@@ -129,7 +129,7 @@ RSpec.describe Lain::CLI::Gateway do
     end
   end
 
-  context "with a git checkout for its root" do
+  context "with a git checkout for its root", :seam do
     let(:repo) { File.join(dir, "repo") }
     let(:options) { super().merge("root" => repo) }
 

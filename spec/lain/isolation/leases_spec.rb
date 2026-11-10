@@ -290,7 +290,7 @@ RSpec.describe Lain::Isolation::Leases do
   # A lane names where this pool's workers are numbered. Every worktree of one
   # repository shares refs/lain/worker/, so two lanes' worker 1 must not spell
   # one id.
-  describe "the lane it numbers its workers in" do
+  describe "the lane it numbers its workers in", :seam do
     let(:lane) { described_class::Lane }
 
     it "prefixes a named lane's worker ids, and leaves the unnamed lane's bare" do
@@ -330,7 +330,7 @@ RSpec.describe Lain::Isolation::Leases do
       expect(inside.map(&:first).chunk_while { |a, b| a == b }.map(&:size)).to eq([2, 2])
     end
 
-    it "numbers a lent lease's children in the lane its caller was numbering in" do
+    it "numbers a lent lease's children in the lane its caller was numbering in", :seam do
       lane = described_class::Lane.named("issue.demo.a.1")
       lent = described_class::InPlace.new(worker_env: Lain::WorkerEnv.default, lane:)
 

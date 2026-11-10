@@ -111,7 +111,7 @@ RSpec.describe Lain::Project::Resolver do
     end
   end
 
-  describe "rung 3, a .git entry" do
+  describe "rung 3, a .git entry", :seam do
     it "resolves a monorepo subtree to the repository top" do
       repo = init_repo(File.join(tmp, "work", "repo"))
       cwd = mkdir("work", "repo", "services", "ingest")
@@ -138,7 +138,7 @@ RSpec.describe Lain::Project::Resolver do
     end
   end
 
-  describe "rung 2, a .lain directory" do
+  describe "rung 2, a .lain directory", :seam do
     it "beats the repository top below it" do
       init_repo(File.join(tmp, "work", "repo"))
       marked = mkdir("work", "repo", "services", "ingest", ".lain")
@@ -196,7 +196,7 @@ RSpec.describe Lain::Project::Resolver do
         .to have_attributes(root: home, cwd:, kind: :home, detected_by: :flag)
     end
 
-    it "outranks every marker the walk would have found" do
+    it "outranks every marker the walk would have found", :seam do
       init_repo(File.join(tmp, "work", "repo"))
       mkdir("work", "repo", "services", ".lain")
       cwd = mkdir("work", "repo", "services", "ingest")
@@ -237,7 +237,7 @@ RSpec.describe Lain::Project::Resolver do
       expect(report.refusal).to have_attributes(directory: home, reason: :home, rung: :lain_dir)
     end
 
-    it "still finds a project root BELOW $HOME" do
+    it "still finds a project root BELOW $HOME", :seam do
       init_repo(File.join(tmp, "home", "code", "app"))
       cwd = mkdir("home", "code", "app", "lib")
 
@@ -262,7 +262,7 @@ RSpec.describe Lain::Project::Resolver do
       end
     end
 
-    it "refuses an XDG base directory, and the lain directory under it" do
+    it "refuses an XDG base directory, and the lain directory under it", :seam do
       base = mkdir("xdg", "config")
       init_repo(File.join(base, "lain"))
       cwd = mkdir("xdg", "config", "lain", "inner")
@@ -273,7 +273,7 @@ RSpec.describe Lain::Project::Resolver do
       expect(report.refusal).to have_attributes(directory: File.join(base, "lain"), reason: :xdg, rung: :git)
     end
 
-    it "refuses the XDG base itself, one level above the lain directory" do
+    it "refuses the XDG base itself, one level above the lain directory", :seam do
       base = mkdir("xdg", "state")
       init_repo(base)
       cwd = mkdir("xdg", "state", "notes")
@@ -281,7 +281,7 @@ RSpec.describe Lain::Project::Resolver do
       expect(resolver.call(cwd:).refusal).to have_attributes(directory: base, reason: :xdg, rung: :git)
     end
 
-    it "does not refuse an ordinary sibling of a refused directory" do
+    it "does not refuse an ordinary sibling of a refused directory", :seam do
       repo = init_repo(File.join(tmp, "xdg", "configuration"))
       cwd = mkdir("xdg", "configuration", "src")
 
@@ -290,7 +290,7 @@ RSpec.describe Lain::Project::Resolver do
       expect(resolver.call(cwd:).project).to have_attributes(root: repo, detected_by: :git)
     end
 
-    it "stops the walk at a mount boundary and ignores every marker above it" do
+    it "stops the walk at a mount boundary and ignores every marker above it", :seam do
       boundary = mkdir("work")
       mkdir("work", ".lain")
       cwd = mkdir("work", "repo", "src")

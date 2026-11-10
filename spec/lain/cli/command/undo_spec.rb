@@ -537,7 +537,7 @@ RSpec.describe Lain::CLI::Command::Undo do
     expect { described_class.new.call("again", env) }.to raise_error(described_class::Refusal, %r{/undo skip})
   end
 
-  it "says no file-changing turn is left after the last one was undone, never that none changed a file" do
+  it "says no file-changing turn is left after the last one was undone, never that none changed a file", :seam do
     turn(shell: { "a.txt" => "a\n" })
     undo
 

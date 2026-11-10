@@ -46,7 +46,7 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
-    it "reaches the judge when the workspace profile will mask what it prints" do
+    it "reaches the judge when the workspace profile will mask what it prints", :seam do
       expect(asked_under(masks: Lain::Approval::Judgement::Masking.new(Struct.new(:masks).new([])))).to eq(["bash"])
     end
 

@@ -67,7 +67,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "an entry bound" do
+  describe "an entry bound", :seam do
     it "refuses a tree larger than the bound, naming the bound and the root" do
       5.times { write("f#{_1}.rb") }
 
@@ -82,7 +82,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "what enters the corpus" do
+  describe "what enters the corpus", :seam do
     it "keeps a denied path out and says why it is out" do
       write(".ssh/id_ed25519", private_key)
       write("app.rb")
@@ -131,7 +131,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "a tree outside the project the classifier is anchored on" do
+  describe "a tree outside the project the classifier is anchored on", :seam do
     subject(:walk) { described_class.new(root:, sensitivity: policy) }
 
     let(:policy) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project)) }
@@ -162,7 +162,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "the same files under the project root" do
+  describe "the same files under the project root", :seam do
     let(:sensitivity) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root)) }
 
     it "projects a secret-named directory as before" do
@@ -177,7 +177,7 @@ RSpec.describe Lain::Survey::Walk do
   # The amplification is what makes this the walk's problem and not the read
   # path's: `read_file` needs a model to NAME a path, while a survey discovers
   # and follows every link in a tree unasked.
-  describe "a symbolic link" do
+  describe "a symbolic link", :seam do
     let(:outside) { @outside }
 
     around do |example|
@@ -315,7 +315,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "the size it reports" do
+  describe "the size it reports", :seam do
     it "carries a byte size for every listed path" do
       bodies = Array.new(50) { |index| "#{"x" * index}\n" }
       bodies.each_with_index { |body, index| write("file#{format("%02d", index)}.txt", body) }
@@ -347,7 +347,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "determinism" do
+  describe "determinism", :seam do
     it "returns the same paths in the same order, and the same withheld, twice over" do
       write("b.rb")
       write("a/deep.rb")
@@ -418,7 +418,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "a listing" do
+  describe "a listing", :seam do
     it "resolves each path against the root, so a reader never rejoins it by hand" do
       write("a/deep.rb")
 
@@ -432,7 +432,7 @@ RSpec.describe Lain::Survey::Walk do
     end
   end
 
-  describe "what it walks" do
+  describe "what it walks", :seam do
     it "reaches nested directories and lists their files relative to the root" do
       write("a/b/c.rb")
 
@@ -570,7 +570,7 @@ RSpec.describe Lain::Survey::Walk do
   end
 
   describe "outside a git repository" do
-    it "walks everything, which is what a directory of prose wants" do
+    it "walks everything, which is what a directory of prose wants", :seam do
       write("chapter.tex")
       write("build/chapter.aux")
 

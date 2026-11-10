@@ -458,7 +458,7 @@ RSpec.describe Lain::CLI::Repl do
            .select { |block| block["type"] == "tool_result" }.map { |block| block["content"] }.join("\n")
     end
 
-    it "exits zero when the ask completed" do
+    it "exits zero when the ask completed", :seam do
       Dir.mktmpdir do |dir|
         wiring, output = run_headless("hello?", dir:)
 
@@ -467,7 +467,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    it "reads no second line: the question it was given is the whole conversation" do
+    it "reads no second line: the question it was given is the whole conversation", :seam do
       Dir.mktmpdir do |dir|
         run_headless("hello?", dir:)
 
@@ -475,7 +475,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    it "reports a turn that could not finish in the exit status" do
+    it "reports a turn that could not finish in the exit status", :seam do
       Dir.mktmpdir do |dir|
         wiring, output = run_headless("hello?", dir:, provider: UnreachableProvider.new)
 
@@ -490,7 +490,7 @@ RSpec.describe Lain::CLI::Repl do
     # thing this flag exists to stop. The rules live on {Repl::Outcome} and are
     # spec'd exhaustively there; these two go through the real Wiring, because
     # a rule nothing consults is worth nothing.
-    it "reports an answer cut off at max_tokens, though the words reached the terminal" do
+    it "reports an answer cut off at max_tokens, though the words reached the terminal", :seam do
       Dir.mktmpdir do |dir|
         wiring, output = run_headless("hello?", dir:, provider: stopping_at(:max_tokens))
 
@@ -499,7 +499,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    it "reports the model refusing" do
+    it "reports the model refusing", :seam do
       Dir.mktmpdir do |dir|
         wiring, = run_headless("hello?", dir:, provider: stopping_at(:refusal))
 
@@ -525,7 +525,7 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
-    describe "when the model asks the human anyway" do
+    describe "when the model asks the human anyway", :seam do
       let(:asking_provider) do
         Lain::Provider::Mock.new(responses: [
                                    Lain::Response.new(
@@ -556,7 +556,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  it "settles one converse round-trip built through Wiring, and the journal records it" do
+  it "settles one converse round-trip built through Wiring, and the journal records it", :seam do
     Dir.mktmpdir do |dir|
       # Paths is injected (the chronicle_spec/journal_spec idiom), never a
       # global ENV mutation: the journal lands under this tmpdir by construction.
@@ -635,7 +635,7 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
-  describe "command dispatch" do
+  describe "command dispatch", :seam do
     it "consults the registry before the skill middleware: /help runs lib-side, zero model turns" do
       Dir.mktmpdir do |dir|
         output = run_chat("/help\n", dir:)
@@ -1047,7 +1047,7 @@ RSpec.describe Lain::CLI::Repl do
   end
 
   # The goal layer and `:LainGoalOff` through the chat the exe assembles.
-  describe "a standing goal, wired" do
+  describe "a standing goal, wired", :seam do
     let(:mock_provider) do
       Lain::Provider::Mock.new(responses: [text_response("all done -- #{Lain::CLI::GoalDriver::DONE}")])
     end

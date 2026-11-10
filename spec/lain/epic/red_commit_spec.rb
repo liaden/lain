@@ -31,25 +31,25 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(red).to eq("test: failing tests at spec/a_spec.rb, from criteria abc123")
   end
 
-  it "is true for a branch whose one commit has the red subject" do
+  it "is true for a branch whose one commit has the red subject", :seam do
     base_sha
     git("checkout", "-q", "-b", "issue/a")
 
     expect(only?(commit(red))).to be(true)
   end
 
-  it "is false for the epic branch's own tip" do
+  it "is false for the epic branch's own tip", :seam do
     expect(only?(base_sha)).to be(false)
   end
 
-  it "is false for an ancestor of the epic branch" do
+  it "is false for an ancestor of the epic branch", :seam do
     first = base_sha
     commit("chore: more")
 
     expect(only?(first)).to be(false)
   end
 
-  it "is false when an implementation commit sits on top" do
+  it "is false when an implementation commit sits on top", :seam do
     base_sha
     git("checkout", "-q", "-b", "issue/a")
     commit(red)
@@ -57,7 +57,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(only?(commit("feat: greet"))).to be(false)
   end
 
-  it "is false when a non-red commit sits below a red one" do
+  it "is false when a non-red commit sits below a red one", :seam do
     base_sha
     git("checkout", "-q", "-b", "issue/a")
     commit("feat: greet")
@@ -65,7 +65,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(only?(commit(red))).to be(false)
   end
 
-  it "is true for two stacked red commits" do
+  it "is true for two stacked red commits", :seam do
     base_sha
     git("checkout", "-q", "-b", "issue/a")
     commit(red)
@@ -73,7 +73,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(only?(commit(described_class.subject("spec/b_spec.rb", "def456")))).to be(true)
   end
 
-  it "judges the tip's own subject when the epic branch does not resolve" do
+  it "judges the tip's own subject when the epic branch does not resolve", :seam do
     git("init", "-q", "-b", "main")
     commit("chore: seed")
     red_tip = commit(red)
@@ -81,7 +81,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect([only?(red_tip), only?(commit("feat: greet"))]).to eq([true, false])
   end
 
-  it "is true for a red-only tip on criss-cross history with 2 merge bases" do
+  it "is true for a red-only tip on criss-cross history with 2 merge bases", :seam do
     base_sha
     git("checkout", "-q", "-b", "side", "epic/demo~0")
     side = commit("chore: side")
@@ -95,7 +95,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect(only?(git("rev-parse", "HEAD").stdout.strip)).to be(true)
   end
 
-  it "judges the tip alone when the base resolves but shares no history with the sha" do
+  it "judges the tip alone when the base resolves but shares no history with the sha", :seam do
     base_sha
     git("checkout", "-q", "--orphan", "other")
     commit("feat: other root")
@@ -104,7 +104,7 @@ RSpec.describe Lain::Epic::RedCommit do
     expect([only?(red_tip), only?(commit("feat: greet"))]).to eq([true, false])
   end
 
-  it "is false for a sha git does not know" do
+  it "is false for a sha git does not know", :seam do
     base_sha
 
     expect(only?("0" * 40)).to be(false)

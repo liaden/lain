@@ -650,7 +650,7 @@ RSpec.describe Lain::CLI::Epic do
 
     # The regression stated as the user sees it: the epic is right there, the
     # chat can see it, and `lain epic status` from a subdirectory could not.
-    it "reports on an epic the chat can see, from a subdirectory of its project" do
+    it "reports on an epic the chat can see, from a subdirectory of its project", :seam do
       in_subdirectory_of_a_project do |project, _sub|
         write_repo_epic(project, "alpha")
 
@@ -1176,7 +1176,7 @@ RSpec.describe Lain::CLI::Epic do
                           { environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }])
     end
 
-    it "asks git through Shell::Out when no factory is injected" do
+    it "asks git through Shell::Out when no factory is injected", :seam do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
 
       expect(described_class.new(root).reason("/x")).to be_a(String)

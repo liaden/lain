@@ -66,7 +66,7 @@ RSpec.describe Lain::Isolation::Null do
       expect { described_class.new.repo_root }.to raise_error(Lain::Error, /no root/)
     end
 
-    it "answers the nearest repository at or above the root it was built with" do
+    it "answers the nearest repository at or above the root it was built with", :seam do
       repo = File.join(@dir, "repo")
       FileUtils.mkdir_p(repo)
       FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", repo)

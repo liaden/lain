@@ -620,7 +620,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The board reads what the Repl hears, so both must hold the one Heard, and a
     # --prompt seed must reach it through the run's own path.
-    it "hands the board and the Repl one Heard, which hears the --prompt seed" do
+    it "hands the board and the Repl one Heard, which hears the --prompt seed", :seam do
       requests = []
       heards = []
       allow(Lain::CLI::Wiring::BoardBuild).to receive(:for).and_wrap_original do |original, **kwargs|
@@ -862,7 +862,7 @@ RSpec.describe Lain::CLI::Wiring do
       # built, read by the board; the arm alone builds no sandbox. Read through the one call it changes:
       # a git log of the project's own history reaches the judge only under the masks.
       describe "the masks the board is told guard a judge-approved call" do
-        it "lets a git log reach the judge when the sandbox wraps bash under --confine workspace" do
+        it "lets a git log reach the judge when the sandbox wraps bash under --confine workspace", :seam do
           offering_every_layer
 
           expect(outside_a_git_hook { judge_asked_about_git_log(board_on_path("/usr/bin", workspace_wiring)) })
@@ -1741,7 +1741,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(verdict).to eq(:approve)
     end
 
-    it "sends a summarizer request past the tier only after the human approves it" do
+    it "sends a summarizer request past the tier only after the human approves it", :seam do
       stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
         .to_return(status: 200, headers: { "Content-Type" => "application/json" },
                    body: JSON.generate("input_tokens" => 104_000))
@@ -1786,7 +1786,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.approvals.to_a).to be_empty
     end
 
-    it "carries an approval given on the chat to its subagents' provider, and shows it on the chat's channel" do
+    it "carries an approval given on the chat to its subagents' provider, and shows it on the chat's channel", :seam do
       stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
         .to_return(status: 200, headers: { "Content-Type" => "application/json" },
                    body: JSON.generate("input_tokens" => 104_000))
@@ -1852,7 +1852,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     def chat_provider = with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") { hosted.provider }
 
-    it "never sends a request carrying a host secret, and journals the host and a count" do
+    it "never sends a request carrying a host secret, and journals the host and a count", :seam do
       password = "db-password-24-bytes-xyz"
       sent = stub_request(:post, messages_url)
 
@@ -1868,7 +1868,7 @@ RSpec.describe Lain::CLI::Wiring do
                                                  "count" => 1, "turn" => 1 }])
     end
 
-    it "sends a clean request with the API key in its headers" do
+    it "sends a clean request with the API key in its headers", :seam do
       sent = stub_request(:post, messages_url)
              .to_return(status: 200, headers: { "Content-Type" => "application/json" },
                         body: JSON.generate("id" => "m", "type" => "message", "role" => "assistant",
@@ -1932,7 +1932,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect { hosted.attach(board, channel) }.not_to raise_error
     end
 
-    it "parks no egress decision when supervision was not asked for" do
+    it "parks no egress decision when supervision was not asked for", :seam do
       sent = stub_request(:post, messages_url).to_return(status: 200, headers: { "Content-Type" => "application/json" },
                                                          body: JSON.generate(reply))
 
@@ -1983,7 +1983,7 @@ RSpec.describe Lain::CLI::Wiring do
         "usage" => { "input_tokens" => 1, "output_tokens" => 1 } }
     end
 
-    describe "the secret oracle's provider" do
+    describe "the secret oracle's provider", :seam do
       let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: "local" }, chronicle:, status_feed:) }
       let(:token) { "0123456789abcdef0123456789abcdef" }
 
@@ -2012,7 +2012,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     %w[oracle all].each do |scope|
-      describe "under --supervise-egress #{scope}" do
+      describe "under --supervise-egress #{scope}", :seam do
         let(:wiring) { new_wiring(options: { grace: 5, secret_oracle: "local" }, chronicle:, status_feed:) }
         let(:hosted) do
           with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
@@ -2063,7 +2063,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    describe "under --supervise-egress all" do
+    describe "under --supervise-egress all", :seam do
       let(:hosted) do
         with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
           Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-haiku-5-5", max_tokens: 64,
@@ -2155,7 +2155,7 @@ RSpec.describe Lain::CLI::Wiring do
   # with no `journal:`), so a live credential-shaped refusal journaled to
   # `Channel::Null` and left no record while every other mount of this
   # middleware (consolidation.rb, improve.rb, run_recorder.rb) passes one.
-  describe "the secret-write guard's journal wiring" do
+  describe "the secret-write guard's journal wiring", :seam do
     # A tool turn primes the shadow snapshot store, which
     # lives under the state home -- so this chat gets a throwaway one.
     around do |example|
@@ -2226,7 +2226,7 @@ RSpec.describe Lain::CLI::Wiring do
   # the memory-save gate judged nothing there. Wiring it in composes the two
   # distinct findings: a credential is a PATTERN hit, a contentless save is
   # the oracle's DECLINE, and they must stay distinguishable in the journal.
-  describe "the secret-write guard's oracle wiring" do
+  describe "the secret-write guard's oracle wiring", :seam do
     # The same throwaway state home, for the same shadow snapshot store.
     around do |example|
       Dir.mktmpdir("lain-wiring-state") do |state|
@@ -2349,7 +2349,7 @@ RSpec.describe Lain::CLI::Wiring do
   # nvim's lain://journal sees what the terminal sees -- while the durable
   # NDJSON keeps only the turn's tool_result (Tools::Bash.render_output),
   # which is where those same bytes already are.
-  describe "streamed tool output on the live views" do
+  describe "streamed tool output on the live views", :seam do
     let(:bash_use) do
       { "type" => "tool_use", "id" => "tu_bash", "name" => "bash", "input" => { "command" => "printf hello" } }
     end
@@ -2475,7 +2475,7 @@ RSpec.describe Lain::CLI::Wiring do
   # Where the records a chat's collaborators write end up. The display Channel
   # renders three record types and skips the rest, so a record handed to it is
   # a record lost; these read the session record back instead.
-  describe "the records a chat's collaborators write" do
+  describe "the records a chat's collaborators write", :seam do
     let(:session_io) { StringIO.new }
     let(:session_file) { Lain::Journal.new(io: session_io) }
     let(:chronicle) { Lain::CLI::Chronicle.new(journal: session_file, journal_path: "collaborator-records-session.ndjson") }
@@ -2614,7 +2614,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
   end
 
-  describe "which files a chat counts as fresh" do
+  describe "which files a chat counts as fresh", :seam do
     let(:session_io) { StringIO.new }
     let(:chronicle) do
       Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: session_io), journal_path: "fresh-session.ndjson")
@@ -2924,7 +2924,7 @@ RSpec.describe Lain::CLI::Wiring do
     # Without the tee `Cold` is never fed, the `:cold` decision path is dead on
     # the live path, and every compaction journals `cache_state: forced` -- a
     # bench arm that measures nothing.
-    it "tees turn_usage to the source, so a zero cache-read confirms the cache cold" do
+    it "tees turn_usage to the source, so a zero cache-read confirms the cache cold", :seam do
       agent = wire_agent
       cold = source_of(agent).instance_variable_get(:@cold)
       expect(cold).not_to be_cold
@@ -2944,7 +2944,7 @@ RSpec.describe Lain::CLI::Wiring do
     # per-turn pipeline has to be built from a flattened twin. Without that,
     # EVERY compacting turn of every real chat raises Ractor::IsolationError out
     # of Scheduler::COMPOSE, and no spec holding a plain Context can see it.
-    it "compacts a Context carrying the live /model slot, which is not shareable" do
+    it "compacts a Context carrying the live /model slot, which is not shareable", :seam do
       agent = wire_agent
       expect(agent.context).not_to be_deeply_frozen
 
@@ -2957,7 +2957,7 @@ RSpec.describe Lain::CLI::Wiring do
     # post-dispatch observer fires a summary into the run's Eager, and the next
     # render -- which compacts, because the cache is cold -- carries the FIRED
     # TEXT where an unwired run would carry an elision line.
-    it "renders the summary a tool dispatch fired, not an elision line" do
+    it "renders the summary a tool dispatch fired, not an elision line", :seam do
       converse(wire_agent)
 
       rendered = Lain::Canonical.dump(reading_provider.last_request.messages)
@@ -2979,7 +2979,7 @@ RSpec.describe Lain::CLI::Wiring do
     # nothing. It is also what a reader needs to spot a `/model` switch: this
     # names the tier the estimate was priced against, TurnUsage names the tier
     # that answered, and after a switch they differ.
-    it "journals the model its zero cost figures are quoted in" do
+    it "journals the model its zero cost figures are quoted in", :seam do
       converse(wire_agent)
 
       accounting = journal.events.grep(Lain::Telemetry::Compaction)
@@ -2995,7 +2995,7 @@ RSpec.describe Lain::CLI::Wiring do
     # drop the control arm's rows rather than compare against them. This
     # describe's own `compaction_options` set no `--compact-strategy`, which is
     # what makes this an unflagged launch and not a contrived one.
-    it "journals the eager control arm on a run that named no strategy at all" do
+    it "journals the eager control arm on a run that named no strategy at all", :seam do
       converse(wire_agent)
 
       accounting = journal.events.grep(Lain::Telemetry::Compaction)
@@ -3009,7 +3009,7 @@ RSpec.describe Lain::CLI::Wiring do
     # to name no policy behind it -- journals that word on every compaction. It
     # is what lets a bench group `bytes_before - bytes_after` by arm with no
     # launch command to hand.
-    context "with --compact-strategy" do
+    context "with --compact-strategy", :seam do
       let(:compaction_options) { super().merge(compact_strategy: "elide-tools") }
 
       it "journals the arm the operator named on every compaction it performs" do
@@ -3021,7 +3021,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "with --no-compact" do
+    context "with --no-compact", :seam do
       let(:compaction_options) { super().merge(compact: false) }
 
       it "leaves the Agent on the Null source, rendering exactly as an unwired chat would" do
@@ -3141,7 +3141,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    context "with the worktree isolation option" do
+    context "with the worktree isolation option", :seam do
       def run_git(dir, *args) = SeedRepo.git(dir, *args)
 
       # Copied, not rebuilt: five git subprocesses per example for a directory that
@@ -3477,26 +3477,26 @@ RSpec.describe Lain::CLI::Wiring do
       [].tap { |bases| budget.for(head: "h") { room }.call(blocks, calls) { |record| bases << record.basis } }
     end
 
-    it "gives a plain chat's main agent the window round budget" do
+    it "gives a plain chat's main agent the window round budget", :seam do
       expect(round_budget_basis(options: {})).to eq(["window"])
     end
 
-    it "gives the main agent the static round budget when asked" do
+    it "gives the main agent the static round budget when asked", :seam do
       expect(round_budget_basis(options: { round_budget: "static" })).to eq(["static"])
     end
 
-    it "gives the main agent only deduplication when the budget is off" do
+    it "gives the main agent only deduplication when the budget is off", :seam do
       expect(round_budget_basis(options: { round_budget: "off" })).to eq(["dedup"])
     end
 
-    it "gives the main agent no round budget when both arms are off" do
+    it "gives the main agent no round budget when both arms are off", :seam do
       expect(round_budget_basis(options: { round_budget: "off", round_dedup: "off" })).to eq([])
     end
 
     # The epic driver's supervisor, retirement and landing queue all journal
     # into what these seams carry, and a chat can only reach that driver through
     # a slash command, so nothing else here would notice a display Channel there.
-    it "hands the epic driver's seams the session record, never the display channel" do
+    it "hands the epic driver's seams the session record, never the display channel", :seam do
       allow(Lain::CLI::EpicDriver::Seams).to receive(:new).and_call_original
 
       run_wiring
@@ -3529,14 +3529,14 @@ RSpec.describe Lain::CLI::Wiring do
     # The stall the derived width exists to stop the driver manufacturing: one
     # local server serves one request at a time, so a second issue either waits
     # or makes the server swap models and throw away the prefix cache.
-    it "carries one issue at a time when the chat's provider dials a local server" do
+    it "carries one issue at a time when the chat's provider dials a local server", :seam do
       expect(carried_width(epic_seams_over(backend_on("ollama")))).to eq(1)
     end
 
     # The other direction, and nowhere but here can catch it: `Backend` answers
     # localhost as the default base for anthropic too, so a wiring that asked
     # IT would halve every hosted run for a reason nothing in the output names.
-    it "carries the hosted default when the chat's provider dials anthropic" do
+    it "carries the hosted default when the chat's provider dials anthropic", :seam do
       width = with_env("ANTHROPIC_API_KEY" => "sk-wiring-spec") do
         carried_width(epic_seams_over(backend_on("anthropic")))
       end
@@ -3547,7 +3547,7 @@ RSpec.describe Lain::CLI::Wiring do
     # `--input socket:<name>` puts the human in another pane. The chat then has
     # no reader for its own stdin at all, which is the point: a `lain up` chat
     # pane is a scrolling transcript nobody types into.
-    it "reads the human from an input socket, never this terminal, when --input names one" do
+    it "reads the human from an input socket, never this terminal, when --input names one", :seam do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: project_dir)
@@ -3566,7 +3566,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # A stopped child keeps its checkout live for a resume, so the run's close
     # is what gives back the leases the chat's spawns hold.
-    it "hands the conductor the chat's spawn leases, which its close gives back" do
+    it "hands the conductor the chat's spawn leases, which its close gives back", :seam do
       closed = []
       allow(Lain::Isolation::Leases).to receive(:new).and_wrap_original do |original, **kwargs|
         original.call(**kwargs).tap do |leases|
@@ -3582,7 +3582,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # History is a line editor's, and a chat reading a pipe has none: what a
     # script feeds it is not what a human would reach for at `you>`.
-    it "keeps no history for a chat reading a stream that is not a terminal" do
+    it "keeps no history for a chat reading a stream that is not a terminal", :seam do
       kept = Dir.mktmpdir do |dir|
         wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
                             tty_factory: tty_factory(dir), conductor_opener:)
@@ -3597,7 +3597,7 @@ RSpec.describe Lain::CLI::Wiring do
     # The pane is a line editor in another process, and its lines reach the
     # chat's Intake over the socket -- which is where they are kept, so a
     # cockpit's history is the chat's and not the pane's.
-    it "keeps the line a pane sent over the input socket in the chat's history" do
+    it "keeps the line a pane sent over the input socket in the chat's history", :seam do
       Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: project_dir)
@@ -3616,7 +3616,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # A cockpit's prompt is typed in another pane, so the transcript is the only
     # place the chat pane can show it; a plain chat's terminal already shows it.
-    it "echoes a line typed in the input pane into the transcript, and not a line typed here" do
+    it "echoes a line typed in the input pane into the transcript, and not a line typed here", :seam do
       transcripts = Dir.mktmpdir do |dir|
         paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
         path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: project_dir)
@@ -3642,7 +3642,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(transcripts).to eq([true, false])
     end
 
-    describe "the terminal's completion sources" do
+    describe "the terminal's completion sources", :seam do
       def offered_after(typed, backend: self.backend)
         sources = nil
         factory = lambda do |channel:, completion_sources:, **|
@@ -3681,7 +3681,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "hands the chat's Intake the approval key, which flips the board" do
+    it "hands the chat's Intake the approval key, which flips the board", :seam do
       built = Hash.new { |hash, key| hash[key] = [] }
       [Lain::Frontend::Intake, Lain::CLI::Switchboard].each do |klass|
         allow(klass).to receive(:new).and_wrap_original do |original, *args, **kwargs, &block|
@@ -3705,7 +3705,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # A line typed mid-run is one note however it arrives, so the Agent that
     # folds it and every reader that can take it must hold the same queue.
-    it "hands a built chat's Agent, Intake, StdinPump and Repl one HumanNotes" do
+    it "hands a built chat's Agent, Intake, StdinPump and Repl one HumanNotes", :seam do
       seen = Hash.new { |hash, key| hash[key] = [] }
       { Lain::Agent => :mailbox, Lain::Frontend::Intake => :notes, Lain::Frontend::StdinPump => :notes,
         Lain::CLI::Repl => :notes }.each do |klass, key|
@@ -3730,7 +3730,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The schedule decides whether a tick exists at all, so the surface a
     # built Repl is handed is read back off the constructor it really got.
-    describe "the phone's surface" do
+    describe "the phone's surface", :seam do
       def remote_handed
         seen = []
         allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
@@ -3758,7 +3758,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    describe "the idle compaction surface" do
+    describe "the idle compaction surface", :seam do
       def idle_handed(schedule)
         seen = []
         allow(backend).to receive(:compaction_schedule).and_return(schedule)
@@ -3797,7 +3797,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "hands the chat's StdinPump the approval key the user's config names" do
+    it "hands the chat's StdinPump the approval key the user's config names", :seam do
       allow(Lain::Config).to receive(:keys)
         .and_return(Lain::Config::Keys.from({ "approval_cycle" => "s-tab" }, path: nil))
       keys = []
@@ -3816,7 +3816,7 @@ RSpec.describe Lain::CLI::Wiring do
       expect(keys).to eq(["s-tab"])
     end
 
-    it "hands the chat's terminal the theme the user's config declares, with the pastel it paints through" do
+    it "hands the chat's terminal the theme the user's config declares, with the pastel it paints through", :seam do
       handed = []
       theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
       allow(Lain::Frontend::Theme).to receive(:on_stdout) { theme }
@@ -3839,7 +3839,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # A registered command runs outside every ask, so prose typed meanwhile
     # waits as the next prompt rather than going to an agent that is not running.
-    it "holds prose typed while a registered command runs, rather than noting it" do
+    it "holds prose typed while a registered command runs, rather than noting it", :seam do
       rails = []
       allow(Lain::Frontend::Intake).to receive(:new).and_wrap_original do |original, **kwargs|
         original.call(**kwargs).tap { |rail| rails << rail }
@@ -3872,7 +3872,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The run is not working once its final reply commits, so a prompt typed
     # while it tears down is the next prompt, not a note for no request.
-    context "with a model that answers twice" do
+    context "with a model that answers twice", :seam do
       let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("first"), text_response("second")]) }
 
       it "holds prose typed after the final reply commits as the next prompt, rather than noting it" do
@@ -3942,7 +3942,7 @@ RSpec.describe Lain::CLI::Wiring do
       nil
     end
 
-    it "threads the injected tty/conductor seams -- the conductor the opener built is the one exposed" do
+    it "threads the injected tty/conductor seams -- the conductor the opener built is the one exposed", :seam do
       wiring = run_wiring
 
       expect(opened).to eq([wiring.conductor])
@@ -3960,7 +3960,7 @@ RSpec.describe Lain::CLI::Wiring do
         expect { wiring.told.call("a file is waiting") }.not_to raise_error
       end
 
-      it "reaches the terminal once #run has built one" do
+      it "reaches the terminal once #run has built one", :seam do
         rendered = StringIO.new
         Dir.mktmpdir do |dir|
           factory = lambda do |channel:, **|
@@ -3986,7 +3986,7 @@ RSpec.describe Lain::CLI::Wiring do
     # forever, which is the defect class this card exists to remove. So the call
     # is EXPECTED here, and against the run's own Store -- an `instance_of`
     # would still pass for a second, empty one, which retires exactly nothing.
-    it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire" do
+    it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire", :seam do
       wiring = run_wiring
 
       expect(status_feed).to have_received(:bind_store).with(wiring.command_surface.env.agent.timeline.store)
@@ -3996,7 +3996,7 @@ RSpec.describe Lain::CLI::Wiring do
     # where RunClock#record_input is called -- and the clock it records on has
     # to be the one the StatusFeed publishes, or the published idle never
     # resets. ChatLaunch builds it; this class only has to pass it on.
-    it "passes the run's RunClock on to the conductor it opens" do
+    it "passes the run's RunClock on to the conductor it opens", :seam do
       run_clock = Lain::RunClock.new
       seen = []
       opener = ->(**kwargs) { Lain::CLI::Conductor.open(**kwargs).tap { seen << kwargs[:run_clock] } }
@@ -4034,7 +4034,7 @@ RSpec.describe Lain::CLI::Wiring do
       # `run_wiring` inlined for one reason: it closes the conductor, and
       # {Lain::CLI::Conductor#close} closes the session record. The driver has to
       # write while the record is still open, so the close moves BELOW the drive.
-      it "wires the standing-goal driver over the run's own journal, not a discard" do
+      it "wires the standing-goal driver over the run's own journal, not a discard", :seam do
         Dir.mktmpdir do |dir|
           wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:,
                               tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
@@ -4056,7 +4056,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       # Readers of a session file take its first record as the header, and a
       # launch under the default auto approval journals a flip from ask.
-      it "writes the session header before the launch's mode switch" do
+      it "writes the session header before the launch's mode switch", :seam do
         Dir.mktmpdir do |dir|
           wiring = new_wiring(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
                               tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
@@ -4092,7 +4092,7 @@ RSpec.describe Lain::CLI::Wiring do
     # collaborator is handed the tee onto nvim's own journal. A flip there must
     # apply whole -- gate policy and all -- and a goal must drive, where a tee
     # that answered only `<<` killed the chat on the first `record`.
-    context "with a --no-journal chronicle teed onto an editor's journal" do
+    context "with a --no-journal chronicle teed onto an editor's journal", :seam do
       let(:tee_io) { StringIO.new }
       let(:chronicle) do
         Class.new(Lain::CLI::Chronicle::Null) do
@@ -4131,7 +4131,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired" do
+    it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired", :seam do
       wiring = run_wiring
       env = wiring.command_env
 
@@ -4150,7 +4150,7 @@ RSpec.describe Lain::CLI::Wiring do
     # The load-bearing identity behind it (a review panel's probe): a dropped
     # surface_kwargs would leave this reader on its Null and silently
     # disconnect /model from the Agent's Context.
-    it "hands the Env the SAME model switch the Agent's context holds" do
+    it "hands the Env the SAME model switch the Agent's context holds", :seam do
       wiring = run_wiring
       env = wiring.command_env
 
@@ -4172,7 +4172,7 @@ RSpec.describe Lain::CLI::Wiring do
     # Reached for privately, on the same terms as `board_for` below: the board
     # IS this run's authority and nothing in lib/ asks Wiring for it, so a
     # public reader would exist only for this example.
-    it "parks the ladder's asking rung on the SAME queue /approve drains" do
+    it "parks the ladder's asking rung on the SAME queue /approve drains", :seam do
       wiring = run_wiring
       board = wiring.instance_variable_get(:@switchboard)
 
@@ -4190,7 +4190,7 @@ RSpec.describe Lain::CLI::Wiring do
     # tree, so the drift never showed in a test; it would show the moment a
     # `.lain/` file changed mid-session, and it defeats the "session-fixed
     # snapshot" claim both objects are documented with. One load each, threaded.
-    describe "the session's ONE catalog and ONE slots" do
+    describe "the session's ONE catalog and ONE slots", :seam do
       def help_catalog(surface)
         surface.commands.registry.find { |command| command.name == "help" }.instance_variable_get(:@catalog)
       end
@@ -4254,7 +4254,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "wires the queue-shaped NoApprovals under --non-interactive, so the env reader stays nil-free" do
+    it "wires the queue-shaped NoApprovals under --non-interactive, so the env reader stays nil-free", :seam do
       wiring = run_wiring(options: { grace: 5, non_interactive: true })
 
       expect(wiring.command_env.approvals).to be(Lain::CLI::Command::Env::NoApprovals)
@@ -4294,14 +4294,14 @@ RSpec.describe Lain::CLI::Wiring do
         seen
       end
 
-      it "hands the TTY factory a renderer composed from the run's own state" do
+      it "hands the TTY factory a renderer composed from the run's own state", :seam do
         expect(run_recording.first).to be_a(Lain::Frontend::PromptComposer::Formatted)
       end
 
       # Through the wiring rather than in isolation: the renderer this
       # class built reads the LIVE agent, so the model it names is the one the
       # run is actually talking to.
-      it "builds it over the live model slot, the run clock and the status feed" do
+      it "builds it over the live model slot, the run clock and the status feed", :seam do
         composed = run_recording.first.call(text: "> ", theme: plain_theme)
 
         expect(composed).to include(Lain::Provider::Ollama::DEFAULT_MODEL)
@@ -4362,11 +4362,11 @@ RSpec.describe Lain::CLI::Wiring do
         notices
       end
 
-      it "tells a cloud chat its width at startup" do
+      it "tells a cloud chat its width at startup", :seam do
         expect(startup_notices_for("ollama-cloud").join).to include("cloud requests at once")
       end
 
-      it "says nothing about cloud width to a local chat" do
+      it "says nothing about cloud width to a local chat", :seam do
         expect(startup_notices_for("ollama").join).not_to include("cloud requests")
       end
 
@@ -4383,7 +4383,7 @@ RSpec.describe Lain::CLI::Wiring do
         [notices, renderer]
       end
 
-      it "reports a malformed project config as a startup notice, and keeps the chat usable" do
+      it "reports a malformed project config as a startup notice, and keeps the chat usable", :seam do
         notices, renderer = with_project_config(%(format = "[unclosed"\n))
 
         expect(notices.join).to include("prompt.toml")
@@ -4394,7 +4394,7 @@ RSpec.describe Lain::CLI::Wiring do
       # only Lain::Error, so an EncodingError escaping `.renderer` aborts the
       # chat with a backtrace before a prompt ever exists. A single Latin-1
       # byte in a project config is enough to do it.
-      it "survives a project config that is not valid UTF-8, rather than aborting the chat" do
+      it "survives a project config that is not valid UTF-8, rather than aborting the chat", :seam do
         notices = renderer = nil
 
         expect { notices, renderer = with_project_config(%(format = "\xBB "\n).b) }.not_to raise_error
@@ -4403,7 +4403,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    describe "the write-record notice" do
+    describe "the write-record notice", :seam do
       def quiet_tty(dir)
         lambda do |channel:, alternate_screen: true, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"),
@@ -4450,7 +4450,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The alternate screen wipes whatever was printed before it opened, so a
     # notice said only at launch is gone before the human sees the chat.
-    describe "resume notices on the chat screen" do
+    describe "resume notices on the chat screen", :seam do
       let(:mismatch) { "recorded with --compact-keep 4; continuing with 8 (the current flags win)" }
 
       def resumed_with_notice
@@ -4567,7 +4567,7 @@ RSpec.describe Lain::CLI::Wiring do
     # The `vi` and `notify` layers are the terminal's to act on, so what this
     # class owes the TTY factory is the session's layer set as it is NOW --
     # read through the live switch `/mode` writes, never a copy taken at launch.
-    describe "the mode layers the terminal reads" do
+    describe "the mode layers the terminal reads", :seam do
       def layered_factory(rendered, dir, seen)
         lambda do |channel:, layers:, **|
           seen << layers
@@ -4739,7 +4739,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       # A chat must never fail to start over this, and a tool that cannot act
       # must not be offered to the model.
-      it "leaves the tool out, and says why, when the home holds several epics and none was named" do
+      it "leaves the tool out, and says why, when the home holds several epics and none was named", :seam do
         in_project("alpha", "beta") do |dir|
           said = []
 
@@ -4750,7 +4750,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       # The ordinary chat: no epic anywhere, no tool, and nothing said.
-      it "starts a chat with no epic home at all, silently" do
+      it "starts a chat with no epic home at all, silently", :seam do
         Dir.mktmpdir do |dir|
           with_state_home(File.join(dir, "state")) do
             Dir.chdir(dir) do
@@ -4764,7 +4764,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      it "sends a mounted chat's agent the epic's slug, home path and tools in its workspace" do
+      it "sends a mounted chat's agent the epic's slug, home path and tools in its workspace", :seam do
         in_project("alpha") do |dir|
           reminders = run_in(dir).command_env.agent.workspace.reminders.join("\n")
 
@@ -4773,7 +4773,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      describe "the session header" do
+      describe "the session header", :seam do
         let(:journal_io) { StringIO.new }
         let(:chronicle) do
           Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io),
@@ -4799,7 +4799,7 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      it "sends a chat in no epic an empty workspace" do
+      it "sends a chat in no epic an empty workspace", :seam do
         in_project do |dir|
           expect(run_in(dir).command_env.agent.workspace.reminders).to be_empty
         end
@@ -4808,7 +4808,7 @@ RSpec.describe Lain::CLI::Wiring do
       # {HumanReplies} is built in #build_repl, strictly AFTER the toolset --
       # so the tool holds a thunk, and what it must read at CALL time is the
       # run's ONE live replies object, the same one the Env hands the commands.
-      it "late-binds the tool to the live HumanReplies the run built" do
+      it "late-binds the tool to the live HumanReplies the run built", :seam do
         in_project("alpha") do |dir|
           wiring = run_in(dir)
           tool = wiring.command_env.agent.toolset.fetch("request_review")
@@ -4821,7 +4821,7 @@ RSpec.describe Lain::CLI::Wiring do
       # The seat resolves it once, and the driver is built from that one mount:
       # a second EpicMount.for would hand this chat a second Epic::Review over
       # one journal, which stops guarding silently.
-      it "builds the command surface's epic driver from the seat's one mount" do
+      it "builds the command surface's epic driver from the seat's one mount", :seam do
         in_project("alpha") do |dir|
           driver = run_in(dir).command_env.epic_driver
 
@@ -4832,7 +4832,7 @@ RSpec.describe Lain::CLI::Wiring do
 
       # No epic resolved costs the chat its driver exactly as it costs it the
       # tool -- and what it gets instead is the refusing Null, never nil.
-      it "hands it the refusing Null when no epic resolves, so the command still answers" do
+      it "hands it the refusing Null when no epic resolves, so the command still answers", :seam do
         in_project("alpha", "beta") do |dir|
           expect(run_in(dir).command_env.epic_driver).not_to be_mounted
         end
@@ -5051,7 +5051,7 @@ RSpec.describe Lain::CLI::Wiring do
     # the root. What is under test is the THREADING, and the argument IS the
     # threading. The two that leave a readable trace get it asserted below as
     # well.
-    it "hands the isolation and exec backends, epic mount, review seams and command surface the ROOT" do
+    it "hands the isolation and exec backends, epic mount, review seams and command surface the ROOT", :seam do
       allow(Lain::CLI::IsolationBackend).to receive(:resolve).and_call_original
       allow(Lain::CLI::ExecBackend).to receive(:new).and_call_original
       allow(Lain::CLI::EpicMount).to receive(:for).and_call_original
@@ -5071,7 +5071,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The rail the chat built is the one that asks the registry and the one /held lists, so
     # a bare Intake in its place, or a surface built without it, reads here.
-    it "refuses /approve with nothing pending and lists what was held, through the chat's own rail" do
+    it "refuses /approve with nothing pending and lists what was held, through the chat's own rail", :seam do
       in_project_tree do |root, cwd|
         output = StringIO.new
         Dir.mktmpdir("lain-held-tty") do |dir|
@@ -5094,7 +5094,7 @@ RSpec.describe Lain::CLI::Wiring do
 
     # The surface's own trace, so the spy above is not the only witness: `/meta`,
     # `/review` and `/review-submit` are each constructed with this root.
-    it "leaves that root where /meta and the two review commands read it" do
+    it "leaves that root where /meta and the two review commands read it", :seam do
       in_project_tree do |root, cwd|
         surface = run_project(project_at(root, cwd)).command_surface
 
@@ -5106,7 +5106,7 @@ RSpec.describe Lain::CLI::Wiring do
     # the two are asserted TOGETHER because the pair is the point: the tools
     # work where the user is, the project-scoped collaborators work where the
     # project is.
-    it "sends the cwd to the Session and the root to the collaborators, from one Project" do
+    it "sends the cwd to the Session and the root to the collaborators, from one Project", :seam do
       in_project_tree do |root, cwd|
         wiring = run_project(project_at(root, cwd))
 
@@ -5325,7 +5325,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "gives a spawned child its own instance of the configured model middleware" do
+    it "gives a spawned child its own instance of the configured model middleware", :seam do
       in_tree do |root|
         WiringSpecInstanceStamp::SEEN.clear
         spawn_call = ["s1", "subagent", { "prompt" => "look", "role" => "researcher" }]
@@ -5354,7 +5354,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
-    it "runs a configured repl middleware over a typed line before the agent sees it" do
+    it "runs a configured repl middleware over a typed line before the agent sees it", :seam do
       in_tree do |root|
         upcase = proc { |env, &downstream| downstream.call(env.merge(text: env.fetch(:text).upcase)) }
         registration = Lain::Config::Middleware::Registration.new(factory: nil, args: [], kwargs: {}, block: upcase,
@@ -5803,24 +5803,24 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
-      it "hands the editor the mounted epic, folded from the root the mount resolved" do
+      it "hands the editor the mounted epic, folded from the root the mount resolved", :seam do
         write_demo
 
         expect(epic_handed_to_editor(seated).lines)
           .to include("# epic `demo`", a_string_including("`a` the a issue"))
       end
 
-      it "hands the editor the unmounted null when the chat is in no epic" do
+      it "hands the editor the unmounted null when the chat is in no epic", :seam do
         expect(epic_handed_to_editor(seated)).to equal(Lain::Frontend::Neovim::StatusView::Unmounted)
       end
 
       # An epic_write in a chat seated in no epic still writes a document the
       # human should be able to read where it was made.
-      it "hands the editor an epic documents reader when the chat is in no epic" do
+      it "hands the editor an epic documents reader when the chat is in no epic", :seam do
         expect(seams_handed_to_editor(seated).fetch(:epic_docs)).to be_a(Lain::CLI::EpicMount::Homes)
       end
 
-      context "with the chat's journal filed in the project's session directory" do
+      context "with the chat's journal filed in the project's session directory", :seam do
         let(:project) { Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag) }
         let(:session_dir) { Lain::Paths.new.filing_dir(root: project.root) }
         let(:chronicle) do
@@ -6396,7 +6396,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # board it would be an unconditional approver: a child could do what its
     # parent must ask to do, which is a privilege inversion and not a wiring
     # omission.
-    it "gates a child through the run's own queue, the one its parent is gated by" do
+    it "gates a child through the run's own queue, the one its parent is gated by", :seam do
       wire
       resolved = child_guard.board.call
 

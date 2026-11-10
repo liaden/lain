@@ -147,7 +147,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
     end
   end
 
-  describe "a patch that does not fit the pristine source" do
+  describe "a patch that does not fit the pristine source", :seam do
     it "is skipped in its own column, counts as not killed, and fails the grade as broken fixture data" do
       leased do |lease, checkout, dir|
         write_tests(checkout, thorough)
@@ -164,7 +164,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
     end
   end
 
-  describe "edits the arm made to the source" do
+  describe "edits the arm made to the source", :seam do
     def grade_after_editing(&edit)
       leased do |lease, checkout|
         write_tests(checkout, thorough)
@@ -211,7 +211,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
 
     [%(--pattern "**/*_spec.rb,**/*_check.rb"\n), "--pattern\n**/*_check.rb,**/*_x.rb\n",
      "--pattern=**/*_a.rb,**/*_check.rb\n"].each do |options|
-      it "reads the pattern #{options.inspect} the way rspec does" do
+      it "reads the pattern #{options.inspect} the way rspec does", :seam do
         project_with(options) do |project|
           leased(project) do |lease, checkout|
             write_tests(checkout, weak)
@@ -237,7 +237,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
       end
     end
 
-    it "grades a test that requires a helper the agent added under spec/support on its merits" do
+    it "grades a test that requires a helper the agent added under spec/support on its merits", :seam do
       leased do |lease, checkout|
         FileUtils.mkdir_p(File.join(checkout, "spec/support"))
         File.write(File.join(checkout, "spec/support/my_helper.rb"),
@@ -248,7 +248,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
       end
     end
 
-    it "does not copy an added symlink into the scratch trees" do
+    it "does not copy an added symlink into the scratch trees", :seam do
       leased do |lease, checkout|
         write_tests(checkout, weak)
         File.symlink("/etc/hostname", File.join(checkout, "spec/unit/link_check.rb"))
@@ -260,7 +260,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
       end
     end
 
-    it "does not let an empty helper kill the grade of real tests beside it" do
+    it "does not let an empty helper kill the grade of real tests beside it", :seam do
       leased do |lease, checkout|
         write_tests(checkout, thorough)
         File.write(File.join(checkout, "spec/unit/helper.rb"), "")

@@ -44,14 +44,14 @@ RSpec.describe Lain::Confine::Profiles do
   def mask(path) = Lain::Sensitivity::Policy::Mask.new(path:, reason: "secret")
 
   describe "#for" do
-    it "confines a ComposedTerm approval under the reader profile, the project first" do
+    it "confines a ComposedTerm approval under the reader profile, the project first", :seam do
       profile = profiles.for(composed)
 
       expect(profile).to have_attributes(name: :reader, trace: true, confined?: true)
       expect(profile.read_dirs.first).to eq(root)
     end
 
-    it "confines a call to the root its request names, as a worktree child's does" do
+    it "confines a call to the root its request names, as a worktree child's does", :seam do
       child = File.join(@base, "child")
       FileUtils.mkdir_p(child)
       ruled = request(ruling("rules", rule: "composed_term"), root: child)
@@ -59,7 +59,7 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profiles.for(ruled).read_dirs.first).to eq(child)
     end
 
-    it "falls back to the session's root when the request names none" do
+    it "falls back to the session's root when the request names none", :seam do
       expect(profiles.for(request(ruling("rules", rule: "composed_term"), root: nil)).read_dirs.first).to eq(root)
     end
 
@@ -68,14 +68,14 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profiles.for(request(barred))).to eq(Lain::Confine::Profile::TRACED)
     end
 
-    it "masks what the mask list holds when the call is made, not when the profiles were built" do
+    it "masks what the mask list holds when the call is made, not when the profiles were built", :seam do
       profiles
       masked << mask(File.join(root, ".env"))
 
       expect(profiles.for(composed).masks).to eq([File.join(root, ".env")])
     end
 
-    it "reads each related directory the classifier names, after the project, with the masks named with it" do
+    it "reads each related directory the classifier names, after the project, with the masks named with it", :seam do
       related = File.join(@base, "sibling").tap { FileUtils.mkdir_p(_1) }
       hidden = File.join(related, ".env")
       masked << mask(File.join(root, ".env"))
@@ -88,7 +88,7 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profile.masks).to eq([File.join(root, ".env"), hidden])
     end
 
-    it "reads each read root the classifier names, read-only and with no listing behind it" do
+    it "reads each read root the classifier names, read-only and with no listing behind it", :seam do
       epics = File.join(@base, "state", "epics").tap { FileUtils.mkdir_p(_1) }
       answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [], reads: [epics])
       classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
@@ -116,7 +116,7 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profiles.for(Lain::Confine::Request::NONE)).to eq(Lain::Confine::Profile::TRACED)
     end
 
-    it "lets a reader run a program resolved outside /usr that no project could have planted" do
+    it "lets a reader run a program resolved outside /usr that no project could have planted", :seam do
       grep = File.join(home, ".local/bin/grep")
       planted = File.join(root, "bin/cat")
       executables = [executable("grep", grep, :user), executable("cat", planted, :project),
@@ -125,14 +125,14 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profiles.for(composed(executables:)).exec_files).to eq([grep])
     end
 
-    it "lets a reader run the wrappers that run a program" do
+    it "lets a reader run the wrappers that run a program", :seam do
       bundle = File.join(home, ".local/share/mise/installs/ruby/bin/bundle")
       wrapped = Lain::Shell::Executable.unresolved("ruby", wrappers: [executable("bundle", bundle, :user)])
 
       expect(profiles.for(composed(executables: [wrapped])).exec_files).to eq([bundle])
     end
 
-    it "refuses a reader a user program that shadows another of its name on PATH" do
+    it "refuses a reader a user program that shadows another of its name on PATH", :seam do
       FileUtils.mkdir_p(File.join(home, "bin"))
       cat = File.join(home, "bin/cat").tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
       resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
@@ -149,7 +149,7 @@ RSpec.describe Lain::Confine::Profiles do
 
       def git_init(dir) = system(SeedRepo::SCRUB, "git", "init", "-q", dir, exception: true)
 
-      it "reads no git config in a clone lain cut whose git dir was tampered with, and refuses it" do
+      it "reads no git config in a clone lain cut whose git dir was tampered with, and refuses it", :seam do
         upstream = File.join(@base, "upstream")
         git_init(upstream)
         system(SeedRepo::SCRUB, "git", "-C", upstream, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q",
@@ -171,17 +171,17 @@ RSpec.describe Lain::Confine::Profiles do
       end
 
       { "the judge" => "auto", "a rule" => "rules", "bypass" => "bypass" }.each do |who, rung|
-        it "confines an automatic approval by #{who} under the workspace profile" do
+        it "confines an automatic approval by #{who} under the workspace profile", :seam do
           expect(profiles.for(request(ruling(rung, rule: "project_rules"))))
             .to have_attributes(name: :workspace, confined?: true, trace: true)
         end
       end
 
-      it "writes the project the request names" do
+      it "writes the project the request names", :seam do
         expect(profiles.for(request(ruling("auto"))).write_dirs).to include(root)
       end
 
-      it "writes a dir made for the call beneath the TMPDIR, never the TMPDIR itself" do
+      it "writes a dir made for the call beneath the TMPDIR, never the TMPDIR itself", :seam do
         profile = profiles.for(request(ruling("auto")))
 
         expect(File.dirname(profile.call_tmpdir)).to eq(scratch)
@@ -190,12 +190,12 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profile.write_dirs).not_to include(scratch)
       end
 
-      it "makes each call a dir of its own" do
+      it "makes each call a dir of its own", :seam do
         dirs = Array.new(2) { profiles.for(request(ruling("auto"))).call_tmpdir }
         expect(dirs.uniq.size).to eq(2)
       end
 
-      it "makes no call dir when the TMPDIR is the private /tmp, which is already the call's own" do
+      it "makes no call dir when the TMPDIR is the private /tmp, which is already the call's own", :seam do
         allow(Dir).to receive(:mktmpdir).and_call_original
         on_tmp = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: "/tmp")
         profile = on_tmp.for(request(ruling("auto")))
@@ -204,7 +204,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(Dir).not_to have_received(:mktmpdir)
       end
 
-      it "refuses a call whose TMPDIR has gone, naming it" do
+      it "refuses a call whose TMPDIR has gone, naming it", :seam do
         gone = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: File.join(@base, "gone"))
 
         expect { gone.for(request(ruling("auto"))) }.to raise_error(described_class::NoTmpdir) { |error|
@@ -212,7 +212,7 @@ RSpec.describe Lain::Confine::Profiles do
         }
       end
 
-      it "makes no dir for a call that is not a workspace one" do
+      it "makes no dir for a call that is not a workspace one", :seam do
         profiles.for(composed)
         profiles.for(request(ruling("judge")))
 
@@ -241,7 +241,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect([abstained, denied].map { profiles.for(request(_1)) }).to all(eq(Lain::Confine::Profile::TRACED))
       end
 
-      it "keeps a ComposedTerm approval in the reader profile" do
+      it "keeps a ComposedTerm approval in the reader profile", :seam do
         expect(profiles.for(composed).name).to eq(:reader)
       end
 
@@ -249,14 +249,15 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(Lain::Confine::Request::NONE)).to eq(Lain::Confine::Profile::TRACED)
       end
 
-      it "masks what the mask list holds when the call is made" do
+      it "masks what the mask list holds when the call is made", :seam do
         profiles.for(request(ruling("auto")))
         masked << mask(File.join(root, ".env"))
 
         expect(profiles.for(request(ruling("auto"))).masks).to eq([File.join(root, ".env")])
       end
 
-      it "refuses a stage the term resolved to a user program that shadows another of its name, and runs a fresh one" do
+      it "refuses a stage the term resolved to a user program that shadows another of its name, and runs a fresh one",
+         :seam do
         FileUtils.mkdir_p(File.join(home, "bin"))
         ls = File.join(home, "bin/ls").tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
         resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
@@ -268,7 +269,7 @@ RSpec.describe Lain::Confine::Profiles do
           .to eq([fresh.realpath])
       end
 
-      describe "a program whose ctime changes during the run" do
+      describe "a program whose ctime changes during the run", :seam do
         let(:cargo) do
           File.join(home, ".cargo/bin/cargo").tap do |path|
             FileUtils.mkdir_p(File.dirname(path))
@@ -294,7 +295,8 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      it "reads each read root and related directory the classifier names, with the related masks, writing neither" do
+      it "reads each read root and related directory the classifier names, with the related masks, writing neither",
+         :seam do
         epics = File.join(@base, "state", "epics").tap { FileUtils.mkdir_p(_1) }
         related = File.join(@base, "sibling").tap { FileUtils.mkdir_p(_1) }
         hidden = File.join(related, ".env")
@@ -328,7 +330,8 @@ RSpec.describe Lain::Confine::Profiles do
         expect(listed).to have_attributes(exit_status: 0, stdout: "epic.md\n")
       end
 
-      it "runs the build output each PROJECT exec rule names in the root the request names, a lease's included" do
+      it "runs the build output each PROJECT exec rule names in the root the request names, a lease's included",
+         :seam do
         lease = File.join(@base, "lease")
         FileUtils.mkdir_p(%w[node_modules .venv/bin target src].map { File.join(lease, _1) })
 
@@ -341,14 +344,14 @@ RSpec.describe Lain::Confine::Profiles do
       describe "a cargo checkout with no target/ yet" do
         before { File.write(File.join(root, "Cargo.toml"), "[package]\nname = \"x\"\n") }
 
-        it "makes target/ empty before the call, and runs it" do
+        it "makes target/ empty before the call, and runs it", :seam do
           profile = profiles.for(request(ruling("auto")))
 
           expect([Dir.children(File.join(root, "target")), profile.runs?(File.join(root, "target/debug/x"))])
             .to eq([[], true])
         end
 
-        it "neither makes nor runs a target/ that is a link out of the checkout, nor writes where it points" do
+        it "neither makes nor runs a target/ that is a link out of the checkout, nor writes where it points", :seam do
           outside = File.join(@base, "outside").tap { FileUtils.mkdir_p(_1) }
           File.symlink(File.join(outside, "made"), File.join(root, "target"))
 
@@ -371,7 +374,7 @@ RSpec.describe Lain::Confine::Profiles do
           expect(built).to have_attributes(exit_status: 0, stderr: "")
         end
 
-        it "makes no target/ for a call it refuses" do
+        it "makes no target/ for a call it refuses", :seam do
           listed = Struct.new(:masks) { def landed_on(_path) = ["link"] }.new([mask(root)])
           refusing = described_class.new(masks: listed, probe:, home:, root:, workspace: true, tmpdir: scratch)
 
@@ -380,7 +383,7 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      it "stops running a node_modules/ swapped for a link out of the root between 2 calls" do
+      it "stops running a node_modules/ swapped for a link out of the root between 2 calls", :seam do
         FileUtils.mkdir_p(modules = File.join(root, "node_modules"))
         real = profiles.for(request(ruling("auto"))).exec_dirs
         FileUtils.rm_rf(modules)
@@ -390,7 +393,7 @@ RSpec.describe Lain::Confine::Profiles do
           .to eq([true, false])
       end
 
-      it "never runs the root itself, though a rule lowers to it" do
+      it "never runs the root itself, though a rule lowers to it", :seam do
         answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [],
                                                       execs: Lain::Confine::ExecRules.of(["**", root]))
         classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
@@ -399,13 +402,13 @@ RSpec.describe Lain::Confine::Profiles do
         expect(wide.for(request(ruling("auto"))).runs?(File.join(root, "planted"))).to be(false)
       end
 
-      it "makes no target/ in a checkout without a Cargo.toml" do
+      it "makes no target/ in a checkout without a Cargo.toml", :seam do
         profiles.for(request(ruling("auto")))
 
         expect(File.exist?(File.join(root, "target"))).to be(false)
       end
 
-      it "makes no node_modules/ or .venv/bin, which run from the call after the one that made them" do
+      it "makes no node_modules/ or .venv/bin, which run from the call after the one that made them", :seam do
         absent = profiles.for(request(ruling("auto")))
         made = %w[node_modules .venv/bin].map { File.join(root, _1) }
         expect(made.map { File.exist?(_1) }).to eq([false, false])
@@ -415,7 +418,7 @@ RSpec.describe Lain::Confine::Profiles do
           .to eq([[false, false], [true, true]])
       end
 
-      it "runs what the exec rules the classifier carries name in the root" do
+      it "runs what the exec rules the classifier carries name in the root", :seam do
         FileUtils.mkdir_p(tools = File.join(root, "tools"))
         answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [],
                                                       execs: Lain::Confine::ExecRules.of(["tools/*", root]))
@@ -426,14 +429,14 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("auto"))).runs?(File.join(tools, "gen"))).to be(false)
       end
 
-      it "lets a workspace call run a program resolved outside /usr that no project could have planted" do
+      it "lets a workspace call run a program resolved outside /usr that no project could have planted", :seam do
         grep = File.join(home, ".local/bin/grep")
         executables = [executable("grep", grep, :user), executable("cat", File.join(root, "bin/cat"), :project)]
 
         expect(profiles.for(request(ruling("auto"), executables:)).exec_files).to eq([grep])
       end
 
-      describe "the programs a parsed command is handed as grants" do
+      describe "the programs a parsed command is handed as grants", :seam do
         let(:bin) { File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin") }
         let(:bundle) { executable("bundle", File.join(bin, "bundle"), :user) }
         let(:fresh_paths) { [] }
@@ -581,7 +584,7 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      it "runs the whole bin dir of a mise install a program resolved into, never a sibling version's" do
+      it "runs the whole bin dir of a mise install a program resolved into, never a sibling version's", :seam do
         bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
         planted = File.join(root, "bin/bundle")
         executables = [executable("bundle", File.join(bin, "bundle"), :user), executable("x", planted, :project)]
@@ -595,14 +598,14 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(composed(executables:)).exec_dirs).not_to include(bin)
       end
 
-      it "runs no mise install for a program a project could have planted there" do
+      it "runs no mise install for a program a project could have planted there", :seam do
         bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
         executables = [executable("bundle", File.join(bin, "bundle"), :project)]
 
         expect(profiles.for(request(ruling("auto"), executables:)).exec_dirs).not_to include(bin)
       end
 
-      it "makes the call's private cargo home in its own dir, holding only the config lain writes" do
+      it "makes the call's private cargo home in its own dir, holding only the config lain writes", :seam do
         FileUtils.mkdir_p(File.join(home, ".cargo/registry"))
         profile = profiles.for(request(ruling("auto")))
         made = profile.homes.sole.source(profile.call_tmpdir)
@@ -611,7 +614,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(File.read(File.join(made, "config.toml"))).to include(%(auto-clean-frequency = "never"))
       end
 
-      it "stops running target/ from the call after it is replaced by a link out of the root" do
+      it "stops running target/ from the call after it is replaced by a link out of the root", :seam do
         FileUtils.mkdir_p(target = File.join(root, "target"))
         real = profiles.for(request(ruling("auto"))).exec_dirs
         FileUtils.rm_rf(target)
@@ -621,7 +624,7 @@ RSpec.describe Lain::Confine::Profiles do
           .to eq([true, false])
       end
 
-      it "runs a target/ from the call after the one that made it" do
+      it "runs a target/ from the call after the one that made it", :seam do
         before = profiles.for(request(ruling("auto"))).exec_dirs
         FileUtils.mkdir_p(target = File.join(root, "target"))
 
@@ -629,7 +632,7 @@ RSpec.describe Lain::Confine::Profiles do
           .to eq([false, true])
       end
 
-      it "removes the call's dir and refuses the call when its private home cannot be made" do
+      it "removes the call's dir and refuses the call when its private home cannot be made", :seam do
         FileUtils.mkdir_p(File.join(home, ".cargo/registry"))
         allow(FileUtils).to receive(:mkdir_p).and_call_original
         allow(FileUtils).to receive(:mkdir_p).with(%r{/\.lain-homes/}).and_raise(Errno::ENOSPC)
@@ -638,7 +641,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(Dir.children(scratch)).to be_empty
       end
 
-      describe "a private network" do
+      describe "a private network", :seam do
         def status(fields) = ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], **fields })}\n", true]
 
         it "is the call's own where the fence says it can make one" do
@@ -652,7 +655,7 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      it "refuses a mask that would empty the project it writes, naming the profile, and makes no dir" do
+      it "refuses a mask that would empty the project it writes, naming the profile, and makes no dir", :seam do
         listed = Struct.new(:masks) { def landed_on(_path) = ["link"] }.new([mask(root)])
         workspace = described_class.new(masks: listed, probe:, home:, root:, workspace: true, tmpdir: scratch)
 
@@ -661,7 +664,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(Dir.children(scratch)).to be_empty
       end
 
-      describe "a build tool's ports" do
+      describe "a build tool's ports", :seam do
         let(:fresh_paths) { [] }
         let(:fresh) do
           paths = fresh_paths
@@ -893,7 +896,7 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      describe "the seal set" do
+      describe "the seal set", :seam do
         before { git_init(root) }
 
         def sealed_paths(ruled_root = root) = profiles.for(request(ruling("auto"), root: ruled_root)).sealed
@@ -1130,7 +1133,7 @@ RSpec.describe Lain::Confine::Profiles do
       }
 
       layouts.each do |layout, write|
-        it "grants the reader and workspace profiles read on the file #{layout} names" do
+        it "grants the reader and workspace profiles read on the file #{layout} names", :seam do
           file = write.call(self)
 
           expect(granted).to all(include(file))
@@ -1152,19 +1155,19 @@ RSpec.describe Lain::Confine::Profiles do
 
         def both = [profiles.for(composed), workspace.for(request(ruling("auto")))]
 
-        it "masks it in neither profile, while the other masked file stays masked" do
+        it "masks it in neither profile, while the other masked file stays masked", :seam do
           expect(both.map(&:masks)).to all(eq([env_file]))
         end
 
-        it "grants it no read of its own, since the project is read whole" do
+        it "grants it no read of its own, since the project is read whole", :seam do
           expect(both.map(&:read_dirs)).to all(satisfy { !_1.include?(shared) })
         end
 
-        it "seals it in the workspace profile" do
+        it "seals it in the workspace profile", :seam do
           expect(workspace.for(request(ruling("auto"))).sealed.map(&:path)).to include(shared)
         end
 
-        it "grants no read of its own to an ordinary-named project config either, and does not mask it" do
+        it "grants no read of its own to an ordinary-named project config either, and does not mask it", :seam do
           plain = write(File.join(root, "tools", "git.inc"), "[alias]\n\tco = checkout\n")
           SeedRepo.git(root, "config", "--add", "include.path", "../tools/git.inc")
           masked << mask(plain)
@@ -1189,7 +1192,7 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      describe "a project config that includes home's secrets" do
+      describe "a project config that includes home's secrets", :seam do
         let(:key) { write(File.join(home, ".ssh", "id_ed25519"), "FAKE KEY\n") }
         let(:pypirc) { write(File.join(home, ".pypirc"), "[pypi]\n\tusername = __token__\n\tpassword = pypi-FAKE\n") }
         let(:shared) { File.join(root, ".gitconfig") }
@@ -1209,20 +1212,20 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
-      it "grants nothing an inactive includeIf names, though the file is ordinary" do
+      it "grants nothing an inactive includeIf names, though the file is ordinary", :seam do
         target = write(File.join(elsewhere, "other.gitconfig"), named)
         File.write(File.join(home, ".gitconfig"), "[includeIf \"gitdir:/nowhere/\"]\n\tpath = #{target}\n")
 
         expect(granted.flatten).not_to include(target)
       end
 
-      it "grants no global the policy denies" do
+      it "grants no global the policy denies", :seam do
         ENV["GIT_CONFIG_GLOBAL"] = write(File.join(elsewhere, ".netrc"), named)
 
         expect(granted.flatten).not_to include(ENV.fetch("GIT_CONFIG_GLOBAL"))
       end
 
-      it "grants nothing for a config file that is not there, nor for a directory" do
+      it "grants nothing for a config file that is not there, nor for a directory", :seam do
         ENV["GIT_CONFIG_GLOBAL"] = File.join(elsewhere, "absent")
         absent = granted.flatten
         ENV["GIT_CONFIG_GLOBAL"] = elsewhere
@@ -1231,7 +1234,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(granted.flatten).not_to include(elsewhere)
       end
 
-      it "grants a file an include gains between calls" do
+      it "grants a file an include gains between calls", :seam do
         File.write(File.join(home, ".gitconfig"), named)
         granted
         added = write(File.join(elsewhere, "late.gitconfig"), named("Q"))
@@ -1240,7 +1243,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(granted).to all(include(added))
       end
 
-      it "follows GIT_CONFIG_GLOBAL when it changes between calls in one root" do
+      it "follows GIT_CONFIG_GLOBAL when it changes between calls in one root", :seam do
         ENV["GIT_CONFIG_GLOBAL"] = first = write(File.join(elsewhere, "first"), named)
         granted
         ENV["GIT_CONFIG_GLOBAL"] = second = write(File.join(elsewhere, "second"), named)
@@ -1275,7 +1278,7 @@ RSpec.describe Lain::Confine::Profiles do
     context "when this kernel cannot trace" do
       before { answers["strace"] = ["", false] }
 
-      it "still confines a reader call, with no trace" do
+      it "still confines a reader call, with no trace", :seam do
         expect(profiles.for(composed)).to have_attributes(name: :reader, trace: false, confined?: true)
       end
 
@@ -1283,7 +1286,7 @@ RSpec.describe Lain::Confine::Profiles do
         expect(profiles.for(request(ruling("judge")))).to eq(Lain::Confine::Profile::NONE)
       end
 
-      it "still confines a workspace call, with no trace" do
+      it "still confines a workspace call, with no trace", :seam do
         workspace = described_class.new(masks:, probe:, home:, root:, workspace: true,
                                         tmpdir: File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) })
         expect(workspace.for(request(ruling("auto")))).to have_attributes(name: :workspace, trace: false)

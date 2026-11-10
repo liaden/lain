@@ -1655,7 +1655,7 @@ RSpec.describe Lain::Tools::Bash do
         expect(confinement.grants.flat_map(&:programs).map(&:name)).to eq(%w[env ls])
       end
 
-      describe "a user program the session's PATH finds another program for" do
+      describe "a user program the session's PATH finds another program for", :seam do
         let(:outside) { File.realpath(Dir.mktmpdir) }
         let(:planted) { plant(File.join(outside, "home"), "ruby") }
         let(:session_ruby) { plant(File.join(outside, "tools"), "ruby") }

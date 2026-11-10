@@ -149,7 +149,7 @@ RSpec.describe Lain::Tools::Glob do
     end
   end
 
-  describe "a tree git ignores part of" do
+  describe "a tree git ignores part of", :seam do
     def git_init(dir)
       FileUtils.mkdir_p(dir)
       _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: dir)
@@ -185,7 +185,7 @@ RSpec.describe Lain::Tools::Glob do
   end
 
   describe "a pattern naming a directory away from the base" do
-    it "honors an absolute pattern, filtered by that directory's own ignores" do
+    it "honors an absolute pattern, filtered by that directory's own ignores", :seam do
       Dir.mktmpdir do |elsewhere|
         _out, _err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: elsewhere)
         expect(status).to be_success

@@ -99,7 +99,7 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    describe "a shared clone, whose objects live in another repository" do
+    describe "a shared clone, whose objects live in another repository", :seam do
       around do |example|
         Dir.mktmpdir do |dir|
           @dir = File.realpath(dir)
@@ -254,7 +254,7 @@ RSpec.describe Lain::Confine::Profile do
       SeedRepo.git(main, "worktree", "add", "-q", root)
     end
 
-    context "with an ordinary checkout" do
+    context "with an ordinary checkout", :seam do
       before do
         FileUtils.mkdir_p(root)
         SeedRepo.git(root, "init", "-q")
@@ -500,7 +500,7 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    context "with a shared clone lain cut" do
+    context "with a shared clone lain cut", :seam do
       # Under lain's lease container, the one tree whose records lain trusts.
       def leases = File.join(Lain::Paths.new.state_home, "worktrees", Lain::Paths.new.project_hash(@dir))
       def root = File.join(leases, "r")
@@ -565,7 +565,7 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    context "with a linked worktree" do
+    context "with a linked worktree", :seam do
       before { linked_worktree }
 
       let(:admin) { File.join(common, "worktrees", "r") }
@@ -595,18 +595,18 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    it "writes the common index too when the git dir is the common dir, as a separate git dir is" do
+    it "writes the common index too when the git dir is the common dir, as a separate git dir is", :seam do
       FileUtils.mkdir_p([root, File.dirname(common)])
       SeedRepo.git(root, "init", "-q", "--separate-git-dir", common)
       expect(workspace.write_dirs).to include(File.join(common, "index"), common)
     end
 
-    it "seals only the project's persistence files outside a git checkout" do
+    it "seals only the project's persistence files outside a git checkout", :seam do
       FileUtils.mkdir_p(root)
       expect(sealed_of(workspace).keys).to eq([".lain", *described_class::PROJECT_SEALED].map { File.join(root, _1) })
     end
 
-    it "refuses a relative TMPDIR" do
+    it "refuses a relative TMPDIR", :seam do
       FileUtils.mkdir_p(root)
       expect { workspace(tmp: "t") }.to raise_error(ArgumentError, /"t"/)
     end
@@ -666,7 +666,7 @@ RSpec.describe Lain::Confine::Profile do
       expect { workspace(bent) }.to raise_error(ArgumentError, /newline/)
     end
 
-    describe "#for_call" do
+    describe "#for_call", :seam do
       before { FileUtils.mkdir_p(root) }
 
       let(:call_dir) { File.join(tmpdir, "lain-call-1") }
@@ -698,7 +698,7 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    it "names no call dir of its own, so nothing removes the TMPDIR it was built with" do
+    it "names no call dir of its own, so nothing removes the TMPDIR it was built with", :seam do
       FileUtils.mkdir_p(root)
       expect([workspace, described_class::TRACED, described_class.reader(root:, home: "/h")].map(&:call_tmpdir))
         .to eq([nil, nil, nil])
@@ -726,7 +726,8 @@ RSpec.describe Lain::Confine::Profile do
       File.write(File.join(cargo, "credentials.toml"), "token = \"x\"\n")
     end
 
-    it "keeps cargo's home private: registry, bin and git checkouts bound back read-only, a config that never cleans" do
+    it "keeps cargo's home private: registry, bin and git checkouts bound back read-only, a config that never cleans",
+       :seam do
       plant_cargo_home
 
       expect(workspace.homes).to eq([private_home(%w[registry bin git])])
@@ -734,18 +735,19 @@ RSpec.describe Lain::Confine::Profile do
       expect(workspace.write_dirs).to include(cargo)
     end
 
-    it "keeps no private home over a ~/.cargo that is a link, which bwrap would mount through to its landing" do
+    it "keeps no private home over a ~/.cargo that is a link, which bwrap would mount through to its landing", :seam do
       FileUtils.mkdir_p(File.join(elsewhere = File.join(@dir, "cargo-elsewhere"), "registry"))
       File.symlink(elsewhere, cargo)
 
       expect(workspace.homes).to eq([])
     end
 
-    it "keeps no private cargo home where home has none, since nothing can be mounted at a path that is not there" do
+    it "keeps no private cargo home where home has none, since nothing can be mounted at a path that is not there",
+       :seam do
       expect([workspace.homes, workspace.write_dirs]).to eq([[], [root, tmpdir, "/dev/null", "/tmp"]])
     end
 
-    it "opens a cargo grant's registry, git checkouts and package lock in the private home, and nothing else" do
+    it "opens a cargo grant's registry, git checkouts and package lock in the private home, and nothing else", :seam do
       plant_cargo_home
       FileUtils.mkdir_p(File.join(root, "target"))
       granted = described_class.grant(program: "cargo", root:, home:, tmpdir:, env: {})
@@ -753,7 +755,8 @@ RSpec.describe Lain::Confine::Profile do
       expect(granted.homes).to eq([private_home(%w[bin], %w[registry git .package-cache])])
     end
 
-    it "hides bundler's user config, where its file lands, and every mise binary, the one its shims reach first" do
+    it "hides bundler's user config, where its file lands, and every mise binary, the one its shims reach first",
+       :seam do
       FileUtils.mkdir_p([File.join(home, ".bundle"), shims = File.join(home, ".local/share/mise/shims")])
       File.write(config = File.join(@dir, "bundle-config"), "BUNDLE_JOBS: \"4\"\n")
       File.symlink(config, File.join(home, ".bundle", "config"))
@@ -764,13 +767,13 @@ RSpec.describe Lain::Confine::Profile do
       expect([workspace.runs?(mise), workspace.hidden]).to match([false, all(satisfy { !_1.start_with?(home) })])
     end
 
-    it "hides nothing in a home that has neither" do
+    it "hides nothing in a home that has neither", :seam do
       expect(workspace.hidden.grep(/\A#{Regexp.escape(@dir)}/)).to eq([])
     end
 
     def bare = described_class.workspace(root:, home:, tmpdir:, execs: Lain::Confine::ExecRules::NONE)
 
-    it "runs each exec rule's dir that is a real dir in the root, and none that is a link, absent or outside" do
+    it "runs each exec rule's dir that is a real dir in the root, and none that is a link, absent or outside", :seam do
       FileUtils.mkdir_p([target = File.join(root, "target"), venv = File.join(root, ".venv/bin")])
       outside = FileUtils.mkdir_p(File.join(@dir, "outside")).first
       File.symlink(outside, File.join(root, "node_modules"))
@@ -780,20 +783,20 @@ RSpec.describe Lain::Confine::Profile do
         .to eq([venv, target])
     end
 
-    it "runs no exec rule's dir reached through a link inside the root" do
+    it "runs no exec rule's dir reached through a link inside the root", :seam do
       FileUtils.mkdir_p(File.join(@dir, "venv/bin"))
       File.symlink(File.join(@dir, "venv"), File.join(root, ".venv"))
 
       expect(workspace.exec_dirs).to eq(bare.exec_dirs)
     end
 
-    it "runs the project's build output by default, and none with no exec rules" do
+    it "runs the project's build output by default, and none with no exec rules", :seam do
       FileUtils.mkdir_p(target = File.join(root, "target"))
 
       expect([workspace, bare].map { _1.exec_dirs.include?(target) }).to eq([true, false])
     end
 
-    it "runs the call's own TMPDIR, which is removed after it, and never the TMPDIR beneath which it is made" do
+    it "runs the call's own TMPDIR, which is removed after it, and never the TMPDIR beneath which it is made", :seam do
       call_dir = File.join(tmpdir, "lain-call-1")
 
       moved = workspace.for_call(call_dir, granted: tmpdir)
@@ -802,14 +805,14 @@ RSpec.describe Lain::Confine::Profile do
       expect(workspace.exec_dirs).not_to include(tmpdir)
     end
 
-    it "reads exactly the file /etc/resolv.conf lands on and the kernel's LSM list, never the resolver's dir" do
+    it "reads exactly the file /etc/resolv.conf lands on and the kernel's LSM list, never the resolver's dir", :seam do
       landing = File.realpath(described_class::RESOLV_CONF)
 
       expect(workspace.read_dirs).to include(landing, "/sys/kernel/security/lsm")
       expect(workspace.read_dirs).not_to include(File.dirname(landing)) unless File.dirname(landing) == "/etc"
     end
 
-    it "shares the host's network unless told the call has a private one, and is deeply frozen" do
+    it "shares the host's network unless told the call has a private one, and is deeply frozen", :seam do
       plant_cargo_home
 
       expect([workspace.private_net, workspace.with(private_net: true).private_net]).to eq([false, true])
@@ -838,7 +841,7 @@ RSpec.describe Lain::Confine::Profile do
     end
   end
 
-  describe ".grant" do
+  describe ".grant", :seam do
     around do |example|
       Dir.mktmpdir do |dir|
         @dir = File.realpath(dir)

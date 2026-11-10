@@ -116,7 +116,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # The port itself. A corpus answers the SEVEN universal messages and neither
   # of the two witnesses -- no `#diff`, no `#commits` -- which is exactly the
   # split `spec/support/shared_examples/review_source.rb` records.
-  describe "the changeset-source port" do
+  describe "the changeset-source port", :seam do
     it_behaves_like "a review changeset source", source: lambda {
       write("guide.md", five_sections(sections))
       write("lib/widget.rb", document("# frozen_string_literal: true", "", "class Widget", "  def alpha",
@@ -167,7 +167,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "#base_ref" do
+  describe "#base_ref", :seam do
     # THE incremental property. `Marks` refuses to cross a base change before it
     # consults a single key, so a base derived from anything that moves would
     # discard every mark on every re-survey.
@@ -187,7 +187,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "#head_ref" do
+  describe "#head_ref", :seam do
     it "moves when the tree does, since it is the corpus's own content address" do
       write("guide.md", five_sections(sections))
       before = corpus.head_ref
@@ -203,7 +203,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "#files" do
+  describe "#files", :seam do
     it "reads a folder that is no repository at all, and calls every file added" do
       write("guide.md", five_sections(sections))
       write("notes/log.txt", document("First run.", "", "Second run."))
@@ -241,7 +241,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # verdict's refusal -- reads that name. `/survey ./lib` opened a file that
   # does not exist because the walk named `greeter.rb` and the editor resolved
   # it against the project the human was standing in.
-  describe "the root every path is named from" do
+  describe "the root every path is named from", :seam do
     let(:subtree) { File.join(root, "lib") }
     let(:walk) { Lain::Survey::Walk.new(root: subtree, sensitivity:) }
 
@@ -371,7 +371,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # Joel's ruling, met at the SOURCE: a gated file enters the corpus redacted to
   # its released regions, so no unreleased byte exists above the object that
   # remembers them -- not in a unit, not in a key, not in the address.
-  describe "a gated file" do
+  describe "a gated file", :seam do
     let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
 
     before { write(".env", "API_KEY=#{api_key}\n") }
@@ -407,7 +407,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "a file gated by its name" do
+  describe "a file gated by its name", :seam do
     let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
     let(:placeholder) { format(Lain::Sensitivity::Regions::PLACEHOLDER, 1) }
 
@@ -454,7 +454,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "withheld paths" do
+  describe "withheld paths", :seam do
     it "keeps a denied path out of the files and readable from the report" do
       write(".ssh/id_ed25519", private_key)
       write("guide.md", five_sections(sections))
@@ -466,7 +466,7 @@ RSpec.describe Lain::Review::Source::Corpus do
 
   # The claim the whole corpus arm exists to make: opening costs one read per
   # file and NO parse, and the parse tier is strictly on demand.
-  describe "laziness" do
+  describe "laziness", :seam do
     it "chunks nothing when a survey is opened and addressed" do
       spread(50)
 
@@ -494,7 +494,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "#identity" do
+  describe "#identity", :seam do
     it "is the projection's content digests, so a release changes exactly the file it touched" do
       write("guide.md", five_sections(sections))
       write("notes/log.txt", document("First run.", "", "Second run."))
@@ -519,7 +519,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # and the unit count is knowable only by chunking. Under-measuring would put a
   # corpus on a different tape from a diff source and let an oversized prompt
   # through, so the bound over-measures instead, off the granularity floor.
-  describe "the size a bound is decided from" do
+  describe "the size a bound is decided from", :seam do
     def rendered(file) = file.hunks.sum { |hunk| hunk.lines.size + 1 }
 
     it "sizes every file without chunking any of them" do
@@ -585,7 +585,7 @@ RSpec.describe Lain::Review::Source::Corpus do
     end
   end
 
-  describe "#file_at" do
+  describe "#file_at", :seam do
     it "reads the working tree at the head and nothing at the base" do
       write("guide.md", five_sections(sections))
 
@@ -602,7 +602,7 @@ RSpec.describe Lain::Review::Source::Corpus do
 
   # One line, numbered as the file on disk numbers it -- the buffer a note is
   # placed in -- with what the projection masks still masked.
-  describe "#line_at" do
+  describe "#line_at", :seam do
     let(:api_key) { "sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE" }
     let(:pem) do
       "-----BEGIN PRIVATE KEY-----\n#{Array.new(4) { "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZn" }.join("\n")}\n" \
@@ -636,7 +636,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # `Changeset#context?` reads `""` as CONTEXT, so a bare blank line would grow
   # an old side that does not exist and materialise anchors against a base that
   # holds nothing.
-  describe "the hunks a unit becomes" do
+  describe "the hunks a unit becomes", :seam do
     before { write("guide.md", five_sections(sections)) }
 
     let(:hunks) { file_for(corpus, "guide.md").hunks }
@@ -676,7 +676,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # demonstrable rather than hypothetical: a one-unit surveyed file and the same
   # bytes newly ADDED in a branch diff have the same path frame and the same
   # all-`+` body.
-  describe "the key scheme" do
+  describe "the key scheme", :seam do
     before { write("only.txt", document("one", "two", "three")) }
 
     let(:surveyed) { file_for(corpus, "only.txt").hunks.first }
@@ -711,7 +711,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # byte-identical units share a content key, so both fall to the span key --
   # which embeds the line they start at, and an insertion above the pair moves
   # both.
-  describe "two byte-identical units in one file" do
+  describe "two byte-identical units in one file", :seam do
     subject(:corpus) do
       described_class.new(walk:, projection:, chunker: ->(_path) { Lain::Survey::Chunker::Paragraphs.new(ceiling: 3) })
     end
@@ -746,7 +746,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   end
 
   # What a survey is FOR: marks that survive the next reading of the same tree.
-  describe "marks across two surveys" do
+  describe "marks across two surveys", :seam do
     let(:untouched) { %w[Alpha Bravo Delta Echo] }
 
     before { write("guide.md", five_sections(sections)) }
@@ -781,7 +781,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # The ceiling is reached from the WALK, before a byte is read: an oversized
   # corpus is refused without paying for the identity pass it would then throw
   # away.
-  describe "the file ceiling" do
+  describe "the file ceiling", :seam do
     it "refuses a corpus over the ceiling, naming the measurement and what to do" do
       spread(6)
       bounds = Lain::Review::Bounds.new(max_files: 5)
@@ -848,7 +848,7 @@ RSpec.describe Lain::Review::Source::Corpus do
   # The observation seam these examples ride, and the reason it is a constructor
   # argument rather than a lookup: the whole laziness claim is only assertable through a
   # chunker somebody else supplied.
-  describe "the injected chunker" do
+  describe "the injected chunker", :seam do
     it "defaults to the dispatch, so each file type meets the chunker that reads it" do
       write("guide.md", five_sections(sections))
       write("lib/widget.rb", document("# frozen_string_literal: true", "", "class Widget", "  def alpha",

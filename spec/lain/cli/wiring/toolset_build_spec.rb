@@ -394,21 +394,21 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       def epic_review_tool = build_with(options, paths:, config:).build(recorder, ask_human:).fetch("epic_review")
 
-      it "runs the author's own model fresh when no review model is configured" do
+      it "runs the author's own model fresh when no review model is configured", :seam do
         result = review_with_spawn
 
         expect(result).not_to be_error
         expect(spawn.calls.map { _1[:model] }).to eq([""])
       end
 
-      it "shows each child its issue file and epic.md as shared context" do
+      it "shows each child its issue file and epic.md as shared context", :seam do
         review_with_spawn
 
         expect(spawn.calls.first[:prompt]).to include("ISSUE-A1", "Shared context", "## epic.md")
         expect(spawn.calls.first.values_at(:role, :mode)).to eq(%i[reviewer_code fresh])
       end
 
-      context "when the review model differs from the author's" do
+      context "when the review model differs from the author's", :seam do
         let(:reviewer) { "reviewer-model" }
 
         it "runs the children on it" do
@@ -418,7 +418,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         end
       end
 
-      context "when the review model is the author's" do
+      context "when the review model is the author's", :seam do
         let(:reviewer) { backend.model }
 
         it "passes none, so the author's own runs fresh" do
@@ -853,7 +853,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           end
         end
 
-        it "runs a version probe in its lease with no pending parked" do
+        it "runs a version probe in its lease with no pending parked", :seam do
           parked = run_call("bash", { "command" => "rustc --version" }) do |subagent|
             Sync { dispatch(subagent) }
             switchboard.approvals.map { |pending| [pending.requester, pending.input] }
@@ -1368,7 +1368,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       journal.events.grep(Lain::Telemetry::Sandbox).select { _1.tool_use_id == "tu_judged" }.last.profile
     end
 
-    it "runs a judge-approved call in the workspace profile under --confine workspace, and traced under reader" do
+    it "runs a judge-approved call in the workspace profile under --confine workspace, and traced under reader",
+       :seam do
       expect(judged_profile(bash_exec(built(Lain::CLI::Arms::OFF.with(confine: :workspace))),
                             journal)).to eq(:workspace)
       expect(judged_profile(bash_exec(built(reader)), journal)).to eq(:traced)
@@ -1544,7 +1545,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
   end
 
-  describe "the confinement the bash tool's exec is handed through the production guard stack" do
+  describe "the confinement the bash tool's exec is handed through the production guard stack", :seam do
     let(:project_root) { File.realpath(Dir.mktmpdir("confinement-project")) }
     let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
     let(:paths) do
@@ -1685,7 +1686,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         .to raise_error(ArgumentError, /lane/)
     end
 
-    it "refuses a lane that cannot name a ref, rather than escaping it" do
+    it "refuses a lane that cannot name a ref, rather than escaping it", :seam do
       toolset_build.build(recorder, ask_human:)
 
       ["bad lane", "a..b", "issue.lock", ""].each do |lane|
@@ -1694,7 +1695,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    it "hands every child of the plan back through the issue's handoff, never the chat's" do
+    it "hands every child of the plan back through the issue's handoff, never the chat's", :seam do
       chat = ToolsetBuildHandoff.new
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff: chat))
       build.build(recorder, ask_human:)
@@ -1710,7 +1711,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     # The researcher works in a kept directory of its own, so neither lane
     # leases it a checkout or hands anything back.
-    it "leaves the chat's own research Subagent leasing its own scratch directory, through neither lane" do
+    it "leaves the chat's own research Subagent leasing its own scratch directory, through neither lane", :seam do
       chat = ToolsetBuildHandoff.new
       build = build_with(options, handback: Lain::CLI::Wiring::Handback.new(handoff: chat))
       full = build.build(recorder, ask_human:)
@@ -1726,7 +1727,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect([chat.reclaimed, issue_handoff.reclaimed]).to eq([[], []])
     end
 
-    it "grants issue_orchestrator at depth 2, over the floor plus a spawner, the skill renderer and the mailbox" do
+    it "grants issue_orchestrator at depth 2, over the floor plus a spawner, the skill renderer and the mailbox",
+       :seam do
       toolset_build.build(recorder, ask_human:)
       epic = issue_epic
       floor = Lain::CLI::Wiring::BaseTools.build(recorder).map(&:name)
@@ -1801,7 +1803,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     # The spawner in the orchestrator's union grants dev from the floor; its
     # depth is whatever the orchestrator has left when it is descended.
-    it "hands the orchestrator a dev spawner, attenuating from the floor" do
+    it "hands the orchestrator a dev spawner, attenuating from the floor", :seam do
       toolset_build.build(recorder, ask_human:)
       spawner = issue_epic.attenuates_from.fetch("subagent")["dev"]
 
@@ -1813,7 +1815,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # reviews. The reviewer reads and searches the code it judges and holds
     # nothing that writes or reaches the network, so a review never edits the
     # tree under it.
-    it "offers dev to implement and reviewer_code to review, each attenuating from the floor" do
+    it "offers dev to implement and reviewer_code to review, each attenuating from the floor", :seam do
       toolset_build.build(recorder, ask_human:)
       offer = issue_epic.attenuates_from.fetch("subagent")
 
@@ -1822,7 +1824,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(offer.input_schema["properties"]["role"]["enum"]).to eq(%w[dev reviewer_code])
     end
 
-    it "frames the orchestrator and the child it spawns with that role's own persona" do
+    it "frames the orchestrator and the child it spawns with that role's own persona", :seam do
       toolset_build.build(recorder, ask_human:)
 
       issue_epic.run("run the plan")
@@ -1833,7 +1835,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         .and end_with("Working directory: #{Dir.pwd}")
     end
 
-    context "when the orchestrator hands a review to a child" do
+    context "when the orchestrator hands a review to a child", :seam do
       let(:issue_isolation) { Lain::Isolation::Null.new(root: repo) }
       let(:repo) { Dir.mktmpdir("lain-reviewed").tap { |dir| committed_repo(dir) } }
       let(:provider) do
@@ -1857,7 +1859,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    context "when the orchestrator's checkout holds work it has not committed" do
+    context "when the orchestrator's checkout holds work it has not committed", :seam do
       let(:checkout) { Dir.mktmpdir("lain-reviewer-gate") }
       let(:isolation_over_checkout) { Lain::Isolation::Null.new(root: checkout) }
       let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }
@@ -1907,14 +1909,14 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
-    it "gives the orchestrator 200 iterations for its one ask, and a chat's researcher child 60" do
+    it "gives the orchestrator 200 iterations for its one ask, and a chat's researcher child 60", :seam do
       full = toolset_build.build(recorder, ask_human:)
 
       expect(issue_epic.budget.iterations).to eq(200)
       expect(full.fetch("subagent")[:researcher].budget.iterations).to eq(60)
     end
 
-    it "reads the researcher and orchestrator ceilings from the configured budget table" do
+    it "reads the researcher and orchestrator ceilings from the configured budget table", :seam do
       table = Lain::Budget::Table.new(rows: { "researcher" => 80, "issue_orchestrator" => 150 })
       config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg), budget: table)
       configured = build_with(options, config:)
@@ -1925,7 +1927,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         .to eq([150, 80])
     end
 
-    it "holds each orchestrator child to its role's own ceiling" do
+    it "holds each orchestrator child to its role's own ceiling", :seam do
       toolset_build.build(recorder, ask_human:)
       allow(Lain::Role::Catalog).to receive(:fetch).and_wrap_original do |original, name|
         role = original.call(name)
@@ -1935,7 +1937,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(issue_epic.attenuates_from.fetch("subagent")["dev"].budget.iterations).to eq(7)
     end
 
-    it "fans out exactly one level: the orchestrator spawns a dev child, which holds no spawner" do
+    it "fans out exactly one level: the orchestrator spawns a dev child, which holds no spawner", :seam do
       toolset_build.build(recorder, ask_human:)
 
       result = issue_epic.run("run the plan")
@@ -1948,7 +1950,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     # Every member but three is the run's own: who the gate is told is asking,
     # the issue's lane in place of the chat's, and the epic's own room.
-    it "spawns over the run's one seam, so its children run behind the chat's own guard" do
+    it "spawns over the run's one seam, so its children run behind the chat's own guard", :seam do
       toolset_build.build(recorder, ask_human:)
       epic = issue_epic
       run = toolset_build.role_spawn.seam
@@ -1966,7 +1968,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(epic.seam.tool_middleware.requester).to eq("issue_orchestrator")
     end
 
-    context "when the chat is built by CLI::Wiring" do
+    context "when the chat is built by CLI::Wiring", :seam do
       let(:offline_backend_class) do
         Class.new(Lain::CLI::Backend) do
           def initialize(options, mock:, root: Dir.pwd)
@@ -2087,13 +2089,13 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect_spilled_into_answers(toolset_build.role_spawn.call(:researcher, :fresh, "look"))
     end
 
-    it "spills through the issue orchestrator" do
+    it "spills through the issue orchestrator", :seam do
       toolset_build.build(recorder, ask_human:)
 
       expect_spilled_into_answers(orchestrator_over(toolset_build).run("plan it"))
     end
 
-    it "spills through the spawner the orchestrator hands its dev children" do
+    it "spills through the spawner the orchestrator hands its dev children", :seam do
       toolset_build.build(recorder, ask_human:)
 
       dev = orchestrator_over(toolset_build).attenuates_from.fetch("subagent")["dev"]

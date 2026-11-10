@@ -208,7 +208,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # An issue's implementation is ONE issue's; approving it says nothing about
     # the epic's other issues, so it moves no epic-wide stage.
-    it "moves no epic-wide stage when one issue's implementation is approved" do
+    it "moves no epic-wide stage when one issue's implementation is approved", :seam do
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
@@ -221,7 +221,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to eq([%w[issue_plan a approve], %w[implementation a approve]])
     end
 
-    it "parks a manual issue's implementation under hands_off, naming manual acceptance" do
+    it "parks a manual issue's implementation under hands_off, naming manual acceptance", :seam do
       home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual")]))
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
@@ -322,7 +322,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     def changeset = commit_sha
     def parked_plans = Lain::Epic::SignoffQueue.from_journal(session_records).parked("alpha", "issue_plan")
 
-    it "opens b's implementation gate while a's issue_plan is parked" do
+    it "opens b's implementation gate while a's issue_plan is parked", :seam do
       deferring.submit("issue_plan", issue: "a")
       command.submit("issue_plan", issue: "b")
 
@@ -334,7 +334,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # An implementation's address names its issue, so an approval of a's commit
     # opens no other issue's gate over that same commit.
-    it "does not read a's implementation approval as b's, over the same commit" do
+    it "does not read a's implementation approval as b's, over the same commit", :seam do
       command.submit("issue_plan", issue: "a")
       command.submit("issue_plan", issue: "b")
       command.submit("implementation", issue: "a", digest: changeset)
@@ -348,7 +348,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(implementations.map { |record| record["artifact_digest"] }.uniq.size).to eq(2)
     end
 
-    it "still refuses a's own implementation while a's plan is parked" do
+    it "still refuses a's own implementation while a's plan is parked", :seam do
       deferring.submit("issue_plan", issue: "a")
 
       expect { command.submit("implementation", issue: "a", digest: changeset) }
@@ -1610,7 +1610,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     expect(stage_events).to eq([%w[research completed], %w[epic_plan started]])
   end
 
-  describe "an abbreviated implementation digest" do
+  describe "an abbreviated implementation digest", :seam do
     before do
       write_epic
       write_research
@@ -1681,7 +1681,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     def tip = commit_sha
 
-    it "writes what the tip's tests did into an implementation's question" do
+    it "writes what the tip's tests did into an implementation's question", :seam do
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
@@ -1695,7 +1695,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(screen.string).to include("(issue a, #{tip}, tests: 3 passed, 1 error)")
     end
 
-    it "carries the tests through a chat's guarded submit" do
+    it "carries the tests through a chat's guarded submit", :seam do
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
@@ -1711,7 +1711,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(screen.string).to include("(issue a, #{tip}, tests: 4 passed)")
     end
 
-    it "says nothing ran for a hand submit given no tests" do
+    it "says nothing ran for a hand submit given no tests", :seam do
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))
       home.issue("a").write("the prose for a\n")
@@ -2048,7 +2048,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
 
     # An implementation's repair writes nothing, so it has no boundary to
     # meet: the epic driver re-submits one while a research revision waits.
-    it "still reports an implementation already approved while a research revision is parked" do
+    it "still reports an implementation already approved while a research revision is parked", :seam do
       command.submit("issue_plan", issue: "a")
       command.submit("implementation", issue: "a", digest: changeset)
       session("zz-parked.ndjson", decision(digest: research_digest("v2\n"), stage: "research"),
@@ -2064,7 +2064,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
                                              "criteria_digest" => criteria_digest_of("it works"))
     end
 
-    it "refuses the implementation once a criterion is edited, naming the un-approved plan digest" do
+    it "refuses the implementation once a criterion is edited, naming the un-approved plan digest", :seam do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
 
@@ -2072,7 +2072,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to raise_error(described_class::PlanNotApproved, /"a".*issue_plan.*#{plan_digest("it works, and says so")}/m)
     end
 
-    it "journals nothing when it refuses" do
+    it "journals nothing when it refuses", :seam do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
       before_records = session_records
@@ -2116,7 +2116,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(screen.string).not_to match(/\d+ bytes/)
     end
 
-    it "opens the implementation again once the edited plan is approved" do
+    it "opens the implementation again once the edited plan is approved", :seam do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
       command.submit("issue_plan", issue: "a")
@@ -2124,7 +2124,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(command.submit("implementation", issue: "a", digest: changeset).text).to start_with("approved")
     end
 
-    it "refuses an implementation for an issue whose plan was never approved" do
+    it "refuses an implementation for an issue whose plan was never approved", :seam do
       expect { command.submit("implementation", issue: "a", digest: changeset) }
         .to raise_error(described_class::PlanNotApproved, /lain epic submit issue_plan alpha --issue a/)
     end
@@ -2169,7 +2169,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect { command.submit("issue_plan") }.to raise_error(Lain::Error, /issue_plan/)
     end
 
-    it "refuses an implementation digest that names no commit in the repository" do
+    it "refuses an implementation digest that names no commit in the repository", :seam do
       commit_sha
       missing = "e" * 40
 
@@ -2177,7 +2177,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to raise_error(Lain::Error, /#{missing}.*not a commit/)
     end
 
-    it "refuses a revision name or an option where a commit is wanted" do
+    it "refuses a revision name or an option where a commit is wanted", :seam do
       commit_sha
 
       %w[HEAD --foo].each do |digest|
@@ -2208,7 +2208,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
     def red_subject = Lain::Epic::RedCommit.subject("spec/a_spec.rb", "abc123")
     def implementation_stages = gate_decisions.map { |record| record["stage"] }.grep("implementation")
 
-    it "refuses an implementation digest whose commits hold only the issue's failing tests" do
+    it "refuses an implementation digest whose commits hold only the issue's failing tests", :seam do
       seeded_on("epic/alpha")
       red = commit_on_branch(red_subject)
 
@@ -2217,7 +2217,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(implementation_stages).to be_empty
     end
 
-    it "refuses a red-only digest by its own subject when the epic branch is missing" do
+    it "refuses a red-only digest by its own subject when the epic branch is missing", :seam do
       seeded_on("main")
       red = commit_on_branch(red_subject)
 
@@ -2226,7 +2226,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(implementation_stages).to be_empty
     end
 
-    it "approves an implementation built on top of the red commit" do
+    it "approves an implementation built on top of the red commit", :seam do
       seeded_on("epic/alpha")
       commit_on_branch(red_subject)
 

@@ -52,7 +52,7 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(profiles.for(request)).to eq(Lain::Confine::Profile::TRACED)
     end
 
-    describe "the lineage's freshness" do
+    describe "the lineage's freshness", :seam do
       let(:ruling) { Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged") }
       let(:git) do
         Lain::Shell::Executable.new(name: "git", resolved: "/usr/bin/git", realpath: "/usr/bin/git", chain: [],
@@ -94,7 +94,7 @@ RSpec.describe Lain::Confine::Sandbox do
     end
 
     # The read grant on git's config files asks the session's own policy, through the mask list built over it.
-    it "grants no git config file the session's policy denies" do
+    it "grants no git config file the session's policy denies", :seam do
       Dir.mktmpdir("lain-sandbox-policy") do |dir|
         base = File.realpath(dir)
         repo, home = %w[repo h].map { File.join(base, _1).tap { |d| FileUtils.mkdir_p(d) } }

@@ -220,7 +220,7 @@ RSpec.describe Lain::Tools::ListFiles do
     end
   end
 
-  describe "a recursive listing of a repository" do
+  describe "a recursive listing of a repository", :seam do
     before do
       _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: tmpdir)
       raise err unless status.success?

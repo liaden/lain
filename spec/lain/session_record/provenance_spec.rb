@@ -43,7 +43,7 @@ RSpec.describe Lain::SessionRecord::Provenance do
       expect(current(effort: nil)).to have_attributes(effort: "unrecorded", home: "unrecorded")
     end
 
-    it "records the running lain's harness" do
+    it "records the running lain's harness", :seam do
       expect(current.harness).to eq(described_class.harness)
     end
 
@@ -60,7 +60,7 @@ RSpec.describe Lain::SessionRecord::Provenance do
     end
   end
 
-  describe "the harness" do
+  describe "the harness", :seam do
     around do |example|
       Dir.mktmpdir("provenance-harness") do |dir|
         @dir = File.realpath(dir)

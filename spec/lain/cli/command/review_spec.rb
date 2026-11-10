@@ -110,7 +110,7 @@ class ReviewCommandSlowIO < StringIO
   end
 end
 
-RSpec.describe Lain::CLI::Command::Review do
+RSpec.describe Lain::CLI::Command::Review, :seam do
   let(:command) do
     described_class.new(root: @repo, outbox:, shell_out_factory: Lain::Shell::Out.public_method(:new),
                         ledger: Lain::Sensitivity::Ledger.new)

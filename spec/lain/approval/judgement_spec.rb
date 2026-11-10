@@ -3,7 +3,7 @@
 require "fileutils"
 require "tmpdir"
 
-RSpec.describe Lain::Approval::Judgement do
+RSpec.describe Lain::Approval::Judgement, :seam do
   around do |example|
     Dir.mktmpdir("lain-judgement") do |dir|
       @base = File.realpath(dir)

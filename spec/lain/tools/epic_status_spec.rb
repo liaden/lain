@@ -33,7 +33,7 @@ RSpec.describe Lain::Tools::EpicStatus do
     expect(tool.requires_approval?).to be(false)
   end
 
-  it "answers the stage, the waves with their ids and the gate state, in the text the CLI prints" do
+  it "answers the stage, the waves with their ids and the gate state, in the text the CLI prints", :seam do
     home.epic.write(epic_md)
 
     result = run(slug: "frugirl-mvp")
@@ -43,13 +43,13 @@ RSpec.describe Lain::Tools::EpicStatus do
     expect(result.content).to include("scaffold", "docs", "wave")
   end
 
-  it "resolves the sole epic when no slug is named" do
+  it "resolves the sole epic when no slug is named", :seam do
     home.epic.write(epic_md)
 
     expect(run.content).to include("scaffold")
   end
 
-  it "reports the epic the slug names, and nothing of the other" do
+  it "reports the epic the slug names, and nothing of the other", :seam do
     home("one").epic.write("# One\n\n### [ ] `only-in-one` first\n")
     home("two").epic.write("# Two\n\n### [ ] `only-in-two` second\n")
 
@@ -74,7 +74,7 @@ RSpec.describe Lain::Tools::EpicStatus do
     expect(result.content).to include("one", "two")
   end
 
-  it "writes nothing to stdout" do
+  it "writes nothing to stdout", :seam do
     home.epic.write(epic_md)
 
     expect { run(slug: "frugirl-mvp") }.not_to output.to_stdout
@@ -91,7 +91,7 @@ RSpec.describe Lain::Tools::EpicStatus do
     expect(result.content).to start_with("line 0 ")
   end
 
-  describe "readiness" do
+  describe "readiness", :seam do
     let(:cargo_config) { "tests preset: :cargo, source_roots: [\"src\"]\n" }
     let(:issues_md) do
       "# Frugirl\n\n### [ ] `deps` pin deps\n\nSubject: Cargo.toml\nLevel: unit\n"

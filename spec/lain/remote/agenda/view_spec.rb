@@ -11,7 +11,7 @@ end
 # What a phone is shown of each agenda item: every text field masked for the
 # board's known secrets and for any region the detector finds, and nothing of a
 # call whose yes would release a file's sensitive regions.
-RSpec.describe Lain::Remote::Agenda::View do
+RSpec.describe Lain::Remote::Agenda::View, :seam do
   around do |example|
     Dir.mktmpdir("agenda-view") do |dir|
       base = File.realpath(dir)

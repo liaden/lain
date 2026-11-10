@@ -44,7 +44,7 @@ end
 # is provable against a doubled source: the whole claim is that two independently
 # derived corpora agree on the keys of the files they share, which a stub would
 # decide by construction.
-RSpec.describe Lain::Review::Session, "widening a round already open" do
+RSpec.describe Lain::Review::Session, "widening a round already open", :seam do
   let(:root) { @root }
   let(:home) { "/home/surveyor" }
   let(:sensitivity) { Lain::Sensitivity.new(home:, cwd: root) }

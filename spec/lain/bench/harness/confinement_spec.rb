@@ -69,7 +69,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       journal.events.grep(Lain::Telemetry::Sandbox).select { _1.tool_use_id == "tu_judged" }.last.profile
     end
 
-    it "runs a judge-approved call in the workspace profile only when the arm is workspace" do
+    it "runs a judge-approved call in the workspace profile only when the arm is workspace", :seam do
       workspace = described_class.new(project:, paths:, journal: run_journal, probe:, confine: :workspace)
       confined = workspace.tools(Lain::Bench::Harness::TOOLS).call(recorder:, journal: agent_journal)
 
@@ -77,7 +77,7 @@ RSpec.describe Lain::Bench::Harness::Confinement do
       expect(judged_profile(exec_of(tools), agent_journal)).to eq(:traced)
     end
 
-    it "grants a workspace call the mise install a binstub's `env ruby` runs from, as a chat's lineage does" do
+    it "grants a workspace call the mise install a binstub's `env ruby` runs from, as a chat's lineage does", :seam do
       bin = File.join(@base, "home/.local/share/mise/installs/ruby/4.0.6/bin")
       FileUtils.mkdir_p(bin)
       File.write(File.join(bin, "rake"), "#!/usr/bin/env ruby\n")

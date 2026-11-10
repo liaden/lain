@@ -108,14 +108,14 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
            .reject { |event| Lain::Frontend::Decorators.for(event) || record.events.include?(event) }
   end
 
-  it "leaves no journalable record on the display channel that the terminal skips and the record lacks" do
+  it "leaves no journalable record on the display channel that the terminal skips and the record lacks", :seam do
     converse
     drain_a_parked_fleet
 
     expect(lost.map(&:journal_type).uniq).to eq([])
   end
 
-  it "reaches the record with each of the three kinds this spec exercises" do
+  it "reaches the record with each of the three kinds this spec exercises", :seam do
     converse
     drain_a_parked_fleet
 

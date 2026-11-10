@@ -4,7 +4,7 @@ require "fileutils"
 require "timeout"
 require "tmpdir"
 
-RSpec.describe Lain::Confine::MaskList do
+RSpec.describe Lain::Confine::MaskList, :seam do
   around do |example|
     Dir.mktmpdir("lain-mask-list") do |dir|
       @base = File.realpath(dir)

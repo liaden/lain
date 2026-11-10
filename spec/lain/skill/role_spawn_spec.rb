@@ -473,7 +473,7 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
     # The lane rides the lineage, so a lent child's spawn says which issue it
     # belonged to rather than reading as the run's own unnamed lane.
-    it "keeps the caller's lane, so a lent child's lineage names the issue it served" do
+    it "keeps the caller's lane, so a lent child's lineage names the issue it served", :seam do
       lane = Lain::Isolation::Leases::Lane.named("issue.demo.a.1")
       spawn = seam(provider: mock(text_response("unused")),
                    isolation: Lain::Isolation::Leases.new(backend:, lane:))
@@ -481,14 +481,14 @@ RSpec.describe Lain::Skill::RoleSpawn do
       expect(spawn.within(Lain::WorkerEnv.default).seam.isolation.lane).to eq(lane)
     end
 
-    it "lends a lane of its own when told one, so a retry's children differ from the first attempt's" do
+    it "lends a lane of its own when told one, so a retry's children differ from the first attempt's", :seam do
       spawn = seam(provider: mock(text_response("unused")), isolation: Lain::Isolation::Leases.new(backend:))
       lent = spawn.within(Lain::WorkerEnv.default, lane: "issue.demo.a.2")
 
       expect(lent.seam.isolation.lane).to eq(Lain::Isolation::Leases::Lane.named("issue.demo.a.2"))
     end
 
-    it "refuses a lane name git would not accept in a ref" do
+    it "refuses a lane name git would not accept in a ref", :seam do
       spawn = seam(provider: mock(text_response("unused")))
 
       expect { spawn.within(Lain::WorkerEnv.default, lane: "bad lane~") }

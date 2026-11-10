@@ -547,7 +547,7 @@ RSpec.describe Lain::Bench::CLI do
       expect(Lain::Arm::NoIsolation.acquire("arm-a").worker_env).to be_nil
     end
 
-    it "reaches every arm with ONE resolved backend, each arm leasing under its own name" do
+    it "reaches every arm with ONE resolved backend, each arm leasing under its own name", :seam do
       Dir.mktmpdir("lain-bench-project") do |project|
         Dir.mktmpdir("lain-bench-runtime") do |runtime|
           FileUtils.mkdir_p(File.join(project, ".git"))
@@ -788,7 +788,7 @@ RSpec.describe Lain::Bench::CLI do
 
   # The production path: arms_report builds the tools and the guard the arms run with, and
   # --confine reader is what puts the sandbox under their bash.
-  describe "#arms_report under --confine reader" do
+  describe "#arms_report under --confine reader", :seam do
     let(:journal) { RecordingChannel.new }
     let(:backend) { Lain::CLI::Backend.new({ provider: "anthropic", max_tokens: 64 }, root: Dir.pwd) }
     let(:execs) { [] }
@@ -1908,7 +1908,7 @@ RSpec.describe Lain::Bench::CLI do
         end
       end
 
-      it "scores a candidate PROGRAMS table against the sessions and the hazard corpus" do
+      it "scores a candidate PROGRAMS table against the sessions and the hazard corpus", :seam do
         out = report(composed_term: candidate, hazards:)
 
         expect(out).to include("composed term:", "parks removed:", "hazards admitted:")

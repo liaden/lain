@@ -112,7 +112,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
     before { submit(stage: "research", slug: "frugirl-mvp") }
 
     # Scenario: a stale verdict says so
-    it "marks a verdict read before an edit as stale against the digest the gate signs" do
+    it "marks a verdict read before an edit as stale against the digest the gate signs", :seam do
       epic("a")
       round_nine = home.read_epic
       id = review!
@@ -123,7 +123,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       expect(question).to include(id, "reviewed#{short(round_nine)},gating#{short(home.read_epic)}:stale")
     end
 
-    it "shows a review of the gated digest as current, with its minor count" do
+    it "shows a review of the gated digest as current, with its minor count", :seam do
       epic("a")
       id = review!
 
@@ -146,7 +146,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       expect(this_sessions_decisions.map { _1["stage"] }).to eq(["research"])
     end
 
-    it "refuses a review of another epic" do
+    it "refuses a review of another epic", :seam do
       epic("a")
       id = review!
 
@@ -156,7 +156,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       expect(result.content).to include(id, "frugirl-mvp", "other-epic")
     end
 
-    context "when the issue plans are reviewed and gated" do
+    context "when the issue plans are reviewed and gated", :seam do
       let(:gates) { every_stage("hands_off").merge("issue_plan" => "interactive") }
 
       before do
@@ -188,7 +188,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       end
     end
 
-    it "refuses a review of another stage" do
+    it "refuses a review of another stage", :seam do
       epic("a")
       id = review!
 

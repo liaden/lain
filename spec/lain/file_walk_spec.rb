@@ -4,7 +4,7 @@ require "tmpdir"
 require "fileutils"
 require "open3"
 
-RSpec.describe Lain::FileWalk do
+RSpec.describe Lain::FileWalk, :seam do
   subject(:walk) { described_class.new(root:) }
 
   let(:root) { @root }

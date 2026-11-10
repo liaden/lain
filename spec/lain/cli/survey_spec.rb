@@ -693,7 +693,7 @@ RSpec.describe LainCLI, "the survey subcommand" do
   # The whole path, undoubled, once: argv in, a rendering on stdout. `render`
   # is the only thing between the lib's String and the terminal, and nothing
   # above pins that it says anything at all.
-  describe "a real survey through the executable" do
+  describe "a real survey through the executable", :seam do
     around do |example|
       Dir.mktmpdir("lain-survey-exe") do |made|
         @tree = File.realpath(made)

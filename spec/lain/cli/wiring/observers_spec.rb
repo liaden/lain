@@ -313,7 +313,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
                                    arms: Lain::CLI::Arms::OFF.with(confine:)).notices
         end
 
-        it "says once, under workspace, which link refuses every automatically approved call" do
+        it "says once, under workspace, which link refuses every automatically approved call", :seam do
           expect(notices_under(:workspace)).to contain_exactly(
             include(File.join(linked, ".envrc"), "--confine reader")
           )
@@ -331,7 +331,7 @@ RSpec.describe Lain::CLI::Wiring::Observers do
           expect(notices_under(:reader)).to be_empty
         end
 
-        it "says nothing under workspace once the link is a file" do
+        it "says nothing under workspace once the link is a file", :seam do
           File.unlink(File.join(linked, ".envrc"))
           File.write(File.join(linked, ".envrc"), "export X=1\n")
 

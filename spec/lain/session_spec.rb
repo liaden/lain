@@ -1401,7 +1401,7 @@ RSpec.describe Lain::Session do
       expect(scope.lend(lent)).to be(lent)
     end
 
-    it "lends its environment in place, in the lender's lane" do
+    it "lends its environment in place, in the lender's lane", :seam do
       lane = Lain::Isolation::Leases::Lane.named("issue.x.1")
       lent = scope.lend(Lain::Isolation::Leases.new(lane:))
 

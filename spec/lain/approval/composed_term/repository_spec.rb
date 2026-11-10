@@ -8,7 +8,7 @@ require "tmpdir"
 # Whether the repository git finds from a directory has a config that could
 # make a read run something: the question the composed term asks before it
 # approves a git stage.
-RSpec.describe Lain::Approval::ComposedTerm::Repository do
+RSpec.describe Lain::Approval::ComposedTerm::Repository, :seam do
   def in_tree
     Dir.mktmpdir("lain-repository") { |dir| yield File.realpath(dir) }
   end

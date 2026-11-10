@@ -42,7 +42,7 @@ RSpec.describe Lain::CLI::Worktrees do
 
   def unreached(name) = record(:kept, :anchor, name, "no branch reaches 0123456789ab")
 
-  it "heads the run with when and where, says what it reaped and kept and why, then counts them" do
+  it "heads the run with when and where, says what it reaped and kept and why, then counts them", :seam do
     records = [record(:reaped, :worktree, "/state/wt/a", "landed on main"), unreached("refs/lain/worker/w")]
 
     expect(worktrees(gc_factory: reaper(records)).gc).to eq(<<~REPORT.chomp)
@@ -56,7 +56,7 @@ RSpec.describe Lain::CLI::Worktrees do
 
   # Kept anchors are kept indefinitely, so a daily log that re-listed every
   # one would bury the day's news under the same lines each morning.
-  it "summarises the anchors it has already reported rather than re-listing them" do
+  it "summarises the anchors it has already reported rather than re-listing them", :seam do
     worktrees(gc_factory: reaper([unreached("refs/lain/worker/a")])).gc
 
     report = worktrees(gc_factory: reaper([unreached("refs/lain/worker/a"), unreached("refs/lain/worker/b")])).gc
@@ -68,7 +68,7 @@ RSpec.describe Lain::CLI::Worktrees do
 
   # An issue branch still holds the commit, so the anchor is no orphan, and
   # it goes once the work lands: it is news to read, not a standing count.
-  it "lists an anchor an issue branch reaches on its own line, apart from the ones no branch reaches" do
+  it "lists an anchor an issue branch reaches on its own line, apart from the ones no branch reaches", :seam do
     held = record(:kept, :anchor, "refs/lain/worker/issue",
                   "only lain/issue/demo/shout reaches it, and an issue branch is not a landing")
 
@@ -81,12 +81,12 @@ RSpec.describe Lain::CLI::Worktrees do
     expect(report).not_to include("  refs/lain/worker/issue")
   end
 
-  it "says so when there was nothing to reap or keep" do
+  it "says so when there was nothing to reap or keep", :seam do
     expect(worktrees(gc_factory: reaper([])).gc)
       .to eq("lain worktrees gc at 2026-09-11T12:00:00Z in #{@repo}\nnothing to reap or keep")
   end
 
-  it "hands the reaper the root chat leases under, the configured retain_days, and a journal under state_home" do
+  it "hands the reaper the root chat leases under, the configured retain_days, and a journal under state_home", :seam do
     write_config(@repo, "isolation retain_days: 3\n")
     seen = {}
 

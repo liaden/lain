@@ -422,7 +422,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(recorded("exec_record").sole).to have_attributes(incomplete: false, execs: [a_hash_including(rc: 0)])
     end
 
-    describe "a workspace call that creates a sealed path it found absent" do
+    describe "a workspace call that creates a sealed path it found absent", :seam do
       let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
       let(:profile) { Lain::Confine::Profile.workspace(root:, home:, tmpdir: scratch) }
       let(:envrc) { File.join(root, ".envrc") }
@@ -508,27 +508,27 @@ RSpec.describe Lain::Exec::Sandboxed do
       let(:call_dir) { Dir.mktmpdir("lain-call-", scratch) }
       let(:profile) { Lain::Confine::Profile.workspace(root:, home:, tmpdir: scratch).for_call(call_dir, granted: scratch) }
 
-      it "pins the call's TMPDIR to its own dir, and removes the dir once the call is over" do
+      it "pins the call's TMPDIR to its own dir, and removes the dir once the call is over", :seam do
         run
 
         expect(inner.calls.sole[:pinned_env]).to include("TMPDIR" => call_dir)
         expect([File.exist?(call_dir), File.directory?(scratch)]).to eq([false, true])
       end
 
-      it "removes the dir after a call that timed out" do
+      it "removes the dir after a call that timed out", :seam do
         inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "too slow" }
 
         expect { run }.to raise_error(Lain::Exec::Timeout)
         expect(File.exist?(call_dir)).to be(false)
       end
 
-      it "removes the dir after a call it refused to start" do
+      it "removes the dir after a call it refused to start", :seam do
         run(confinement: composed(executables: [executable("cat", File.join(root, "bin/cat"), :project)]))
 
         expect([inner.calls, File.exist?(call_dir)]).to eq([[], false])
       end
 
-      it "removes a dir the call left unreadable, without following a link out of it" do
+      it "removes a dir the call left unreadable, without following a link out of it", :seam do
         outside = File.join(@base, "outside").tap { FileUtils.mkdir_p(_1) }
         File.chmod(0o500, outside)
         inner.behaviour = lambda do |**|
@@ -546,7 +546,7 @@ RSpec.describe Lain::Exec::Sandboxed do
         File.chmod(0o700, outside)
       end
 
-      it "journals a dir it could not remove" do
+      it "journals a dir it could not remove", :seam do
         allow(FileUtils).to receive(:rm_rf)
         run
 
@@ -565,7 +565,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
-    describe "calls through real profiles that a wrapper changes, as the egress seam's does" do
+    describe "calls through real profiles that a wrapper changes, as the egress seam's does", :seam do
       let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
       let(:probe) { Struct.new(:nothing) { def supports?(_layer) = true }.new }
       let(:masks) { Struct.new(:masks) { def landed_on(_path) = [] }.new([]) }

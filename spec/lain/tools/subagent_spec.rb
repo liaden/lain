@@ -3247,7 +3247,7 @@ RSpec.describe Lain::Tools::Subagent do
         expect(seen).to be_empty
       end
 
-      it "refuses an extends whose repository has no commit to cut from" do
+      it "refuses an extends whose repository has no commit to cut from", :seam do
         SeedRepo.git(project, "init", "-q")
 
         expect(refused(project)).to match(/extends #{Regexp.escape(project)} .*no commit/)
@@ -3650,7 +3650,7 @@ RSpec.describe Lain::Tools::Subagent do
 
       # Only the run's own spawner is there after the run to resume a stop, so a
       # nested spawner's stop keeps no pin past the close.
-      it "drops a nested spawner's snapshot pin at close, and keeps the run's own" do
+      it "drops a nested spawner's snapshot pin at close, and keeps the run's own", :seam do
         repo = File.join(leases_root, "repo")
         FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", FileUtils.mkdir_p(repo).first)
         worktrees = SubagentSpecGitWorktrees.new(repo, File.join(leases_root, "w"))

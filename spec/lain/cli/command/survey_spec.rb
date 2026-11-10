@@ -192,7 +192,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # grammar with the path intact -- a dispatcher that swallowed either would hand
   # this command an empty line and get its usage back, looking for all the world
   # like the human mistyped.
-  describe "the line a human types, through the registry that dispatches it" do
+  describe "the line a human types, through the registry that dispatches it", :seam do
     let(:registry) { Lain::CLI::Command::Registry.new([command]).bind(env) }
 
     it "reaches the command with its path and its flags intact" do
@@ -330,7 +330,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # A directory whose name has a space could not be surveyed at all before
     # {Lain::CLI::Command::Args} started splitting with {Shellwords}.
-    it "surveys a directory whose name has a space when the line quotes it" do
+    it "surveys a directory whose name has a space when the line quotes it", :seam do
       spaced = write("my notes/page.md", document("# Notes", "", "One line of prose."))
       attached
 
@@ -352,7 +352,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
-  describe "opening a survey in the editor the chat already has" do
+  describe "opening a survey in the editor the chat already has", :seam do
     before { two_documents }
 
     it "draws the tree on the editor's own surface and says what it opened" do
@@ -573,7 +573,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   describe "the scope the flag picks" do
     before { two_documents }
 
-    it "presents the directory grouping when it is asked for" do
+    it "presents the directory grouping when it is asked for", :seam do
       attached
       write("deep/inner.md", document("# Inner", "", "A file one directory down."))
 
@@ -592,7 +592,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # Applicability is a SEPARATE, later refusal than "is this a scope at all":
     # `ByCommit#supports?` asks the source, and a corpus has no commit walk.
-    it "refuses the commit walk over a corpus, naming the scope and the source" do
+    it "refuses the commit walk over a corpus, naming the scope and the source", :seam do
       attached
 
       expect { command.call("#{@root} --scope commits", env) }
@@ -604,7 +604,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # a review panel killed a `:by_directory` canary with exactly such an assertion
     # and learned nothing. MOVING the constant is the only question that
     # separates a command reading the registry from one reading a literal.
-    it "follows the registry's default WHEREVER it moves, so the word is never restated here" do
+    it "follows the registry's default WHEREVER it moves, so the word is never restated here", :seam do
       attached
       stub_const("Lain::Review::Partition::DEFAULT_SCOPE", "by_directory")
 
@@ -644,7 +644,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
-  describe "the ceilings, and the flag that lifts them" do
+  describe "the ceilings, and the flag that lifts them", :seam do
     before { two_documents }
 
     def bounded(**ceilings)
@@ -720,14 +720,14 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # Nothing marked, so the default policy refuses -- and what it refuses WITH
     # has to be reachable from the same line the human just typed.
-    it "refuses an approve over an unreviewed survey without it, naming it as the way past" do
+    it "refuses an approve over an unreviewed survey without it, naming it as the way past", :seam do
       attached
       command.call(@root, env)
 
       expect(editor.bound.wrote_verdict("approve")).to include("--permissive")
     end
 
-    it "admits that same approve when the survey was opened with it" do
+    it "admits that same approve when the survey was opened with it", :seam do
       attached
       command.call("#{@root} --permissive", env)
 
@@ -736,7 +736,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # `wrote_verdict` answering nil is "nothing refused it", which a verdict
     # that quietly went nowhere would also satisfy. The record is the claim.
-    it "journals the verdict it admitted, rather than merely not refusing it" do
+    it "journals the verdict it admitted, rather than merely not refusing it", :seam do
       attached
       command.call("#{@root} --permissive", env)
       editor.bound.wrote_verdict("approve")
@@ -757,7 +757,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # the human's end -- a typed `/survey ... --permissive`, a blocker placed on
     # the rail, then approve -- because the whole defect is that the escape
     # became TYPEABLE.
-    it "still refuses an approve over an unanswered blocker, in the blocker's own words" do
+    it "still refuses an approve over an unanswered blocker, in the blocker's own words", :seam do
       attached
       command.call("#{@root} --permissive", env)
       handover = editor.bound
@@ -766,7 +766,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(handover.wrote_verdict("approve")).to include("notes.md:3").and include("nobody has answered")
     end
 
-    it "leaves that review unsettled, so the flag cost the verdict and not the round" do
+    it "leaves that review unsettled, so the flag cost the verdict and not the round", :seam do
       attached
       command.call("#{@root} --permissive", env)
       handover = editor.bound
@@ -779,7 +779,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # The escape still escapes: a plain note claims nothing about
     # admissibility, so the flag does what its sentence promises.
-    it "admits over an unreviewed changeset carrying only a plain note" do
+    it "admits over an unreviewed changeset carrying only a plain note", :seam do
       attached
       command.call("#{@root} --permissive", env)
       handover = editor.bound
@@ -793,7 +793,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # "any switch present" and was correct only while the list held one member
     # -- adding a second is exactly what arms it, and the ceiling is what
     # notices.
-    it "does not lift the ceilings that the other switch lifts" do
+    it "does not lift the ceilings that the other switch lifts", :seam do
       bounded = described_class.new(cwd: @root, outbox:, ledger:, sensitivity:,
                                     bounds: Lain::Review::Bounds.new(max_files: 1))
       attached
@@ -856,7 +856,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # names the very same path -- "head ref "feature" does not resolve to a
     # commit in /tmp/.../corpus". The two refusals are only distinguishable by
     # what they SAY.
-    it "refuses a changeset review over an open survey, naming the survey already open" do
+    it "refuses a changeset review over an open survey, naming the survey already open", :seam do
       attached
       command.call(@root, env)
 
@@ -867,7 +867,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # The `@root` match alone is the vacuous assertion above, so it carries the
     # guard's own words too: this example is about WHICH surface is named, and
     # it must not be satisfiable by the resolver's refusal naming the same tree.
-    it "names the survey itself in that refusal, so the human knows which surface is in the way" do
+    it "names the survey itself in that refusal, so the human knows which surface is in the way", :seam do
       attached
       command.call(@root, env)
 
@@ -885,7 +885,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # Two refusals raise from `Session#present`, which is AFTER the round is
     # open -- the LINE ceiling and `UnsupportedScope`. The file ceiling is not
     # one of them: `Corpus#initialize` refuses it before a session exists.
-    it "holds nothing when the LINE ceiling refuses, so a later /review is not locked out" do
+    it "holds nothing when the LINE ceiling refuses, so a later /review is not locked out", :seam do
       attached
       bounded = described_class.new(outbox:, ledger:, sensitivity:,
                                     bounds: Lain::Review::Bounds.new(max_lines: 1))
@@ -901,7 +901,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # the human fast enough to gesture between the two, and a verdict landing
     # on a survey nobody saw -- `--permissive` would even admit one -- is what
     # is left if the refusal does not let them go.
-    it "leaves the rails unbound and draws the refusal where the sidebar was when the LINE ceiling refuses" do
+    it "leaves the rails unbound and draws the refusal where the sidebar was when the LINE ceiling refuses", :seam do
       attached
       bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
                                     bounds: Lain::Review::Bounds.new(max_lines: 1))
@@ -915,7 +915,7 @@ RSpec.describe Lain::CLI::Command::Survey do
         .to eq(["refusal"])
     end
 
-    it "keeps holding a settled changeset review when a survey opened over it refuses" do
+    it "keeps holding a settled changeset review when a survey opened over it refuses", :seam do
       attached
       outbox.hold(session: settled_changeset_round, number: 12, label: "pull request 12")
       bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
@@ -926,7 +926,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect(outbox.target).to eq("pull request 12")
     end
 
-    it "holds nothing when the scope is one a corpus cannot answer, for the same reason" do
+    it "holds nothing when the scope is one a corpus cannot answer, for the same reason", :seam do
       attached
 
       expect { command.call("#{@root} --scope commits", env) }
@@ -950,7 +950,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # the other command sees, and `Session#submit` touches no outbox at all.
     # `--permissive` is on the line because the default policy refuses an
     # approve over rows nobody marked, and this example is about the guard.
-    it "lets a changeset review open once the survey has been settled by a verdict" do
+    it "lets a changeset review open once the survey has been settled by a verdict", :seam do
       attached
       command.call("#{@root} --permissive", env)
 
@@ -963,7 +963,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # and whatever round replaces it the survey is still held, so
     # `/review-submit` names it rather than answering "no changeset review is
     # open" about the round the human has only just judged.
-    it "still holds the settled survey, so the round a human just judged is still the one held" do
+    it "still holds the settled survey, so the round a human just judged is still the one held", :seam do
       attached
       command.call("#{@root} --permissive", env)
       editor.bound.wrote_verdict("approve")
@@ -974,7 +974,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     # THE MIRROR of the pair above, and the direction `/survey` owns: a
     # changeset review that has been judged is not a surface in the way either.
-    it "opens a survey over a changeset review that has already been settled" do
+    it "opens a survey over a changeset review that has already been settled", :seam do
       attached
       outbox.hold(session: settled_changeset_round, number: 12, label: "pull request 12")
 
@@ -987,7 +987,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # THE COUNTER-EXAMPLE to a guard written as `outbox.open?`. Reopening the
     # same kind is how a human gets a second look at a tree they have already
     # surveyed, and refusing it would be a rule about the wrong thing.
-    it "rebinds when a survey is reopened over a survey, rather than refusing" do
+    it "rebinds when a survey is reopened over a survey, rather than refusing", :seam do
       attached
       command.call(@root, env)
       first = editor.bound
@@ -1003,7 +1003,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # left open -- a round is round-scoped -- so a survey of the same TARGET says
   # so. The target is the tree a human named, not its content: a survey of
   # `big/` whose files changed since is still the survey of `big/`.
-  describe "reopening a survey in a resumed chat" do
+  describe "reopening a survey in a resumed chat", :seam do
     before { two_documents }
 
     def chronicle_on(on, path) = instance_double(Lain::CLI::Chronicle, record_journal: on, journal_path: path)
@@ -1112,7 +1112,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # drives the human's own route -- `/survey`, a note, a question typed into the
   # pane that note opened -- and asserts an ANSWER came back, was DRAWN, and is
   # ON THE RECORD.
-  describe "the docent a survey wires, and the question that reaches it" do
+  describe "the docent a survey wires, and the question that reaches it", :seam do
     let(:inlet) { SurveyDocentInlet.new }
     let(:surface) { Lain::Review::Surface::Neovim.new(rpc: inlet) }
     let(:editor) { SurveyCommandEditor.new(sink, surface:) }
@@ -1364,7 +1364,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # every answer itself, on its own task, long after the gesture that asked --
   # so a surface with no thread pane has nowhere to put one, and a docent that
   # spent a provider call and drew nowhere is worse than one that refuses.
-  describe "a survey drawn on a surface with no thread pane" do
+  describe "a survey drawn on a surface with no thread pane", :seam do
     it "keeps refusing by name rather than wiring a docent that cannot render" do
       two_documents
       attached

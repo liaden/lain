@@ -103,7 +103,7 @@ RSpec.describe Lain::SearchRules do
       klass.new(walk_limit: rules.limit, include: rules.include)
     end
 
-    it "searches an ignored path the include names and no other ignored path" do
+    it "searches an ignored path the include names and no other ignored path", :seam do
       git("init", "-q")
       write(".gitignore", "planning/notes/\ntarget/\n")
       write("planning/notes/a.md", "needle\n")
@@ -117,7 +117,7 @@ RSpec.describe Lain::SearchRules do
       expect(result.content.lines.map { _1.split(":").first }).to eq(%w[planning/notes/a.md src.rb])
     end
 
-    it "lists an ignored include through list_files" do
+    it "lists an ignored include through list_files", :seam do
       git("init", "-q")
       write(".gitignore", "planning/notes/\n")
       write("planning/notes/a.md", "x\n")
@@ -127,7 +127,7 @@ RSpec.describe Lain::SearchRules do
       expect(result.content.lines.map(&:chomp)).to include("planning/notes/a.md")
     end
 
-    it "finds an ignored include through glob" do
+    it "finds an ignored include through glob", :seam do
       git("init", "-q")
       write(".gitignore", "planning/notes/\ntarget/\n")
       write("planning/notes/a.md", "x\n")
@@ -138,7 +138,7 @@ RSpec.describe Lain::SearchRules do
       expect(result.content.lines.map(&:chomp)).to eq(["planning/notes/a.md"])
     end
 
-    it "searches an ignored include through ast_search" do
+    it "searches an ignored include through ast_search", :seam do
       git("init", "-q")
       write(".gitignore", "gen/\n")
       write("gen/a.rb", "def hidden(x); end\n")
@@ -150,7 +150,7 @@ RSpec.describe Lain::SearchRules do
       expect(result.content).to include("gen/a.rb").and(satisfy { !_1.include?("skip.rb") })
     end
 
-    it "reaches the file tools of the production floor with real rules" do
+    it "reaches the file tools of the production floor with real rules", :seam do
       git("init", "-q")
       write(".gitignore", "planning/notes/\n")
       write("planning/notes/a.md", "needle\n")
@@ -163,7 +163,7 @@ RSpec.describe Lain::SearchRules do
         .to include("listing stopped at 5 entries")
     end
 
-    it "reaches the chat's tools through ToolsetBuild from the project's config" do
+    it "reaches the chat's tools through ToolsetBuild from the project's config", :seam do
       git("init", "-q")
       write(".gitignore", "notes/\n")
       write("notes/a.md", "needle\n")
@@ -194,7 +194,7 @@ RSpec.describe Lain::SearchRules do
       expect(result.content).to include("listing stopped at 5 entries")
     end
 
-    it "keeps the default limits and ignore handling when nothing is configured" do
+    it "keeps the default limits and ignore handling when nothing is configured", :seam do
       git("init", "-q")
       write(".gitignore", "target/\n")
       write("target/x.txt", "needle\n")

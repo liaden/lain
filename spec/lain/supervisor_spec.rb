@@ -1041,7 +1041,7 @@ RSpec.describe Lain::Supervisor do
     # forever, with `<<<<<<<` markers standing in a real working tree. The Report
     # is the only place it is ever named, so discarding the Report makes it
     # discoverable only when the next handback mysteriously declines.
-    it "journals the reap's Report, carrying a STRANDED parent onto the record" do
+    it "journals the reap's Report, carrying a STRANDED parent onto the record", :seam do
       journal = []
       supervised(described_class.new(journal:, isolation: LoggingIsolation.new(shared_env, []),
                                      handoff: stranding_handoff)) do |supervisor, _task|
@@ -1185,7 +1185,7 @@ RSpec.describe Lain::Supervisor do
     # handback. Operates on a THROWAWAY repo it creates itself (git init in a
     # mktmpdir), never the lain repo it runs in -- worktree_spec.rb's posture,
     # and the reason this stays in the default suite: git is always present.
-    describe "against a real worktree backend" do
+    describe "against a real worktree backend", :seam do
       around do |example|
         Dir.mktmpdir("lain-repo") do |repo|
           Dir.mktmpdir("lain-worktrees") do |worktrees|
@@ -1486,7 +1486,7 @@ RSpec.describe Lain::Supervisor do
     # Every run's supervisor mints its first actor the same default id, so the
     # epic caller names the worker itself, and a name git could not put in a
     # ref is refused before anything is leased.
-    it "keys an adopted actor on the worker id its caller names, and refuses one git could not put in a ref" do
+    it "keys an adopted actor on the worker id its caller names, and refuses one git could not put in a ref", :seam do
       log = []
       supervised(described_class.new(isolation: RetireIsolation.new(shared_env, log))) do |supervisor, _task|
         supervisor.adopt(role: "issue_orchestrator", worker_id: "issue.demo.a") do |worker_env|

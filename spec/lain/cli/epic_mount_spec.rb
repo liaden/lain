@@ -124,7 +124,7 @@ RSpec.describe Lain::CLI::EpicMount do
       expect(unmounted.map(&:name)).to eq(%w[epic_write epic_graph epic_status epic_show epic_review epic_submit])
     end
 
-    describe "a review handed from epic_review to epic_submit" do
+    describe "a review handed from epic_review to epic_submit", :seam do
       let(:journal) { Lain::Journal.open(paths:, root: @dir) }
       let(:reviewing) do
         Class.new do

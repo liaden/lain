@@ -323,7 +323,7 @@ RSpec.describe Lain::Tools::AstSearch do
     end
   end
 
-  it "skips files git ignores" do
+  it "skips files git ignores", :seam do
     _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: tmpdir)
     raise err unless status.success?
 

@@ -22,7 +22,7 @@ RSpec.describe "LAIN_SEAM_REPORT" do
     Dir.mktmpdir("seam_report") do |dir|
       path = File.join(dir, "git_user_spec.rb")
       File.write(path, spec_source)
-      env = report ? { "LAIN_SEAM_REPORT" => "1" } : {}
+      env = { "LAIN_SEAM_REPORT" => report ? "1" : nil }
       out, status = Open3.capture2e(env, RbConfig.ruby, "-S", "bundle", "exec", "rspec", path, "--format", "progress",
                                     chdir: root)
       [out, status, path]

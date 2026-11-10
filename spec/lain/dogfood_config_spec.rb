@@ -46,7 +46,7 @@ RSpec.describe "the dogfood config tree" do
 
     def setup_script = Open3.capture3(env, File.join(tree, "bin/dogfood-setup"), unsetenv_others: true)
 
-    it "links .lain, excludes it and prints the trust command in a checkout with a .git directory" do
+    it "links .lain, excludes it and prints the trust command in a checkout with a .git directory", :seam do
       # The scrub guard reads the constant at the call site.
       system(env.merge(SeedRepo::SCRUB), "git", "init", "-q", tree, unsetenv_others: true, exception: true)
       out, _err, status = setup_script

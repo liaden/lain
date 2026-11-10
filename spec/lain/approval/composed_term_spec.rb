@@ -1804,7 +1804,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
     saved.each { |name, value| ENV[name] = value }
   end
 
-  describe "git's read subcommands" do
+  describe "git's read subcommands", :seam do
     it "approves a log with no body and a diff that prints only its stat" do
       in_tree do |root, home|
         git_repo(root)
@@ -2695,7 +2695,7 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
   end
 
-  describe "the hazard corpus the approval replay scores a table against" do
+  describe "the hazard corpus the approval replay scores a table against", :seam do
     let(:hazards) do
       File.foreach(File.expand_path("../../fixtures/approval_replay/hazards.ndjson", __dir__)).map { JSON.parse(_1) }
     end

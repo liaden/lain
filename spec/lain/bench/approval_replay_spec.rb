@@ -588,7 +588,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       described_class.composed_term(sessions:, candidate: table(source), hazards:, project:)
     end
 
-    it "lists no hazard today's table admits, though it cannot rebuild the context some hazards name" do
+    it "lists no hazard today's table admits, though it cannot rebuild the context some hazards name", :seam do
       report = terms(today).report
 
       # A replay blind spot, not a live verdict: the corpus names `git status`, `git log` and `git diff` in a
@@ -600,15 +600,15 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
 
     # The git entries ask git what a status or ls-files would print, which no record holds.
-    it "says that the cargo entry reads manifests and configs from the live disk" do
+    it "says that the cargo entry reads manifests and configs from the live disk", :seam do
       expect(terms(today).report).to match(/^cargo reads live: .*manifests.*configs.*cargo home$/)
     end
 
-    it "says that git runs live for the git entries" do
+    it "says that git runs live for the git entries", :seam do
       expect(terms(today).report).to match(/^git runs live: .*status.*ls-files.*$/)
     end
 
-    it "lists the hazards a candidate that admits the reader programs without their flags lets through" do
+    it "lists the hazards a candidate that admits the reader programs without their flags lets through", :seam do
       report = terms("#{today}.merge(%w[sed find git rg sort grep].to_h { [_1, #{flags}] })").report
 
       expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
@@ -616,7 +616,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       expect(report).to match(/^hazards admitted: \d+ of 41$/)
     end
 
-    it "keeps a hazard out of the list when the candidate's flags refuse it" do
+    it "keeps a hazard out of the list when the candidate's flags refuse it", :seam do
       open_sort = terms("#{today}.merge(\"sort\" => #{flags})").report
       guarded = "Lain::Approval::ComposedTerm::Flags.new(long: %w[--compress-program])"
       refusing = terms("#{today}.merge(\"sort\" => #{guarded})").report
@@ -625,7 +625,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       expect(refusing).not_to match(/^  sort --compress-program:/)
     end
 
-    it "reports the parks a candidate removes and the judge or human denies it would have admitted" do
+    it "reports the parks a candidate removes and the judge or human denies it would have admitted", :seam do
       report = terms("#{today}.merge(%w[make rm].to_h { [_1, #{flags}] })").report
 
       expect(report).to include("parks removed: 3")
@@ -635,7 +635,7 @@ RSpec.describe Lain::Bench::ApprovalReplay do
                     .and match(/^  auto.ndjson tu_2 rm -rf build \(judge deny\)$/)
     end
 
-    it "reports nothing removed for today's own table" do
+    it "reports nothing removed for today's own table", :seam do
       expect(terms(today).report).to include("parks removed: 0", "admitted against a recorded deny: 0")
     end
 
@@ -658,17 +658,17 @@ RSpec.describe Lain::Bench::ApprovalReplay do
         .to raise_error(Lain::Bench::CLI::Refusal, /--hazards is missing/)
     end
 
-    it "heads the report with what it does not model and that it scores per call" do
+    it "heads the report with what it does not model and that it scores per call", :seam do
       head = terms(today).report.lines.first(4).join
 
       expect(head).to include("per call", "content predicate", "classes", "program exclusions", "live disk")
     end
 
-    it "says how many hazards could not be rebuilt" do
+    it "says how many hazards could not be rebuilt", :seam do
       expect(terms(today).report).to match(/^not rebuilt: 4 \(judged as plain commands, also counted above\)$/)
     end
 
-    it "tells a hazard the shell verdict cannot weigh from one the table refuses" do
+    it "tells a hazard the shell verdict cannot weigh from one the table refuses", :seam do
       report = terms(today).report
 
       unread = "verdict gives no term; only ComposedTerm's own reading weighs:"

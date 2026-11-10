@@ -253,7 +253,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Spool do
     expect(Dir.children(@home.dir)).to be_empty
   end
 
-  describe "the ref each queued commit is held under" do
+  describe "the ref each queued commit is held under", :seam do
     around do |example|
       Dir.mktmpdir("lain-spool-repo") do |repo|
         @repo = File.realpath(repo)

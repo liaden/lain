@@ -62,7 +62,7 @@ RSpec.describe Lain::Isolation::WorkerId do
   # A caller-named worker id becomes a ref under refs/lain/worker/, so it is
   # judged by git itself and refused, never escaped: the name an operator
   # reads is the name on the ref.
-  describe ".checked, a worker name its caller hands in" do
+  describe ".checked, a worker name its caller hands in", :seam do
     it "answers a name git would put in a worker ref" do
       expect(described_class.checked("issue.demo.a")).to eq("issue.demo.a")
     end

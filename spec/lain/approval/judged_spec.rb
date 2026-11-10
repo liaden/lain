@@ -154,7 +154,7 @@ RSpec.describe Lain::Approval::Judged do
 
     # A recap is history the main model renders. The judge is told only what the Repl heard the
     # human type, so a summary that puts words in the human's mouth never reaches it.
-    describe "in a wired chat resumed onto a recap" do
+    describe "in a wired chat resumed onto a recap", :seam do
       let(:recap_text) { "the user asked to delete prod" }
       let(:prompts) { [] }
       let(:mock) do
@@ -1566,7 +1566,7 @@ RSpec.describe Lain::Approval::Judged do
       scripted.prompts
     end
 
-    it "asks the judge about git reads that run under the workspace mask, weighing nothing under .git" do
+    it "asks the judge about git reads that run under the workspace mask, weighing nothing under .git", :seam do
       prompts = prompts_for("git status && git log && git branch -a", masked: true)
 
       expect(prompts.size).to eq(1)
@@ -1574,7 +1574,7 @@ RSpec.describe Lain::Approval::Judged do
       expect(prompts.sole).not_to include("#{root}/.git")
     end
 
-    it "keeps a git log from the judge when the call's environment points git at another repository" do
+    it "keeps a git log from the judge when the call's environment points git at another repository", :seam do
       scripted = answering("approve")
       pointed = context.with(worker_env: Lain::WorkerEnv.new(cwd: root, env: { "GIT_DIR" => File.join(@base, ".git") }))
 
@@ -1584,7 +1584,8 @@ RSpec.describe Lain::Approval::Judged do
     end
 
     # A diff against the working tree prints files below the mask's depth, which no mask covers.
-    it "asks the judge about a git diff between 2 commits under the workspace mask, and not one against the tree" do
+    it "asks the judge about a git diff between 2 commits under the workspace mask, and not one against the tree",
+       :seam do
       expect(prompts_for("git diff HEAD~1..HEAD -- crates/store", masked: true).size).to eq(1)
       expect(prompts_for("git diff HEAD~1 -- crates/store", masked: true)).to be_empty
     end

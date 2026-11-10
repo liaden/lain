@@ -326,7 +326,7 @@ RSpec.describe Lain::Tools::Grep do
     end
   end
 
-  describe "a tree git ignores part of" do
+  describe "a tree git ignores part of", :seam do
     def git_init(dir)
       _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: dir)
       raise err unless status.success?
@@ -381,7 +381,7 @@ RSpec.describe Lain::Tools::Grep do
       expect(content.lines.last).to include("10 entries").and include("narrow")
     end
 
-    it "does not count a repository's ignored files held by a plain parent" do
+    it "does not count a repository's ignored files held by a plain parent", :seam do
       FileUtils.mkdir_p(File.join(tmpdir, "proj"))
       _out, err, status = Open3.capture3(SeedRepo::SCRUB, "git", "init", "-q", chdir: File.join(tmpdir, "proj"))
       raise err unless status.success?
@@ -405,7 +405,7 @@ RSpec.describe Lain::Tools::Grep do
       expect(content.lines.last).to include("1500000 bytes")
     end
 
-    it "names the byte limit in notices read before the matches are consumed" do
+    it "names the byte limit in notices read before the matches are consumed", :seam do
       3.times { write("big#{_1}.txt", "needle\n#{"x" * 999_990}\n") }
       files = described_class::Files.under(tmpdir)
       reads = files.within(Lain::Tool::Bounds::WalkLimit.new(entries: 10, bytes: 1_500_000))
@@ -466,7 +466,7 @@ RSpec.describe Lain::Tools::Grep do
       expect(result.content).to include("Permission denied").and include(unreadable)
     end
 
-    describe "stopped while git lists the repository" do
+    describe "stopped while git lists the repository", :seam do
       # A `git` that hangs on the listing, so the stop lands while the child runs.
       def hanging_git(dir)
         real = ENV.fetch("PATH").split(File::PATH_SEPARATOR).map { File.join(_1, "git") }
