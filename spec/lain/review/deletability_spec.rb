@@ -312,53 +312,71 @@ end
 # thread pane's own deletability row reached that conclusion first and this
 # generalises it.
 #
-# Read eagerly rather than memoised because six capabilities times three
-# examples over ~1400 files is eight seconds of re-reading the same bytes, and
-# because the sweep is a fact about a tree that does not change under it.
+# Read on first use and memoised per process, not at load: six capabilities
+# times three examples over ~1400 files is eight seconds of re-reading the same
+# bytes, and a sweep at load is time no example's timing is charged for.
 module TreeSweep
   # This file is the map, so it names every capability -- exempting it by path
   # is what keeps the sweep from reporting itself. A row's deletion takes its
   # entry in the map with it, which is an edit rather than a file.
   EXEMPT = "spec/lain/review/deletability_spec.rb"
 
-  SOURCES = Dir[DeletionMap::ROOT.join("{lib,spec,exe}/**/*.{rb,lua}")]
-            .select { |path| File.file?(path) }
-            .map { |path| Pathname(path).relative_path_from(DeletionMap::ROOT).to_s }
-            .reject { |path| path == EXEMPT }.sort.freeze
+  MEMO = Concurrent::Map.new
 
-  CODE = SOURCES.to_h do |path|
-    comment = path.end_with?(".lua") ? /^\s*--/ : /^\s*#/
-    [path, DeletionMap::ROOT.join(path).readlines.grep_v(comment).join]
-  end.freeze
+  def self.sources
+    MEMO.fetch_or_store(:sources) do
+      Dir[DeletionMap::ROOT.join("{lib,spec,exe}/**/*.{rb,lua}")]
+        .select { |path| File.file?(path) }
+        .map { |path| Pathname(path).relative_path_from(DeletionMap::ROOT).to_s }
+        .reject { |path| path == EXEMPT }.sort.freeze
+    end
+  end
+
+  def self.code
+    MEMO.fetch_or_store(:code) do
+      sources.to_h do |path|
+        comment = path.end_with?(".lua") ? /^\s*--/ : /^\s*#/
+        [path, DeletionMap::ROOT.join(path).readlines.grep_v(comment).join]
+      end.freeze
+    end
+  end
 
   # `(?<!\w)` and not `\b`: the leaf of a qualified name (`Review::Submit`) must
   # match, while a longer identifier that merely ends in it (`EpicSubmit`) must
   # not.
-  NAMING = DeletionMap::CAPABILITIES.to_h do |cap|
-    pattern = Regexp.union(cap.constants.map { |name| /(?<!\w)#{Regexp.escape(name)}\b/ })
-    [cap.key, cap.constants.empty? ? [] : CODE.select { |_path, body| body.match?(pattern) }.keys]
-  end.freeze
+  def self.namings
+    MEMO.fetch_or_store(:namings) do
+      DeletionMap::CAPABILITIES.to_h do |cap|
+        pattern = Regexp.union(cap.constants.map { |name| /(?<!\w)#{Regexp.escape(name)}\b/ })
+        [cap.key, cap.constants.empty? ? [] : code.select { |_path, body| body.match?(pattern) }.keys]
+      end.freeze
+    end
+  end
 
   # Where a constant is DEFINED, as opposed to where it is read. This is the
   # check that catches a row which has drifted from the tree: a capability whose
   # constants live in a file its row does not name is not deletable by that row.
-  DEFINING = DeletionMap::CAPABILITIES.to_h do |cap|
-    pattern = Regexp.union(cap.constants.map { |name| /^\s*(?:class|module)\s+#{Regexp.escape(name)}\b/ })
-    [cap.key, cap.constants.empty? ? [] : CODE.select { |_path, body| body.match?(pattern) }.keys]
-  end.freeze
+  def self.definings
+    MEMO.fetch_or_store(:definings) do
+      DeletionMap::CAPABILITIES.to_h do |cap|
+        pattern = Regexp.union(cap.constants.map { |name| /^\s*(?:class|module)\s+#{Regexp.escape(name)}\b/ })
+        [cap.key, cap.constants.empty? ? [] : code.select { |_path, body| body.match?(pattern) }.keys]
+      end.freeze
+    end
+  end
 
   module_function
 
-  def naming(cap) = NAMING.fetch(cap.key)
-  def defining(cap) = DEFINING.fetch(cap.key)
+  def naming(cap) = namings.fetch(cap.key)
+  def defining(cap) = definings.fetch(cap.key)
 
   # Every `lib/` unit that loads +unit+, by the stem relative to the requiring
   # file's own directory (`review/prefill` from `review.rb`, `prefill/finding`
   # from `review/prefill.rb`).
   def requiring(unit)
-    SOURCES.grep(%r{^lib/.*\.rb$}).select do |path|
+    sources.grep(%r{^lib/.*\.rb$}).select do |path|
       stem = Pathname(unit).sub_ext("").relative_path_from(Pathname(path).dirname)
-      CODE.fetch(path).match?(/^require_relative "#{Regexp.escape(stem.to_s)}"$/)
+      code.fetch(path).match?(/^require_relative "#{Regexp.escape(stem.to_s)}"$/)
     end
   end
 end
@@ -677,5 +695,13 @@ RSpec.describe "the deletion map", :seam do
     ensure
       tree&.remove
     end
+  end
+end
+
+# A dry run loads the file and runs no example, so a tree read at load is a
+# sweep no example's timed window, and so no runtime log entry, is charged for.
+RSpec.describe "loading spec/lain/review/deletability_spec.rb" do
+  it "reads no source file" do
+    expect(DryRunReads.count("spec/lain/review/deletability_spec.rb")).to eq(0)
   end
 end

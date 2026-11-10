@@ -771,15 +771,20 @@ module RefusalWidthDiscipline
     def to_s = "#{site.file}:#{site.constant.line} #{name} renders at #{width} (bar #{BAR}): #{rendered.inspect}"
   end
 
+  MEMO = Concurrent::Map.new
+
   module_function
 
   def lib_root = Pathname(__dir__).join("..", "lib").expand_path
 
-  # @return [Array<Measured>] every rail sentence, rendered. Called ONCE -- see
-  #   MEASURED_REFUSALS below.
+  # @return [Array<Measured>] every rail sentence, rendered. Called ONCE per
+  #   worker, from the first example that needs it: a `let` re-ran it four times,
+  #   and a constant ran it at load, outside every example's timed window.
   def measured
     Derivation.new(lib_root).sites.map { |site| Measured.new(site, render(site.value)) }
   end
+
+  def measured_refusals = MEMO.fetch_or_store(:measured) { measured.each(&:freeze).freeze }
 
   # A `::`-BOUNDARY match. See {Derivation#matches?} for why a raw string suffix
   # is not good enough; module_function so the rule itself is testable.
@@ -831,14 +836,8 @@ REFUSAL_SHAPES = {
   "ensure" => "def m(_x); A; ensure; OVER; end"
 }.freeze
 
-# ONE derivation for the whole file: 465 files parsed, at load rather than per
-# example. A `let` re-ran it four times over and this file runs in one worker of
-# every `pspec`; `before(:all)` would say the same thing and leak state between
-# examples, which for a value nothing mutates is a worse trade than a constant.
-MEASURED_REFUSALS = RefusalWidthDiscipline.measured.each(&:freeze).freeze
-
 RSpec.describe "refusal width discipline" do
-  let(:measured) { MEASURED_REFUSALS }
+  let(:measured) { RefusalWidthDiscipline.measured_refusals }
 
   # THE ROUTES AN OVER-LONG REFUSAL CAN TAKE TO THE RAIL, each one a way the
   # panel's smuggling probe got a 140-column sentence past the first cut of this
@@ -1024,5 +1023,13 @@ RSpec.describe "refusal width discipline" do
         "and not the instruction. If it genuinely cannot keep both, raise BAR deliberately and say why " \
         "in this file; the hard ceiling is v:echospace (&columns - 12), 98 in a 110-column pane."
     }
+  end
+end
+
+# A dry run loads the file and runs no example, so a tree read at load is a
+# sweep no example's timed window, and so no runtime log entry, is charged for.
+RSpec.describe "loading spec/refusal_width_discipline_spec.rb" do
+  it "reads no source file" do
+    expect(DryRunReads.count("spec/refusal_width_discipline_spec.rb")).to eq(0)
   end
 end
