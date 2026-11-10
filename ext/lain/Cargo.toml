@@ -10,7 +10,9 @@ publish = false
 crate-type = ["cdylib"]
 
 [dependencies]
-magnus = { version = "0.9.0" }
+# `bytes` is for `RString::to_bytes`, a byte copy that needs no `unsafe` here;
+# the `bytes` crate is already in the tree under lain-core.
+magnus = { version = "0.9.0", features = ["bytes"] }
 # rb_nogvl, for releasing the GVL with an unblocking function: magnus has no
 # such API and does not re-export rb-sys. rb-sys declares `links = "rb"`, so
 # Cargo allows only 1 copy in the graph and this always resolves to the one
@@ -137,6 +139,13 @@ unicode-segmentation = "1"
 # upstream's, and `[bans] multiple-versions` is set to "warn" precisely so a
 # duplicate stays visible instead of being fatal or hidden.
 petgraph = "=0.8.3"
+
+# Secret-shape scans over file bytes for `Sensitivity::Regions`. Ruby's shapes
+# use lookaround, atomic groups and backreferences, which `regex` refuses;
+# fancy-regex runs those on its own VM and hands every plain part to the
+# regex-automata the tree already has. It brings bit-set 0.8 beside
+# ast-grep-core's 0.11, a `multiple-versions` warning accepted on 2026-11-09.
+fancy-regex = "=0.20.0"
 
 [dev-dependencies]
 proptest = { version = "1", default-features = false, features = ["std"] }

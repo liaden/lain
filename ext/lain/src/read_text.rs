@@ -1,7 +1,8 @@
 #![cfg(not(test))]
-//! **The only way text enters this crate.** Every binding that takes a String
-//! from Ruby -- `Fuzzy`, `Prompt`, `AstGrep`, `TreeSitter` -- reads it through
-//! [`read_text`], so there is exactly one string-boundary policy to reason
+//! **The only way TEXT enters this crate**; a byte scan reads its String
+//! through `read_bytes` instead. Every binding that takes text from Ruby --
+//! `Fuzzy`, `Prompt`, `AstGrep`, `TreeSitter` -- reads it through
+//! [`read_text`], so there is exactly one text-boundary policy to reason
 //! about rather than one per module drifting apart.
 //!
 //! This module is `magnus`-typed throughout, so `cargo test` cannot reach it

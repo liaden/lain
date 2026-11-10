@@ -329,6 +329,7 @@ ThreadSafety/ClassInstanceVariable:
     - "lib/lain/prompt/slots.rb"
     - "lib/lain/provider/http/configuration.rb"
     - "lib/lain/provider/http/streaming.rb"
+    - "lib/lain/sensitivity/rust_shapes.rb"
     - "lib/lain/tool.rb"
     - "lib/lain/tool/contracts.rb"
     - "lib/lain/tool/input.rb"

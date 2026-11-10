@@ -84,6 +84,11 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   wrote to stderr and Bundler interleaved a plain-text warning into it. This crate emits no
   diagnostics of its own; an error crosses the boundary as a Ruby exception.
 - **Pin every dependency.** `cargo deny` bans wildcards.
+- **A String from Ruby enters through one of 2 boundaries, never a third.** Text goes through
+  `read_text.rs`, which refuses a String whose bytes are not its UTF-8 text, so an offset never
+  indexes a transcoded copy. Bytes for a scan go through `read_bytes.rs`, which copies a String's
+  bytes whatever its encoding, so its offsets are byte offsets into the caller's String;
+  `Lain::Ext::Regions#scan` is its one user.
 - **No crate here may own, drive, or interrogate a terminal — and none may read the
   environment to decide colour.** `NO_COLOR`, `FORCE_COLOR`, `TERM` and `isatty` are properties
   of the stream **Ruby** owns. Ruby resolves them and passes the answer across the boundary as

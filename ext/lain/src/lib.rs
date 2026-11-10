@@ -50,7 +50,9 @@ mod graph;
 mod local;
 mod nogvl;
 mod prompt;
+mod read_bytes;
 mod read_text;
+mod regions;
 #[cfg(test)]
 mod test_sources;
 mod treesitter;
@@ -2775,6 +2777,9 @@ mod ffi {
         // pattern: class, errors and methods all live in `fuzzy::ffi`, so the
         // matcher and its FFI surface stay in one file.
         crate::fuzzy::ffi::define(ruby, ext, lain_error)?;
+
+        // Every secret shape in 1 compiled set, so a file is scanned in 1 crossing.
+        crate::regions::ffi::define(ruby, ext, lain_error)?;
 
         // Stateless structural search: no wrapped handle, so `AstGrep` is a bare
         // class with two singleton methods and one named error. `BadPattern`
