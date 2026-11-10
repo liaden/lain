@@ -115,7 +115,9 @@ module Lain
              "scored per call: a park removed may be a call the judge denied",
              "not modelled, so a clean result is no licence to widen: the content predicate (closed files, secret " \
              "regions, oversize, FIFOs), classes:, project program exclusions; Landing reads the live disk for " \
-             "unrecorded paths"]
+             "unrecorded paths",
+             "git runs live: what a git status or ls-files prints, whether a rev peels to a tree and whether " \
+             "a hook would run are asked of git in each call's place"]
           end
 
           def parks(admitted)

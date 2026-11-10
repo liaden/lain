@@ -374,7 +374,7 @@ disqualifying flag, no aliasing segment, confined to the project root, and — a
 ```
 you> /ruby Lain::Approval::ComposedTerm::PROGRAMS.keys
 ```
-→ 23 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26), `lain` (only `epic status` and `epic show`), since round 3 `rg`, `git`, `find` and `sed`, and the inert `sleep` (one number of at most 3 digits), `true`, `false`, `echo` and `printf` (`printf -v` refused). The `rg`, `git`, `find` and `sed` entries are read-only by option table (below). `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
+→ 23 programs: `cat head tail wc nl grep sort cut tr rev` plus `ls`, `pwd` and `which` (round 26), `lain` (only `epic status` and `epic show`), since round 3 `rg`, `git`, `find` and `sed`, and the inert `sleep` (one number of at most 3 digits), `true`, `false`, `echo` and `printf` (`printf -v` refused). The `rg`, `git`, `find` and `sed` entries are read-only by option table (below); `git` reads `log`, `diff`, `rev-parse`, `show`, `status`, `ls-files` and `branch`, each held to the names and bytes it prints. `ls`, `pwd` and `which` still answer to their own listing predicates, and `VERSION_PROBES` is `rustc cargo rustup dx adb go gcc clang cmake`.
 
 `echo hello` reaches `allow` at the verdict (§1) and is auto-approved when it has no redirect. The same predicates approve `ls`, `pwd` and `which`,
 and `rustc`, `cargo`, `rustup`, `dx`, `adb`, `go`, `gcc`, `clang` and `cmake` with exactly `--version`,
@@ -470,7 +470,15 @@ predicates 13 to 15; `Shell::Reading`). Not yet driven; rebuild the probe above 
 | `sed -n '1,20p' README.md`, `sed -n '/foo/p' README.md` | approve: `sed -n` with print-only scripts by number, range or pattern |
 | `sed -i 's/a/b/' README.md`, `sed -n 'w out' README.md`, `sed 's/a/b/' README.md` | abstain: a write form, a script that is not a print, or no `-n` |
 | `git log --oneline`, `git diff --stat`, `git rev-parse HEAD` | approve in a repository whose config names no program, include or moved tree |
-| `git -c core.pager=x log`, `git status` | abstain: every global option is refused, and `status` is not on the table |
+| `git status --short`, `git ls-files`, `git branch -a` | approve when every name git would print classifies ordinary, as an `ls` entry must: the rule asks git itself (`status --porcelain` in the stage's own untracked mode, `ls-files --full-name`) with the stage's own pathspecs, and a directory a status folds is judged by its name |
+| `git status` beside an untracked, unignored `.env`, `git ls-files` over a tracked one, `git status --ignored`, `git branch -D main`, `git branch new` | abstain: a printed name the classifier withholds, an option outside the table, a branch operand |
+| `git status` or `git diff --stat` beside an executable `.git/hooks/post-index-change`, or one under the user's `core.hooksPath` | abstain: refreshing the index runs that hook. `git ls-files` refreshes nothing and still approves |
+| `git ls-files -u` over a conflicted `.env` | abstain: `-u` is `--unmerged` there, not an untracked mode, so the probe lists the index, which names the `.env` |
+| `git show HEAD:a:b.txt`, for a tracked `a:b.txt` | abstain, the accepted cost of the colon guard: a `rev:path` whose path holds a colon or a brace is not split. `git diff -- a:b.txt` still approves |
+| `git show HEAD:lib/a.rb`, `git diff -- lib/a.rb`, `git diff Cargo.lock`, `git log -p --oneline -- lib/a.rb` | approve when every `rev:path` and every pathspec names an ordinary regular file today; a show path reads from the tree's top, or from the cwd for `./` |
+| `git show HEAD:.env`, `git show HEAD`, `git diff`, `git diff -- lib`, `git diff -- '*.rb'`, `git log -p --oneline`, `git log -p --oneline --follow -- a.rb`, `git log --oneline --dd` | abstain: a secret path, no path, a directory or glob, a followed rename, a merge patch with no path |
+| `printf -- '--\n.env\n' \| git diff --stdin -- a.rb`, `git diff <blob id> -- a.rb`, `git show 'HEAD^{/fix:b}:.env'` | abstain: `--stdin` reads pathspecs from the pipe, a rev must peel to a tree, and a `rev:path` holding a second colon or a brace is not split |
+| `git -c core.pager=x log`, `git --git-dir=/tmp/x status` | abstain: every global option is refused |
 | `git log` in a repository whose `.git/config` sets `core.fsmonitor` or `core.pager`, or a submodule's config does | abstain: the repository predicate |
 
 Also check the shell reading: `cd lib && cat foo.rb | head -5` (plain quoting, leading `cd`, `|` and `&&` only) can now approve

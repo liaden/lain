@@ -30,3 +30,8 @@
 {"hazard":"sleep then rm","command":"sleep 1; rm -rf x"}
 {"hazard":"echo to a file","command":"echo hi > notes.txt"}
 {"hazard":"printf substitution","command":"printf '%s' $(id)"}
+{"hazard":"git config override runs a pager","command":"git -c core.pager=id log"}
+{"hazard":"git log writes a file","command":"git log --output=x"}
+{"hazard":"git diff runs an external program","command":"git diff --ext-diff"}
+{"hazard":"git branch deletes","command":"git branch -D main"}
+{"hazard":"git status of another repository","command":"git --git-dir=/tmp/x status"}

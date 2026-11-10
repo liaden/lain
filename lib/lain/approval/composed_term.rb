@@ -48,6 +48,8 @@ module Lain
     #     entries, each ordinary as an `ls` entry must be, since it prints names.
     # 15. THE REPOSITORY PREDICATE: no `git` stage runs in a repository whose
     #     own config names a program, includes another file or moves the tree.
+    # 16. THE GIT NAME PREDICATE: every file name and every file's bytes a
+    #     `git` stage prints classifies ordinary, as an `ls` entry must.
     #
     # Predicate 2 has one widening: where the verdict ABSTAINS rather than
     # denies, {Shell::Reading} reads the string itself, accepting only leading `cd`s
@@ -335,6 +337,9 @@ module Lain
 
         def admits?(arguments) = arguments.none? { |word| disqualifies?(word) }
 
+        # @return [Boolean] whether any word is one of these flags
+        def any_in?(arguments) = !admits?(arguments)
+
         private
 
         def disqualifies?(word)
@@ -414,7 +419,8 @@ module Lain
       # refused the dangerous flags. Words after `--` are operands.
       class Valueless
         # @param short [String] the letters, any of which may be bundled
-        # @param long [Array<String>] whole, with no abbreviation and no `=`
+        # @param long [Array<String>] whole words, with no abbreviation; a single-dash word here is
+        #   one whose letters are not a bundle, such as git's `-uall`
         def initialize(short:, long:)
           @short = short.chars.freeze
           @long = long.freeze
@@ -427,9 +433,9 @@ module Lain
 
         private
 
-        def known?(word)
-          word.start_with?(LONG) ? @long.include?(word) : word.delete_prefix(DASH).chars.all? { @short.include?(_1) }
-        end
+        def known?(word) = @long.include?(word) || (!word.start_with?(LONG) && bundled?(word))
+
+        def bundled?(word) = word.delete_prefix(DASH).chars.all? { @short.include?(_1) }
       end
       private_constant :Valueless
 
@@ -439,13 +445,6 @@ module Lain
         def admits?(arguments) = first.admits?(arguments) && second.admits?(arguments)
       end
       private_constant :Both
-
-      # A diff that does not ask for its stat prints the patch, so the stat is
-      # required, not merely allowed.
-      Requires = Data.define(:pattern) do
-        def admits?(arguments) = arguments.any? { _1.match?(pattern) }
-      end
-      private_constant :Requires
 
       # A `git log` admitted only when it names its format and every format it
       # names prints no commit body, no note and no signature, which runs gpg.
@@ -546,6 +545,204 @@ module Lain
       STAT = /\A--(stat|shortstat)(=|\z)/
       private_constant :HISTORY_SHORT, :HISTORY_LONG, :NAMES, :STAT
 
+      # What git says a stage would print, asked through {Repository.git}: the
+      # names a status or ls-files lists, whether each rev peels to a tree, and
+      # whether refreshing the index would run a hook. Injected, so a replay can
+      # say it runs live.
+      module Listing
+        FORMS = { "status" => %w[status --porcelain=v1 -z], "ls-files" => %w[ls-files -z --full-name] }.freeze
+        MOVED = /[RC]/
+        SEPARATOR = "\0"
+        HOOK = "hooks/post-index-change"
+
+        # @param subcommand [String] `status` or `ls-files`
+        # @param directory [String] where the stage runs
+        # @param operands [Array<String>] its pathspecs
+        # @param modes [Array<String>] its untracked-files options, so a status folds what the stage folds
+        # @return [Array<String>, nil] named from the tree's top; nil where git does not answer cleanly
+        def self.names(subcommand, directory, operands, modes = [])
+          output = Repository.git(*FORMS.fetch(subcommand), *modes, "--", *operands, directory:)
+          fields = output&.split(SEPARATOR)
+          subcommand == "status" && fields ? paths(fields) : fields
+        end
+
+        # @param directory [String]
+        # @param revisions [Array<String>] rev-shaped words
+        # @return [Boolean] whether every one peels to a tree, as a commit, a tree or a tag to either does
+        def self.trees?(directory, revisions)
+          !Repository.git("rev-parse", "--end-of-options", *revisions.map { "#{_1}^{tree}" }, "--", directory:).nil?
+        end
+
+        # Asked without the setting that turns hooks off, which would hide the
+        # user's own `core.hooksPath`; an unanswered question counts as a hook.
+        #
+        # @param directory [String]
+        # @return [Boolean]
+        def self.hooked?(directory)
+          hook = Repository.git("rev-parse", "--git-path", HOOK, directory:, settings: Repository::QUIET)
+          hook.nil? || File.executable?(File.expand_path(hook.chomp, directory))
+        end
+
+        # A rename or copy entry is followed by the name it had.
+        def self.paths(fields)
+          paths = []
+          until fields.empty?
+            entry = fields.shift
+            paths << entry[3..]
+            paths << fields.shift if entry[0, 2].match?(MOVED)
+          end
+          paths
+        end
+        private_class_method :paths
+      end
+
+      # The git name predicate: a git stage prints only names and bytes the
+      # classifier lets an `ls` entry or a `cat` print. A status or ls-files is
+      # asked of git itself, over the stage's own pathspecs, and a directory a
+      # status folds is judged by its name, as `ls` prints one; a show reads
+      # each `rev:path` from the tree's top, or from the cwd for `./` and `../`;
+      # a log or diff that prints a patch names every path it prints, each a
+      # regular file today, against revs that each peel to a tree. A form whose
+      # paths cannot be named -- no path, a directory, a glob, a whole commit,
+      # a blob -- is the judge's. A status or diff refreshes the index, which
+      # runs a `post-index-change` hook, so neither runs beside one.
+      class Printed
+        REV_WORD = %r{[\w@][\w./~^@{}+-]*}
+        REV = /\A#{REV_WORD}\z/
+        # git splits at the first colon outside braces, so a path holding a
+        # colon or a brace is one this split could have misplaced.
+        REV_PATH = /\A#{REV_WORD}:(?<path>[^\/:}][^:}]*)\z/m
+        RANGE = /\.\.\.?/
+        FROM_CWD = %r{\A\.\.?/}
+        PATHSPEC_MAGIC = /[*?\[\\]|\A:/
+        OPTION = /\A--?[^-]/
+        UNTRACKED = /\A(?:-u|--untracked-files)/
+        FOLDED = "/"
+        MARKER = ".git"
+        REFRESHING = %w[status diff].freeze
+        # `--dd` is a first-parent patch of every merge, though no flag says patch.
+        PATCH = Flags.new(short: %w[p u U], long: %w[--patch --unified --dd])
+        # A followed path prints the patches of the names it had before.
+        FOLLOW = Flags.new(long: %w[--follow])
+
+        # An option could move where the path is read from, so none is taken.
+        class Shown
+          def admits?(arguments) = arguments.any? && arguments.all? { _1.match?(REV_PATH) }
+        end
+
+        # Options only: a branch listing names no branch.
+        class Unnamed
+          def admits?(arguments) = arguments.all? { _1.match?(OPTION) }
+        end
+
+        PATCHED_SHORT = (HISTORY_SHORT - %w[p u U]).freeze
+        # `--stdin` reads more revs, `--` and pathspecs from a pipe, none of them a word here.
+        PATCHED_LONG = (HISTORY_LONG - %w[--patch --unified] + %w[--diff-merges --stdin]).freeze
+        STATUS = %w[--short --branch --long --porcelain --porcelain=v1 --porcelain=v2 --null --show-stash
+                    --ahead-behind --no-ahead-behind --renames --no-renames --untracked-files
+                    --untracked-files=all --untracked-files=normal --untracked-files=no -u -uall -unormal -uno].freeze
+        LS_FILES = %w[--cached --deleted --modified --stage --unmerged --full-name --deduplicate
+                      --error-unmatch].freeze
+        BRANCH = %w[--all --remotes --verbose --list --show-current --no-color --no-column].freeze
+        GIT = Reads.new(
+          "log" => Both.new(Flags.new(short: PATCHED_SHORT, long: PATCHED_LONG + NAMES), Bodiless.new),
+          "diff" => Flags.new(short: PATCHED_SHORT, long: PATCHED_LONG),
+          "rev-parse" => Flags.new,
+          "show" => Shown.new,
+          "status" => Valueless.new(short: "sbz", long: STATUS),
+          "ls-files" => Valueless.new(short: "cdmstuz", long: LS_FILES),
+          "branch" => Both.new(Valueless.new(short: "alrv", long: BRANCH), Unnamed.new)
+        )
+
+        # @param arguments [Array<String>] the stage's argv after `git`
+        # @param directory [String] where the stage runs, resolved
+        # @param ordinary [#call] `absolute path -> Boolean`, the `ls` entry predicate
+        # @param git [#names, #trees?, #hooked?] what git says, {Listing} in production
+        # @param facts [#file?, #exist?, #symlink?] the disk the rule's factory reads
+        def initialize(arguments, directory, ordinary, git:, facts:)
+          @subcommand, *@arguments = arguments
+          @directory = directory
+          @ordinary = ordinary
+          @git = git
+          @facts = facts
+        end
+
+        def held?
+          unhooked? && printed?
+        end
+
+        private
+
+        def printed?
+          case @subcommand
+          when "status", "ls-files" then listed?
+          when "show" then shown?
+          when "log" then !patch? || named?
+          when "diff" then (stat? && !patch?) || named?
+          else true
+          end
+        end
+
+        def unhooked? = !REFRESHING.include?(@subcommand) || !@git.hooked?(@directory)
+
+        def patch? = PATCH.any_in?(@arguments)
+
+        def stat? = @arguments.any? { _1.match?(STAT) }
+
+        # For ls-files `-u` is --unmerged, not an untracked mode.
+        def modes = @subcommand == "status" ? options.grep(UNTRACKED) : []
+
+        def listed?
+          top = top_level
+          names = @git.names(@subcommand, @directory, operands, modes) if top
+          names && names.size <= WALK_BOUND && names.all? { @ordinary.call(File.join(top, _1.chomp(FOLDED))) }
+        end
+
+        def shown?
+          top = top_level
+          top && @arguments.all? do |word|
+            path = word[REV_PATH, :path]
+            named_file?(within(path.match?(FROM_CWD) ? @directory : top, path))
+          end
+        end
+
+        # Without `--`, git reads a word as a rev only while no file has that
+        # name, so a word that is not rev-shaped, or names something on disk, is
+        # a path here as well.
+        def named?
+          revs, paths = revisions.partition { revision?(_1) }
+          paths += pathspecs
+          FOLLOW.admits?(@arguments) && paths.any? &&
+            paths.all? { !_1.match?(PATHSPEC_MAGIC) && named_file?(within(@directory, _1)) } && trees?(revs)
+        end
+
+        def trees?(revs)
+          ends = revs.flat_map { _1.split(RANGE) }.reject(&:empty?)
+          ends.empty? || @git.trees?(@directory, ends)
+        end
+
+        def revision?(word)
+          path = within(@directory, word)
+          word.match?(REV) && !@facts.exist?(path) && !@facts.symlink?(path)
+        end
+
+        def options = @arguments.take_while { _1 != LONG }
+
+        def revisions = options.grep_v(OPTION)
+
+        def pathspecs = @arguments.drop(options.size + 1)
+
+        # For a status or ls-files every one is a pathspec.
+        def operands = revisions + pathspecs
+
+        def named_file?(path) = @facts.file?(path) && @ordinary.call(path)
+
+        def within(base, word) = Pathname.new(base).join(word).cleanpath.to_s
+
+        def top_level = Pathname.new(@directory).ascend.find { @facts.exist?(_1.join(MARKER).to_s) }&.to_s
+      end
+      private_constant :Printed
+
       # THE ALLOWLIST, derived from what each program does with the argv it is
       # GIVEN: reads only, writes nothing, fetches nothing, executes nothing.
       #
@@ -633,19 +830,16 @@ module Lain
                                        --with-filename --no-filename --byte-offset --quiet --multiline --pcre2
                                        --null --column --no-heading --heading --vimgrep --trim --text --no-messages
                                        --json --pretty]),
-        # Read subcommands only, and only the forms that print commit ids,
-        # subjects and counts, never a file's bytes or a commit body -- a
-        # history read that does is the judge's, with the history fact it is
-        # told -- and never a list of file names, which no name check holds
-        # here as `ls` and `find` are held. The diff's own stat is the one
-        # exception, and the form the diff must ask for. Every global option is
-        # refused, `-c` and `-C` among them; the repository predicate reads the
-        # config git would.
-        "git" => Reads.new(
-          "log" => Both.new(Flags.new(short: HISTORY_SHORT, long: HISTORY_LONG + NAMES), Bodiless.new),
-          "diff" => Both.new(Flags.new(short: HISTORY_SHORT, long: HISTORY_LONG), Requires.new(STAT)),
-          "rev-parse" => Flags.new
-        ),
+        # Read subcommands only. Commit ids, subjects and counts print freely;
+        # a file's name or bytes prints only where the git name predicate holds
+        # it to the classifier, as `ls` and `find` are held, and a commit body
+        # never does -- a history read that prints one is the judge's, with the
+        # history fact it is told. The diff's own stat is the one list of names
+        # left unchecked. Every global option is refused, `-c` and `-C` among
+        # them, and so is every option that runs or writes; the repository
+        # predicate reads the config git would. Output masking stays on behind
+        # all of it: every bash result is masked whoever approved it.
+        "git" => Printed::GIT,
         # Lists names, so the walk predicate holds its tree to what an `ls`
         # may print. Every action that runs, deletes or writes is refused, and
         # so is following a link.
@@ -729,10 +923,14 @@ module Lain
       #   also answers `#executables(term, cwd)`, one resolved stage per stage.
       # @param classes [Boolean] whether predicate 12 rules; off, the bench arm's
       #   baseline, approves by name as before it existed
-      def initialize(sensitivity:, classes: false)
+      # @param git [#names, #trees?, #hooked?] what git says a stage would print, for predicate 16
+      # @param facts [#file?, #exist?, #symlink?] the disk predicate 16 reads
+      def initialize(sensitivity:, classes: false, git: Listing, facts: FileFacts::LIVE)
         super()
         @sensitivity = sensitivity
         @classes = classes
+        @git = git
+        @facts = facts
         freeze
       end
 
@@ -798,7 +996,7 @@ module Lain
         ordinary_words?(term, cwd) && unaliased?(term) && confined?(term, cwd) &&
           plain_content?(term, cwd) && resolved_words?(term, cwd) &&
           unpinned?(term, cwd) && unrevealing?(term, cwd) && searched_files?(term, cwd) &&
-          walkable?(term, cwd) && quiet_repository?(term, cwd)
+          walkable?(term, cwd) && quiet_repository?(term, cwd) && git_named?(term, cwd)
       end
 
       def explainable?(call, term, cwd) = flags_ok_where_listed?(term) && vouched?(call, term, cwd)
@@ -1045,6 +1243,22 @@ module Lain
         Repository.quiet?(@sensitivity.confinement(cwd).landing_of(CURRENT))
       rescue StandardError
         false
+      end
+
+      # The git name predicate, after the repository predicate, since a status
+      # or ls-files asks git what it would print.
+      def git_named?(term, cwd)
+        classifier = @sensitivity.call(cwd)
+        confinement = @sensitivity.confinement(cwd)
+        ordinary = ->(path) { confinement.contains?(path) && ordinary_entry?(classifier, confinement, path) }
+        term.stages.select { |stage| stage.program == GIT }
+            .all? { |stage| printed(stage, confinement, ordinary).held? }
+      rescue StandardError
+        false
+      end
+
+      def printed(stage, confinement, ordinary)
+        Printed.new(stage.argv.drop(1), confinement.landing_of(CURRENT), ordinary, git: @git, facts: @facts)
       end
 
       def programs(term) = term.programs

@@ -36,6 +36,35 @@ module Lain
         CONTINUED = /\\\s*\z/
         BOUND = 64 * 1024
 
+        # Every setting through which reading the index could run a program or
+        # write it back is forced off, the optional locks with them, and this
+        # process's own git variables are dropped but the two that name which
+        # global config applies. It runs the `git` on lain's own PATH, as the
+        # judge's driver check does: lain already trusts that binary to say
+        # what a repository holds.
+        QUIET = %w[core.fsmonitor=false core.untrackedCache=false core.pager=cat].flat_map { ["-c", _1] }.freeze
+        SETTINGS = [*QUIET, "-c", "core.hooksPath=/dev/null"].freeze
+        KEPT_ENV = %w[GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM].freeze
+        GIT_ENV = /\AGIT_/
+        TIMEOUT = 10
+
+        # @param arguments [Array<String>] git's argv after the settings
+        # @param directory [String] where git runs
+        # @param settings [Array<String>] the `-c` pairs to force
+        # @return [String, nil] stdout of a clean exit; nil for anything else
+        def self.git(*arguments, directory:, settings: SETTINGS)
+          argv = ["git", "--no-pager", *settings, *arguments]
+          out = Shell::Out.new(*argv, environment:, cwd: directory.to_s, timeout: TIMEOUT).run_command
+          out.stdout if Shell::Out.ok?(out)
+        rescue Shell::Out::Timeout, SystemCallError
+          nil
+        end
+
+        def self.environment
+          dropped = ENV.keys.grep(GIT_ENV).reject { KEPT_ENV.include?(_1) }
+          dropped.to_h { [_1, nil] }.merge("GIT_OPTIONAL_LOCKS" => "0")
+        end
+
         # @param directory [String] absolute, where the git stage runs
         # @return [Boolean]
         def self.quiet?(directory)
@@ -121,49 +150,32 @@ module Lain
           entry = line.match(ENTRY)
           !entry.nil? && !keys.include?(entry[1].downcase)
         end
+        private_class_method :environment
         private_class_method :dirs_at, :pointed, :plain?, :configs, :submodules, :absorbed?, :absorbed_link?,
                              :under?, :plain_file?, :plain_line?
 
-        # The paths git's own index lists as gitlinks, asked of git: an index
-        # git accepts can show a byte reader a different entry list, as review
-        # MEASURED with a crafted one, and git also reads a split index's shared
-        # half. Every setting through which reading the index could run a
-        # program or write it back is forced off, the optional locks with them,
-        # and this process's own git variables are dropped but the two that
-        # name which global config applies. Anything but a clean exit with
-        # output that parses answers nil, which refuses. It runs the `git` on
-        # lain's own PATH, as the judge's driver check does: lain already trusts
-        # that binary to say what a repository holds.
+        # The paths git's own index lists as gitlinks, asked of git through
+        # {Repository.git}: an index git accepts can show a byte reader a
+        # different entry list, as review MEASURED with a crafted one, and git
+        # also reads a split index's shared half. Anything but a clean exit with
+        # output that parses answers nil, which refuses.
         module Gitlinks
-          SETTINGS = %w[core.fsmonitor=false core.untrackedCache=false core.hooksPath=/dev/null
-                        core.pager=cat].flat_map { ["-c", _1] }.freeze
-          KEPT_ENV = %w[GIT_CONFIG_GLOBAL GIT_CONFIG_NOSYSTEM].freeze
-          GIT_ENV = /\AGIT_/
           ENTRY = /\A(\d{6}) \h+ [0-3]\t(.+)\z/m
           GITLINK = "160000"
           SEPARATOR = "\0"
-          TIMEOUT = 10
 
           # @param worktree [Pathname] where git finds the repository whose index is read
           # @return [Array<String>, nil]
           def self.of(worktree)
-            out = Shell::Out.new("git", "--no-pager", *SETTINGS, "ls-files", "-s", "-z",
-                                 environment:, cwd: worktree.to_s, timeout: TIMEOUT).run_command
-            parsed(out.stdout.b) if Shell::Out.ok?(out)
-          rescue Shell::Out::Timeout, SystemCallError
-            nil
-          end
-
-          def self.environment
-            dropped = ENV.keys.grep(GIT_ENV).reject { KEPT_ENV.include?(_1) }
-            dropped.to_h { [_1, nil] }.merge("GIT_OPTIONAL_LOCKS" => "0")
+            output = Repository.git("ls-files", "-s", "-z", directory: worktree)
+            parsed(output.b) if output
           end
 
           def self.parsed(output)
             entries = output.split(SEPARATOR).map { _1.match(ENTRY) }
             entries.select { _1[1] == GITLINK }.map { _1[2] } if entries.all?
           end
-          private_class_method :environment, :parsed
+          private_class_method :parsed
         end
         private_constant :Gitlinks
       end

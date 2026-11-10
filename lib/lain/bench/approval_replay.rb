@@ -110,6 +110,9 @@ module Lain
       # Whether {Approval::ComposedTerm}, holding a table of programs, would approve a call with no
       # human and no judge. Nothing is run, and paths are placed through {FileFacts::Recorded}.
       #
+      # Its git entries ask the live git what a status or ls-files would print, whether a rev peels to a
+      # tree and whether a hook would run, in the place each call names; no record holds those answers.
+      #
       # It scores a table SAFER than it would run, in 4 places, so a clean result is no licence to widen:
       # the content predicate is replaced by root containment (a file closed to other users, a secret
       # region, an oversize file and a FIFO are never refused); `classes:` is always off where a chat
@@ -198,7 +201,12 @@ module Lain
             home: place.home, cwd: place.cwd, root: place.root, confinement: Approval::Root.new(place.root), facts:
           )
           sensitivity = Unopened.new(factory)
-          @programs ? Candidate.new(programs: @programs, sensitivity:) : Approval::ComposedTerm.new(sensitivity:)
+          git = Approval::ComposedTerm::Listing
+          if @programs
+            Candidate.new(programs: @programs, sensitivity:, git:, facts:)
+          else
+            Approval::ComposedTerm.new(sensitivity:, git:, facts:)
+          end
         end
       end
 

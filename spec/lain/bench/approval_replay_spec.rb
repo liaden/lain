@@ -574,12 +574,17 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       expect(report).to match(/^not rebuilt: 4 \(judged as plain commands, also counted above\)$/)
     end
 
+    # The git entries ask git what a status or ls-files would print, which no record holds.
+    it "says that git runs live for the git entries" do
+      expect(terms(today).report).to match(/^git runs live: .*status.*ls-files.*$/)
+    end
+
     it "lists the hazards a candidate that admits the reader programs without their flags lets through" do
       report = terms("#{today}.merge(%w[sed find git rg sort grep].to_h { [_1, #{flags}] })").report
 
       expect(report.lines.grep(/^  [^ ].*: /).map { _1[/^  ([^:]+):/, 1] })
         .to include("sort --compress-program", "grep --exclude-from")
-      expect(report).to match(/^hazards admitted: \d+ of 32$/)
+      expect(report).to match(/^hazards admitted: \d+ of 37$/)
     end
 
     it "keeps a hazard out of the list when the candidate's flags refuse it" do

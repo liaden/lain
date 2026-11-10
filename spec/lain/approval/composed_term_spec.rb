@@ -1759,6 +1759,21 @@ RSpec.describe Lain::Approval::ComposedTerm do
     root
   end
 
+  def committed(root, message: "init", **files)
+    git_repo(root)
+    files.each { |name, body| on_disk(root, name, body) }
+    SeedRepo.git(root, "add", "-A")
+    SeedRepo.git(root, "-c", "user.name=dev", "-c", "user.email=dev@example.com", "commit", "-qm", message)
+  end
+
+  def with_env(values)
+    saved = values.keys.to_h { [_1, ENV.fetch(_1, nil)] }
+    ENV.update(values)
+    yield
+  ensure
+    saved.each { |name, value| ENV[name] = value }
+  end
+
   describe "git's read subcommands" do
     it "approves a log with no body and a diff that prints only its stat" do
       in_tree do |root, home|
@@ -1781,12 +1796,12 @@ RSpec.describe Lain::Approval::ComposedTerm do
     end
 
     # A file name is held to the classifier wherever else this rule lets one
-    # print -- `ls` entry by entry, `find` over its whole tree -- and git
-    # prints the names of every changed, untracked or tracked file unchecked.
-    it "refuses the forms that list file names, which no name check holds" do
+    # print -- `ls` entry by entry, `find` over its whole tree -- and a log's
+    # names are those of every commit it walks, which nothing here reads.
+    it "refuses the log and diff forms that list file names, which no name check holds" do
       in_tree do |root, home|
         git_repo(root)
-        commands = ["git status", "git status --short", "git ls-files", "git log --oneline --stat",
+        commands = ["git log --oneline --stat",
                     "git log --oneline --name-only", "git log --oneline --name-status", "git log --oneline --numstat",
                     "git log --oneline --raw", "git log --oneline --summary", "git log --oneline --dirstat",
                     "git diff --name-only", "git diff --name-status", "git diff --numstat"]
@@ -1807,7 +1822,8 @@ RSpec.describe Lain::Approval::ComposedTerm do
                     "git log --oneline --show-signature", "git log --oneline --notes", "git log --format='%h %G?'",
                     "git -C . log --oneline", "git --no-pager log --oneline", "git -c core.pager=sh log --oneline",
                     "git branch -D main", "git commit -m x", "git log --oneline -- .env", "git blame README.md",
-                    "git log --oneline -L1,2:README.md", "git diff --stat -O order.txt"]
+                    "git log --oneline -L1,2:README.md", "git diff --stat -O order.txt", "git log --oneline --dd",
+                    "git log --oneline --diff-merges=on"]
 
         rule = rule_for(home, root)
         expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
@@ -1820,6 +1836,343 @@ RSpec.describe Lain::Approval::ComposedTerm do
         git_repo(root, config: "[core]\n\tfsmonitor = id\n")
 
         expect(rule_for(home, root).decide(call_of("git diff --stat", cwd: root))).to be_nil
+      end
+    end
+
+    it "approves git status by rule" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        on_disk(root, "notes.md", "draft\n")
+
+        expect(rule_for(home, root).decide(call_of("git status --short", cwd: root))).to be_allow
+      end
+    end
+
+    it "approves status, ls-files and a branch listing whose printed names are ordinary" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", ".gitignore" => ".env\n")
+        on_disk(root, ".env", "API_TOKEN=x\n")
+        on_disk(root, "lib/a.rb", "2\n")
+        commands = ["git status", "git status -s -b", "git status --porcelain -z -uall", "git status -- lib",
+                    "git ls-files", "git ls-files -s lib", "git branch", "git branch -a -v",
+                    "git branch --show-current"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "refuses a status or ls-files that would print a name the classifier withholds" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", "config/.env" => "API_TOKEN=x\n")
+        on_disk(root, ".env.local", "API_TOKEN=y\n")
+        commands = ["git status", "git status --short", "git ls-files", "git ls-files config"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+        expect(rule.decide(call_of("git ls-files lib", cwd: root))).to be_allow
+      end
+    end
+
+    it "refuses the status, ls-files and branch forms that print more, write, or take a value" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        commands = ["git status --ignored", "git status -v", "git status --column=always", "git ls-files -o",
+                    "git ls-files --others", "git ls-files -i", "git ls-files --recurse-submodules",
+                    "git ls-files --format=%(path)", "git branch new", "git branch -D main", "git branch -d main",
+                    "git branch -m main other", "git branch -c main other", "git branch -f main",
+                    "git branch --list 'ma*'", "git branch --contains HEAD", "git -C . status",
+                    "git -c core.fsmonitor=id status", "git --git-dir=/tmp/x status", "git --no-pager status"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    it "refuses a config override and a repository config that runs a program" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        expect(rule_for(home, root).decide(call_of("git -c core.fsmonitor=id status", cwd: root))).to be_nil
+
+        File.write(File.join(root, ".git", "config"), "[core]\n\tfsmonitor = id\n", mode: "a")
+        expect(rule_for(home, root).decide(call_of("git status", cwd: root))).to be_nil
+      end
+    end
+
+    it "approves a show of an ordinary file, and has no opinion on a secret one" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", ".env" => "API_TOKEN=x\n")
+        factory = factory_for(home, root)
+        expect(factory.call(root).classify(".env")).to be_gated
+
+        rule = described_class.new(sensitivity: factory)
+        expect(rule.decide(call_of("git show HEAD:lib/a.rb", cwd: root))).to be_allow
+        expect(rule.decide(call_of("git show HEAD:.env", cwd: root))).to be_nil
+      end
+    end
+
+    it "reads a show's path from the tree's top, or from the cwd when it starts with ./" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", "lib/.env" => "API_TOKEN=x\n")
+        lib = File.join(root, "lib")
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("git show HEAD:lib/a.rb", cwd: lib))).to be_allow
+        expect(rule.decide(call_of("git show HEAD:./a.rb", cwd: lib))).to be_allow
+        expect(rule.decide(call_of("git show HEAD:./.env", cwd: lib))).to be_nil
+        expect(rule.decide(call_of("git show HEAD:lib/.env", cwd: lib))).to be_nil
+      end
+    end
+
+    it "leaves a show whose paths cannot be named to the judge" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        commands = ["git show", "git show HEAD", "git show HEAD:lib", "git show HEAD:", "git show :lib/a.rb",
+                    "git show HEAD:../x", "git show HEAD:/etc/passwd", "git show HEAD:lib/a.rb HEAD",
+                    "git show --textconv HEAD:lib/a.rb", "git show HEAD:lib/*.rb", "git show HEAD:lib/a.rb -- lib"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    it "approves a log or diff that prints a patch when every path it names is an ordinary file" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", "Cargo.lock" => "x\n")
+        on_disk(root, "lib/a.rb", "2\n")
+        commands = ["git log -p --oneline -- lib/a.rb", "git log --format='%h %s' -u -3 -- lib/a.rb",
+                    "git diff -- lib/a.rb", "git diff Cargo.lock", "git diff HEAD lib/a.rb",
+                    "git diff -U1 HEAD -- lib/a.rb",
+                    "git diff --cached -- lib/a.rb Cargo.lock"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "leaves a patch whose paths cannot be named, or that reaches past them, to the judge" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", ".env" => "API_TOKEN=x\n")
+        commands = ["git log -p --oneline", "git log -p -- lib/a.rb", "git diff", "git diff HEAD", "git diff -- lib",
+                    "git diff -- '*.rb'", "git diff -- .env", "git diff HEAD:lib/a.rb HEAD:.env",
+                    "git diff -- gone.rb", "git log -p --oneline --full-diff -- lib/a.rb",
+                    "git log -p --oneline --follow -- lib/a.rb", "git diff --ext-diff -- lib/a.rb",
+                    "git diff --textconv -- lib/a.rb", "git diff --output=x -- lib/a.rb",
+                    "git diff --no-index -- lib/a.rb .env", "git log -p --oneline -S x -- lib/a.rb",
+                    "git log --oneline --show-signature -p -- lib/a.rb", "git diff -- :/lib/a.rb"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # --stdin reads more revs, `--` and pathspecs from the pipe, none of them a word here.
+    it "refuses a log or diff that reads its pathspecs from stdin" do
+      in_tree do |root, home|
+        committed(root, "notes.txt" => "hello\n", ".env" => "API_TOKEN=x\n")
+        on_disk(root, "notes.txt", "hello2\n")
+        commands = ["printf -- '--\\n.env\\n' | git log -p --oneline --stdin -- notes.txt",
+                    "printf -- '--\\n.env\\n' | git diff --stdin -- notes.txt"]
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("printf -- '--\\n.env\\n' | git diff -- notes.txt", cwd: root))).to be_allow
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # For ls-files `-u` is --unmerged, which prints stage lines rather than names.
+    it "refuses an ls-files -u over a conflicted file the classifier withholds" do
+      in_tree do |root, home|
+        committed(root, "notes.txt" => "x\n", ".env" => "A=1\n")
+        identity = %w[-c user.name=d -c user.email=d@e]
+        commit = ->(message) { SeedRepo.git(root, *identity, "commit", "-qam", message) }
+        SeedRepo.git(root, "checkout", "-qb", "other")
+        on_disk(root, ".env", "A=2\n")
+        commit.call("other")
+        SeedRepo.git(root, "checkout", "-q", "-")
+        on_disk(root, ".env", "A=3\n")
+        commit.call("main")
+        system(SeedRepo::SCRUB, "git", "-c", "user.name=d", "-c", "user.email=d@e", "merge", "-q", "other",
+               chdir: root, out: File::NULL, err: File::NULL)
+        commands = ["git ls-files -u", "git ls-files -us"]
+
+        rule = rule_for(home, root)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    it "counts a hook lookup git does not answer as a hook" do
+      in_tree do |root, _home|
+        expect(described_class::Listing.hooked?(root)).to be(true)
+      end
+    end
+
+    # git refuses a blob end in a diff range itself; the rule does not lean on that refusal.
+    it "refuses a range with an end that does not peel to a tree" do
+      in_tree do |root, home|
+        committed(root, "notes.txt" => "hello\n", ".env" => "API_TOKEN=x\n")
+        blob = SeedRepo.git(root, "rev-parse", "HEAD:.env").stdout.strip
+        SeedRepo.git(root, "tag", "envtag", blob)
+
+        expect(rule_for(home, root).decide(call_of("git diff envtag..HEAD -- notes.txt", cwd: root))).to be_nil
+      end
+    end
+
+    # rev-parse echoes an option-shaped word and exits 0 unless options end first.
+    it "refuses a range end named like an option" do
+      in_tree do |root, home|
+        committed(root, "notes.txt" => "hello\n", ".env" => "API_TOKEN=x\n")
+        blob = SeedRepo.git(root, "rev-parse", "HEAD:.env").stdout.strip
+        SeedRepo.git(root, "update-ref", "refs/tags/-x", blob)
+
+        expect(rule_for(home, root).decide(call_of("git diff HEAD..-x -- notes.txt", cwd: root))).to be_nil
+      end
+    end
+
+    # A blob id is rev-shaped and names nothing on disk, and a diff against it
+    # prints the blob; its id is itself approved, by `git rev-parse HEAD:.env`.
+    it "refuses a rev that does not peel to a tree" do
+      in_tree do |root, home|
+        committed(root, "notes.txt" => "hello\n", ".env" => "API_TOKEN=x\n")
+        blob = SeedRepo.git(root, "rev-parse", "HEAD:.env").stdout.strip
+        SeedRepo.git(root, "tag", "envblob", blob)
+        commands = ["git diff #{blob} -- notes.txt", "git diff #{blob} notes.txt", "git diff envblob -- notes.txt",
+                    "git log -p --oneline #{blob} -- notes.txt", "git diff HEAD..#{blob} -- notes.txt"]
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("git diff HEAD -- notes.txt", cwd: root))).to be_allow
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+      end
+    end
+
+    # git splits `rev:path` at the first colon outside braces, so a rule that
+    # split at the first colon would judge a decoy file in place of the path git reads.
+    it "refuses a show whose rev:path holds more than 1 colon" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n", ".env" => "API_TOKEN=x\n", message: "fix:b release")
+        on_disk(root, "b}:.env", "decoy\n")
+
+        expect(rule_for(home, root).decide(call_of("git show 'HEAD^{/fix:b}:.env'", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a pathspec that git would read as a glob, though a file has that name" do
+      in_tree do |root, home|
+        committed(root, "*" => "1\n", ".env" => "API_TOKEN=x\n")
+        on_disk(root, "*", "2\n")
+        on_disk(root, ".env", "API_TOKEN=y\n")
+
+        expect(rule_for(home, root).decide(call_of("git diff -- '*'", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a status that would print more names than a walk may judge" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        Lain::Approval::ComposedTerm::WALK_BOUND.succ.times { on_disk(root, "many/#{_1}.txt", "x\n") }
+
+        rule = rule_for(home, root)
+        expect(rule.decide(call_of("git status", cwd: root))).to be_allow
+        expect(rule.decide(call_of("git status -uall", cwd: root))).to be_nil
+      end
+    end
+
+    it "judges the name a renamed file had" do
+      in_tree do |root, home|
+        committed(root, ".env" => "API_TOKEN=x\n")
+        SeedRepo.git(root, "mv", ".env", "settings.txt")
+
+        expect(rule_for(home, root).decide(call_of("git status", cwd: root))).to be_nil
+      end
+    end
+
+    it "refuses a status that prints a name outside the project root" do
+      in_tree do |root, home|
+        committed(root, "project/a.rb" => "1\n", "other/notes.txt" => "1\n")
+        project = File.join(root, "project")
+        rule = rule_for(home, project)
+        expect(rule.decide(call_of("git status", cwd: project))).to be_allow
+
+        on_disk(root, "other/notes.txt", "2\n")
+        expect(rule.decide(call_of("git status", cwd: project))).to be_nil
+      end
+    end
+
+    it "lists through git with this process's own git variables dropped" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+
+        decision = with_env("GIT_DIR" => File.join(root, "nowhere")) do
+          rule_for(home, root).decide(call_of("git status", cwd: root))
+        end
+        expect(decision).to be_allow
+      end
+    end
+
+    # Refreshing the index runs post-index-change, which no config key names;
+    # ls-files reads the index without refreshing it.
+    it "refuses a status or diff where a post-index-change hook would run" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        commands = ["git status", "git diff --stat", "git diff -- lib/a.rb"]
+        rule = rule_for(home, root)
+        hook = on_disk(root, ".git/hooks/post-index-change", "#!/bin/sh\nid\n")
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+
+        File.chmod(0o755, hook)
+        expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+        expect(["git log --oneline", "git ls-files"].map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+      end
+    end
+
+    it "finds the hook where the user's own core.hooksPath puts it" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        hooks = File.join(home, "hooks")
+        on_disk(hooks, "post-index-change", "#!/bin/sh\nid\n", mode: 0o755)
+        config = on_disk(home, "gitconfig", "[core]\n\thooksPath = #{hooks}\n")
+
+        decision = with_env("GIT_CONFIG_GLOBAL" => config) do
+          rule_for(home, root).decide(call_of("git status", cwd: root))
+        end
+        expect(decision).to be_nil
+      end
+    end
+
+    # A default status folds an untracked directory into its own name, which is
+    # all it prints; the user's config can unfold it, so the mode is git's to pick.
+    it "judges a folded untracked directory by its name, in the mode the stage asks for" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        on_disk(root, "drafts/.env", "API_TOKEN=x\n")
+        rule = rule_for(home, root)
+        expect(["git status", "git status --short"].map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+        expect(rule.decide(call_of("git status -uall", cwd: root))).to be_nil
+
+        config = on_disk(home, "gitconfig", "[status]\n\tshowUntrackedFiles = all\n")
+        decision = with_env("GIT_CONFIG_GLOBAL" => config) { rule.decide(call_of("git status", cwd: root)) }
+        expect(decision).to be_nil
+      end
+    end
+
+    it "asks git, and the disk, through what it is handed" do
+      in_tree do |root, home|
+        committed(root, "lib/a.rb" => "1\n")
+        listing = Class.new do
+          def initialize(names)
+            @names = names
+          end
+
+          def names(*) = @names
+          def trees?(*) = true
+          def hooked?(*) = false
+        end
+        nothing = Class.new(SimpleDelegator) { def file?(_path) = false }.new(Lain::FileFacts::LIVE)
+        build = ->(**rest) { described_class.new(sensitivity: factory_for(home, root), **rest) }
+
+        expect(build.call(git: listing.new(["lib/a.rb"])).decide(call_of("git status", cwd: root))).to be_allow
+        expect(build.call(git: listing.new([".env"])).decide(call_of("git status", cwd: root))).to be_nil
+        expect(build.call(facts: nothing).decide(call_of("git show HEAD:lib/a.rb", cwd: root))).to be_nil
       end
     end
   end
