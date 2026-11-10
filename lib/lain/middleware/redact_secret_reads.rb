@@ -285,17 +285,27 @@ module Lain
         human = ruling.allow? && ruling.human?
         files = named_files(carried, effect, human:)
         release_printed(carried, effect, result.text, files, ruling) if human
-        masked = text_mask(carried, released: files.flat_map { @ledger.released(_1) }).call(result.text)
+        released = files.flat_map { @ledger.released(_1) }
+        masked = text_mask(carried, released:).call(result.text)
         return carried unless masked.fresh.positive? || masked.prior.positive?
 
-        record_printed(carried, masked) if masked.fresh.positive?
+        record_printed(carried, masked, released) if masked.fresh.positive?
         carried.merge(result: Tool::Result.new(content: with_trailer(masked), is_error: result.error?))
       end
 
-      def record_printed(carried, masked)
+      def record_printed(carried, masked, released)
+        effect = carried.fetch(:effect)
         record(Telemetry::CommandRedacted) do
-          Telemetry::CommandRedacted.new(tool_use_id: carried.fetch(:effect).tool_use_id, regions: masked.fresh,
-                                         prior: masked.prior)
+          Telemetry::CommandRedacted.new(tool_use_id: effect.tool_use_id, regions: masked.fresh, prior: masked.prior)
+        end
+        shown = ::Lain::Sensitivity::Regions.detect(carried.fetch(:result).text).reject { released.include?(_1.digest) }
+        record_over_masked(effect, shown)
+      end
+
+      # One record per shape, so the count a projection reads is how many results held one, not how many bytes.
+      def record_over_masked(effect, regions)
+        regions.filter_map(&:over_masked_by).tally.each do |shape, spans|
+          record(Telemetry::OverMasked) { Telemetry::OverMasked.new(tool: effect.name, shape:, spans:) }
         end
       end
 
@@ -306,16 +316,17 @@ module Lain
         masked = recalled_body(text_mask(carried), body.to_s)
         return carried unless masked.fresh.positive? || masked.prior.positive?
 
-        record_recalled(carried, effect, masked) if masked.fresh.positive?
+        record_recalled(carried, effect, masked, body.to_s) if masked.fresh.positive?
         carried.merge(result: Tool::Result.ok("#{author}\n#{with_trailer(masked, MEMORY_TRAILER)}"))
       end
 
-      def record_recalled(carried, effect, masked)
+      def record_recalled(carried, effect, masked, body)
         id = effect.input["id"]
         (carried.fetch(:context) || Session::Null.instance).record_withheld(Session::Withheld::Source.memory(id))
         record(Telemetry::SourceMasked) do
           Telemetry::SourceMasked.new(tool_use_id: effect.tool_use_id, kind: :memory, key: id, regions: masked.fresh)
         end
+        record_over_masked(effect, ::Lain::Sensitivity::Regions.detect(body))
       end
 
       # A lineage digest is the evidence a clerk is asked to cite, and the
@@ -501,7 +512,10 @@ module Lain
       # ruled on", which IS the transition, so the check goes BEFORE it is added to.
       def mask(carried, effect, withheld, why)
         withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path))
-        record(Telemetry::SourceMasked) { redaction(effect, withheld) } unless declined?(withheld)
+        unless declined?(withheld)
+          record(Telemetry::SourceMasked) { redaction(effect, withheld) }
+          record_over_masked(effect, withheld.unreleased)
+        end
         @ledger.decline(withheld.path, withheld.unreleased) unless why == :postponed
         masked = withheld.scan.mask(withheld.unreleased)
         carried.merge(result: Tool::Result.ok(Trailer.append(masked, withheld.unreleased.length, why)))
@@ -534,6 +548,7 @@ module Lain
             Telemetry::SearchRedacted.new(tool_use_id: effect.tool_use_id, path:, regions: found[path].length,
                                           released: found[path].length - held.length)
           end
+          record_over_masked(effect, held)
           held.each { @row_masked << [path, _1.digest] }
         end
       end

@@ -70,6 +70,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     MemoryRoot: { turn_digest: d, root: d },
     Message: { digest: d, kind: :message, from: "a", to: "b", payload: { "text" => "hi" }, causal_parents: [d],
                correlation: { "ask" => d } },
+    OverMasked: { tool: "bash", shape: "github token", spans: 2 },
     ModeSwitch: { from_scope: "checkout", to_scope: "plan", from_approval: "ask", to_approval: "auto", from_layers: [],
                   to_layers: [], surface: "slash" },
     ModelSwitch: { from: "a", to: "b", surface: "slash" },

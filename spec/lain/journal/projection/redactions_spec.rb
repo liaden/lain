@@ -8,9 +8,10 @@ RSpec.describe Lain::Journal::Projection::Redactions do
   released = lambda do |regions|
     telemetry::ReadReleased.new(tool_use_id: "tu_4", path: ".env", regions:, requester: "agent", surface: "tty")
   end
+  over = ->(spans) { telemetry::OverMasked.new(tool: "bash", shape: "github token", spans:) }
   turn = telemetry::Untyped.new(fields: { "type" => "turn", "digest" => "d1", "parent" => nil })
 
-  palette = [source.call(1), command.call(2), search.call(4), released.call(3), released.call(1), turn]
+  palette = [source.call(1), command.call(2), search.call(4), released.call(3), released.call(1), over.call(2), turn]
   g = PropCheck::Generators
   record_lists = g.array(g.one_of(*palette.map { g.constant(_1) }), min: 0, max: 5)
 
@@ -24,8 +25,14 @@ RSpec.describe Lain::Journal::Projection::Redactions do
     expect([redactions.masked, redactions.released]).to eq([7, 3])
   end
 
+  it "counts each over_masked record, and no span of it as a masked region" do
+    redactions = described_class.over([over.call(2), over.call(5), over.call(1), command.call(2), turn])
+
+    expect([redactions.over_masked, redactions.masked]).to eq([3, 2])
+  end
+
   it "answers a session with none as no regions" do
-    expect(described_class.over([turn]).value).to eq({ masked: 0, released: 0 })
+    expect(described_class.over([turn]).value).to eq({ masked: 0, released: 0, over_masked: 0 })
   end
 
   it "names the record types it counts as masked" do

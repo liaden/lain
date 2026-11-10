@@ -8,10 +8,10 @@ module Lain
       # disagree.
       class Redactions < Projection
         REDACTIONS = %w[source_masked command_redacted search_redacted].freeze
-        COUNTED = [*REDACTIONS, "read_released"].freeze
+        COUNTED = [*REDACTIONS, "read_released", "over_masked"].freeze
 
         # @return [Redactions]
-        def self.unit = new({ masked: 0, released: 0 })
+        def self.unit = new({ masked: 0, released: 0, over_masked: 0 })
 
         # @param record [Telemetry::Journalable, Telemetry::Untyped]
         # @return [Redactions] self for a record that counts toward neither
@@ -19,6 +19,8 @@ module Lain
           case record
           when Telemetry::SourceMasked, Telemetry::CommandRedacted, Telemetry::SearchRedacted
             self.class.new(state.merge(masked: masked + record.regions))
+          when Telemetry::OverMasked
+            self.class.new(state.merge(over_masked: over_masked + 1))
           when Telemetry::ReadReleased
             self.class.new(state.merge(released: released + record.regions))
           else self
@@ -27,10 +29,16 @@ module Lain
 
         # @param other [Redactions]
         # @return [Redactions] the counts of both halves
-        def combine(other) = self.class.new({ masked: masked + other.masked, released: released + other.released })
+        def combine(other)
+          self.class.new({ masked: masked + other.masked, released: released + other.released,
+                           over_masked: over_masked + other.over_masked })
+        end
 
         # @return [Integer] regions masked as placeholders, the count the html footer shows
         def masked = state.fetch(:masked)
+
+        # @return [Integer] tool results that held a span masked whole because a scan could not finish
+        def over_masked = state.fetch(:over_masked)
 
         # @return [Integer] regions the model was shown in clear after a release
         def released = state.fetch(:released)

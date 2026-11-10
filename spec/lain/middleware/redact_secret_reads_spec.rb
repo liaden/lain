@@ -1910,6 +1910,82 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  describe "a result a scan could not finish" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, secrets:) }
+
+    let(:secrets) { Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null) }
+    let(:child_env) { Lain::Exec::ChildEnv.new(env: {}) }
+    # A 1.2 MB run of `github_pat_` overflows fancy-regex's backtracking stack at any limit.
+    let(:runaway) { "github_pat_" * 110_000 }
+    let(:output) { Lain::Tool::Result.ok("one\n#{runaway}\ntwo\n#{runaway}\nthree\n") }
+    let(:tool) { Struct.new(:result) { def call(_input, _invocation) = result }.new(output) }
+
+    def over_masked = journal.grep(Lain::Telemetry::OverMasked)
+
+    def run(name, input)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_over", name:, input:)
+      Sync { dispatch(call, tool:) }.fetch(:result)
+    end
+
+    it "journals one over_masked record naming the tool, the shape and the span count, and no bytes" do
+      run("bash", { "command" => "cat big" })
+
+      expect(over_masked).to contain_exactly(have_attributes(tool: "bash", shape: "github token", spans: 2))
+      expect(over_masked.map(&:to_journal).to_json).not_to include("github_pat_")
+    end
+
+    it "journals a masked memory item the same way" do
+      run("memory_read", { "id" => "note" })
+
+      expect(over_masked).to contain_exactly(have_attributes(tool: "memory_read", shape: "github token", spans: 2))
+    end
+
+    it "journals a masked read_file the same way" do
+      path = write("big.txt", "x\n")
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_over", name: "read_file", input: { "path" => path })
+
+      Sync { dispatch(call, tool:) }
+
+      expect(over_masked).to contain_exactly(have_attributes(tool: "read_file", shape: "github token", spans: 2))
+    end
+
+    it "journals a masked grep row the same way" do
+      settings = write("settings.yml", "name: app\n")
+      rows = Lain::Tool::Result.ok("#{settings}:1:#{runaway}\n#{settings}:2:#{runaway}\n")
+      rowed = Struct.new(:result) { def call(_input, _invocation) = result }.new(rows)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_over", name: "grep",
+                                        input: { "pattern" => "x", "path" => dir })
+
+      Sync { dispatch(call, tool: rowed) }
+
+      expect(over_masked).to contain_exactly(have_attributes(tool: "grep", shape: "github token", spans: 2))
+    end
+
+    it "writes nothing for a result that masks a plain match" do
+      bash = Lain::Effect::ToolCall.new(tool_use_id: "tu_plain", name: "bash", input: { "command" => "echo" })
+      plain = Struct.new(:result) do
+        def call(_input, _invocation)
+          result
+        end
+      end.new(Lain::Tool::Result.ok("AKIAIOSFODNN7EXAMPLE\n"))
+
+      Sync { dispatch(bash, tool: plain) }
+
+      expect(over_masked).to be_empty
+    end
+
+    it "still returns the masked result when the journal refuses the record" do
+      refusing = RedactSpecSupport::RefusingJournal.new(journal, refuses: Lain::Telemetry::OverMasked)
+      middleware = described_class.new(ledger:, queue:, journal: refusing, secrets:)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_over", name: "bash", input: { "command" => "cat big" })
+
+      result = Sync { dispatch(call, subject_stack: Lain::Middleware::Stack.new([middleware]), tool:) }.fetch(:result)
+
+      expect(result.content).not_to include("github_pat_")
+      expect(journal.to_a.map { _1["type"] if _1.is_a?(Hash) }).to include("journal_error")
+    end
+  end
+
   describe "a memory_read result" do
     let(:credential) { "deploy notes\nDB_PASSWORD=hunter2pass\n" }
 
@@ -2122,6 +2198,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     def bash(command, authority:, stack: ruled_stack(authority))
       call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => command })
       Sync { dispatch(call, subject_stack: stack, tool: Lain::Tools::Bash.new) }.fetch(:result)
+    end
+
+    it "does not journal a released over-masked region as over-masked when another region masks" do
+      runaway = "github_pat_" * 110_000
+      ledger.release(config, Lain::Sensitivity::Regions.detect(runaway), authority: :human)
+      shown = Struct.new(:result) { def call(_input, _invocation) = result }
+                    .new(Lain::Tool::Result.ok("#{runaway}\nAKIAIOSFODNN7EXAMPLE\n"))
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash", input: { "command" => "cat #{config}" })
+
+      Sync { dispatch(call, subject_stack: ruled_stack(nil), tool: shown) }
+
+      expect(journal.grep(Lain::Telemetry::CommandRedacted)).to contain_exactly(have_attributes(regions: 1))
+      expect(journal.grep(Lain::Telemetry::OverMasked)).to be_empty
     end
 
     it "shows a human-approved cat its file's bytes, and journals the release by path and surface" do
