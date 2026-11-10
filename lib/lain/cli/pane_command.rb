@@ -34,11 +34,12 @@ module Lain
       # Variables lain needs that are not flag defaults, so PANE_ENV cannot hold
       # them: OpenSSL's library path, the shared temp directory, the
       # provider tuning (concurrency, connect timeout, stream stall timeout,
-      # stream debug toggle), the human's env pass list, and the bootsnap switch
-      # and cache path, so a pane's children share one cache. Sorted.
+      # stream debug toggle), the human's env pass list, the bootsnap switch
+      # and cache path, and the load-path cache path, so a pane's children
+      # share one of each cache. Sorted.
       RUNTIME_ENV = %w[
-        LAIN_BOOTSNAP LAIN_BOOTSNAP_CACHE LAIN_CONNECT_TIMEOUT LAIN_ENV_PASS LAIN_PROVIDER_CONCURRENCY
-        LAIN_STREAM_DEBUG LAIN_STREAM_STALL_TIMEOUT LD_LIBRARY_PATH TMPDIR
+        LAIN_BOOTSNAP LAIN_BOOTSNAP_CACHE LAIN_CONNECT_TIMEOUT LAIN_ENV_PASS LAIN_LOAD_PATH_CACHE
+        LAIN_PROVIDER_CONCURRENCY LAIN_STREAM_DEBUG LAIN_STREAM_STALL_TIMEOUT LD_LIBRARY_PATH TMPDIR
       ].freeze
 
       # Names lain sets on ITSELF that a pane would be poisoned by.
@@ -58,13 +59,35 @@ module Lain
       # @return [Array<String>] the variables, in unset order
       def self.scrubbed = [ChatLaunch::PREFLIGHT_ENV].freeze
 
-      # @return [String] the `unset` preamble, first thing on the line
-      def self.scrubs = scrubbed.map { |name| "unset #{name}; " }.join
+      # @param program [String] the binary the pane execs
+      # @return [String] the `unset` preamble, then bundler's require dropped, first thing on the line
+      def self.scrubs(program: $PROGRAM_NAME)
+        "#{scrubbed.map { |name| "unset #{name}; " }.join}#{bundle_exports(program:)}"
+      end
 
       # Composed per call, never a constant, because `$PROGRAM_NAME` must be
       # read when the exe runs -- under rspec it is not the lain binary.
       def self.call(*argv)
         "#{scrubs}#{gem_exports}#{lain_exports}#{runtime_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+      end
+
+      # The `-r` bundler/setup exports into RUBYOPT, whatever path it names.
+      BUNDLER_REQUIRE = %r{\A-r\S*bundler/setup\z}
+
+      # A pane inherits the tmux server's RUBYOPT, and the launching process's bundler/setup put its own
+      # `-r` there, so every pane would load Bundler before exe/lain's first line. The exe sets up its
+      # own bundle, from a cache when it can, so the pane is handed RUBYOPT without it. Only an exe
+      # with a Gemfile beside it does: the packaged gem, run under another project's `bundle exec`,
+      # keeps that project's bundle, the same test exe/lain makes.
+      #
+      # @param env [#[]] the launching process's environment
+      # @param program [String] the binary the pane execs
+      # @return [String] the preamble that drops bundler's require from the pane's Ruby
+      def self.bundle_exports(env = ENV, program: $PROGRAM_NAME)
+        return "" unless File.exist?(File.expand_path("../Gemfile", File.dirname(program)))
+
+        rubyopt = env["RUBYOPT"].to_s.split.grep_v(BUNDLER_REQUIRE).join(" ")
+        "unset BUNDLER_SETUP; #{rubyopt.empty? ? "unset RUBYOPT" : "export RUBYOPT=#{Shellwords.escape(rubyopt)}"}; "
       end
 
       # PATH alone is HALF a chruby, and the missing half made `lain up` die

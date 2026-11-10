@@ -1128,8 +1128,8 @@ RSpec.describe "exe/lain outside its own repository", :seam do
       "BUNDLE_APP_CONFIG" => nil, "BUNDLER_SETUP" => nil }
   end
 
-  def lain(*argv, chdir:, script: exe)
-    out = IO.popen(runner_env, [RbConfig.ruby, "-I#{lib}", script, *argv],
+  def lain(*argv, chdir:, script: exe, flags: [], **env)
+    out = IO.popen(runner_env.merge(env), [RbConfig.ruby, *flags, "-I#{lib}", script, *argv],
                    chdir:, err: %i[child out], &:read)
     [out, $CHILD_STATUS.exitstatus]
   end
@@ -1185,6 +1185,62 @@ RSpec.describe "exe/lain outside its own repository", :seam do
 
     expect(status).to eq(0)
     expect(output).to include("lain review")
+  end
+
+  it "starts from its cached load path in a project whose Gemfile it cannot resolve" do
+    Dir.mktmpdir("lain-load-path") do |cache|
+      probe = File.join(cache, "probe.rb")
+      record = "#{cache}/bundler".dump
+      File.write(probe, %(at_exit { File.write(#{record}, "\#{defined?(Bundler::SharedHelpers)}\\n", mode: "a") }))
+      boots = hostile_project do |dir|
+        Array.new(2) { lain("help", chdir: dir, flags: ["-r#{probe}"], "LAIN_LOAD_PATH_CACHE" => cache) }
+      end
+
+      seen = boots.map { |out, status| [status, out.include?("lain review"), out.include?("Bundler::GemNotFound")] }
+
+      expect(seen).to eq([[0, true, false]] * 2)
+      expect(File.readlines(File.join(cache, "bundler"), chomp: true)).to eq(["constant", ""])
+    end
+  end
+end
+
+# The cache `exe/lain` keeps of what `bundler/setup` resolved, so a later launch skips Bundler.
+RSpec.describe "exe/lain frozen load path", :seam do
+  let(:exe) { File.expand_path("../../exe/lain", __dir__) }
+  let(:lib) { File.expand_path("../../lib", __dir__) }
+  let(:root) { Dir.mktmpdir("lain-load-path") }
+  let(:record) { File.join(root, "record.json") }
+
+  # What a child of this launch inherits: ENV, and the gem paths a pane's command exports.
+  let(:probe) do
+    File.join(root, "probe.rb").tap do |path|
+      File.write(path, <<~RUBY)
+        at_exit do
+          require "json"
+          File.write(#{record.dump}, JSON.generate(bundler: defined?(Bundler::SharedHelpers), env: ENV.to_h,
+                                                   gem_paths: [Gem.paths.home, Gem.paths.path]))
+        end
+      RUBY
+    end
+  end
+
+  after { FileUtils.remove_entry(root) }
+
+  # A launch from a shell, not from `bundle exec rspec`: no bundle reaches it from this runner.
+  def launch
+    env = ENV.keys.grep(/\ABUNDLER?_/).to_h { [_1, nil] }
+             .merge("RUBYOPT" => nil, "RUBYLIB" => nil, "LAIN_LOAD_PATH_CACHE" => nil, "XDG_CACHE_HOME" => root)
+    out = IO.popen(env, [RbConfig.ruby, "-r#{probe}", "-I#{lib}", exe, "help"], err: %i[child out], &:read)
+    JSON.parse(File.read(record), symbolize_names: true).merge(out:, status: $CHILD_STATUS.exitstatus)
+  end
+
+  it "skips Bundler on a second launch and hands children the same environment" do
+    first = launch
+    second = launch
+
+    expect([first[:bundler], second[:bundler], second[:status]]).to eq(["constant", nil, 0])
+    expect(second.values_at(:out, :env, :gem_paths)).to eq(first.values_at(:out, :env, :gem_paths))
+    expect(Dir.glob(File.join(root, "lain", "load_path", "*.rb")).size).to eq(1)
   end
 end
 

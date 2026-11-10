@@ -132,6 +132,48 @@ RSpec.describe Lain::CLI::PaneCommand do
     end
   end
 
+  # exe/lain sets up its own bundle from a cache; bundler's -r in RUBYOPT, which a pane inherits from
+  # the tmux server, would make every pane pay for bundler/setup before the exe's first line.
+  describe ".bundle_exports" do
+    let(:exe) { File.expand_path("../../../exe/lain", __dir__) }
+
+    it "drops bundler's -r from RUBYOPT and keeps the rest" do
+      env = { "RUBYOPT" => "-W0 -r/gems/bundler-4.0.10/lib/bundler/setup -r/probe.rb", "BUNDLER_SETUP" => "/x" }
+
+      expect(described_class.bundle_exports(env, program: exe))
+        .to eq("unset BUNDLER_SETUP; export RUBYOPT=-W0\\ -r/probe.rb; ")
+    end
+
+    it "unsets RUBYOPT when bundler's -r was all it held" do
+      expect(described_class.bundle_exports({ "RUBYOPT" => "-rbundler/setup" }, program: exe))
+        .to eq("unset BUNDLER_SETUP; unset RUBYOPT; ")
+    end
+
+    it "leaves the pane's shell with neither bundler's -r nor BUNDLER_SETUP" do
+      env = { "RUBYOPT" => "-r/gems/bundler/setup -W0", "BUNDLER_SETUP" => "/gems/bundler/setup" }
+      preamble = described_class.bundle_exports(env, program: exe)
+      script = "#{preamble}echo \"[$RUBYOPT]\"; printenv BUNDLER_SETUP; echo $?"
+      out, = Open3.capture3(env, "sh", "-c", script)
+
+      expect(out).to eq("[-W0]\n1\n")
+    end
+
+    # The packaged gem ships no Gemfile beside exe/, so under another project's `bundle exec` the pane
+    # keeps that project's bundle.
+    it "leaves RUBYOPT alone for a program with no Gemfile beside it" do
+      Dir.mktmpdir do |dir|
+        program = File.join(dir, "exe", "lain")
+
+        expect(described_class.bundle_exports({ "RUBYOPT" => "-rbundler/setup" }, program:)).to eq("")
+      end
+    end
+
+    it "runs inside the scrub preamble every pane command starts with" do
+      expect(described_class.scrubs(program: exe))
+        .to eq("unset LAIN_PREFLIGHT; #{described_class.bundle_exports(program: exe)}")
+    end
+  end
+
   # The same stale-server story for variables lain needs but does not own: the
   # OpenSSL library path, the shared temp directory, and the provider
   # concurrency width. None is a flag default, so none can live in PANE_ENV.

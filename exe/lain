@@ -25,10 +25,18 @@ Warning[:experimental] = false
 # SOURCE checkout invoked from elsewhere -- `ruby ~/dev/lain/exe/lain review
 # ...` inside the repository under review -- fails the same way the installed
 # gem did. `||=` so an explicit BUNDLE_GEMFILE still wins.
+#
+# What bundler/setup resolved is replayed from a cache keyed on the bundle's inputs, so a launch
+# that changed none of them skips Bundler.
+# Paths is not loaded yet, so its XDG rule is restated here.
+xdg = ENV.fetch("XDG_CACHE_HOME", "")
+cache_home = File.expand_path(xdg.empty? ? "~/.cache" : xdg)
 lain_gemfile = File.expand_path("../Gemfile", __dir__)
 if File.exist?(lain_gemfile)
   ENV["BUNDLE_GEMFILE"] ||= lain_gemfile
-  require "bundler/setup"
+  require File.expand_path("../lib/lain/boot/frozen_load_path", __dir__)
+  load_path_cache = ENV.fetch("LAIN_LOAD_PATH_CACHE") { File.join(cache_home, "lain", "load_path") }
+  Lain::Boot::FrozenLoadPath.setup(gemfile: ENV.fetch("BUNDLE_GEMFILE"), cache_dir: load_path_cache)
 end
 require "thor"
 
@@ -37,9 +45,6 @@ require "thor"
 unless defined?(Bootsnap) || ENV["LAIN_BOOTSNAP"] == "0"
   begin
     require "bootsnap"
-    # Paths is not loaded yet, so its XDG rule is restated here.
-    xdg = ENV.fetch("XDG_CACHE_HOME", "")
-    cache_home = File.expand_path(xdg.empty? ? "~/.cache" : xdg)
     Bootsnap.setup(cache_dir: ENV.fetch("LAIN_BOOTSNAP_CACHE") { File.join(cache_home, "lain", "bootsnap") })
   rescue LoadError, SystemCallError
     nil

@@ -15,6 +15,14 @@ RSpec.describe ChildBoot do
       expect(env["RUBYOPT"]).to include("-r#{File.expand_path("bootsnap_setup.rb", __dir__)}")
     end
 
+    it "points children at this process's load-path cache rather than the user's" do
+      env = {}
+
+      described_class.install(env:)
+
+      expect(env["LAIN_LOAD_PATH_CACHE"]).to eq(ChildBoot::LOAD_PATH_CACHE).and start_with(Dir.tmpdir)
+    end
+
     it "leaves a child that has no bundler setup to boot without the cache" do
       env = { "RUBYOPT" => "-W0" }
 

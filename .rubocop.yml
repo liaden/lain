@@ -225,9 +225,10 @@ Naming/BlockForwarding:
   EnforcedStyle: explicit
 
 # `decide` resolves a parked approval and `ask_decision` blocks until a human answers;
-# both return the yes or no, but a `?` name would read as a pure query.
+# both return the yes or no, but a `?` name would read as a pure query. Boot::FrozenLoadPath.setup
+# loads the load path and answers whether the cache served it, so it is a command too.
 Naming/PredicateMethod:
-  AllowedMethods: [call, ask_decision, decide]
+  AllowedMethods: [call, ask_decision, decide, setup]
 
 # Joel's `{ effect:, context: }` in tool_runner.rb is the style we want everywhere a
 # hash value merely repeats its key -- `always` is the only shorthand setting that
