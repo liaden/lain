@@ -15,6 +15,21 @@ RSpec.describe Lain::Frontend::Decorators::JudgeRuled do
     expect(described_class.new(denied).render(theme)).to eq('the judge denied bash({"command" => "ls -la /home/u"})')
   end
 
+  it "names a remembered approval apart from the judge's own" do
+    remembered = Lain::Telemetry::JudgeRuled.new(call: "bash({})", verdict: "remembered")
+
+    expect(described_class.new(remembered).render(theme)).to eq("the judge approved this earlier: bash({})")
+  end
+
+  it "dims a remembered approval and leaves the judge's own line plain" do
+    dyed = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: true))
+    remembered = Lain::Telemetry::JudgeRuled.new(call: "bash({})", verdict: "remembered")
+
+    expect(described_class.new(remembered).render(dyed)).to eq(dyed.paint(:label,
+                                                                          "the judge approved this earlier: bash({})"))
+    expect(described_class.new(event).render(dyed)).not_to include("\e[")
+  end
+
   it "cuts a long call to a fixed width with an ellipsis" do
     long = Lain::Telemetry::JudgeRuled.new(call: "bash(#{"x" * 100_000})", verdict: "approved")
     line = described_class.new(long).render(theme)

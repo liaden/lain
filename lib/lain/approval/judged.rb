@@ -255,7 +255,7 @@ module Lain
 
         place = place_for(effect, context, facts)
         key = JudgeMemo.key(tool: effect.name, input: effect.input, place:)
-        return remembered(context) if @memo.approved?(key)
+        return remembered(effect, context) if @memo.approved?(key)
 
         verdict, cause, read = asked(effect, place)
         @memo.approve(key) if verdict == :approve
@@ -272,8 +272,9 @@ module Lain
         [verdict, cause, digests_of(prompt, place)]
       end
 
-      def remembered(context)
+      def remembered(effect, context)
         counted(:approve, context)
+        show(effect, "remembered")
         Escalation::Ruling.allow(rung: NAME, because: REMEMBERED)
       end
 

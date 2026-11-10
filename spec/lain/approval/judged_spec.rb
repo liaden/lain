@@ -1675,6 +1675,17 @@ RSpec.describe Lain::Approval::Judged do
       expect([second.rung, second.reason]).to eq(["auto", described_class::REMEMBERED])
     end
 
+    it "shows a remembered approval on the display, not as the judge's own" do
+      scripted = answering("approve")
+      shown = []
+      ruled(remembering(scripted, display: shown), bash)
+      shown.clear
+
+      ruled(remembering(scripted, display: shown), bash)
+
+      expect(shown.map(&:verdict)).to eq(["remembered"])
+    end
+
     it "asks again for another requester or another cwd" do
       scripted = answering("approve")
       ruled(remembering(scripted), bash)

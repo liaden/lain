@@ -60,7 +60,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     IsolationLease: { kind: :acquired, worker_key: "w-1", backend: "B", service: "postgres", path: "/p", base: "abc",
                       branch: "feat" },
     JudgeBreakerTripped: { requester: "agent", count: 3, because: "timeouts" },
-    JudgeRuled: { call: "tu_1", verdict: "approved" },
+    JudgeRuled: { call: "tu_1", verdict: "remembered" },
     LandingBatch: { branch: "main", desk: :parent, verifier: "rake spec", worker_keys: %w[w-1], landed: %w[w-1],
                     ejected: [], declined: [], verifies: 1, rebuilds: 0, verify_wall_s: 1.5,
                     queue_wait_s: { "w-1" => 0.2 },

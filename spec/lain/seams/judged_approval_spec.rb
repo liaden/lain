@@ -92,6 +92,30 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
     end
   end
 
+  context "when the same call repeats after the judge approved it" do
+    let(:channel) { Lain::Channel.new }
+    let(:call) { ["tu_1", "bash", { "command" => "git log --oneline -5" }] }
+    let(:provider) do
+      Lain::Provider::Mock.new(responses: [
+                                 tool_response(call), text_response("APPROVE"), text_response("settled"),
+                                 tool_response(call), text_response("settled again")
+                               ])
+    end
+
+    it "puts a distinct remembered line on the display, and asks the judge only once" do
+      recorder, session = wiring.run_state(nil)
+      agent = wiring.wire_agent(channel:, recorder:, session:, backend:)
+      Sync { 2.times { agent.ask("show the log") } }
+      channel.close
+      theme = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: false))
+      lines = channel.drain.grep(Lain::Telemetry::JudgeRuled).map { Lain::Frontend::Decorators.for(_1).render(theme) }
+
+      expect(provider.requests.count { _1.tools.empty? }).to eq(1)
+      expect(lines).to eq(['the judge approved bash({"command" => "git log --oneline -5"})',
+                           'the judge approved this earlier: bash({"command" => "git log --oneline -5"})'])
+    end
+  end
+
   # The project is not where the process stands, so a judge told the process's
   # directory would be told a place the call does not run in.
   it "tells the judge the project's working directory" do

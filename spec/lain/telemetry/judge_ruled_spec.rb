@@ -7,7 +7,13 @@ RSpec.describe Lain::Telemetry::JudgeRuled do
     expect(event.to_journal).to include("type" => "judge_ruled", "call" => "bash({})", "verdict" => "denied")
   end
 
-  it "refuses a verdict other than approved or denied" do
+  it "journals a remembered verdict" do
+    remembered = described_class.new(call: "bash({})", verdict: "remembered")
+
+    expect(remembered.to_journal).to include("type" => "judge_ruled", "verdict" => "remembered")
+  end
+
+  it "refuses a verdict outside approved, denied and remembered" do
     expect { described_class.new(call: "bash({})", verdict: "deferred") }
       .to raise_error(ArgumentError, /deferred/)
   end

@@ -8,7 +8,8 @@ module Lain
         # A model-written command can run to kilobytes; the line is a reminder, not a copy.
         WIDTH = 120
         UNSAFE = /[[:cntrl:]\p{Cf}]/
-        SAID = { "approved" => "the judge approved", "denied" => "the judge denied" }.freeze
+        SAID = { "approved" => "the judge approved", "denied" => "the judge denied",
+                 "remembered" => "the judge approved this earlier:" }.freeze
 
         def initialize(event) = @event = event
 
@@ -16,9 +17,13 @@ module Lain
 
         def stamped? = true
 
-        # @param _theme [Frontend::Theme] unused; the line carries no styling
-        # @return [String] `the judge approved tool(input)` or `the judge denied tool(input)`
-        def render(_theme) = "#{SAID.fetch(@event.verdict)} #{@event.call.gsub(UNSAFE, " ").truncate(WIDTH)}"
+        # @param theme [Frontend::Theme] dims a remembered approval, which is a reminder rather than news
+        # @return [String] `the judge approved tool(input)`, `the judge denied tool(input)`, or the dim
+        #   `the judge approved this earlier: tool(input)`
+        def render(theme)
+          line = "#{SAID.fetch(@event.verdict)} #{@event.call.gsub(UNSAFE, " ").truncate(WIDTH)}"
+          @event.verdict == "remembered" ? theme.paint(:label, line) : line
+        end
       end
     end
   end

@@ -3,9 +3,9 @@
 module Lain
   module Telemetry
     module Carriers
-      # The verdict is a closed pair; `call` is interned.
+      # The verdict is a closed set; `call` is interned.
       class JudgeRuled < Declarative::Carrier
-        VERDICTS = %w[approved denied].freeze
+        VERDICTS = %w[approved denied remembered].freeze
 
         attribute :call, :lain_interned
         attribute :verdict, :lain_interned
@@ -17,7 +17,7 @@ module Lain
 
     JudgeRuled = Data.define(:call, :verdict)
 
-    # A call the judge approved or denied, as a human would read it: the tool,
+    # A call the judge approved, denied or had approved earlier, as a human would read it: the tool,
     # its input, and the verdict. Sent to the display channel so the transcript
     # can say who let the call run or stopped it; the escalation record already
     # holds the ruling.
