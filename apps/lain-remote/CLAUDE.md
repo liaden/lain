@@ -17,7 +17,8 @@ dx serve --platform desktop                         # where dx exists
 ```
 
 The Android SDK is not installed here either, so nothing on this box builds for Android.
-Run the app with `LAIN_REMOTE_ADDR=<host:port> LAIN_REMOTE_TOKEN=<token>` until a settings screen exists.
+Pair in the Settings screen (saved 0600 at `$LAIN_REMOTE_CONFIG`, else `$XDG_CONFIG_HOME/lain-remote/settings`, else `~/.config/lain-remote/settings`);
+`LAIN_REMOTE_ADDR` and `LAIN_REMOTE_TOKEN` are the fallback when nothing is saved. The token is never logged or shown after saving.
 
 ## Tests find lain-core
 
@@ -39,6 +40,8 @@ The relay confines itself with Landlock, so a kernel without it fails the tests 
 
 ## Code patterns
 
-- `src/client.rs` is the tested core: no dioxus in it. `src/main.rs` is the Dioxus shell.
+- `src/client.rs` is the tested core: no dioxus in it. `src/main.rs` is the Dioxus shell and the screen state.
+- `src/ui/{agenda,item,settings}.rs` each keep their view state as plain functions and types with the tests; the components only draw it.
+- Deep links (`lain-remote://item/<id>`) are not wired and stay for the manual pass: Dioxus 0.7 has no hook for them on Android or Linux without platform code; iOS and macOS get `Event::Opened` through `use_wry_event_handler`.
 - Reading and answering use separate connections, because a long poll in flight cannot be cancelled to send.
 - Comments explain why only. Commit messages never name plan cards.

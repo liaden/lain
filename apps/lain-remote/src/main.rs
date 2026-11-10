@@ -1,48 +1,76 @@
 mod client;
+mod ui {
+  pub mod agenda;
+  pub mod item;
+  pub mod settings;
+}
 
-use client::{Error, Session};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use client::Session;
 use dioxus::prelude::*;
-use futures_util::StreamExt;
 use lain_wire::{AgendaItem, Answer};
+use ui::agenda::Agenda;
+use ui::item::{Item, outcome};
+use ui::settings::{Settings, SettingsForm, default_path};
 
 fn main() {
   dioxus::launch(App);
 }
 
-fn pairing() -> Result<(std::net::SocketAddr, String), String> {
-  let addr = std::env::var("LAIN_REMOTE_ADDR").map_err(|_| "set LAIN_REMOTE_ADDR to the relay's address:port")?;
-  let token = std::env::var("LAIN_REMOTE_TOKEN").map_err(|_| "set LAIN_REMOTE_TOKEN to the pairing token")?;
-  let addr = addr.parse().map_err(|_| format!("{addr} is not an address:port"))?;
-  Ok((addr, token))
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Screen {
+  Agenda,
+  Item(String),
+  Settings,
 }
 
-async fn connect() -> Result<Session, String> {
-  let (addr, token) = pairing()?;
-  Session::connect(addr, &token).await.map_err(|error: Error| error.to_string())
+fn initial_settings() -> Option<Settings> {
+  default_path().and_then(|path| Settings::load(&path)).or_else(|| {
+    let addr = std::env::var("LAIN_REMOTE_ADDR").ok()?;
+    let token = std::env::var("LAIN_REMOTE_TOKEN").ok()?;
+    Settings::from_form(None, &addr, &token).ok()
+  })
+}
+
+async fn connect(settings: &Settings) -> Result<Session, String> {
+  Session::connect(settings.socket_addr(), settings.token())
+    .await
+    .map_err(|error| error.to_string())
 }
 
 /// One long poll. The session reconnects with its cursor by itself, so only a failed first connect needs a fresh one.
-async fn read_agenda(session: &mut Option<Session>) -> Result<Vec<AgendaItem>, String> {
+async fn read_agenda(settings: &Settings, session: &mut Option<Session>) -> Result<Vec<AgendaItem>, String> {
   if session.is_none() {
-    *session = Some(connect().await?);
+    *session = Some(connect(settings).await?);
   }
   let Some(session) = session else { return Err("not connected".to_string()) };
   session.next().await.map_err(|error| error.to_string())?;
   Ok(session.items().to_vec())
 }
 
-const RETRY_AFTER: std::time::Duration = std::time::Duration::from_secs(3);
+fn now() -> i64 {
+  SystemTime::now()
+    .duration_since(UNIX_EPOCH)
+    .map_or(0, |elapsed| i64::try_from(elapsed.as_secs()).unwrap_or(0))
+}
 
-// Reading and answering get a connection each, because a long poll in flight cannot be cancelled to send.
+const RETRY_AFTER: Duration = Duration::from_secs(3);
+
 #[component]
 fn App() -> Element {
   let mut items = use_signal(Vec::<AgendaItem>::new);
   let mut status = use_signal(String::new);
+  let mut notice = use_signal(String::new);
+  let mut settings = use_signal(initial_settings);
+  let mut screen = use_signal(|| if settings.peek().is_some() { Screen::Agenda } else { Screen::Settings });
 
-  use_future(move || async move {
+  // Reading `settings` here restarts the loop, and drops its session, when the pairing changes.
+  use_resource(move || async move {
+    let Some(paired) = settings() else { return };
     let mut session = None;
     loop {
-      match read_agenda(&mut session).await {
+      match read_agenda(&paired, &mut session).await {
         Ok(waiting) => {
           items.set(waiting);
           status.set(String::new());
@@ -55,46 +83,59 @@ fn App() -> Element {
     }
   });
 
-  let answers = use_coroutine(move |mut queue: UnboundedReceiver<Answer>| async move {
-    match connect().await {
-      Err(message) => status.set(message),
-      Ok(mut session) => {
-        while let Some(answer) = queue.next().await {
-          if let Err(error) = session.answer(&answer).await {
-            status.set(error.to_string());
-          }
-        }
+  let send = move |answer: Answer| {
+    let Some(paired) = settings.peek().clone() else { return };
+    spawn(async move {
+      // A connection of its own, because the reader's long poll in flight cannot be cancelled to send.
+      let sent = match connect(&paired).await {
+        Ok(mut session) => session.answer(&answer).await.map_err(|error| error.to_string()),
+        Err(message) => Err(message),
+      };
+      let result = outcome(sent);
+      notice.set(result.notice);
+      if result.close {
+        screen.set(Screen::Agenda);
       }
-    }
-  });
+    });
+  };
+
+  let shown = match screen() {
+    Screen::Agenda => rsx! {
+      Agenda { items: items(), now: now(), open: move |id| {
+          notice.set(String::new());
+          screen.set(Screen::Item(id));
+        } }
+    },
+    Screen::Item(id) => match items().into_iter().find(|item| ui::item::ItemView::of(item).id == id) {
+      Some(item) => rsx! {
+        Item { item, notice: notice(), send, close: move |()| screen.set(Screen::Agenda) }
+      },
+      None => rsx! {
+        p { "That item is no longer waiting." }
+        button { onclick: move |_| screen.set(Screen::Agenda), "Back" }
+      },
+    },
+    Screen::Settings => rsx! {
+      SettingsForm {
+        current: settings(),
+        save: move |saved: Settings| {
+          if let Some(path) = default_path()
+            && let Err(error) = saved.save(&path)
+          {
+            status.set(format!("could not save settings: {error}"));
+          }
+          settings.set(Some(saved));
+          screen.set(Screen::Agenda);
+        },
+        close: move |()| screen.set(Screen::Agenda),
+      }
+    },
+  };
 
   rsx! {
     h1 { "Lain Remote" }
+    button { onclick: move |_| screen.set(Screen::Settings), "Settings" }
     p { "{status}" }
-    for item in items.read().iter() {
-      Waiting { item: item.clone(), answers }
-    }
-  }
-}
-
-#[component]
-fn Waiting(item: AgendaItem, answers: Coroutine<Answer>) -> Element {
-  match item {
-    AgendaItem::Question { id, question, options, .. } => rsx! {
-      div {
-        p { {question} }
-        for option in options {
-          button {
-            onclick: {
-              let (id, option) = (id.clone(), option.clone());
-              move |_| answers.send(Answer::Question { id: id.clone(), option: Some(option.clone()), text: None, device: None })
-            },
-            {option.clone()}
-          }
-        }
-      }
-    },
-    AgendaItem::ParkedCall { tool, input, .. } => rsx! { p { "{tool} {input}" } },
-    AgendaItem::GateQuestion { question, .. } => rsx! { p { {question} } },
+    {shown}
   }
 }
