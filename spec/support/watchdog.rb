@@ -52,7 +52,8 @@ require "etc"
 module SpecWatchdog
   # Seconds. Overridable for runs that legitimately wait on somebody else's
   # network -- `:api_integration` hits a real API -- but never as a way to make a
-  # slow example pass.
+  # slow example pass. An example may carry its own `budget:` metadata, but only to
+  # RAISE its limit: the larger of the two wins, so this env var is a floor.
   BUDGET = Float(ENV.fetch("LAIN_SPEC_BUDGET", "30"))
 
   # Not a StandardError: a `rescue => e` inside an example must not be able to
@@ -77,7 +78,7 @@ module SpecWatchdog
     # `cpu_started` rides beside `started` (wall clock) so a strike can charge
     # the WHOLE watch window's CPU consumption to the one example it watched,
     # the same way `started` already charges it the wall time.
-    Watch = Struct.new(:example, :started, :cpu_started, :thread)
+    Watch = Struct.new(:example, :started, :cpu_started, :thread, :budget, :memory_started)
 
     # Answers one question a `Stuck` report could not ask before: did this
     # process get to RUN during the window it was charged for? A thread
@@ -111,9 +112,15 @@ module SpecWatchdog
       # process its turn, as opposed to a box that is merely busy.
       LOAD_FACTOR = 1.5
 
+      # Percent of the watch window in which some task stalled on memory. A process in reclaim
+      # shows the same near-zero CPU as one never scheduled, with an idle load average. Measured over
+      # the window, not the kernel's avg10, which has already forgotten a stall that ended 10s ago.
+      MEMORY_PRESSURE_FLOOR = 20.0
+
       # One verdict, carrying the numbers the report quotes rather than
       # forcing {Sentry} to re-derive them from a second call.
-      Reading = Struct.new(:starved, :cpu_elapsed, :wall_elapsed, :load1, :cores, keyword_init: true)
+      Reading = Struct.new(:starved, :cpu_elapsed, :wall_elapsed, :load1, :cores, :memory_stall_percent,
+                           keyword_init: true)
 
       # @param cores [Integer] overridable so a spec can name a small number
       #   and cross {LOAD_FACTOR} with an ordinary-looking `loadavg`
@@ -125,12 +132,18 @@ module SpecWatchdog
       # @param load1_reader [#call] returns the 1-minute load average; real
       #   default reads `/proc/loadavg` and is Linux-only, guarded in
       #   {#read_load1} rather than here so the default stays a plain lambda
+      # @param memory_reader [#call] returns the cumulative seconds some task has stalled on memory; real
+      #   default reads the `some` total of `/proc/pressure/memory`, microseconds
       def initialize(cores: CORES,
                      cpu_clock: -> { Process.clock_gettime(Process::CLOCK_PROCESS_CPUTIME_ID) },
-                     load1_reader: -> { File.read("/proc/loadavg").split.first.to_f })
+                     load1_reader: -> { File.read("/proc/loadavg").split.first.to_f },
+                     memory_reader: lambda {
+                       File.read("/proc/pressure/memory")[/^some .*total=(\d+)/, 1].to_i / 1_000_000.0
+                     })
         @cores = cores
         @cpu_clock = cpu_clock
         @load1_reader = load1_reader
+        @memory_reader = memory_reader
       end
 
       # @return [Float] CPU seconds the process has consumed so far, through
@@ -139,22 +152,33 @@ module SpecWatchdog
       #   example it watched
       def cpu_now = @cpu_clock.call
 
+      # @return [Float] cumulative memory stall seconds; 0.0 where the file is unreadable, so the
+      #   window delta reads as no stall rather than as starvation
+      def memory_now
+        @memory_reader.call
+      rescue SystemCallError
+        0.0
+      end
+
       # @param cpu_elapsed [Float] CPU seconds consumed across the watch
       #   window (the caller's `cpu_now` delta)
       # @param wall_elapsed [Float] wall seconds the watch ran
+      # @param memory_elapsed [Float] memory stall seconds across the window (the `memory_now` delta)
       # @return [Reading]
-      def reading(cpu_elapsed:, wall_elapsed:)
+      def reading(cpu_elapsed:, wall_elapsed:, memory_elapsed:)
         load1 = read_load1
-        Reading.new(cpu_elapsed:, wall_elapsed:, load1:, cores: @cores,
-                    starved: starved?(cpu_elapsed:, wall_elapsed:, load1:))
+        stall = memory_elapsed / wall_elapsed * 100
+        Reading.new(cpu_elapsed:, wall_elapsed:, load1:, cores: @cores, memory_stall_percent: stall,
+                    starved: starved?(cpu_elapsed:, wall_elapsed:, load1:, stall:))
       end
 
       private
 
-      def starved?(cpu_elapsed:, wall_elapsed:, load1:)
-        return false unless load1
-
-        (cpu_elapsed / wall_elapsed) < CPU_SHARE_FLOOR && load1 > (@cores * LOAD_FACTOR)
+      # An unreadable load average is `nil`, which reads as 0 here: it cannot prove load starvation,
+      # but memory stalls are measured separately and may still prove it.
+      def starved?(cpu_elapsed:, wall_elapsed:, load1:, stall:)
+        (cpu_elapsed / wall_elapsed) < CPU_SHARE_FLOOR &&
+          (load1.to_f > (@cores * LOAD_FACTOR) || stall >= MEMORY_PRESSURE_FLOOR)
       end
 
       # No `/proc` on a platform without it (macOS), and no standing on a box
@@ -176,7 +200,8 @@ module SpecWatchdog
     end
 
     def watch(example)
-      @watch = Watch.new(example, now, @starvation.cpu_now, Thread.current).freeze
+      budget = [example.metadata.fetch(:budget, 0), @budget].max
+      @watch = Watch.new(example, now, @starvation.cpu_now, Thread.current, budget, @starvation.memory_now).freeze
       supervisor
       yield
     ensure
@@ -198,9 +223,18 @@ module SpecWatchdog
         loop do
           sleep(@tick)
           overdue = @watch
-          strike(overdue) if overdue && elapsed(overdue) > @budget
+          strike_safely(overdue) if overdue && elapsed(overdue) > overdue.budget
         end
       end
+    end
+
+    # The supervisor is memoised, so an exception escaping it would leave every later hang unwatched;
+    # a report that cannot be built still has to end the example.
+    def strike_safely(watch)
+      strike(watch)
+    rescue StandardError => e
+      watch.thread.raise(Stuck, "STUCK: #{watch.example.location} overran its budget; the report failed: " \
+                                "#{e.class}: #{e.message}")
     end
 
     # Cleared BEFORE raising, so a budget expiring again while the example
@@ -209,33 +243,49 @@ module SpecWatchdog
     # stacks worth reading.
     def strike(watch)
       @watch = nil
-      watch.thread.raise(Stuck, diagnosis(watch))
+      reading = reading(watch)
+      excused = reading.starved && watch.example.metadata[:starvable]
+      RSpec::Core::Pending.mark_pending!(watch.example, pending_message(watch, reading)) if excused
+      watch.thread.raise(Stuck, diagnosis(watch, reading))
     end
 
-    def diagnosis(watch)
-      [headline(watch), verdict(watch), *editors, *threads].join("\n")
+    def pending_message(watch, reading) = "#{starved_line(reading)} Starvable: #{watch.example.metadata[:starvable]}"
+
+    def diagnosis(watch, reading)
+      [headline(watch), verdict(reading), *editors, *threads].join("\n")
+    end
+
+    def reading(watch)
+      @starvation.reading(cpu_elapsed: @starvation.cpu_now - watch.cpu_started, wall_elapsed: elapsed(watch),
+                          memory_elapsed: @starvation.memory_now - watch.memory_started)
     end
 
     def headline(watch)
-      "STUCK: #{watch.example.location} ran #{elapsed(watch).round(1)}s against a #{@budget.round}s budget."
+      "STUCK: #{watch.example.location} ran #{elapsed(watch).round(1)}s against a #{watch.budget.round}s budget."
     end
 
     # The one sentence the report used to state as fact -- "this is a hang" --
     # now asked of {Starvation} first, because it is sometimes wrong. Either
     # way the numbers behind the verdict are printed, so a reader can check
     # the claim rather than take it on faith.
-    def verdict(watch)
-      reading = @starvation.reading(cpu_elapsed: @starvation.cpu_now - watch.cpu_started, wall_elapsed: elapsed(watch))
+    def verdict(reading)
       reading.starved ? starved_line(reading) : hang_line(reading)
     end
 
     def starved_line(reading)
       format("STARVED, not necessarily stuck: this process used %<cpu>.1fs of CPU across %<wall>.1fs of wall " \
              "time (%<pct>d%% of one core), and the box's 1-minute load average is %<load1>.1f against " \
-             "%<cores>d cores -- there was nowhere for this thread to run, genuinely blocked or not. The " \
-             "dump below may say nothing about why.", cpu: reading.cpu_elapsed, wall: reading.wall_elapsed,
-                                                      pct: cpu_percent(reading), load1: reading.load1,
-                                                      cores: reading.cores)
+             "%<cores>d cores%<memory>s -- there was nowhere for this thread to run, genuinely blocked or not. " \
+             "The dump below may say nothing about why.", cpu: reading.cpu_elapsed, wall: reading.wall_elapsed,
+                                                          pct: cpu_percent(reading), load1: reading.load1.to_f,
+                                                          cores: reading.cores, memory: memory_clause(reading))
+    end
+
+    def memory_clause(reading)
+      return "" unless reading.memory_stall_percent >= Starvation::MEMORY_PRESSURE_FLOOR
+
+      format(", and memory pressure had some task stalled for %<memory>.0f%% of the window",
+             memory: reading.memory_stall_percent)
     end
 
     def hang_line(reading)

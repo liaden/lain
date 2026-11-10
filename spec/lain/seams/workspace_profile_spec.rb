@@ -45,7 +45,8 @@ RSpec.describe "A project's own tests inside the workspace profile", :seam do
 
   def examples_in(output) = output[/(\d+) examples?, /, 1].to_i
 
-  it "passes one spec file with the example count an unconfined run reports" do
+  it "passes one spec file with the example count an unconfined run reports",
+     budget: 60, starvable: "a nested bundler run takes minutes on a box under memory pressure" do
     argv = %w[bundle exec rspec spec/lain/price_spec.rb]
     out, err, status = confined(*argv)
     plain, = unconfined_bundle(*argv.drop(1))
@@ -56,7 +57,8 @@ RSpec.describe "A project's own tests inside the workspace profile", :seam do
 
   # The fence's tests skip themselves, and pass, where Landlock is not shown active, so a pass that skipped proves
   # nothing. The one UDP test binds a datagram socket, which the profile refuses on purpose.
-  it "passes the fence crate's tests, none of them skipped" do
+  it "passes the fence crate's tests, none of them skipped",
+     budget: 60, starvable: "a cargo test build takes minutes on a box under memory pressure" do
     out, err, status = confined(*%w[cargo test -p lain-fence --test fence --offline --
                                     --skip a_udp_send_to_a_loopback_listener_is_refused])
 
