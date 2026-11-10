@@ -29,7 +29,8 @@ RSpec.describe Lain::Bench::Sweep do
   end
 
   describe "#report — the headline retrieval eval" do
-    subject(:report) { described_class.new(k: 5).report }
+    shared = nil
+    subject(:report) { shared ||= described_class.new(k: 5).report.freeze }
 
     it "scores every one of the five arms" do
       names = arm_rows(report).map(&:first)

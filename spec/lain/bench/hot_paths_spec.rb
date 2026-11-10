@@ -15,8 +15,9 @@ RSpec.describe Lain::Bench::HotPaths do
   end
 
   describe "#rows at a tiny size" do
+    shared = nil
     let(:rows) do
-      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000]).rows }
+      shared ||= NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000]).rows.freeze }
     end
 
     it "returns one row per measured path, in the table's order", :seam do
