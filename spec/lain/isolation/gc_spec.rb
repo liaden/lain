@@ -454,6 +454,52 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       expect(summary(record)).to eq([:kept, :branch, "nothing has landed on it since lain created or last moved it"])
     end
 
+    it "lists the worktrees once however many merged branches it judges" do
+      names = %w[a b c d e].map { |name| "busy-#{name}" }
+      names.each do |name|
+        Lain::Isolation::WorkingBranch.epic(name, repo_root: @repo_root)
+        land_on("epic/#{name}", "#{name}.txt")
+      end
+      Dir.mktmpdir("lain-gc-list") do |outside|
+        wt = File.join(File.realpath(outside), "held")
+        run_git(@repo_root, "worktree", "add", "-q", wt, "epic/busy-a")
+        listings = 0
+        counting = lambda do |*argv, **kwargs|
+          listings += 1 if argv.each_cons(2).include?(%w[worktree list])
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+
+        records = gc(shell_out_factory: counting)
+
+        expect(listings).to eq(3)
+        expect(summary(record_for(records, "refs/heads/epic/busy-a"))).to eq([:kept, :branch, "checked out at #{wt}"])
+        expect(names.drop(1).map { |name| ref?("refs/heads/epic/#{name}") }).to all(be(false))
+      ensure
+        try_git(@repo_root, "worktree", "remove", "--force", wt)
+      end
+    end
+
+    it "keeps a merged epic branch a worktree took after the batch was judged" do
+      Lain::Isolation::WorkingBranch.epic("late", repo_root: @repo_root)
+      land_on("epic/late", "late.txt")
+      Dir.mktmpdir("lain-gc-late") do |outside|
+        wt = File.join(File.realpath(outside), "late-wt")
+        listings = 0
+        taking = lambda do |*argv, **kwargs|
+          run_git(@repo_root, "worktree", "add", "-q", wt, "epic/late") if listings >= 2 && !File.exist?(wt)
+          listings += 1 if argv.each_cons(2).include?(%w[worktree list])
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+
+        record = record_for(gc(shell_out_factory: taking), "refs/heads/epic/late")
+
+        expect(ref?("refs/heads/epic/late")).to be(true)
+        expect(summary(record)).to eq([:kept, :branch, "checked out at #{wt}"])
+      ensure
+        try_git(@repo_root, "worktree", "remove", "--force", wt)
+      end
+    end
+
     it "keeps a merged epic branch that is checked out" do
       Lain::Isolation::WorkingBranch.epic("busy", repo_root: @repo_root)
       land_on("epic/busy", "busy.txt")

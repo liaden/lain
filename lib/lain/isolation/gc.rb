@@ -460,35 +460,52 @@ module Lain
           @registry = registry
         end
 
-        def call = @repo.refs(WorkingBranch::OWNED).map { |marker, marked| judge(marker, marked) }
+        # A branch judged mergeable waits for a fresh listing before it goes:
+        # a checkout may have taken it since the first one.
+        def call
+          entries = @registry.entries
+          judged = @repo.refs(WorkingBranch::OWNED).map { |marker, marked| judge(marker, marked, entries) }
+          return judged unless judged.any?(Reapable)
+
+          fresh = @registry.entries
+          judged.map { |verdict| verdict.is_a?(Reapable) ? settle(verdict, fresh) : verdict }
+        end
 
         private
 
-        def judge(marker, marked)
+        Reapable = Data.define(:branch, :tip, :marker, :marked)
+
+        def judge(marker, marked, entries)
           branch = "refs/heads/#{marker.delete_prefix("#{WorkingBranch::OWNED}/")}"
           tip = @repo.tip(branch)
           return orphaned(marker, marked) if tip.empty?
 
-          reason = hold(branch, tip, marked)
-          reason.empty? ? reap(branch, tip, marker, marked) : Records.kept(:branch, branch, reason)
+          reason = hold(branch, tip, marked, entries)
+          reason.empty? ? Reapable.new(branch:, tip:, marker:, marked:) : Records.kept(:branch, branch, reason)
+        end
+
+        def settle(verdict, entries)
+          holders = entries.select { |entry| entry.branch == verdict.branch }.map(&:path)
+          return reap(verdict.branch, verdict.tip, verdict.marker, verdict.marked) if holders.empty?
+
+          Records.kept(:branch, verdict.branch, "checked out at #{holders.join(", ")}")
         end
 
         # The marker holds the SHA the branch was created at, which is the
         # trunk's tip at that moment: a branch still there has had nothing land
         # on it, and "merged" would be true of it trivially.
         # @return [String] why the branch stays, or "" when it may go
-        def hold(branch, tip, marked)
+        def hold(branch, tip, marked, entries)
           return "it is #{@repo.trunk}, which is never reaped" if branch == "refs/heads/#{@repo.trunk}"
           return "nothing has landed on it since lain created or last moved it" if tip == marked
           return "not merged into #{@repo.trunk}" unless @repo.merged?(tip)
 
-          in_use(branch)
+          in_use(branch, entries)
         end
 
         # A rebase in progress detaches its checkout, so the porcelain names no
         # branch for it, yet finishing the rebase rewrites the branch by name.
-        def in_use(branch)
-          entries = @registry.entries
+        def in_use(branch, entries)
           holders = entries.select { |entry| entry.branch == branch }.map(&:path)
           return "checked out at #{holders.join(", ")}" unless holders.empty?
 
