@@ -149,13 +149,14 @@ RSpec.describe Lain::CLI::Command::Review do
   # what the default renders and the example would be green either way.
   around do |example|
     Dir.mktmpdir("lain-command-review") do |dir|
-      FileUtils.cp_r(File.join(SeedRepo.at("README" => "seed\n"), "."), dir)
-      git(dir, "branch", "-M", "main")
-      git(dir, "checkout", "-q", "-b", "feature")
-      File.write(File.join(dir, "README"), "seed\nthe line under review\n")
-      commit(dir, "the work under review")
-      File.write(File.join(dir, "later.rb"), "the second commit\n")
-      commit(dir, "and the commit after it")
+      SeedRepo.derived("review_command_feature", into: dir) do |template|
+        git(template, "branch", "-M", "main")
+        git(template, "checkout", "-q", "-b", "feature")
+        File.write(File.join(template, "README"), "seed\nthe line under review\n")
+        commit(template, "the work under review")
+        File.write(File.join(template, "later.rb"), "the second commit\n")
+        commit(template, "and the commit after it")
+      end
       @repo = dir
       example.run
     end
