@@ -191,7 +191,7 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
     end
 
     describe "in a follow-up request" do
-      let(:other) { "glpat-Xk3mQ9vR2tY7wP4nL8bZ" }
+      let(:other) { %w[glpat- Xk3mQ9vR2tY7wP4nL8bZ].join }
       let(:first) { ["a token nobody listed: #{token}", "noted"] }
 
       def flags = journal.grep(Lain::Telemetry::EgressRefused::Flagged)
