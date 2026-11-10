@@ -905,9 +905,18 @@ only when every word of it is ordinary and under the project root. That now incl
   channel or a version (`+nightly`, `+1.85`), never a path. After `--`, `clippy` takes only lint
   levels and lint names, and `test` takes only filters and options that neither open nor write a
   file. The call is approved only when every manifest and `.cargo/config.toml` cargo would load lies
-  inside the project root, is plain text, names no workspace outside it, neither aliases `fmt` or
-  `clippy` nor includes another config, and no `rust-toolchain` file is in the working directory or above it. Your own cargo
-  home config counts only when it sets nothing that runs. Anything else goes to the judge.
+  inside the project root and is plain TOML. A manifest's path dependencies, build scripts,
+  `[patch]` and `[replace]` entries and workspace members must resolve inside the root, a git or
+  registry source on disk (`file:` or no scheme) is refused, a manifest may not turn on a
+  `cargo-features` entry, and a member glob may not use `**`. A project config may hold only an
+  allowlist of inert keys: aliases (never for `fmt` or `clippy`), terminal, network and build-job
+  settings, and a runner, wrapper or linker given as a bare program name such as `sccache`, whose
+  arguments are plain words. Its `rustflags` may only set lint levels, `--cfg`, a few `-C` codegen
+  options and a linker by name, and an `[env]` table is refused. Paths in a config are refused,
+  never resolved. The walk has a budget per call, and no `rust-toolchain` file may be in the
+  working directory or above it. Your own cargo home config counts only when it sets nothing that
+  runs. Code that source pulls in by itself, such as `#[path]`, `include!` or a symlinked
+  `build.rs`, is the workspace sandbox's to stop, not this rule's. Anything else goes to the judge.
   `check`, `clippy`, `build` and `test` write the target directory, so a rule-approved one runs
   under the workspace sandbox profile when the workspace switch is on, and under the reader
   profile (where the build cannot write `target/`) when it is off. `fmt --check` stays on the reader.
