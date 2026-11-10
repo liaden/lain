@@ -97,6 +97,12 @@ RSpec.describe Lain::Sensitivity::Masking do
 
     # The whole walk is in BINARY because an offset into re-decoded text is a
     # different offset, so the label has to be put back.
+    it "restores the UTF-8 tag on UTF-16 bytes it was given" do
+      bytes = content.encode(Encoding::UTF_16LE).b.force_encoding(Encoding::UTF_8)
+
+      expect(described_class.render(bytes, detect(bytes)).encoding).to eq(Encoding::UTF_8)
+    end
+
     it "restores the encoding it was given" do
       utf8 = "# café\nAPI_KEY=#{secret}\n"
 
@@ -110,6 +116,30 @@ RSpec.describe Lain::Sensitivity::Masking do
       mixed = "naïve=café API_KEY=#{secret}\n"
 
       expect(described_class.render(mixed, detect(mixed))).to eq("naïve=café API_KEY=#{placeholder(1)}\n")
+    end
+
+    context "with UTF-16 bytes" do
+      def utf16(text, order) = text.encode(order).b
+
+      it "writes the placeholder in UTF-16LE behind a byte order mark, so the result stays legible" do
+        bytes = "\xFF\xFE".b + utf16(content, Encoding::UTF_16LE)
+
+        expect(described_class.render(bytes, detect(bytes)))
+          .to eq("\xFF\xFE".b + utf16("API_KEY=#{placeholder(1)}\n", Encoding::UTF_16LE))
+      end
+
+      it "writes the placeholder in UTF-16BE with no byte order mark" do
+        bytes = utf16(content, Encoding::UTF_16BE)
+
+        expect(described_class.render(bytes, detect(bytes))).to eq(utf16("API_KEY=#{placeholder(1)}\n", Encoding::UTF_16BE))
+      end
+
+      it "widens a span that splits a character to the whole character" do
+        bytes = utf16("ab#{secret}cd", Encoding::UTF_16LE)
+        split = [Lain::Sensitivity::Spans::Span.new(start: 5, length: 3)]
+
+        expect(described_class.render(bytes, split)).to eq(utf16("ab#{placeholder(1)}#{secret[2..]}cd", Encoding::UTF_16LE))
+      end
     end
   end
 

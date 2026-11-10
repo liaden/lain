@@ -25,8 +25,9 @@ module Lain
         # (a plain list is checked, never sorted), so one forward walk rebuilds the
         # content with each withheld span swapped for its placeholder. The whole
         # walk is in BINARY because an offset into re-decoded text is a
-        # different offset; the original encoding is restored at the end, and
-        # the placeholder is ASCII so it cannot invalidate it.
+        # different offset; the original encoding is restored at the end. The
+        # placeholder is spelled as the {Regions::View} reads the bytes, so UTF-16
+        # stays UTF-16, and a span that splits a UTF-16 character masks all of it.
         #
         # @param content [String] the bytes the regions were detected in
         # @param regions [Spans, Enumerable<#start, #length>] the ones to withhold,
@@ -37,8 +38,9 @@ module Lain
         # @return [String] shaped and encoded as `content` arrived
         def render(content, regions, ordinals: (1..).each)
           bytes = content.b
-          spans = regions.is_a?(Spans) ? regions : Spans.ascending(regions)
-          cursor, parts = spans.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals) }
+          view = Regions::View.of(bytes)
+          spans = view.aligned(regions.is_a?(Spans) ? regions : Spans.ascending(regions))
+          cursor, parts = spans.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals, view) }
 
           (parts << bytes.byteslice(cursor..)).join.force_encoding(content.encoding)
         end
@@ -54,9 +56,9 @@ module Lain
 
         # The bytes kept since the previous region, then the placeholder that
         # stands in for this one -- carrying forward the offset just past it.
-        def swap(bytes, (at, kept), region, ordinals)
+        def swap(bytes, (at, kept), region, ordinals, view)
           [region.start + region.length,
-           kept + [bytes.byteslice(at, region.start - at), format(Regions::PLACEHOLDER, ordinals.next)]]
+           kept + [bytes.byteslice(at, region.start - at), view.encode(format(Regions::PLACEHOLDER, ordinals.next))]]
         end
       end
     end

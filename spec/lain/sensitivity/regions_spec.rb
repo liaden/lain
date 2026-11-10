@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "openssl"
+require "zlib"
 
 RSpec.describe Lain::Sensitivity::Regions do
   # Every example also holds the default Rust scanner to Ruby's own pass per shape, the oracle it replaced.
@@ -948,6 +949,93 @@ RSpec.describe Lain::Sensitivity::Regions do
 
       it "digests it identically to the same file without the BOM" do
         expect(digests(content)).to eq(digests("SESSION=hunter2pass\n"))
+      end
+    end
+
+    context "when the bytes are UTF-16" do
+      let(:dotenv) { "NAME=lain\nSESSION=hunter2pass\nAWS=AKIAQZ7R2M4X9TBL3KWE\n" }
+
+      def utf16(text, order) = text.encode(order).b
+
+      def found_in(bytes) = detect(bytes).map { bytes.byteslice(_1.start, _1.length) }
+
+      {
+        "UTF-16LE behind a byte order mark" => ["\xFF\xFE".b, Encoding::UTF_16LE],
+        "UTF-16BE behind a byte order mark" => ["\xFE\xFF".b, Encoding::UTF_16BE],
+        "UTF-16LE with no byte order mark" => ["".b, Encoding::UTF_16LE],
+        "UTF-16BE with no byte order mark" => ["".b, Encoding::UTF_16BE]
+      }.each do |label, (mark, order)|
+        it "finds each secret in #{label}, at offsets into the bytes handed over" do
+          bytes = mark + utf16(dotenv, order)
+
+          expect(found_in(bytes)).to eq([utf16("hunter2pass", order), utf16("AKIAQZ7R2M4X9TBL3KWE", order)])
+        end
+      end
+
+      it "names each region as the UTF-8 text names it" do
+        expect(detect("\xFF\xFE".b + utf16(dotenv, Encoding::UTF_16LE)).map(&:reason))
+          .to eq(detect(dotenv).map(&:reason))
+      end
+
+      it "starts every region on a character boundary" do
+        bytes = "\xFF\xFE".b + utf16("é€ #{secret}\n", Encoding::UTF_16LE)
+
+        expect(detect(bytes).map(&:start)).to all(be_even)
+      end
+
+      it "still finds a secret in the ASCII a UTF-16 text runs into" do
+        bytes = "\xFF\xFE".b + utf16("NAME=lain\n", Encoding::UTF_16LE) + "API_KEY=#{secret}\n"
+
+        expect(found_in(bytes)).to include(secret)
+      end
+
+      it "does not find a placeholder already standing in UTF-16" do
+        expect(detect("\xFF\xFE".b + utf16("API_KEY=<redacted:1>\n", Encoding::UTF_16LE))).to be_empty
+      end
+
+      it "counts and numbers past the placeholders standing in UTF-16" do
+        bytes = utf16("a <redacted:4> b <redacted:2>\n", Encoding::UTF_16LE)
+
+        expect([described_class.placeholders(bytes), described_class.numbering_after(bytes).next]).to eq([2, 5])
+      end
+
+      it "finds a recurrence of a UTF-8 secret in UTF-16 text" do
+        bytes = "\xFF\xFE".b + utf16("echo #{secret}\n", Encoding::UTF_16LE)
+
+        expect(described_class.recurrences(bytes, [secret]).map { bytes.byteslice(_1.start, _1.length) })
+          .to eq([utf16(secret, Encoding::UTF_16LE)])
+      end
+
+      it "finds no recurrence touching a placeholder standing in UTF-16" do
+        bytes = utf16("<redacted:1>#{secret}\n", Encoding::UTF_16LE)
+
+        expect(described_class.recurrences(bytes, ["<redacted:1>#{secret}"])).to be_empty
+      end
+    end
+
+    context "when ordinary binary carries ASCII" do
+      # Each holds its secret as plain ASCII inside the binary, so what the detector found before UTF-16
+      # was read is a known offset, and a binary taken for UTF-16 would move or lose it.
+      let(:assignment) { "API_KEY=#{secret}\n" }
+
+      def png(text)
+        chunk = ->(type, data) { [data.bytesize].pack("N") + type + data + [Zlib.crc32(type + data)].pack("N") }
+        "\x89PNG\r\n\x1A\n".b + chunk.call("IHDR".b, [1, 1, 8, 2, 0, 0, 0].pack("NNC5")) +
+          chunk.call("tEXt".b, "Comment\0#{text}".b)
+      end
+
+      def stored_gzip(text) = Zlib.gzip(text, level: Zlib::NO_COMPRESSION).b
+
+      it "finds the same region in a PNG text chunk" do
+        bytes = png(assignment)
+
+        expect(detect(bytes).map { [_1.start, _1.bytes] }).to eq([[bytes.index(secret), secret]])
+      end
+
+      it "finds the same region in a stored gzip stream" do
+        bytes = stored_gzip(assignment)
+
+        expect(detect(bytes).map { [_1.start, _1.bytes] }).to eq([[bytes.index(secret), secret]])
       end
     end
 

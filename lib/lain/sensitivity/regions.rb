@@ -43,6 +43,7 @@ module Lain
       PLACEHOLDER = "<redacted:%d>"
       PLACEHOLDER_SHAPE = Regexp.new(Regexp.escape(PLACEHOLDER).sub("%d", "(\\d+)"))
       PLACEHOLDER_ONLY = /\A#{PLACEHOLDER_SHAPE}\z/
+      PLACEHOLDER_STEM = PLACEHOLDER[/\A[^%]*/].freeze
 
       # A region no pattern named. Journaled as-is, so triage stays legible as
       # triage rather than reading like a matched credential.
@@ -185,15 +186,15 @@ module Lain
       VALUED = CONTENT_SHAPES.select { _2.names.include?("value") }.keys.freeze
 
       class << self
-        # A BOM defeats every line-anchored shape on line 1 -- `^` anchors before
-        # it and a BOM is not `[ \t]` -- so it is skipped for the scan and added
-        # back to every offset, which keeps offsets indexing the bytes the caller
-        # handed over rather than the ones that were scanned.
+        # The shapes read the {View}'s UTF-8 text, so `^` sees line 1 behind a BOM
+        # and UTF-16 reads as the text it spells; each offset maps back to the
+        # bytes the caller handed over. The raw bytes of a UTF-16 view are scanned
+        # too, so ASCII next to UTF-16 text is found.
         #
         # @param content [String] file bytes in any encoding; re-tagged BINARY
         #   here rather than by the caller, because the credential table
         #   deliberately does not normalize and this is the consumer that needs
-        #   it. UTF-16 and invalid UTF-8 are safe as a result.
+        #   it. Invalid UTF-8 is safe as a result.
         # @param checksums [Boolean] true for a file {Sensitivity::Policy#checksums?}
         #   names: a value in {CHECKSUM} shape behind a checksum key is no longer
         #   found by its entropy or value shape alone, while a name hint, an issuer
@@ -204,18 +205,16 @@ module Lain
         # @return [Array<Region>] frozen, ascending by offset, no two overlapping
         def detect(content, checksums: false, hinted: false, scanner: RustScanner.default)
           bytes = content.b
-          skip = bytes.start_with?(BOM) ? BOM.bytesize : 0
-          scanned = skip.zero? ? bytes : bytes.byteslice(skip..)
-
-          matches_by_shape = group_by_shape(scanner, scanned)
+          view = View.of(bytes)
+          found = mapped(view, scan(view.text, scanner, checksums, hinted))
+          found += scan(bytes, scanner, checksums, hinted) if view.utf16?
 
           # `:rank` makes the sort key TOTAL. No output depends on it -- equal
           # starts always overlap, so they merge, and `coalesced` picks the name
           # by rank anyway -- but `sort_by` is not stable, and without it the
           # fold's intermediate order is arbitrary. Deliberately unpinnable: no
           # mutant can kill it, which is the honest reason there is no spec.
-          sorted = candidates(scanned, matches_by_shape, checksums, hinted).sort_by { [_1[:start], _1[:rank]] }
-          merge(sorted, bytes, skip)
+          merge(found.sort_by { [_1[:start], _1[:rank]] }, bytes, view)
         end
 
         # @param text [String]
@@ -231,7 +230,11 @@ module Lain
 
         # @param text [String]
         # @return [Integer] the largest placeholder number present, 0 when none
-        def highest(text) = text.b.scan(PLACEHOLDER_SHAPE).flatten.map(&:to_i).max.to_i
+        def highest(text)
+          view = View.of(text)
+          [text.b, *(view.text if spelled?(text, view))].flat_map { _1.scan(PLACEHOLDER_SHAPE).flatten }
+                                                        .map(&:to_i).max.to_i
+        end
 
         # Where each of `secrets` recurs in `text`, raw or escaped as `inspect` would
         # escape it. Only a value of substance is sought, since a short one recurs in
@@ -243,28 +246,56 @@ module Lain
         # @return [Array<Spans::Span>]
         def recurrences(text, secrets)
           haystack = text.b
+          view = View.of(haystack)
           standing = placeholder_spans(text)
-          secrets.select { _1.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH }.flat_map { spellings(_1) }.uniq
+          secrets.select { _1.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH }.flat_map { spellings(_1, view) }.uniq
                  .flat_map { occurrences(haystack, _1) }
                  .reject { |span| standing.any? { span.start < _1.finish && _1.start < span.finish } }
         end
 
         private
 
-        def merge(sorted, bytes, skip)
-          # Here and not in the CONTENT pattern, which a real value starting with `<` must still match.
-          coalesce(sorted).map { region_at(_1, bytes, skip) }.reject { _1.bytes.match?(PLACEHOLDER_ONLY) }.freeze
+        def scan(scanned, scanner, checksums, hinted)
+          candidates(scanned, group_by_shape(scanner, scanned), checksums, hinted)
         end
+
+        def mapped(view, found)
+          found.map { _1.merge(start: view.offset(_1[:start]), finish: view.end_offset(_1[:finish])) }
+        end
+
+        def merge(sorted, bytes, view)
+          # Here and not in the CONTENT pattern, which a real value starting with `<` must still match.
+          coalesce(sorted).map { region_at(_1, bytes) }.reject { placeholder?(_1.bytes, view) }.freeze
+        end
+
+        def placeholder?(bytes, view) = [bytes, view.decode(bytes)].any? { _1.match?(PLACEHOLDER_ONLY) }
 
         def placeholder_spans(text)
           haystack = text.b
-          haystack.to_enum(:scan, PLACEHOLDER_SHAPE).map do
+          view = View.of(haystack)
+          spans = placeholders_in(haystack) { |start, finish| [start, finish] }
+          return spans unless spelled?(haystack, view)
+
+          spans + placeholders_in(view.text) { |start, finish| [view.offset(start), view.end_offset(finish)] }
+        end
+
+        # Whether a UTF-16 view holds a placeholder, asked of the bytes so a view with none is never decoded.
+        def spelled?(text, view) = view.utf16? && text.b.include?(view.encode(PLACEHOLDER_STEM))
+
+        def placeholders_in(scanned)
+          scanned.to_enum(:scan, PLACEHOLDER_SHAPE).map do
             found = Regexp.last_match
-            Spans::Span.new(start: found.begin(0), length: found[0].bytesize)
+            start, finish = yield found.byteoffset(0)
+            Spans::Span.new(start:, length: finish - start)
           end
         end
 
-        def spellings(bytes) = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
+        def spellings(bytes, view)
+          utf8 = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
+          return utf8 unless view.utf16?
+
+          utf8 + utf8.map { String.new(_1, encoding: Encoding::UTF_8) }.select(&:valid_encoding?).map { view.encode(_1) }
+        end
 
         def occurrences(haystack, needle)
           Enumerator.produce(haystack.byteindex(needle)) { haystack.byteindex(needle, _1 + needle.bytesize) }
@@ -287,9 +318,9 @@ module Lain
         # not always the one that started first.
         def named(span, group) = group.min_by { _1[:rank] }.merge(start: span.start, finish: span.finish)
 
-        def region_at(candidate, bytes, skip)
-          start = candidate[:start] + skip
-          Region.new(start:, bytes: bytes.byteslice(start, candidate[:finish] - candidate[:start]),
+        def region_at(candidate, bytes)
+          start = candidate[:start]
+          Region.new(start:, bytes: bytes.byteslice(start, candidate[:finish] - start),
                      reason: candidate[:reason], detector: candidate[:detector])
         end
 

@@ -212,6 +212,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(body.select { |line| content.include?(line) }).to be_empty
     end
 
+    # read_file refuses a UTF-16 file behind a byte order mark as not text, so what reaches masking is
+    # UTF-16 with none, which reads as valid UTF-8.
+    [Encoding::UTF_16LE, Encoding::UTF_16BE].each do |order|
+      it "masks a credential in #{order} with no byte order mark" do
+        path = File.join(dir, "settings.txt").tap { File.binwrite(_1, one_secret.encode(order)) }
+
+        content = read(path).fetch(:result).content
+
+        expect(content.b).not_to include(api_key.encode(order).b)
+        expect(content.b).to start_with("API_KEY=<redacted:1>\n".encode(order).b)
+      end
+    end
+
     it "leaves a file with no regions byte-identical, and parks nothing" do
       path = write("plain.rb", ordinary)
 
@@ -1695,6 +1708,25 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       result = bash(tool: ->(_input, _invocation) { Lain::Tool::Result.held("waiting: #{token}") })
 
       expect(result).to have_attributes(error?: true, ends_turn: true)
+    end
+
+    describe "a UTF-16LE file it prints" do
+      let(:aws) { "AKIAQZ7R2M4X9TBL3KWE" }
+
+      def cat(bytes) = bash("cat #{File.join(dir, "keys.txt").tap { File.binwrite(_1, bytes) }}")
+
+      it "masks a key in one with no byte order mark" do
+        content = cat("AWS=#{aws}\n".encode(Encoding::UTF_16LE)).content
+
+        expect(content.b).not_to include(aws.encode(Encoding::UTF_16LE).b)
+        expect(content.b).to include("AWS=<redacted:1>\n".encode(Encoding::UTF_16LE).b)
+      end
+
+      it "lets no key text through from one behind a byte order mark" do
+        content = cat("\uFEFFAWS=#{aws}\n".encode(Encoding::UTF_16LE)).content
+
+        expect(content.b).not_to include(aws.encode(Encoding::UTF_16LE).b)
+      end
     end
 
     describe "a session secret no pattern matches" do

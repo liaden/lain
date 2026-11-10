@@ -24,8 +24,11 @@ module Lain
   # disagrees with its bytes: invalid UTF-8 raises ArgumentError, and UTF-16
   # raises Encoding::CompatibilityError while `valid_encoding?` answers TRUE --
   # which is why a caller cannot use that predicate to decide a scan is safe.
-  # Binary bytes have neither failure mode. This table deliberately does not
-  # normalize: one that re-encoded its input would hide which consumer needed it.
+  # Binary bytes have neither failure mode, but not raising is not finding: in
+  # UTF-16 bytes a NUL splits every shape, so they match nothing. This table
+  # deliberately does not normalize: one that re-encoded its input would hide
+  # which consumer needed it. {Sensitivity::Regions::View} is where the read
+  # side decodes UTF-16 before matching.
   module CredentialPatterns
     # A refusal that came from a judgment rather than a named pattern is not a
     # pattern hit. {Telemetry::WriteRefused} requires `pattern` non-nil, so a

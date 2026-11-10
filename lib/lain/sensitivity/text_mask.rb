@@ -52,6 +52,10 @@ module Lain
       # A line still open past {PARTIAL_CAP} is shown up to its last space or
       # tab, so a progress bar or a long unbroken line is not held until exit,
       # and a token, which holds neither, is masked whole.
+      #
+      # UTF-16 output is cut only after a whole 2-byte newline or blank, and each
+      # piece is masked behind the stream's byte order mark, since a later piece
+      # carries none and must still be read, and spelled back, as UTF-16.
       class Stream
         # Roughly what a held block may grow to (one chunk past it) before it is
         # masked unfinished; an endless BEGIN must not hold the display forever.
@@ -62,6 +66,32 @@ module Lain
         KEY_BEGIN = /^-----BEGIN [A-Z ]*KEY-----/n
         KEY_END = /-----END [^\n]*\n/n
         SUNK = /\A.*?-----END [^\n]*\n/mn
+
+        Layout = Data.define(:line, :blank, :width, :mark)
+
+        # How one encoding spells the newline and the blank a cut lands after.
+        class Layout
+          # @param bytes [String] BINARY, starting on a character boundary
+          # @param pattern [Regexp] {#line} or {#blank}
+          # @return [Integer, nil] the length up to and including the last whole match
+          def after_last(bytes, pattern)
+            found = Enumerator.produce(bytes.rindex(pattern)) { _1.positive? ? bytes.rindex(pattern, _1 - 1) : nil }
+                              .take_while(&:itself).find { (_1 % width).zero? }
+            found && (found + width)
+          end
+
+          # @return [Integer] the most of `bytes` that ends on a character boundary
+          def whole(bytes) = bytes.bytesize - (bytes.bytesize % width)
+
+          # @return [String] `mark` in front of `text`, unless it is there already
+          def marked(text) = text.start_with?(mark) ? text : mark + text
+        end
+
+        LAYOUTS = {
+          utf8: Layout.new(line: LINE_END, blank: BLANK, width: 1, mark: "".b.freeze),
+          utf16le: Layout.new(line: /[\n\r]\0/n, blank: /[ \t]\0/n, width: 2, mark: "\xFF\xFE".b.freeze),
+          utf16be: Layout.new(line: /\0[\n\r]/n, blank: /\0[ \t]/n, width: 2, mark: "\xFE\xFF".b.freeze)
+        }.freeze
 
         # @return [Integer] how many fresh spans have been masked so far
         attr_reader :count
@@ -80,8 +110,8 @@ module Lain
         # @return [String] the masked text safe to show now
         def <<(chunk)
           @pending << chunk.b
-          cut = @pending.rindex(LINE_END)
-          return take(cut + 1, final: false) if cut
+          cut = layout.after_last(@pending, layout.line)
+          return take(cut, final: false) if cut
           return +"" if @pending.bytesize <= PARTIAL_CAP
 
           take(partial_cut, final: false)
@@ -92,10 +122,18 @@ module Lain
 
         private
 
+        # Read from the first 2 bytes or more, since a byte order mark arrives only once.
+        def layout
+          return @layout if @layout
+          return LAYOUTS.fetch(:utf8) if @pending.bytesize < 2
+
+          @layout = LAYOUTS.fetch(Regions::View.of(@pending).encoding)
+        end
+
         # A held key block is taken whole, so it answers to {HOLD_CAP} alone.
         def partial_cut
-          blank = @pending.rindex(BLANK) unless @pending.match?(KEY_BEGIN)
-          blank&.positive? ? blank + 1 : @pending.bytesize
+          blank = layout.after_last(@pending, layout.blank) unless @pending.match?(KEY_BEGIN)
+          blank && blank > layout.width ? blank : layout.whole(@pending)
         end
 
         def take(length, final:)
@@ -137,11 +175,11 @@ module Lain
         end
 
         def masked(text)
-          text.force_encoding(Encoding::UTF_8)
-          skip_shown(text)
-          masked = @mask.mask(text, @ordinals)
+          marked = layout.marked(text).force_encoding(Encoding::UTF_8)
+          skip_shown(marked)
+          masked = @mask.mask(marked, @ordinals)
           @count += masked.fresh
-          masked.text
+          masked.text.byteslice((marked.bytesize - text.bytesize)..)
         end
       end
     end

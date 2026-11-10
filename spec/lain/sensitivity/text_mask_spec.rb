@@ -81,6 +81,23 @@ RSpec.describe Lain::Sensitivity::TextMask do
       expect(described_class.new(secrets: ["redacted"]).call(text).text).to eq("#{placeholder(1)} #{placeholder(2)}\n")
     end
 
+    context "with UTF-16 text" do
+      let(:aws) { "AKIAQZ7R2M4X9TBL3KWE" }
+      let(:bytes) { "\xFF\xFE".b + "user=lain\nAWS=#{aws}\n".encode(Encoding::UTF_16LE).b }
+
+      it "masks a key and keeps the text legible as UTF-16LE" do
+        text = mask.call(bytes).text
+
+        expect(text.b).to eq("\xFF\xFE".b + "user=lain\nAWS=#{placeholder(1)}\n".encode(Encoding::UTF_16LE).b)
+      end
+
+      it "changes no byte when it masks masked text again" do
+        once = mask.call(bytes).text
+
+        expect(mask.call(once)).to have_attributes(text: once, fresh: 0, prior: 1)
+      end
+    end
+
     describe "its laws, over drawn texts" do
       let(:word) { PropCheck::Generators.alphanumeric_string(min: 1, max: 8) }
       let(:token) { PropCheck::Generators.alphanumeric_string(min: 40, max: 48).map { "kJ8fQ#{_1}Zq9" } }
@@ -227,6 +244,79 @@ RSpec.describe Lain::Sensitivity::TextMask do
 
       expect([stdout << "A_TOKEN=#{secret}\n", stderr << "B_TOKEN=#{other}\n", stdout << "C_TOKEN=#{other}\n"])
         .to eq(["A_TOKEN=#{placeholder(1)}\n", "B_TOKEN=#{placeholder(2)}\n", "C_TOKEN=#{placeholder(3)}\n"])
+    end
+
+    context "with UTF-16LE output" do
+      let(:aws) { "AKIAQZ7R2M4X9TBL3KWE" }
+      let(:text) { "\xFF\xFE".b + "user=lain\nAWS=#{aws}\ndone\n".encode(Encoding::UTF_16LE).b }
+
+      def legible?(piece) = piece.bytesize.even? && piece.dup.force_encoding(Encoding::UTF_16LE).valid_encoding?
+
+      def pieces_of(cuts) = [0, *cuts, text.bytesize].each_cons(2).map { |from, to| text.byteslice(from...to) }
+
+      it "masks as the whole text does, cut on its 2-byte newlines", aggregate_failures: false do
+        cuts = PropCheck::Generators.array(PropCheck::Generators.choose(0..text.bytesize), min: 0, max: 6).map(&:sort)
+
+        forall(cuts:) do |cuts:|
+          stream = mask.stream
+          shown = pieces_of(cuts).map { stream << _1 } << stream.finish
+
+          expect(shown).to all(satisfy { legible?(_1) })
+          expect(shown.join.b).to eq(mask.call(text).text.b)
+        end
+      end
+
+      it "cuts a long partial line at a 2-byte blank" do
+        words = "word " * 1000
+        stream = mask.stream
+        line = "\xFF\xFE".b + "#{words}AWS=#{aws}".encode(Encoding::UTF_16LE).b
+
+        expect([stream << line, stream.finish].map { _1.force_encoding(Encoding::UTF_16LE).encode(Encoding::UTF_8) })
+          .to eq(["\uFEFF#{words}", "AWS=#{placeholder(1)}"])
+      end
+
+      def shown_by(pieces)
+        stream = mask.stream
+        (pieces.map { stream << _1 } << stream.finish).reject(&:empty?)
+      end
+
+      def leaked?(shown) = shown.join.b.then { _1.include?(aws.encode(Encoding::UTF_16LE).b) || _1.include?(aws) }
+
+      it "masks a key in a later piece too CJK-heavy to read as UTF-16 alone" do
+        shown = shown_by(["\xFF\xFE".b + "ok\n".encode(Encoding::UTF_16LE).b,
+                          "#{"日本語" * 30}#{aws}\n".encode(Encoding::UTF_16LE).b])
+
+        expect([leaked?(shown), shown.all? { legible?(_1) }]).to eq([false, true])
+      end
+
+      it "never cuts on newline bytes that sit across 2 units" do
+        shown = shown_by(["\xFF\xFE".b + "x\u0A0A\u0100y".encode(Encoding::UTF_16LE).b,
+                          "AWS=#{aws}\n".encode(Encoding::UTF_16LE).b])
+
+        expect([leaked?(shown), shown.all? { legible?(_1) }]).to eq([false, true])
+      end
+
+      it "keeps a long line with no blank legible when it arrives in odd-sized chunks" do
+        long = "\xFF\xFE".b + "#{"z" * 5000}AWS=#{aws}\n".encode(Encoding::UTF_16LE).b
+        shown = shown_by(long.bytes.each_slice(4097).map { _1.pack("C*") })
+
+        expect([leaked?(shown), shown.all? { legible?(_1) }]).to eq([false, true])
+      end
+
+      it "shows no key text through the live display, and every piece decodes as UTF-16LE" do
+        channel = RecordingChannel.new
+        secrets = Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env: {}),
+                                                         history: Lain::Sensitivity::HistoryLiterals::Null)
+        invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: nil, channel:)
+        sink = Lain::Sensitivity::Display.new(secrets:).sinks(invocation).fetch(:stdout_sink)
+        text.bytes.each_slice(3) { sink << _1.pack("C*") }
+        sink.flush
+        shown = channel.events.map(&:bytes).reject(&:empty?)
+
+        expect(shown).to all(satisfy { legible?(_1) })
+        expect(shown.join.force_encoding(Encoding::UTF_16LE).encode(Encoding::UTF_8))
+          .to eq("\uFEFFuser=lain\nAWS=#{placeholder(1)}\ndone\n")
+      end
     end
 
     it "keeps counting across chunks" do
