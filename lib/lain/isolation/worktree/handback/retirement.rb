@@ -25,6 +25,9 @@ module Lain
           # this did.
           RELEASED = "%<worker>s's lease was already released, so nothing is left to anchor"
 
+          SYNC_STILL = [nil, :current, :disabled, :dirty].freeze
+          CHECKS_STILL = [nil, :passed, :skipped, :dirty].freeze
+
           # What a worker's ref holds before its sync, judged against the
           # checkout's own HEAD. `refusal` is the outcome that stops the
           # retirement when the ref already anchors work this checkout lacks.
@@ -81,10 +84,12 @@ module Lain
             # @param worker_id [Object] names the ref
             # @param from [String, nil] the HEAD {#standing} read, which the
             #   self-sync may have anchored before its rebase
+            # @param moved [Boolean] false when the sync left HEAD where
+            #   {#standing} read it, which spares a second read
             # @return [Outcome]
-            def anchor(lease, worker_id:, from:)
+            def anchor(lease, worker_id:, from:, moved: true)
               named = Naming.new(worker_id)
-              commit = head_of(lease)
+              commit = moved ? head_of(lease) : from
               return outcome(:nothing_to_do, named) if nothing?(commit)
 
               held = @parent.target(named.ref)
@@ -230,11 +235,23 @@ module Lain
 
             outcome = nil
             synced = yield
-            outcome = @anchor.anchor(lease, worker_id:, from: standing.head)
+            outcome = @anchor.anchor(lease, worker_id:, from: standing.head, moved: moved?(synced))
             reported(outcome, synced, detail)
           ensure
             unwound(lease, worker_id, standing) unless outcome || standing.nil? || standing.taken? || lease.released?
           end
+
+          # HEAD is reused only when nothing that ran after {Anchor#standing}
+          # read it can have moved it: the sync made no attempt, even an
+          # abandoned rebase counts, and the checks asked the worker for no fix.
+          def moved?(synced)
+            record = synced.to_record
+            checks = record.fetch(:checks, nil) || { attempts: [] }
+            !(still?(record[:sync], record[:attempts], SYNC_STILL) &&
+              still?(checks[:outcome], checks[:attempts], CHECKS_STILL))
+          end
+
+          def still?(outcome, attempts, outcomes) = attempts.empty? && outcomes.include?(outcome)
 
           # Total, because it runs while a cancel climbs and a raise here would
           # replace it.

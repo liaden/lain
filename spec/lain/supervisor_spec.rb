@@ -1343,7 +1343,7 @@ RSpec.describe Lain::Supervisor do
           Lain::Isolation::Worktree::Handback::Retirement::Standing.new(head: "b" * 40, refusal: (refusal if @taken))
         end
 
-        def anchor(lease, worker_id:, from:)
+        def anchor(lease, worker_id:, from:, **)
           @log << [:anchor, worker_id, lease.released?]
           Lain::Isolation::Worktree::Handback::Outcome.new(
             kind: :declined, worker_key: worker_id, ref: "refs/lain/worker/#{worker_id}", sha: "a" * 40,

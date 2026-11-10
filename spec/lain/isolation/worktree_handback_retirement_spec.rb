@@ -226,6 +226,101 @@ RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
       lease&.release
     end
 
+    context "when counting the HEAD reads in the worker's checkout" do
+      let(:reads) { [] }
+      let(:factory) do
+        lambda do |*argv, **kwargs|
+          reads << argv[2] if argv.last(2) == %w[rev-parse HEAD]
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+      end
+      let(:counted) do
+        anchor = Lain::Isolation::Worktree::Handback::Retirement::Anchor.new(
+          parent: Lain::Isolation::Checkout.new(@repo_root), base: backend.base, shell_out_factory: factory
+        )
+        described_class.new(sync:, anchor:, journal:)
+      end
+
+      def sync_reporting(outcome, &on_call)
+        Class.new do
+          define_method(:editorless) { |env| env }
+          define_method(:call) do |lease, **|
+            on_call&.call(lease)
+            Lain::Isolation::SelfSync::Result.new(outcome:)
+          end
+        end.new
+      end
+
+      context "with a self-sync that rewrote nothing" do
+        let(:sync) { sync_reporting(:current) }
+
+        it "reads HEAD once and anchors that commit" do
+          lease = backend.acquire("worker-7")
+          commit = commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+          report = counted.settled(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id: "worker-7")
+
+          expect([reads.size, report.sha]).to eq([1, commit])
+        ensure
+          lease&.release
+        end
+      end
+
+      context "with a self-sync that rebased the worker" do
+        let(:sync) do
+          sync_reporting(:synced) { |lease| @rebased = commit_in(lease.worker_env.cwd, "rebased\n", "rebased") }
+        end
+
+        it "reads HEAD again and anchors the rebased commit" do
+          lease = backend.acquire("worker-8")
+          commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+
+          report = counted.settled(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id: "worker-8")
+
+          expect([reads.size, report.sha]).to eq([2, @rebased])
+        ensure
+          lease&.release
+        end
+      end
+    end
+
+    it "anchors the commit of a worker left mid-rebase, though no further rebase is allowed" do
+      lease = backend.acquire("worker-9")
+      dir = lease.worker_env.cwd
+      commit = commit_in(dir, "worker\n", "worker work")
+      File.write(File.join(@repo_root, "worker.txt"), "tip\n")
+      run_git(@repo_root, "add", "-A")
+      run_git(@repo_root, "commit", "-q", "-m", "tip conflicts")
+      expect { run_git(dir, "rebase", run_git(@repo_root, "rev-parse", "--abbrev-ref", "HEAD")) }
+        .to raise_error(SeedRepo::GitFailed)
+
+      report = described_class.over(isolation: backend, journal:, retries: 0)
+                              .settled(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id: "worker-9")
+
+      expect([report.kind, report.sha]).to eq([:declined, commit])
+    ensure
+      lease&.release
+    end
+
+    it "anchors the commit a worker made while the checks ran, though the sync rewrote nothing" do
+      lease = backend.acquire("worker-10")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      fixed = nil
+      fixing = lambda do |checked, **|
+        fixed = commit_in(checked.worker_env.cwd, "fix\n", "fix")
+        Lain::Isolation::WorkerChecks::Result.new(outcome: :fixed, attempts: [{ "by" => "lain" }])
+      end
+      sync = Lain::Isolation::Checked.new(checks: fixing, sync: Lain::Isolation::SelfSync.new(base: backend.base))
+      anchor = described_class::Anchor.new(parent: Lain::Isolation::Checkout.new(@repo_root), base: backend.base)
+
+      report = described_class.new(sync:, anchor:, journal:)
+                              .settled(lease, worker: Lain::Isolation::SelfSync::Unaskable, worker_id: "worker-10")
+
+      expect(report.sha).to eq(fixed)
+    ensure
+      lease&.release
+    end
+
     # Built as the epic driver builds it: the project's `isolation` lint, run
     # in the actor's own checkout before the anchor.
     it "carries the actor's checks onto its retirement record" do
