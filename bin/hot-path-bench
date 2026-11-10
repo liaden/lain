@@ -36,7 +36,9 @@ module HotPathBench
 
   # Milliseconds. Seed each from 3 quiet-box logs at 1.25x the largest of the 3 medians, rounded up;
   # a nil is a row nobody has budgeted yet, and `--check` fails on it. Lowering one is free; raising one
-  # is its own commit, saying why.
+  # is its own commit, saying why. request_100000 sits at 1.17: its instructions crept from about 3.7M to
+  # 6.0M per rep across the epic and approval commits with no single step, and its wall time is bimodal
+  # under memory layout, so it was re-seeded from 3 fresh medians rather than bisected further.
   CEILINGS = {
     "render_chat_10k" => 18.3,
     "render_cold_10k" => 111,
@@ -44,7 +46,7 @@ module HotPathBench
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
     "bash_true_workspace" => 17.8,
-    "request_100000" => 0.821,
+    "request_100000" => 1.17,
     "request_1000000" => 2.98,
     "request_guarded_1000000" => 5.49,
     "journal_small" => 0.0052,
