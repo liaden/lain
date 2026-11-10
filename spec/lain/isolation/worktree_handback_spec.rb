@@ -85,9 +85,10 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
   end
 
   def commit_in(dir, contents, message, file: "README")
+    tracked = File.exist?(File.join(dir, file))
     File.write(File.join(dir, file), contents)
-    run_git(dir, "add", file)
-    run_git(dir, "commit", "-q", "-m", message)
+    run_git(dir, "add", file) unless tracked
+    run_git(dir, "commit", "-q", *("-a" if tracked), "-m", message)
     head_commit(dir)
   end
 

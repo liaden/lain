@@ -78,13 +78,10 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   def contains?(sha) = shell("merge-base", "--is-ancestor", sha, "refs/heads/epic/demo").exitstatus.zero?
 
   # A worker's commit, cut from the epic tip and anchored where a handback
-  # anchors it; the parent goes back to the epic branch.
+  # anchors it.
   def worker(id, files)
-    git("switch", "-q", "--detach", tip)
-    sha = commit(files)
     ref = Lain::Isolation::Worktree::Handback::Naming.new("issue.demo.#{id}.1").ref
-    git("update-ref", ref, sha)
-    git("switch", "-q", "epic/demo")
+    sha = CommitBuilder.call(@repo, parent: tip, files:, message: "work on #{files.keys.join(", ")}", ref:)
     [sha, ref]
   end
 

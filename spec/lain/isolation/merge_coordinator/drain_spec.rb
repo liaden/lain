@@ -47,15 +47,8 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
   def landings_of(file) = git("log", "--format=%H", "--first-parent", "refs/heads/main", "--", file).lines.size
 
   def worker(id, from: tip, file: id)
-    git("switch", "-q", "--detach", from)
-    FileUtils.mkdir_p(File.dirname(File.join(@repo, file)))
-    File.write(File.join(@repo, file), "#{id}\n")
-    git("add", file)
-    git("commit", "-q", "-m", "#{id} work")
-    sha = git("rev-parse", "HEAD")
     ref = Lain::Isolation::Worktree::Handback::Naming.new(id).ref
-    git("update-ref", ref, sha)
-    git("switch", "-q", "main")
+    sha = CommitBuilder.call(@repo, parent: from, files: { file => "#{id}\n" }, message: "#{id} work", ref:)
     Lain::Isolation::LandingQueue::Worker.new(id:, ref:, sha:)
   end
 
@@ -100,6 +93,25 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
     Process.kill(:KILL, -pid)
     Process.wait(pid)
     raise "the drainer #{pid} did not exit within 20s: #{File.read(File.join(@state, "drainer.log"))}"
+  end
+
+  describe "the worker helper" do
+    it "builds a worker commit with 1 git process, parented and anchored as given" do
+      base = tip
+      spawned = []
+      allow(Lain::Shell::Out).to receive(:new).and_wrap_original do |original, *argv, **kwargs|
+        spawned << argv if argv.first == "git"
+        original.call(*argv, **kwargs)
+      end
+
+      w1 = worker("w1", from: base, file: "dir/w1")
+
+      expect(spawned.size).to eq(1)
+      expect(git("rev-parse", "#{w1.ref}^")).to eq(base)
+      expect(git("rev-parse", w1.ref)).to eq(w1.sha)
+      expect(git("show", "#{w1.sha}:dir/w1")).to eq("w1")
+      expect(git("show", "#{w1.sha}:f")).to eq("a")
+    end
   end
 
   describe "the production construction" do
