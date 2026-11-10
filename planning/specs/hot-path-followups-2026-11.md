@@ -165,6 +165,8 @@ None.
 ```mermaid
 flowchart LR
   M1 --> M2 --> M3 --> M4
+  M3 --> M5
+  M5 --> D1
   U1 --> M4
   M3 --> C2
   C2 --> C3
@@ -435,6 +437,41 @@ OverMasked = Data.define(:tool, :shape, :spans) # include Telemetry::Journalable
 **Stop and report if:**
 - `spec/journalable_surface_spec.rb`'s generic build sweep cannot build the new record. Report the
   carrier validation that refuses it.
+
+### M5: Delete the Ruby scanner          [risk: medium]
+
+**Depends on:** M3
+**Files:** `lib/lain/sensitivity/regions/ruby_scanner.rb` (deleted),
+`lib/lain/sensitivity/regions.rb` and `lib/lain/sensitivity/regions/rust_scanner.rb` (only any
+comment or keyword that names the Ruby scanner), `spec/lain/sensitivity/regions_spec.rb`, and any
+other spec that names `RubyScanner` (grep the spec tree)
+**Reuse:** the parity M3 measured: its review's run of both scanners over the frozen corpus and
+1,000 random strings
+**Shared-file wiring:** none
+**Reachable from:** `Regions.detect`
+
+Decided here, by the user's ruling: parity measured once is enough. After M3 no production path
+builds a `RubyScanner`, so it is kept only as a spec oracle, and that weight is not carried
+forward. If a Rust miss turns up later, the Ruby scanner is read back out of git history.
+`CredentialPatterns` stays: `RustShapes` translates its patterns, so it is the source of the
+shapes, not a second scanner. The parity helper (`regions_spec.rb:7-11`) keeps each example's
+expected regions and drops the Ruby comparison. Examples whose only assertion was Ruby against
+Rust are deleted. A `scanner:` keyword on `Regions.detect` that only specs pass goes with it. The
+commit message records M3's parity numbers.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the Ruby scanner is gone
+  Given the tree after this card
+  When lib/ and spec/ are searched for RubyScanner
+  Then nothing names it, and every example that had its own expected regions still asserts them against the Rust scanner
+```
+Spec file: `spec/lain/sensitivity/regions_spec.rb`
+
+**Stop and report if:**
+- An example's expected regions came only from the Ruby scanner at run time, with nothing
+  written in the spec. List each one, with what Rust finds there.
 
 ### C1: Run a rule-approved cargo build under the workspace profile          [risk: high]
 
@@ -935,7 +972,7 @@ Spec file: none; the check is `/manual-qa` reading each section without a missin
 
 ### D1: Correct the docs this round changes          [risk: low]
 
-**Depends on:** M4, Q1, S2, S3
+**Depends on:** M4, M5, Q1, S2, S3
 **Files:** `ARCHITECTURE.md`, `docs/commands.md`, `docs/toolchain-traps.md`
 **Reuse:** Grounding's list of disagreements
 **Shared-file wiring:** `docs/rust-bindings.md:29`: replace the `Scan#limited` sentence with the
@@ -1065,3 +1102,9 @@ Spec file: none can fail on prose; the main session greps for "578", "Ruby scann
 - B1 re-seed handed back 09:33: medians 0.793, 0.936, 0.813 ms at loads 1.68, 1.96, 1.72; ceiling 0.821 to 1.17; landing attempt 1 started
 - B1 landed a070c57d (attempt 1)
 - Checkpoint 09:42: landed U2, U1, S2, R1, S1, C4, S4, G1, S3, M1, C1, B1; M2 in flight; M3, M4, C2, C3, Q1, D1 wait on it
+- M2 handed back 10:00. Ruling: scenario 1 holds as no key text, since Bash refuses non-UTF-8 output before masking; legible bash UTF-16 is FU-e. Review started (high, opus).
+- M2 review 10:21: APPROVE-WITH-FIXES, 6 mechanical items (3 Stream guard specs, 2 NulPattern guard specs, drop a dead check, pin paired? as base behaves, docstring, move a never-red example). Skipped: C-level decode (UTF-16 display cost 391 ms per MB against 343 to 374 for UTF-8), end_offset. Prefix arm of the bash refusal confirmed masked. Fix round sent; no second review by policy.
+- M2 fixes verified 10:24: lib diff is the dead check and the docstring only; 699 card examples green; landing attempt 1
+- M2 landed 5418f414 (attempt 1)
+- 10:28 M2 cleaned up. M3 started (opus, rust-implementer), worktree hfu-M3 cut at 5418f414 with a copy of tmp/x86_64-linux
+- 10:34 User ruling: delete the Ruby scanner once parity is measured; git history is the archive. Added card M5 (after M3, before D1). M3 unchanged: its parity run is the one measurement.
