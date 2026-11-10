@@ -20,7 +20,7 @@ module SuiteProfile
   USAGE = "usage: bin/suite-profile <dissect|stack-cpu|stack-wall|gc|spawns|rbspy> [--dry-run]"
 
   # The same two counts CLAUDE.md names for "nothing else is running"; ps | grep over-counts.
-  BUSY_PATTERNS = ["mise/installs/ruby/[0-9.]*/bin/parallel_rspec", "[p]re-commit (hook-impl|run)"].freeze
+  BUSY_PATTERNS = ["mise/installs/ruby/[0-9.]*/bin/parallel_rspec", "[p]re[-_]commit (hook-impl|run)"].freeze
 
   # env is what the lens sets; requires are rspec --require hooks under spec/support/suite_profile.
   Lens = Data.define(:env, :requires) do

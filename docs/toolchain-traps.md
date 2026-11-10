@@ -55,7 +55,7 @@ reads. Check for a live hook before believing a tree that looks wrong, and re-ch
 with the precise pattern:
 
 ```bash
-pgrep -cf '[p]re-commit (hook-impl|run)'   # a real hook runs as `pre-commit hook-impl ...`
+pgrep -cf '[p]re[-_]commit (hook-impl|run)'   # git runs it as `python -mpre_commit hook-impl ...`
 ```
 
 **The bare `pgrep -f '[p]re-commit'` false-matches.** The bracket trick hides only the pattern's own
@@ -63,6 +63,11 @@ spelling; any process whose command text holds the plain word matches it. A sibl
 background waiter whose echo said "waiting for pre-commit" read as a live hook to every other agent,
 and left several reading "busy" for the length of a run (2026-09-11). Match the hook's real argv, and
 never put the unbracketed word in a long-running command of your own.
+
+**The hook's real argv has an underscore.** git starts it as `python -mpre_commit hook-impl`, so the
+hyphen-only `[p]re-commit (hook-impl|run)` read 0 under a live hook, and 2 sessions landing on main
+each believed the other's hook was not running (2026-11-10). `[-_]` covers both spellings, the
+hyphen for `pre-commit run` and the underscore for the hook.
 
 **`rake compile` needs `clang`** (bindgen wants `libclang`). Switching interpreters invalidates
 `rb-sys`'s build fingerprint and forces a rebuild, which is usually when its absence surfaces.

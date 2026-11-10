@@ -67,10 +67,12 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   (`$XDG_STATE_HOME/lain/locks/suite.lock`); `cat` that file to see the holder. A bare `rspec`
   takes no lock, so a red beside one is still not evidence. `LAIN_SUITE_LOCK_HELD=1` is set only
   by the merge verifier, for the suite it runs inside the lock; exported anywhere else it skips the lock.
-  Before trusting a worktree's `git status`, `pgrep -cf '[p]re-commit (hook-impl|run)'` must read 0 —
+  Before trusting a worktree's `git status`, `pgrep -cf '[p]re[-_]commit (hook-impl|run)'` must read 0 —
   the hook autostashes repo-wide, so another worktree's `git status` lies while it runs. **That pattern is precise on purpose**: a bare
   `[p]re-commit` matches any command line merely *containing* the word, your own echo label
-  included, so it reads busy on a quiet box.
+  included, so it reads busy on a quiet box. The `[-_]` is not optional: git runs the hook as
+  `python -mpre_commit hook-impl`, and the hyphen-only spelling read 0 under a live hook until 2026-11-10.
+  pgrep is box-wide, so a hook in another repo counts too; that errs toward waiting, never toward a miss.
 - **`LAIN_SPEC_WORKERS=12`** is the measured default *on this box*; `physical - 1` is the worst
   count tried. On 2026-10-02 (a smaller suite) the median wall was 57.7s at 12 workers, 53.7s at 14
   and 53.1s at 16 (5 interleaved runs each); 2026-10-22 is 74s at 12, and 2026-11-04 is 121s at 12 (load 4 at the start). The wall is the larger of the
