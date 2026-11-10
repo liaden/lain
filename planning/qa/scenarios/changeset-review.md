@@ -385,3 +385,72 @@ Both files must appear under their real names, under **all three** config routes
 in the listing is the finding, and it is one that only shows up if the round sets the config
 deliberately — the default already being ON is not enough, because a global config could equally be
 setting it OFF on this box.
+
+## 9: A 30-file branch, between the 4-path subject and the 300-file ceiling *(headless half driven 2026-11-10; the cockpit half is a prediction)*
+
+§0's subject has 4 changed paths and §4 refuses at 301, so no section reviews the size a real branch has. The
+hot-path round's spawn profile put 1,285 `git show` calls at `Review::Source::LocalBranch#file_at` over one suite run,
+one per file per side, and `§4b` already prices an open at about 15 to 20 ms per file. A branch of 30 files is where
+that cost is large enough to notice and small enough that nothing may refuse it. Zero model turns.
+
+```bash
+R="$(mktemp -d)/wide30"; mkdir -p "$R/lib/n" "$R/bin"; cd "$R"; git init -q -b main .
+git config user.email qa@example.invalid; git config user.name QA
+for i in $(seq 1 10); do printf 'a = %s\n' "$i" > "lib/m$i.rb"; done
+git add -A; git commit -qm seed; git switch -qc feature
+for i in $(seq 1 10); do printf 'b = %s\n' "$i" >> "lib/m$i.rb"; done; git commit -qam 'edit ten'
+for i in $(seq 1 10); do printf 'n = %s\n' "$i" > "lib/n/n$i.rb"; done; git add -A; git commit -qm 'add ten'
+for i in $(seq 1 10); do printf '#!/bin/sh\necho %s\n' "$i" > "bin/t$i"; done; git add -A; git commit -qm 'add ten bins'
+git diff --name-status main feature | wc -l      # 30: 10 M under lib/, 10 A under lib/n/, 10 A under bin/
+```
+
+The recipe names `main` on purpose (`git init -b main`), so the default base resolves and §1's `master` refusal is not
+in play. Record `git rev-parse main feature` beside the findings.
+
+**1. Open it in each scope.** From `$R`, with `method.md`'s redirected `XDG_*`:
+
+```bash
+for s in cumulative commits by_directory; do /usr/bin/time -f "$s %es" lain review feature --base main --scope "$s" | grep -c '^ *\[ \]'; done
+```
+
+Driven 2026-11-10 against this fixture (the checkout's `exe/lain` through `bundle exec`, about 2 s wall per run, boot
+included, so the 30 `git show` calls do not dominate it):
+
+| scope | what the output holds |
+|---|---|
+| `cumulative` | the header `reviewing branch feature at cumulative scope: <40 hex>..<40 hex>`, then 30 `[ ] <path>` rows in path order (`bin/t1`, `bin/t10`, `bin/t2` ... then `lib/m1.rb` ... then `lib/n/n1.rb` ...), exit 0 |
+| `commits` | 3 groups headed `edit ten`, `add ten`, `add ten bins`, 10 rows each |
+| `by_directory` | 3 groups headed `bin`, `lib` and `lib/n`, 10 rows each (a nested directory is its own group) |
+
+The count is 30 in all three, and no scope prints a ceiling refusal: 30 is far under 300 files and the line ceilings.
+**Wrong looks like:** a row count other than 30 (a deleted or renamed file dropped, or a file listed twice under two
+commits in `cumulative`); a refusal naming a bound; a scope that exits non-zero; a wall that is seconds beyond the
+others, since the open reads every file from git objects and a regression to a per-file shell-out per scope would show
+as 3 scopes taking different times.
+
+**2. The record.** Each open writes one `changeset_opened` record, and a refused one would too (§4):
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  puts "#{r["source"]} #{r["base_ref"][0,8]}..#{r["head_ref"][0,8]} #{r["digest"][-12..]}" if r["type"]=="changeset_opened"}' \
+  "$XDG_STATE_HOME"/lain/sessions/*/*.ndjson
+```
+
+3 opens leave 3 records, each `local_branch`, and **one digest** across them: the identity is the same commits, whatever
+the scope, so a digest that moves between the scopes of one branch is a defect (hand-driven 2026-11-10: it did not move).
+Each `lain review` run is its own session file, so read the glob rather than one journal.
+
+**3. In the cockpit** *(prediction)*. Piggyback on the subject session, as §5 does:
+
+```
+you> /review feature --base main --scope commits
+```
+
+Open the sidebar with `2G<CR>` (§5) over RPC and check, on this size rather than on 4 paths: the sidebar lists 30 rows
+under 3 headers and scrolls without drawing a partial row; `<CR>` on a `lib/m3.rb` row puts base bytes (`a = 3`) in the
+OLD window and the branch's (`a = 3`, `b = 3`) in NEW; `<CR>` on a `lib/n/n3.rb` row, a file the base does not carry,
+leaves OLD empty by the nil rule (`file_at` answers nil for a path the revision lacks), not an error buffer. Then `x`
+on 3 rows, `:LainNote note ok` on one, `:LainNoteDone`, and `:LainReviewVerdict approve`: the default strict policy
+must refuse, naming the unreviewed remainder (§5), and `/review feature --base main --permissive` must accept. The open itself, from `/review` to the sidebar drawn,
+should read as instant; record its wall beside the headless one. A 30-file open that takes several seconds in the
+cockpit while the headless one took 2 is the finding.

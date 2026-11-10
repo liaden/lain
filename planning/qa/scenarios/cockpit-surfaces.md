@@ -1456,3 +1456,99 @@ makes a single-line row (no continuation lines at all, e.g. an inbox item before
 lines) fold at all; a single-line row on a build that skipped that write folds open regardless of
 `foldlevel`, which would read as "row won't close" and is a different bug than a row that closes but
 won't reopen.
+
+## 9: `lain up` by a relative path, an absolute path, and beside a large `.venv` *(predictions, not yet driven; one model turn in step 4)*
+
+Two defects of the hot-path round (2026-11) lived where a cockpit meets a real tree, and neither had a
+scenario. A pane's command used to `exec` the launcher exactly as `$PROGRAM_NAME` spelled it, so a
+relative `exe/lain` ran in a pane started with `-c <another directory>` and exited 127 (`PaneCommand.launcher` now
+expands a spelling that holds a `/`, and leaves a bare name for the pane's PATH). And an ignored `.venv` of tens of
+thousands of names was listed and identified before every bash call; the mask list now drops `.venv`, `venv`,
+`__pycache__` and the tool caches whole, at any depth (`Confine::MaskList`). `method.md`'s "Launch by ABSOLUTE path,
+through a shim" bullet records the first as a workaround and is stale once step 2 passes.
+
+The fixture is a Python checkout with a 50,000-file `.venv`, ignored by git:
+
+```bash
+P="$(mktemp -d)/pyproj"; mkdir -p "$P"; cd "$P"; git init -q .
+printf '.venv/\n__pycache__/\n' > .gitignore; printf "print('hi')\n" > app.py
+ruby -rfileutils -e '100.times { |d| dir = ".venv/lib/python3.12/site-packages/pkg#{d}"; FileUtils.mkdir_p(dir)
+  500.times { |i| File.write("#{dir}/m#{i}.py", "x = #{i}\n") } }'
+find .venv -type f | wc -l            # 50000
+```
+
+**1. Launch matrix.** Four launches, each from a fresh server sized per `method.md` ("Size the server before the panes
+exist") and torn down between runs. `$LAIN_REPO` is the checkout under test, and every run is from a toolchain shell
+(`method.md`), so `exe/lain` finds its Ruby:
+
+| # | cwd of the launching shell | command | cwd of the panes | what it settles |
+|---|---|---|---|---|
+| a | `$LAIN_REPO` | `exe/lain up . --session lain-qa --socket "$QA_SOCK"` | `$LAIN_REPO` | the relative control: launcher and pane cwd agree, so it passed before the fix too |
+| b | `$LAIN_REPO` | `exe/lain up "$P" --session lain-qa --socket "$QA_SOCK"` | `$P` | the defect: relative launcher, other pane cwd. 127 before the fix |
+| c | `$P` | `"$LAIN_REPO/exe/lain" up . --session lain-qa --socket "$QA_SOCK"` | `$P` | absolute launcher beside the `.venv` |
+| d | `$LAIN_REPO` | `"$LAIN_REPO/exe/lain" up . --session lain-qa --socket "$QA_SOCK"` | `$LAIN_REPO` | absolute launcher in this checkout |
+
+`lain up` execs `tmux attach` and fails after the session exists in a non-interactive shell, so read `has-session` and
+the pane state, never the exit status (`method.md`, "Driving the cockpit"). After each launch:
+
+```bash
+tmux -L "$QA_SOCK" has-session -t lain-qa && echo up
+for o in @lain_editor_pane @lain_chat_pane @lain_input_pane; do
+  id=$(tmux -L "$QA_SOCK" show-options -v -t lain-qa "$o")
+  tmux -L "$QA_SOCK" display-message -p -t "$id" "$o dead=#{pane_dead} status=#{pane_dead_status} cmd=#{pane_current_command}"
+done
+chat=$(tmux -L "$QA_SOCK" show-options -v -t lain-qa @lain_chat_pane)
+tmux -L "$QA_SOCK" display-message -p -t "$chat" '#{pane_start_command}' | grep -o 'exec [^ ]*'
+tmux -L "$QA_SOCK" capture-pane -p -t "$chat" | grep -c -e 'No such file' -e 'command not found'     # must read 0
+```
+
+Every run: the session exists, all 3 panes read `dead=0`, and the input pane draws `you>` and the HUD line (§0 check
+3). In b, c and d the `exec` word names an **absolute** path ending `/exe/lain`; in a it may too, since the
+fix expands every spelling that holds a `/`. **Wrong looks like:** `dead=1 status=127` on the chat pane in b, or a
+chat pane whose scrollback reads `exe/lain: No such file or directory`. `pane_start_command` prints the exact string
+`PaneCommand.call` built, so it is the instrument for "which spelling": read it rather than inferring from the
+pane's behaviour. Also launch once through the `lain` shim (a bare name, `$PROGRAM_NAME` of `lain`) and confirm the
+`exec` word is still the bare `lain`: the fix must leave a PATH name alone.
+
+**2. A pane that forks more panes.** In b's cockpit, run `/fork` and `/btw` (both build a pane through the same
+`PaneCommand.call`, `Command::Fork` and `Command::Btw`), and open `lain://status`'s fleet with one subagent, so each
+pane spawner is exercised from a launcher that started relative. Each new pane must read `dead=0` and start an
+absolute `exec`. A spawner that still hands the pane a relative path is a caller the fix missed.
+
+**3. The warm mask listing, with and without the `.venv`.** Zero model calls. `MaskList#masks` is what every
+bash call pays before it spawns, and `bin/hot-path-bench`'s `mask_list_warm` row (ceiling 4.45 ms, over an empty
+repository) is the reference for its warm cost:
+
+```bash
+cd "$LAIN_REPO" && bundle exec ruby -Ilib -rlain -e '
+  root = File.realpath(ARGV.fetch(0))
+  sens = Lain::Sensitivity.new(home: root, cwd: root, root:)
+  masks = Lain::Confine::MaskList.new(root:, policy: -> { Lain::Sensitivity::Policy.new(sensitivity: sens, home: root, root:) })
+  ms = ->(&b) { t = Process.clock_gettime(Process::CLOCK_MONOTONIC); b.call; ((Process.clock_gettime(Process::CLOCK_MONOTONIC) - t) * 1000).round(1) }
+  puts "cold #{ms.call { masks.masks }} ms, warm #{3.times.map { ms.call { masks.masks } }} ms, #{masks.masks.size} masked"
+' "$P"
+```
+
+Hand-driven on 2026-11-10 against this fixture: cold 4.2 ms, warm 1.9, 1.5 and 1.4 ms, 0 masked names. The check is
+the shape, not the figures: the cold and warm times sit within a few milliseconds of an empty repository's, and move
+by milliseconds when `mv .venv .venv.off` takes the 50,000 files away. A cold listing that costs seconds, or a warm
+one that grows with the file count, is the pre-prune behaviour back. Also plant a real secret outside the
+pruned names (`printf 'TOKEN=x\n' > .env` with `.env` ignored) and confirm `masked` becomes 1: pruning the
+environment must not have pruned the listing.
+
+**4. The cockpit beside the `.venv`, over a real call** *(one model turn)*. In c's cockpit, ask the model to
+run `ls` and read the journal:
+
+```bash
+ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
+  puts "#{r["ts"]} #{r["type"]} #{r["tool_use_id"]}" if %w[sandbox exec_record tool_result].include?(r["type"])}' "$LAIN_QA_JOURNAL"
+```
+
+The gap between a call's `sandbox` record and its `tool_result` is its sandbox wall. Run the same `ls` once with
+the `.venv` in place and once after `mv .venv .venv.off`, in the same session. Expected: both calls exit 0 and the two
+gaps differ by tens of milliseconds at most. Record both. The model's own reply says nothing about this, so the
+journal is the only evidence.
+
+**What wrong looks like:** the chat pane of b dead on 127; a cockpit that needs `$QA/bin/lain` to come up at all;
+a `.venv` call that is seconds slower than the same call without it; a launch that appears hung beside the
+`.venv` with the HUD never drawn. Restore the tree (`mv .venv.off .venv`) and kill the server when done.

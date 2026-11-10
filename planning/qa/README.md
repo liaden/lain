@@ -151,7 +151,8 @@ the cheap set even when the feature it guards is not. `shell-terms` §0–§4 an
 `/ruby` reads, §5–§7 spend local completions, and **§9 alone is metered** — cut §9 first, §7 second
 (it needs a docker daemon), and **do not cut §5**, which holds every negative control. In
 `shell-term-approval`, §1, §2, §4a, §6 and §10 are zero-model; the rest is under fifteen local
-completions. `shell-terms` §0 names the **three gates** (`ask`, the judge-first `auto`, and
+completions, plus about 6 for §12.
+`shell-terms` §0 names the **three gates** (`ask`, the judge-first `auto`, and
 `bypass`'s approve-all bottom rung, plus the unattended refusal) because they decide differently and a driver who
 conflates them files a false finding.
 

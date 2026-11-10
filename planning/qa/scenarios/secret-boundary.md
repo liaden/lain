@@ -1217,3 +1217,109 @@ Use `gpt-oss:120b-cloud` (round 28): glm-5.3 on ollama.com ignores the request's
 *Wrong looks like:* any question sent before the identity exchange, or without one; the token in a request, a
 message, a parked line or the session file; the chat's own cloud key reaching the gateway; a streaming body at the
 gateway; a cloud model asked through the local tier; a stopped gateway that only shows up in the session file.
+
+## 10: UTF-16 text, a Stripe key in a git diff, and the over-masked record *(predictions, not yet driven; a chat with a model for the reads)*
+
+Three shapes the content mask used to lose, each fixed in the 2026-11 hot-path round and each reached only through
+`RedactSecretReads` in a real stack. Work in §0's `$S` with `HOME` redirected as §0 says, and read `§4f` first: a bash
+result is masked whoever approved the call, and under `auto` a rule-allowed call is withheld instead, so run these under
+`/mode ask` and approve each call.
+
+```bash
+cd "$S"; printf 'PORT=3000\nAUTH=hunter2hunter2\n' > deploy.conf
+git add deploy.conf; git -c user.name=QA -c user.email=qa@example.invalid commit -qm deploy
+# the working copy: a Stripe-shaped key added, the old AUTH line removed, a short value under a weak name added
+printf 'PORT=3000\nSTRIPE_KEY=%s%s\nSESSION_ID=abc12345xyz\n' 'sk_live_' 'abcabcabcabcabcabcabcabc' > deploy.conf
+ruby -e 'aws = "AKIA" + "QZ7XRT4NBVHW2LMK"; body = "AWS_ACCESS_KEY_ID=#{aws}\nREGION=us-east-1\n"
+  File.binwrite("u16le.txt", "﻿#{body}".encode("UTF-16LE"))
+  File.binwrite("u16le_nobom.txt", body.encode("UTF-16LE")); File.binwrite("u16be_nobom.txt", body.encode("UTF-16BE"))'
+```
+
+The fixture joins each vendor-shaped value from two literals, as `hinted_corpus.yml` does, so this file holds none whole.
+These values are fake. The key is **never typed into a prompt**: a value the egress guard knows is refused before
+anything runs (`§4f` item 2), so every read below is a command or a path the model is given, never the secret itself.
+
+**1. A UTF-16 file, `cat` through bash.**
+
+```
+you> Use the bash tool to run exactly: cat u16le_nobom.txt   Then reply done.
+```
+
+Approve it. The model's result carries a placeholder and not the key, and the placeholder is **UTF-16 too**, so the
+result stays legible UTF-16 rather than becoming a mix. Over the journal (JSON writes each NUL as `\u0000`):
+
+```bash
+grep -c 'A\\u0000K\\u0000I\\u0000A\\u0000Q' "$JOURNAL"                                        # the key, UTF-16LE: must read 0
+grep -c 'r\\u0000e\\u0000d\\u0000a\\u0000c\\u0000t\\u0000e\\u0000d' "$JOURNAL"                 # the placeholder: at least 1
+```
+
+Repeat for `u16be_nobom.txt`, where the key spells `\u0000A\u0000K\u0000I\u0000A\u0000Q` and the placeholder
+`\u0000r\u0000e\u0000d`. Then `cat u16le.txt`, the file **with** a byte order mark: its first bytes (`FF FE`) are not
+valid UTF-8, so the bash tool may refuse the result as not text before masking is reached. Either outcome passes: the
+refusal wording (`was not text`) or a masked UTF-16 result. **The key's bytes in the tool result, the journal, the
+chat pane or `lain://journal` fail it**; check the pane with
+`tmux -L "$QA_SOCK" capture-pane -p -t "$(tmux -L "$QA_SOCK" show-options -v -t lain-qa @lain_chat_pane)" | tr -d '\0' | grep -c AKIAQZ`, which must read 0 (the display masks UTF-16 as it
+streams, in pieces, each piece cut on a 2-byte line end). Record which of the two the BOM file gave.
+
+**2. The same files through `read_file`.** Ask for each of the three by name. A BOM'd file is refused by `read_file` as
+not text before it reaches the mask; the two without one are read, and the key is masked as in step 1. Two controls, so
+that "no key" is not a vacuous pass: `cat` any `.png` on the box and a gzip file (`gzip -c lib.rb >
+lib.gz`) and confirm each is refused or returned **unchanged**, with no `<redacted:N>` appearing in binary noise (the
+NUL test for UTF-16 must not take ordinary binary for it). And mask twice: write a UTF-16LE file whose line already reads
+`AWS_ACCESS_KEY_ID=<redacted:1>` and `cat` it. No byte changes, and the trailer reads `0 regions were masked, 1 already
+redacted`.
+
+**3. A Stripe key on a git diff line.**
+
+```
+you> Use the bash tool to run exactly: git diff   Then reply done.
+```
+
+Approve it. The patch holds `+STRIPE_KEY=sk_live_...` (24 low-entropy characters after the prefix, which is not a
+high-entropy token and used to slip through), `+SESSION_ID=abc12345xyz` (a short value under a weak name) and
+`-AUTH=hunter2hunter2` (a removed line). The result must hold `+STRIPE_KEY=<redacted:N>`, `+SESSION_ID=<redacted:N>`
+and `-AUTH=<redacted:N>` with the `+` and `-` still there, and none of the three values. Hand-checked on 2026-11-10
+against `Regions.detect`: the Stripe line is a `stripe key` region and the session id a `dotenv assignment` region, both
+found with the `+` prefix. Then the control that keeps the new `_KEY` hint honest, which needs no model:
+
+```bash
+printf 'sort_key=created_at\nSTRIPE_KEY=Zx9Qw8Lm2Pq\n' > hints.txt     # then: cat hints.txt, approved
+```
+
+`sort_key=created_at` must come back **unmasked** (a lower-case `_key` is not a hint) and `STRIPE_KEY=Zx9Qw8Lm2Pq`
+masked. Then the §7 grep, with the fake key added to its patterns: `grep -RIl -e 'sk_live_' -e 'AKIAQZ7XRT4NBVHW2LMK' "$QA"
+| grep -v '^'"$S"` must be empty, plus the two UTF-16 greps above over `$QA`.
+
+**4. The over-masked record.** When a shape cannot be scanned to the end even on the retry (a pathological 1 MB line),
+the scan masks the span it could not finish rather than let it through, and a tool result holding such a span journals
+**one `over_masked` record per shape**: the tool, the shape name and a count of spans, never the text. The scan is
+driveable without a model:
+
+```bash
+cd "$LAIN_REPO" && bundle exec ruby -Ilib -rlain -e '
+  lines = ["# config", "AWS=" + "AKIA" + "QZ7XRT4NBVHW2LMK", "name = lain", "", "github_pat_" * 110_000, "plain prose", "end"]
+  Lain::Sensitivity::Regions.detect("#{lines.join("\n")}\n").each { |r| puts [r.reason, r.over_masked_by.inspect, r.length].join(" | ") }'
+```
+
+Hand-driven on 2026-11-10 on this box: 2 regions, the AWS key (`aws access key id`, `nil`, 20) and
+`over-masked: github token could not be scanned to the end | "github token" | 1210000`, the whole 1.21 MB line, with the
+other 6 lines untouched. **That is the whole of what a driver can reach today, and the record itself is not.** Every
+tool result is bounded at 16 KiB before the middleware sees it (`Tool::Bounds::RESULT_BYTES`), and 22 texts of 16,000
+bytes each (repeated `github_pat_`, `-----BEGIN `, `password=`, long `A` runs and the rest) all finished with 0
+over-masked regions, so a chat cannot hand `RedactSecretReads` a text that over-masks. Drive the negative so it is on record:
+
+```
+you> Use the bash tool to run exactly: ruby -e 'print "github_pat_" * 1400'   Then reply done.
+```
+
+Approve it. The result is masked (`<redacted:1>` and the trailer from §4f) and the journal holds a `command_redacted`
+record and **no** `over_masked` record: `W=300 jr over_masked` must print nothing. A round that finds an input under
+16 KiB that does write one has found the first reachable case: keep the input, and check the record is exactly
+`{"type":"over_masked","tool":"bash","shape":"<name>","spans":<N>}`, with no key, value or line in it. The count a
+projection reads is `Journal::Projection::Redactions#over_masked`, which `lain export`'s footer does not print, so read
+the records with `jr`. If the box gives no reachable case, say so in the findings and leave step 4's record to
+`spec/lain/middleware/redact_secret_reads_spec.rb`, which holds it behind a stubbed scan.
+
+**What wrong looks like:** any of the three secrets, in any encoding, in the tool result, the journal, a request or the
+pane; a UTF-16 result whose placeholder is UTF-8 inside UTF-16 text (the model reads garbage around the mask); a `.png`
+or gzip result with `<redacted:N>` in it; a `sort_key` line masked; an `over_masked` record carrying text.

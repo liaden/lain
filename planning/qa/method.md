@@ -300,10 +300,10 @@ only worth having if it is read rather than skimmed:
   with the session left standing and the corpse inside it. So read the exit status *and*
   `has-session` together, and see `failure-injection.md` §11 for which combination means what. A
   creating `lain up` pays ~110ms for the pre-flight; a reattach is untaxed.
-- **Launch by ABSOLUTE path, through a shim.** `bundle exec ./exe/lain up` leaves `$PROGRAM_NAME`
-  relative and `PaneCommand.call` interpolates it into the pane's command, so the chat pane exits
-  **127** the moment the cwd differs. The shim also re-establishes the mise toolchain, which does
-  not survive `PANE_ENV`'s eleven-name `LAIN_*` allowlist.
+- **Launch through a shim, for the toolchain.** A relative `bundle exec ./exe/lain up` now gives
+  each pane an absolute program path, so a pane in another cwd no longer exits **127**;
+  `cockpit-surfaces` §9 checks both launches. The shim is still needed because the mise toolchain
+  does not survive `PANE_ENV`'s eleven-name `LAIN_*` allowlist.
 - **Size the server before the panes exist.** At tmux's default 80x24 nvim hits its hit-enter prompt
   and the RPC attach **deadlocks**. `new-session -x 220 -y 50` *and* `set-option -g default-size
   220x50` — the option is what later panes inherit.

@@ -892,6 +892,113 @@ who leaves the session there will read the next section's confinement refusal as
 Confirm the mode report reads `checkout ask` before continuing, and type `/mode auto` if the rest of
 the round should run under the launch default.
 
+## 12: An auto-mode chat doing cargo and git work, and which rung answered each call *(predictions, not yet driven; about 6 local completions)*
+
+Three changes of the hot-path round (2026-11) meet in one ordinary Rust session, and nothing drove them together. A
+`cargo check --locked` that a rule approves used to run under the **reader** profile and exit 101 on a read-only
+`target/` with no registry; the rule's ruling now says the run builds, and `Confine::Profiles#for` sends it to the
+**workspace** profile. A call the judge approved twice used to print nothing the second time, so it read like a rule
+approval; `Judged#remembered` now shows a dim line. And the dev role prompt now says to prefer `cargo <cmd> --locked`,
+the only spelling the rule approves. The level is the launch default, `auto`: say so in the findings, and drive from
+`checkout auto`, not `ask`.
+
+```bash
+C="$(mktemp -d)/cargoqa"; mkdir -p "$C"; cd "$C"; git init -q .
+cargo init --vcs none --name cargoqa . && cargo generate-lockfile --offline
+printf 'target/\n' > .gitignore; git add -A; git commit -qm seed
+```
+
+The crate has no dependencies, so nothing needs the network. Needs `cargo` on the box's PATH, bwrap and `lain-fence`
+(`bash-confinement.md` records the probe; on a box without them the `sandbox` records are absent and the profile
+steps are not driveable, which is a recorded drop and never a pass). Bring the cockpit up on `$C` with
+`qwen3-coder:30b` per `bench.md`. Read the journal after every step with the `jr` helper from
+`bash-confinement.md` (defined above its §1), as `W=900 jr escalation sandbox exec_record`.
+
+**1. `cargo check --locked`, approved by the rule.**
+
+```
+you> Use the bash tool to run exactly: cargo check --locked   Then reply done.
+```
+
+Three records for the call's `tool_use_id`, in this order:
+
+- `escalation` at `"rung":"rules"`, `"verdict":"allow"`, a reason that begins `every stage is a bare allowlisted reader over
+  ordinary words` and names `cargo`. **No** `"rung":"auto"` record for this id: the judge was never asked, so the call cost
+  no judge completion.
+- `sandbox` with `"profile":"workspace"`, `"refused":[]`.
+- `exec_record` with `"refusals":[]`. The tool result reads `exit status: 0`, stderr ends `Finished`, and `$C/target`
+  exists afterwards.
+
+**Wrong looks like:** `"profile":"reader"` with `exit status: 101` and a `Read-only file system` line (the pre-fix
+behaviour); a `"rung":"auto"` record, which means the rule abstained and the judge answered (check the command really
+carried `--locked`, since a bare `cargo check` is the judge's, by design); a bare `Permission denied` on
+`~/.cargo/bin/cargo` with exit 126, which means the rustup proxy was dropped from the exec grant (report it, with the
+`sandbox` record, before anything else).
+
+**2. The usual pipeline shape.**
+
+```
+you> Use the bash tool to run exactly: cargo test --locked 2>&1 | tail -5   Then reply done.
+```
+
+Same three records, `"profile":"workspace"`, `exit status: 0`, and a `test result: ok` line. A model that drops
+`--locked` or the `2>&1` of its own accord has run a different command: re-run it rather than reading its journal.
+
+**3. The read-only controls stay on the reader.** Run `cargo --version` and `cargo fmt --check` the same way. Each is a
+`rules` allow and each `sandbox` record reads `"profile":"reader"`, whether or not `rustfmt` is installed and
+whatever the exit status. A control on `workspace` means the build flag leaked onto a call that does not build.
+Then relaunch with `--confine reader` and repeat step 1: the `sandbox` record must read `"profile":"reader"` (`traced`
+or an absent record is the finding), and the call is allowed to fail on the read-only `target/`: a session that
+chose to confine reads must not be widened by a rule.
+
+**4. Git work, and the judge.** Under `auto` a git call abstains at the rules rung (§2a), so the judge answers:
+
+```
+you> Use the bash tool to run exactly: git log --oneline -5   Then reply done.
+```
+
+Expected: an `escalation` at `"rung":"rules"`, `"verdict":"abstain"`, then one at `"rung":"auto"`, `"verdict":"allow"`,
+`"reason":"the judge approved this call"`, and the transcript shows 1 stamped line, `the judge approved
+bash({"command" => "git log --oneline -5", ...})`. The `sandbox` record reads `"profile":"workspace"`. If the judge
+defers instead, the call parks and the human is asked: answer it, then drive a second, different read-only call
+(`git status --short`) until one is judge-approved, and say how many it took.
+
+**5. The remembered-judge line.** In the **same session**, a new turn:
+
+```
+you> Use the bash tool to run exactly: git log --oneline -5   Then reply done.
+```
+
+A repeat inside one model round is deduplicated before it reaches the gate, so the repeat has to be a later turn.
+Expected: **no** judge completion for this id, an `escalation` at
+`"rung":"auto"`, `"verdict":"allow"`, `"reason":"the judge approved this exact call earlier this session"`, and
+in the transcript 1 stamped, **dim** line reading `the judge approved this earlier: bash({"command" => "git log
+--oneline -5", ...})`. The dim line and the plain `the judge approved ...` line of step 4 must read as different
+things at a glance. Then run `git log --oneline -3` (a different command): it is asked again and prints the plain
+line, since the memo keys on the exact call and place. **Wrong looks like:** no line at all on the repeat (the
+pre-fix behaviour, which read like a rule approval); the plain `the judge approved` wording for a memo hit; a second
+`rung:"auto"` record with `"the judge approved this call"` for a call the memo should have answered.
+`Telemetry::JudgeRuled` goes to the display channel and no journal on this box holds a `judge_ruled` record, so the
+transcript line and the `escalation` reason are the evidence. Record whether a `judge_ruled` record appears.
+
+**6. A manifest with quoted headers still approves** *(depends on the parsed-TOML reading of manifests, which was in
+review when this was written; before it, step 6 is the old behaviour and its failure is expected, so record which
+build you drove)*. Append two tables to `Cargo.toml`, one with a quoted header and one that is a workspace root:
+
+```bash
+printf "\n[target.'cfg(unix)'.dependencies]\n\n[workspace]\n" >> "$C/Cargo.toml"
+```
+
+Run `cargo check --locked` again (`cargo` itself accepts the file, as checked 2026-11-10). With the parsed reading it
+is a `rules` allow with no `"rung":"auto"` record, exactly as in step 1. Without it the quoted header abstains at the
+rules rung and the judge answers, which costs a completion and reads `"rung":"auto"`. Then confirm the holds are
+intact: add `[alias]` with `c = "run"` to `$C/.cargo/config.toml` and run `cargo check --locked` again. It must **not**
+be a rules allow: it abstains and goes to the judge (or the human), because an alias can run code.
+
+**Close-out.** Over the first session, `W=900 jr escalation | grep '"rung":"rules"' | grep -c '"verdict":"allow"'`
+counts the calls the rule answered: steps 1, 2, 3 (twice) and 6 make 5, and steps 4 and 5 add none (their rules records
+are abstains). Record the count against that. Delete `$C/.cargo` before leaving.
+
 ---
 
 ## What this scenario does not cover
