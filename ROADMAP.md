@@ -130,6 +130,16 @@ was worth removing.
   Rust with a journaled over-mask, a rule-approved cargo build that runs under the workspace sandbox
   and reads cargo's files as TOML, a remembered-judge line, absolute pane launches, 3 flaky or
   clock-bound specs, and the measurements the run left open. Done when its integration checks pass.
+- **Agent states and herdr (2026-11-10).** `[planned]` `planning/specs/herdr-attention.md`, 22 cards
+  from `planning/herdr-research-2026-11.md`:
+  - a blocked, working, done or idle state for every agent, in the HUD and `lain://status`;
+  - desktop and morning-feed notices that wait 30 s and skip the window you are at;
+  - reporting to herdr beside Claude Code without touching Claude's panes, and lain's windows as
+    herdr tabs;
+  - `/park` re-entry notes, a `lain up` hint for an unclosed session, and `/resume`.
+
+  Done when its integration checks pass, including the manual pass with Claude Code and lain side by
+  side in herdr.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
