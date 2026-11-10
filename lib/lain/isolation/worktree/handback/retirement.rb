@@ -28,6 +28,21 @@ module Lain
           SYNC_STILL = [nil, :current, :disabled, :dirty].freeze
           CHECKS_STILL = [nil, :passed, :skipped, :dirty].freeze
 
+          # Reads a live result's record and a journaled one alike: a journal
+          # hands back strings where the result holds symbols.
+          #
+          # @param record [Hash] a sync result's `to_record`, or a journaled handback line
+          # @return [Boolean]
+          def self.reused_head?(record)
+            record = record.transform_keys(&:to_sym)
+            checks = (record[:checks] || { attempts: [] }).transform_keys(&:to_sym)
+            settled = still?(record[:sync], record[:attempts], SYNC_STILL)
+            settled && still?(checks[:outcome], checks[:attempts], CHECKS_STILL)
+          end
+
+          def self.still?(outcome, attempts, outcomes) = attempts.to_a.empty? && outcomes.include?(outcome&.to_sym)
+          private_class_method :still?
+
           # What a worker's ref holds before its sync, judged against the
           # checkout's own HEAD. `refusal` is the outcome that stops the
           # retirement when the ref already anchors work this checkout lacks.
@@ -244,14 +259,7 @@ module Lain
           # HEAD is reused only when nothing that ran after {Anchor#standing}
           # read it can have moved it: the sync made no attempt, even an
           # abandoned rebase counts, and the checks asked the worker for no fix.
-          def moved?(synced)
-            record = synced.to_record
-            checks = record.fetch(:checks, nil) || { attempts: [] }
-            !(still?(record[:sync], record[:attempts], SYNC_STILL) &&
-              still?(checks[:outcome], checks[:attempts], CHECKS_STILL))
-          end
-
-          def still?(outcome, attempts, outcomes) = attempts.empty? && outcomes.include?(outcome)
+          def moved?(synced) = !self.class.reused_head?(synced.to_record)
 
           # Total, because it runs while a cancel climbs and a raise here would
           # replace it.

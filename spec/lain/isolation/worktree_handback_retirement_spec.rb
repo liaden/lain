@@ -12,6 +12,21 @@ require "fileutils"
 # repo it runs in -- the posture worktree_handback_spec.rb takes, and the reason
 # the git half of this file stays in the default suite.
 RSpec.describe Lain::Isolation::Worktree::Handback::Retirement do
+  describe ".reused_head?" do
+    it "reads journaled string values like the symbols the retirement itself sees" do
+      record = { "sync" => "current", "attempts" => [], "checks" => { "outcome" => "passed", "attempts" => [] } }
+
+      expect([described_class.reused_head?(record), described_class.reused_head?(record.merge("sync" => "synced"))])
+        .to eq([true, false])
+    end
+
+    it "answers the negation of what the retirement's own sync result moves" do
+      result = Lain::Isolation::SelfSync::Result.new(outcome: :synced)
+
+      expect(described_class.reused_head?(result.to_record)).to be(false)
+    end
+  end
+
   describe "a lease that was already given up" do
     # The refusal Retirement holds for ITSELF. {Lain::Supervisor#retire} refuses
     # the same case one layer up, so nothing in production reaches this raise --

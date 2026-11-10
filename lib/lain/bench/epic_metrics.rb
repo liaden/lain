@@ -27,7 +27,8 @@ module Lain
         # and the duck this class accepts includes a one-shot IO enumerator
         # (`File.foreach`), which a second pass over would read as empty.
         records = entries.to_a
-        new(rework: fold_rework(records), round_trips: fold_round_trips(records))
+        new(rework: fold_rework(records), round_trips: fold_round_trips(records),
+            handback_reuse: HandbackReuse.fold(records))
       end
 
       # Rework has two sources, both journaled elsewhere in the pipeline and
@@ -87,10 +88,15 @@ module Lain
       # @param round_trips [Hash] a frozen `[epic_slug, stage, issue_id]`
       #   Array (issue_id nil for an epic-wide decision) mapped to its
       #   gate-decision count
-      def initialize(rework:, round_trips:)
+      # @param handback_reuse [HandbackReuse] how often a handback left the standing HEAD alone
+      def initialize(rework:, round_trips:, handback_reuse: HandbackReuse.fold([]))
         @rework = rework.freeze
         @round_trips = round_trips.freeze
+        @handback_reuse = handback_reuse
       end
+
+      # @return [HandbackReuse]
+      attr_reader :handback_reuse
 
       # @param epic_slug [#to_s, nil] nil reads a supersession's unscoped
       #   `step_id` bucket -- see {.fold_rework}

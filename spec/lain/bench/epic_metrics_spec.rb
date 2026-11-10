@@ -62,6 +62,17 @@ RSpec.describe Lain::Bench::EpicMetrics do
     end
   end
 
+  describe "#handback_reuse" do
+    it "folds the journal's handback lines into a reuse count" do
+      %w[current synced].each do |sync|
+        journal_io.puts(JSON.generate("type" => "handback", "worker_key" => "w", "outcome" => "merged",
+                                      "sync" => sync, "attempts" => []))
+      end
+
+      expect(described_class.from_journal(entries).handback_reuse).to have_attributes(reused: 1, total: 2)
+    end
+  end
+
   describe "#rework" do
     it "answers 0 for an issue with no journaled rework at all" do
       metrics = described_class.from_journal([])
