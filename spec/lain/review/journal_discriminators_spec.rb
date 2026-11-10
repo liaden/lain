@@ -27,9 +27,11 @@ RSpec.describe "the review records' journal discriminators" do
   # `rspec spec/lain/review/` and passed under `rake pspec` only because the
   # workers happened to split those files apart. Nothing is lost by skipping
   # them: an anonymous class has no stable discriminator to collide WITH.
+  # A class a stub_const replaced keeps its name until GC, so only a class its
+  # own name still resolves to is in the registry.
   def discriminators_in_the_registry
     ObjectSpace.each_object(Class).select do |klass|
-      klass.include?(Lain::Telemetry::Journalable) && !klass.name.nil?
+      klass.include?(Lain::Telemetry::Journalable) && !klass.name.nil? && Object.const_get(klass.name).equal?(klass)
     rescue StandardError
       false
     end
@@ -54,5 +56,17 @@ RSpec.describe "the review records' journal discriminators" do
 
     expect(klasses.size).to be > 60
     expect(klasses.map { |klass| klass.allocate.journal_type }.uniq.size).to eq(klasses.size)
+  end
+
+  it "ignores a class a stub_const left named after its constant was replaced" do
+    stale = Data.define(:a) { include Lain::Telemetry::Journalable }
+    current = Data.define(:a) { include Lain::Telemetry::Journalable }
+    stub_const("Lain::Telemetry::Probe", stale)
+    stub_const("Lain::Telemetry::Probe", current)
+
+    klasses = discriminators_in_the_registry
+
+    expect(klasses).to include(current)
+    expect(klasses).not_to include(stale)
   end
 end
