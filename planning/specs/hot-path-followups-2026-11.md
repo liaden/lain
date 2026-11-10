@@ -1,6 +1,6 @@
 # Hot-path follow-ups: masking gaps, cargo by rule, and the run's loose ends
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby, rust (cards M3 and C2)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust seats for M3 and C2 (Raph Levien, Andrew Gallant)
@@ -1121,3 +1121,58 @@ Spec file: none can fail on prose; the main session greps for "578", "Ruby scann
 - 11:25 M4 second review APPROVE (each fix red when backed out). M4 waits for M3 to land, then patches from stack base 87a990c8.
 - 11:25 M3 fixes in (540/0, cargo 359). Diff checked against the review copy (over 20 lines). Sent back 1 mechanical change: the new Rust cancel test's margin is 7.5 line-scans, widen to 63 lines. Narrow re-check by the M3 reviewer owed after. C2 review APPROVE-WITH-FIXES, 5 NITs; fix round sent (to_string keeps line and column, a specific message assertion, leaf? type check, baseline header, date-as-text doc line).
 - 11:25 M3 scenario text updated to the new over-mask reason.
+- 11:27 M3 cancel test widened to 63 lines (red 31 s on old check, green 5 of 5 at 1.4 to 2.0 s). Narrow re-check by the M3 reviewer started.
+- 11:27 C2 fixes in and verified against the review copy (under 20 lines; main rewrapped 1 doc comment). C2 approved; lands after M3 and M4, with a merge of corpus_generator.rb and binding_coverage_spec.rb.
+- 11:51 M3 re-check APPROVE (cancel test red 8 of 8 on the old check, green 24 of 24 at 8 parallel; real binary shows the new reason). Docs nit applied. Landing attempt 1.
+- M3 landed 197ac27b (attempt 1)
+- 11:55 M3 cleaned up. Peer lain-04's red hooks (11:34, 11:41) predate M3; it confirms its own commit is the suspect. C2 shared files apply clean over M3; landing attempt 1 (951 paths, 939 vendored fixtures).
+- 12:00 C2 attempt 1 red: end-of-file-fixer and trailing-whitespace rewrote toml-test fixtures whose whitespace is the test, so toml_spec:80 failed (the only failed example; other output was known async warnings). Fix: exclude spec/fixtures/toml-test/ from both fixers in .pre-commit-config.yaml (wiring added to C2). Peer lain-04 holds the gate now; attempt 2 after it.
+- 12:05 C2 attempt 2 refused: main held peer lain-04's uncommitted .pre-commit-config.yaml. The refusal's cleanup ran git reset and checked out HEAD's .pre-commit-config.yaml, reverting the peer's edit and unstaging its files (content intact on disk). Told the peer. land.sh fixed: refuses on a non-empty index, and a refusal before patching touches nothing. Holding the gate until the peer says main is clear.
+- 12:05 M5 started (sonnet, ruby-implementer), worktree hfu-M5 cut at 197ac27b
+- 12:06 Peer lain-04: main holds nothing of its; it lands nothing until it reproduces its red. C2 attempt 3.
+- 12:09 Peer lain-04 running a cold Dioxus cargo build outside our locks, then rake pspec (takes the XDG suite lock, which serializes with our hook's pspec). A red in this window with hangs is suspect load, not a card.
+- C2 landed eb56675c (attempt 3)
+- 12:12 C2 landed eb56675c and cleaned up. C3 started (opus, ruby-implementer), worktree hfu-C3 cut at eb56675c. M4 landing attempt 1 (patch from stack base 87a990c8).
+- M4 landed 49c67b12 (attempt 1)
+- 12:17 M4 landed 49c67b12; every M4 path in main equals its worktree copy. card/hfu-M4 deleted with -D: its head is the hookless stack snapshot 87a990c8 of M3 before its fix round, superseded by 197ac27b, so -d could never pass.
+- 12:17 M5 handed back (RubyScanner grep 10 to 0; 1496/0; no stop: corpus_generator already treats regions vectors as retired). Applied docs wiring. Medium review started.
+- 12:18 M5 review APPROVE (1 nit: describe renamed .detect over-masking, applied by main). Landing attempt 1.
+- 12:19 C3 handed back (36/3 red, 210/0 file, 823/0 related). Expected stop fired and cleared with real cargo metadata. High review (opus) waits for M5's landing.
+- M5 landed 8494fba4 (attempt 1)
+- 12:22 M5 landed 8494fba4 and cleaned up. C3 high review (opus) started.
+- 12:22 Q1 started from HEAD 8494fba4 while C3 is in review (scenario prose; C3-dependent steps named in the hand-back).
+- 12:32 Q1 handed back (1 new section per scenario file, model steps marked as predictions; only shell-term-approval §12 step 6 depends on C3). Applied method.md and README wiring. Low review started. Found: over_masked unreachable from a real chat (FU-i).
+- 12:32 D1 started from HEAD 8494fba4 (docs; Q1 in review, C3 in review).
+- 12:33 Q1 low review APPROVE-WITH-FIXES (2 probe commands lacked -rlain; README line overran), applied by main. Landing attempt 1.
+- 12:33 Q1 held: plan order says it lands after C3 (in review).
+- 12:34 D1 handed back (grep clean; rust-bindings needed no change; CLAUDE.md wiring applied). Low review started with 3 claims to verify (16 KiB cap order, 20 ms per MB, request rows).
+- 12:35 C3 high review APPROVE-WITH-FIXES. Pre-existing hole found: Crate approves cargo check over a manifest whose path dependency, build script, [patch] or member lies outside the root, and real cargo runs the outside build.rs; C3 also turned the quoted-header spelling from refused to approved. Ruling: fix in C3 (its own file; predicate 17 already claims it), substantive, so a second review follows. Plus 9 mechanical items. Real data: 58 local crates and 200 registry crates, refused to approved only, never the reverse.
+- 12:36 D1 low review APPROVE-WITH-FIXES: verified 16 KiB cap applied inside each tool before RedactSecretReads, 20.2 ms per MB re-measured, request-row sentence correct. 3 docs nits applied by main. D1 held until C3 lands: its commands.md cargo bullet must then say C3's rule (parsed TOML, every loaded path inside the root).
+- 12:36 Peer lain-04 holds the gate for its reworked commit (app now its own Cargo workspace; root change is 1 exclude line; cold Dioxus build inside the hook). Our next landing queues behind it.
+- 12:48 Peer lain-04 is off main (branch in its worktree, 1 ff-only merge later under the gate). It found the hook-detection pattern misses python -mpre_commit; scratch scripts now match pre[-_]commit.
+- 12:49 C3 fix round in (42/5 red, 216/0 file, 886/0 related; real cargo runs no outside code in any approved case). Second review by the same reviewer started; asked to check cycle termination in the transitive walk.
+- 13:11 C3 second review REQUEST-CHANGES: 3 blockers proven with real cargo (build Array on nightly, file: git source, project .cargo/config paths), 4 should-fix (recursion depth, seen Array cost, unbounded glob, 4 surviving mutants), 2 nits. Ruled: fix all; local git and project configs in scope. Fix round 2 sent to the implementer; a third review follows (high-risk card, standing user preference).
+- Q1 landed 93d8119c (attempt 1)
+- 13:11 Q1 landed 93d8119c
+- 13:47 C3 fix round 2 done (55/9 red, then 229/0 on the file and 899/0 related; real-cargo probe 0 hazards). Third review started with a fresh opus panel.
+- 14:05 C3 third review REQUEST-CHANGES: project .cargo/config program keys (rustc-wrapper, linker, runner, rustflags, [env], [unstable]) approved and ran outside code with no sandbox; glob walk unbounded on a non-matching tail; convention files (symlinked build.rs, #[path]) unchecked. All pre-existing; the sandbox stopped each on this box. Asked the user for the scope ruling.
+- 14:24 User ruling on C3 scope: close config and manifest keys (program keys, rustflags, [env], [unstable], manifest rustflags) and bound the glob walk; the sandbox owns what source pulls in, written into the docstring. Fix round 3 sent; a 4th review follows.
+- 14:41 C3 fix round 3 done (64/7 red then 238/0; override keys 66/1 then 245/0; related 908/0; all config hazards refused under real cargo; real data unchanged). Fourth review started.
+- 14:41 D1 commands.md cargo bullet rewritten to C3's ruled scope, in the D1 worktree
+- 14:53 User asked: run the full suite (rake pspec, all examples) at the very end, after the last landing, on a quiet box. Hook now runs only reachable suites, so this is the only full run.
+- 14:53 C3 fourth review REQUEST-CHANGES: relative/symlinked flag and env paths, deeper-config base mismatch, credential providers, nightly codegen-backend, target-dir/build-dir, @response files, per-call glob cost. Denylist keeps leaking; asking the user about an allowlist.
+- 14:54 User ruling: C3 flips to an allowlist for project config keys and manifest cargo-features; slash-bearing words refused, not resolved; per-call walk budget. Fix round 4 sent; 5th review follows. User notes another agent is running planning/specs/test-selection.md (likely touches the hook; eb7e7335 already changed the hook to reachable suites).
+- 15:31 C3 fix round 4 (allowlist) done: 63/10 red then 237/0, related 907/0, every probe hazard refused, no real-data call went from approved to refused. Fifth review started.
+- 15:31 D1 cargo bullet rewritten for the allowlist
+- 15:41 User ruling: land C3 after the 5th review and its fix round; anything still open after that becomes a follow-up after the plan, not another review round.
+- 15:41 User: work D1 concurrently with C3. D1 split: its cargo bullet moves to C3's commit (saved at C3-commands-bullet.md), the rest of D1 lands now. User also OK'd landing cheap fixes from review 5 without a 6th review.
+- D1 landed f127b836 (attempt 1)
+- 15:51 D1 landed f127b836 (without the cargo bullet, which rides with C3)
+- 15:52 C3 fifth review REQUEST-CHANGES: slash-free words still name paths (.., bare file names in cargo's cwd) through rustflags, [env], runner args; no byte budget; config inside? unpinned. All specified precisely, so final fix round sent (flag shape allowlist, [env] refused, byte budget); per user ruling it lands after this round on my own test check, no 6th review.
+- 16:21 C3 final round verified by me: 538/0 across composed_term, cargo seam, judged, board_build; rubocop clean; c3r6_slashless on stable: rule abstains on every hazard. Cargo bullet added to C3's commands.md. Landing.
+- C3 landed f0f4ccec (attempt 3)
+- 16:26 C3 landed f0f4ccec, cargo bullet landed 2d47036c (split after 2 three-way conflicts with D1's adjacent lines). All 20 cards landed.
+- 16:29 Final full suite: rake pspec 34233 examples, 0 failures, 15 pending, 119s (start 16:27 load 7.31 head 2d47036c).
+- 16:34 Close-out: rubocop 2653 files clean; cargo test 527/0; clippy clean; cargo deny ok (1 unmatched NCSA allowance warning); zeitwerk-census clean. runtime-census --check FAIL: cli/epic_driver/factory_spec over its 22s ceiling in 2 of 3 logs (10-22 log 24.7s, this run 29.0s at start load 7.3; alone 22.6s and 29.8s at load 16). Not touched by this plan; rerun on a quiet box. Checks 5 and 6 (M1 gate rerun, measurements) given to a sonnet agent. Bench waits for load under 2.
+- 16:39 Check 5 (M1 gate, 181e08bb vs 2d47036c): tree 1822, references 9218, journals 10 hits each side, 0 gained, 0 lost; write refusals identical. Extra history diff (150 commits): 1 gained non-credential, a Cargo.toml authors line in a diff hit by the dotenv rule (FU-l). Check 6: approval-replay over the 2 sessions, 122 judged calls (1046.4 s); 27 settled before the judge (27.5 s) plus 15 by the composed term (54.3 s), about 8 percent. G1 epic reuse not measurable: no epic journals on the box (4 of 4 handbacks reused in 1 session). over_masked: 15 journals predate M4, 0 records; rescan of 1192 tool results gives 0 over-masks.
+- 16:45 Bench: 3 records at load 1.9 to 2.4, --check exit 0; credential_scan_assignment 29.6 to 36.0 ms (ceiling 37.7), credential_scan_gated 49.7 to 57.6 ms (63.7), request_100000 0.60 to 0.65 ms (1.17). factory_spec alone at load 2.3: 19.3 s twice, under its 22 s ceiling, so the runtime-census failure was load. Plan status set to done.
