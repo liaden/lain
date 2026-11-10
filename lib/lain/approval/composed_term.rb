@@ -1111,41 +1111,50 @@ module Lain
 
       # The listing predicate. One level deep, because the flags predicate
       # already refuses a listing that recurses.
-      def unrevealing?(term, cwd)
-        classifier = @sensitivity.call(cwd)
-        confinement = @sensitivity.confinement(cwd)
-        term.stages.select { |stage| stage.program == LISTER }
-            .all? { |stage| ordinary_listing?(stage.argv.drop(1), classifier, confinement) }
-      rescue StandardError
-        false
-      end
+      def unrevealing?(term, cwd) = held_where?(term, cwd, LISTER) { |*parts| Listed.new(*parts) }
 
-      # `ls` prints no dot entry unless a flag asks for them.
-      def ordinary_listing?(arguments, classifier, confinement)
-        dots = !SHOWS_DOT_ENTRIES.admits?(arguments)
-        listed_directories(arguments, confinement).all? do |directory|
-          printed_entries(directory, dots).all? { |path| ordinary_entry?(classifier, confinement, path) }
+      # `ls` prints no dot entry unless a flag asks for them. The cwd stands in
+      # when no operand is a directory, so a word misread as an operand cannot
+      # leave the cwd unjudged.
+      class Listed
+        # @param arguments [Array<String>] the stage's argv after `ls`
+        # @param confinement [#landing_of] where the call's words land
+        # @param entry [#call] `absolute path -> Boolean`, the `ls` entry predicate
+        def initialize(arguments, confinement, entry)
+          @arguments = arguments
+          @confinement = confinement
+          @entry = entry
+        end
+
+        def held?
+          dots = !SHOWS_DOT_ENTRIES.admits?(@arguments)
+          directories.all? { |directory| printed_entries(directory, dots).all? { @entry.call(_1) } }
+        end
+
+        private
+
+        def directories
+          found = Operands.of(@arguments).map { |word| @confinement.landing_of(word) }
+                          .select { |landing| File.directory?(landing) }
+          found.empty? ? [@confinement.landing_of(CURRENT)] : found
+        end
+
+        def printed_entries(directory, dots)
+          entries = Dir.children(directory)
+          shown = dots ? entries : entries.reject { |entry| entry.start_with?(DOT) }
+          shown.map { |entry| File.join(directory, entry) }
         end
       end
-
-      # The cwd stands in when no operand is a directory, so a word misread as
-      # an operand cannot leave the cwd unjudged.
-      def listed_directories(arguments, confinement)
-        directories = operands(arguments).map { |word| confinement.landing_of(word) }
-                                         .select { |landing| File.directory?(landing) }
-        directories.empty? ? [confinement.landing_of(CURRENT)] : directories
-      end
-
-      def printed_entries(directory, dots)
-        entries = Dir.children(directory)
-        (dots ? entries : entries.reject { |entry| entry.start_with?(DOT) }).map { |entry| File.join(directory, entry) }
-      end
+      private_constant :Listed
 
       # Every word after `--` is an operand, as getopt reads it.
-      def operands(arguments)
-        options = arguments.take_while { |word| word != LONG }
-        options.reject { |word| word.start_with?(DASH) } + arguments.drop(options.size + 1)
+      module Operands
+        def self.of(arguments)
+          options = arguments.take_while { |word| word != LONG }
+          options.reject { |word| word.start_with?(DASH) } + arguments.drop(options.size + 1)
+        end
       end
+      private_constant :Operands
 
       # A link's landing counts though a plain `ls` prints only its name: `-l`
       # prints the target, and the parked prompt costs less than telling them apart.
@@ -1157,13 +1166,26 @@ module Lain
           (!File.symlink?(path) || ordinary_landing?(classifier, confinement, path))
       end
 
+      # Every stage of one program, held to what it prints by the policy the
+      # block builds from its arguments, the confinement and the `ls` entry
+      # predicate. A raise refuses.
+      def held_where?(term, cwd, program)
+        classifier = @sensitivity.call(cwd)
+        confinement = @sensitivity.confinement(cwd)
+        entry = ->(path) { ordinary_entry?(classifier, confinement, path) }
+        term.stages.select { |stage| stage.program == program }
+            .all? { |stage| yield(stage.argv.drop(1), confinement, entry).held? }
+      rescue StandardError
+        false
+      end
+
       # The operand predicate. The first word that is not an option is the
       # pattern and the rest are files -- true only because `rg`'s table admits
       # no option that takes a value, which is what makes the slots certain.
       def searched_files?(term, cwd)
         confinement = @sensitivity.confinement(cwd)
         term.stages.select { |stage| stage.program == SEARCHER }
-            .all? { |stage| named_files?(operands(stage.argv.drop(1)).drop(1), confinement) }
+            .all? { |stage| named_files?(Operands.of(stage.argv.drop(1)).drop(1), confinement) }
       end
 
       def named_files?(words, confinement)
@@ -1174,34 +1196,42 @@ module Lain
 
       # The walk predicate. Bounded, so a large tree is the judge's rather than
       # a cost on every call; never through a link, as find does not follow one.
-      def walkable?(term, cwd)
-        classifier = @sensitivity.call(cwd)
-        confinement = @sensitivity.confinement(cwd)
-        term.stages.select { |stage| stage.program == FINDER }
-            .all? { |stage| ordinary_tree?(stage.argv.drop(1), classifier, confinement) }
-      rescue StandardError
-        false
-      end
+      def walkable?(term, cwd) = held_where?(term, cwd, FINDER) { |*parts| Walked.new(*parts) }
 
-      def ordinary_tree?(arguments, classifier, confinement)
-        depth = max_depth(arguments)
-        starts = start_points(arguments).map { |word| confinement.landing_of(word) }
-        entries = Tree.new(starts, depth:, bound: WALK_BOUND).first(WALK_BOUND + 1) if depth
-        entries && entries.size <= WALK_BOUND && entries.all? { |path| ordinary_entry?(classifier, confinement, path) }
-      end
+      # A `find` reaching at most {WALK_BOUND} entries, each an ordinary `ls` entry.
+      class Walked
+        # @param arguments [Array<String>] the stage's argv after `find`
+        # @param confinement [#landing_of] where the call's words land
+        # @param entry [#call] `absolute path -> Boolean`, the `ls` entry predicate
+        def initialize(arguments, confinement, entry)
+          @arguments = arguments
+          @confinement = confinement
+          @entry = entry
+        end
 
-      def start_points(arguments)
-        words = arguments.drop_while { |word| word == FIND_START }.take_while { |word| !word.start_with?(DASH) }
-        words.empty? ? [CURRENT] : words
-      end
+        def held?
+          depth = max_depth
+          starts = start_points.map { |word| @confinement.landing_of(word) }
+          entries = Tree.new(starts, depth:, bound: WALK_BOUND).first(WALK_BOUND + 1) if depth
+          entries && entries.size <= WALK_BOUND && entries.all? { @entry.call(_1) }
+        end
 
-      # One that is not a number bounds nothing. GNU find obeys the last of
-      # several and warns, so more than one is not read: nil.
-      def max_depth(arguments)
-        depths = arguments.each_cons(2).select { |option, _| option == MAX_DEPTH }
-                          .map { |_, value| Integer(value, exception: false) || Float::INFINITY }
-        depths.size > 1 ? nil : depths.first || Float::INFINITY
+        private
+
+        def start_points
+          words = @arguments.drop_while { |word| word == FIND_START }.take_while { |word| !word.start_with?(DASH) }
+          words.empty? ? [CURRENT] : words
+        end
+
+        # One that is not a number bounds nothing. GNU find obeys the last of
+        # several and warns, so more than one is not read: nil.
+        def max_depth
+          depths = @arguments.each_cons(2).select { |option, _| option == MAX_DEPTH }
+                             .map { |_, value| Integer(value, exception: false) || Float::INFINITY }
+          depths.size > 1 ? nil : depths.first || Float::INFINITY
+        end
       end
+      private_constant :Walked
 
       # Every entry under each start point, breadth first, the start included.
       class Tree
@@ -1246,19 +1276,13 @@ module Lain
       end
 
       # The git name predicate, after the repository predicate, since a status
-      # or ls-files asks git what it would print.
+      # or ls-files asks git what it would print; a printed name must also lie
+      # inside the root.
       def git_named?(term, cwd)
-        classifier = @sensitivity.call(cwd)
-        confinement = @sensitivity.confinement(cwd)
-        ordinary = ->(path) { confinement.contains?(path) && ordinary_entry?(classifier, confinement, path) }
-        term.stages.select { |stage| stage.program == GIT }
-            .all? { |stage| printed(stage, confinement, ordinary).held? }
-      rescue StandardError
-        false
-      end
-
-      def printed(stage, confinement, ordinary)
-        Printed.new(stage.argv.drop(1), confinement.landing_of(CURRENT), ordinary, git: @git, facts: @facts)
+        held_where?(term, cwd, GIT) do |arguments, confinement, entry|
+          ordinary = ->(path) { confinement.contains?(path) && entry.call(path) }
+          Printed.new(arguments, confinement.landing_of(CURRENT), ordinary, git: @git, facts: @facts)
+        end
       end
 
       def programs(term) = term.programs
