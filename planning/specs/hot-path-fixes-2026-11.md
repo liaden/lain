@@ -1,6 +1,6 @@
 # Hot-path fixes from the 2026-11 profiling round
 
-status: in-progress (panel-reviewed 2026-11-09, REQUEST-CHANGES folded in)
+status: done (panel-reviewed 2026-11-09, REQUEST-CHANGES folded in)
 commit-mode: orchestrator-commits
 language: ruby, rust (cards R2 only)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust seats for R2 (Raph Levien, Andrew Gallant)
@@ -1636,3 +1636,38 @@ Spec file: none can fail on prose; the check is `grep -n` for each stale phrase 
 - J4 landed c4dd3792 (attempt 1)
 - 04:08 J4 landed c4dd3792
 - 04:08 S9 started (56 files from the seam report + the seam_report_spec env fix)
+- 04:18 D1 handed back (3 docs; grep of every Grounding stale phrase empty; flakes recorded by name: 61 of 84 red reports STARVED at load 27-141). Wiring applied by the main session: ROADMAP.md:166 (not 161) reworded to name the stamp-gated listing; docs/rust-bindings.md test 2 records the bounded-worst-case ruling. S9's docs part follows S9.
+- 04:20 D1 review (low) APPROVE-WITH-FIXES: the ; bullet understated the cd rule; flake counts did not match the main session's count of the hook logs (the implementer recounts with a saved script); digits. ROADMAP wording fixed by the main session (mtime or ctime, per U2).
+- 04:21 D1 fixes verified by the main session (reran count-flakes.sh: 8 red hooks, 82 lines, 74 names, 80 reports with 57 STARVED in 6 logs, load 27.2-140.8). D1 waits for S9, then gets S9's doc part and lands.
+- 04:36 S9 handed back: 53 of 56 files tagged plus the seam_report_spec env scrub (red 4/1, then 4/0); 4182 examples untagged before and after; --tag '~seam' report clean over 3 seeds only with a before(:suite) prewarm of Provenance.running_harness (a process-wide git memo charged to whichever example records first). Ruling: take the prewarm as spec/support/running_harness.rb (written by the main session), because it costs 1 harness read per process and the memo is filled at boot anyway in a real chat. Ruling: accept the implementer's rule of a group tag when at least half the group runs git; the card asks for group tags, and splitting groups is a refactor. About 17 files that reach git only through a lib default go to follow-up FU-14.
+- 04:48 S9 review (medium) APPROVE-WITH-FIXES: the prewarm is confirmed needed (seed 4711 lists bench/cli_spec without it) and costs 11.6 ms per process; the half rule hides about 343 examples that run no git. Ruling reversed: tag the narrowest group in which every example runs git, otherwise tag examples. The fix is substantive, so a second review follows.
+- 05:06 S9 fix round back: tags now per example or narrowest all-git group; 5 files keep group or file tags for shared-repo first users; :seam 1443 to 1364; report clean on seeds 43-47 (2822 examples); untagged 4182. Second review sent to the same reviewer.
+- 05:23 S9 review 2 APPROVE-WITH-FIXES: acceptance holds on 2 more seeds; 264 of 1364 tagged examples still run no git on 1 seed (repl_spec 25 of 27, session_spec 7 of 8, harness/confinement_spec 7 of 9 are the clearest; wiring_spec 84 of 144 and epic_submit_spec 30 of 55 may be shared-repo first users). No SeedRepo prewarm needed; 1 untagged SeedRepo user outside the list, isolation/null_spec "answers the nearest repository...", tagged :seam by the main session.
+- 05:23 Ruling: land S9 now. The card's criterion holds and the card is low risk; narrowing the remaining over-tags needs multi-seed evidence per file, a third round for an inner-loop speed gain, not a correctness one. FU-15: narrow the 264 tagged examples that run no git (list in .review-S9-2.md), with per-example git over several seeds; also FU-14's 17 lib-default files.
+- S9 landed afb7e585 (attempt 1)
+- 05:26 S9 landed afb7e585
+- 05:27 D1 S9 docs part added (spec-suite-performance.md); main session fixed a dangling 'any of them' it orphaned. Landing D1:1.
+- D1 landed 807d06ab (attempt 1)
+- 05:27 D1 landed 807d06ab. All cards landed. Close-out started.
+- 05:48 Close-out:
+  - Checks 1, 2, 4 and 5 are green: pspec 33924 examples, 0 failures, 15 pending (floor 33645); rubocop 2625 files, no offenses; cargo test, clippy and deny clean; runtime-census record and check ok; zeitwerk-census check ok (seed 707316).
+  - Check 3: 3 bench records at load 1.46 to 1.86. --check fails only on request_100000 (medians 0.817, 0.855, 0.871 against 0.821). No card touched the HTTP transport, the row is marked NOISY, and its ceiling dates from 2026-10-23. Ruling: left for the user as FU-16, not raised.
+  - mask_list_warm is seeded at 4.45 ms in its own commit, d58a4acf.
+  - Worktrees and branches match the start of the run. The pre-commit patch files are all equal in size, and each hook run restored its stash; the tracked status matches the start apart from the pre-staged submodules, which are re-staged last.
+- Follow-ups for the user, beyond FU-1 to FU-12 above:
+  - FU-13: land k28-4 (the sandbox grants ~/.cargo/bin read only) or J4's rule approves cargo calls the sandbox then refuses.
+  - FU-14: about 17 spec files reach git only through a lib default and could take a non-git double.
+  - FU-15: 264 :seam examples run no git on 1 seed; narrow them with multi-seed evidence.
+  - FU-16: the request_100000 bench ceiling (0.821 ms, seeded 2026-10-23) sits under today's quiet medians; re-seed or investigate.
+- 05:55 Check 6, measured at HEAD (load 0.55 to 4.6; the full table is in the run's scratchpad, measure-results.md):
+  - lain up wall: 1687 and 1808 ms before, 912 and 914 ms after. ChatPreflight went from 810 ms to about 30 ms.
+  - cockpit e2e plain wall: 9.57 s before, 7.3 to 7.6 s after.
+  - mask listing, warm: this checkout 70.3 ms to 36 ms; a 50k-file .venv checkout 397 ms to 2.2 ms (cold 6039 ms to 20 to 42 ms).
+  - Regions.detect, 1 MB: 231 ms to 29 to 32 ms.
+  - exe/lain help: 756 ms to 665 ms.
+  - git spawns per pspec: 37259 to 32988 (unit-tagged about 3180 to 10).
+  - judged_today_term admits 15 calls (54.3 s) where it admitted 4, and leaves 83 calls (665 s) judged.
+  - Exact judged repeats over the 2 recorded sessions: 13 of 98 (55.6 s), with 3 (23.3 s) left after the term table.
+  - Gaps: no real session recorded since the cards landed. judged_fixable.rb re-reads recorded shell_arm records only, so it cannot score the new parser. FU-17: replay the 2 sessions through the shell-verdict rung to measure the quoted-string and redirect calls (527 s).
+- Item 7 (manual pass) is owed by the user: lain up here and in a Python checkout with a .venv, 1 auto-mode session with cargo and git work, and a review of a 30-file branch.
+- Run done.
