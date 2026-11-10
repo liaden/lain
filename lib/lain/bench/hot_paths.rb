@@ -38,7 +38,7 @@ module Lain
 
       # @return [Array<Row>] one per measured row, in the table's order
       def rows
-        [*render_rows, *bash_rows, *request_rows, *journal_rows, mask_row, wire_row]
+        [*render_rows, *bash_rows, mask_list_row, *request_rows, *journal_rows, mask_row, wire_row]
       end
 
       # @param reps [Integer]
@@ -78,6 +78,15 @@ module Lain
               measure(@reps, name: "bash_true_#{profile}") { call.call }
             end
           end
+        end
+      end
+
+      # The warm refresh of the real list, since the bash rows run with none: a chat pays it before every call.
+      def mask_list_row
+        Dir.mktmpdir("hot-path-masks") do |dir|
+          masks = Corpus.mask_list(File.realpath(dir))
+          masks.masks
+          measure(@reps, name: "mask_list_warm") { masks.masks }
         end
       end
 
@@ -199,6 +208,21 @@ module Lain
           request = Lain::Request.new(model: "bench", max_tokens: 64, stream: false,
                                       messages: [{ role: "user", content: body }])
           Canonical.dump(model: request.model, messages: request.messages, stream: false)
+        end
+
+        # A repository whose ignored files are secrets, so the list has names to classify and restate.
+        #
+        # @return [Confine::MaskList]
+        def mask_list(root)
+          Open3.capture2e(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "init", "-q", root).last.success? or
+            raise Error, "git init failed in #{root}"
+          File.write(File.join(root, ".gitignore"), ".env\n")
+          100.times do |i|
+            FileUtils.mkdir_p(File.join(root, "pkg#{i}"))
+            File.write(File.join(root, "pkg#{i}", ".env"), "TOKEN=#{i}\n")
+          end
+          sensitivity = Sensitivity.new(home: root, cwd: root, root:)
+          Confine::MaskList.new(root:, policy: -> { Sensitivity::Policy.new(sensitivity:, home: root, root:) })
         end
 
         def probe = Confine::Probe.new(fence: Confine::Bwrap.fence_binary, journal: Channel::Null.instance)

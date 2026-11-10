@@ -4,7 +4,7 @@ RSpec.describe Lain::Bench::HotPaths do
   let(:row_names) do
     %w[
       render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader bash_true_workspace
-      request_1000 request_guarded_1000
+      mask_list_warm request_1000 request_guarded_1000
       journal_small journal_1000 journal_chained_small journal_chained_1000 mask_first_output wire_ready
     ]
   end
@@ -31,6 +31,17 @@ RSpec.describe Lain::Bench::HotPaths do
 
     it "reports the repetitions it was asked for", :seam do
       expect(rows.reject(&:skipped).map(&:reps)).to all(eq(1))
+    end
+  end
+
+  describe "the mask list row" do
+    it "lists a real checkout's ignored secrets, while the bash rows keep their stub", :seam do
+      Dir.mktmpdir("hot-path-mask-spec") do |dir|
+        masks = described_class::Corpus.mask_list(File.realpath(dir))
+
+        expect(masks.masks.map { File.basename(_1.path) }).to include(".env")
+        expect(described_class.const_get(:Bash)::NoMasks.new.masks).to eq([])
+      end
     end
   end
 
