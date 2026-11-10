@@ -68,7 +68,18 @@ module Lain
       # Composed per call, never a constant, because `$PROGRAM_NAME` must be
       # read when the exe runs -- under rspec it is not the lain binary.
       def self.call(*argv)
-        "#{scrubs}#{gem_exports}#{lain_exports}#{runtime_exports}exec #{$PROGRAM_NAME} #{Shellwords.join(argv)}"
+        program = launcher
+        "#{scrubs(program:)}#{gem_exports}#{lain_exports}#{runtime_exports}" \
+          "exec #{Shellwords.escape(program)} #{Shellwords.join(argv)}"
+      end
+
+      # A pane starts in `-c`, so a relative path would resolve against the wrong directory; a
+      # bare name is left for the pane's PATH.
+      #
+      # @param program [String] the launching binary
+      # @return [String] the program, expanded when it names a path
+      def self.launcher(program = $PROGRAM_NAME)
+        program.include?(File::SEPARATOR) ? File.expand_path(program) : program
       end
 
       # The `-r` bundler/setup exports into RUBYOPT, whatever path it names.

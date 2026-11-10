@@ -32,6 +32,28 @@ RSpec.describe Lain::CLI::PaneCommand do
                "exec #{$PROGRAM_NAME} chat --fork a\\ b")
     end
 
+    it "execs a relative launcher by its absolute path, escaped, so a pane started elsewhere finds it" do
+      Dir.mktmpdir("pane command") do |dir|
+        FileUtils.mkdir_p(File.join(dir, "exe"))
+        Dir.chdir(dir) do
+          program_was = $PROGRAM_NAME
+          $PROGRAM_NAME = "exe/lain"
+          expect(described_class.call("chat"))
+            .to end_with("exec #{Shellwords.escape(File.join(File.realpath(dir), "exe", "lain"))} chat")
+        ensure
+          $PROGRAM_NAME = program_was
+        end
+      end
+    end
+
+    it "leaves a bare PATH name as it is" do
+      program_was = $PROGRAM_NAME
+      $PROGRAM_NAME = "lain"
+      expect(described_class.call("chat")).to end_with("exec lain chat")
+    ensure
+      $PROGRAM_NAME = program_was
+    end
+
     # The blocker: `lain up` runs its pre-flight by exporting LAIN_PREFLIGHT
     # into a child, and a variable is inherited by everything downstream of
     # wherever it was set. A tmux SERVER carries it to every pane it spawns

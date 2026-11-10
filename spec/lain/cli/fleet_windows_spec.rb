@@ -933,8 +933,8 @@ RSpec.describe Lain::CLI::FleetWindows do
     # this sink now passes. The record is not a closer, so the tail runs for
     # as long as the example needs -- which is what lets the REAL command run
     # rather than a stand-in that steps around the thing under test.
-    def plant_session
-      dir = File.join(pane_state_home, "lain", "sessions", Lain::Paths.new.project_hash(Dir.pwd))
+    def plant_session(cwd: Dir.pwd)
+      dir = File.join(pane_state_home, "lain", "sessions", Lain::Paths.new.project_hash(cwd))
       FileUtils.mkdir_p(dir)
       File.write(File.join(dir, "20260828T000000-1.ndjson"), %({"type":"session_started"}\n))
     end
@@ -1054,6 +1054,30 @@ RSpec.describe Lain::CLI::FleetWindows do
           expect(window_names).to include("researcher-5aaa1111")
         end
       end
+    end
+
+    # A relative launcher is the shape `bundle exec exe/lain up` hands the
+    # cockpit, and the pane starts in `-c`, where that path names nothing.
+    it "leaves a window alive when the launcher was a relative path and the pane starts elsewhere" do
+      elsewhere = File.realpath(Dir.mktmpdir("fleet-elsewhere"))
+      plant_session(cwd: elsewhere)
+      relative = Pathname(lain_exe).relative_path_from(Pathname(Dir.pwd)).to_s
+      as_a_pane_would(program: relative) do
+        Sync do
+          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+                                      notice: notices, session: "lain", cwd: elsewhere)
+          fleet << spawn_record
+          sleep(2.0)
+
+          fleet << usage_record
+          sleep(0.5)
+
+          expect(deaths_seen).to be_empty
+          expect(window_names).to include("researcher-5aaa1111")
+        end
+      end
+    ensure
+      FileUtils.remove_entry(elsewhere)
     end
   end
 end

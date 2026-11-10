@@ -614,7 +614,7 @@ module Lain
         #   resolve a relative one against the wrong directory
         # @return [#call] a runner for {#initialize}
         def self.spawning(shell_out_factory, executable: $PROGRAM_NAME)
-          binary = executable.include?(File::SEPARATOR) ? File.expand_path(executable) : executable
+          binary = PaneCommand.launcher(executable)
           lambda do |args, cwd:, environment:, timeout:|
             shell_out_factory.call(binary, "chat", *args, cwd:, environment:, timeout:).tap(&:run_command)
           end
