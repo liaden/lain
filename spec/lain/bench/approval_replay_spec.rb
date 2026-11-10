@@ -683,4 +683,111 @@ RSpec.describe Lain::Bench::ApprovalReplay do
         .to raise_error(Lain::Bench::CLI::Refusal, /bad.ndjson.*command/)
     end
   end
+
+  describe "the judge wait a replay removes" do
+    def judged_at(started, answered)
+      [{ "type" => "escalation", "rung" => "rules", "verdict" => "abstain", "ts" => started },
+       { "type" => "escalation", "rung" => "auto", "verdict" => "allow", "ts" => answered,
+         "prompt_digest" => "blake3:#{"0" * 64}" }]
+    end
+
+    def stamped(id, command, seconds)
+      answered = format("2026-11-01T10:00:%02dZ", seconds)
+      call(id, "bash", { "command" => command }, rulings: judged_at("2026-11-01T10:00:00Z", answered)).with(place: live)
+    end
+
+    # The composed term resolves programs on the disk, which the placeholder project has none of.
+    let(:live) { described_class::Place.current }
+    let(:calls) do
+      [stamped("tu_1", "pwd", 4), stamped("tu_2", "echo 'a b'", 9), stamped("tu_3", "ls", 6),
+       stamped("tu_4", "ls 2>&1", 11), stamped("tu_5", "make test", 20)]
+    end
+
+    def removed_report(calls)
+      Dir.mktmpdir("lain-approval-replay-wait") do |dir|
+        rules = File.join(dir, "rules.rb")
+        File.write(rules, <<~RULES)
+          approval do
+            allow "bash", command: "pwd"
+            allow "bash", command: "echo 'a b'"
+            allow "bash", command: "echo $HOME"
+          end
+        RULES
+        described_class.new(calls:, arms: [arm(:auto, rules:)], project: live).report
+      end
+    end
+
+    it "totals the calls the surfaces, triage and rules settle, with the recorded seconds" do
+      expect(removed_report(calls)).to include("  judged in the record: 5\n")
+        .and include("  settled before the judge by surfaces, triage or rules: 2 (13.0 s of recorded judge wait)")
+    end
+
+    it "totals the calls the composed term admits, which the replay stack lacks, beside it" do
+      expect(removed_report(calls))
+        .to include("  admitted by the composed term, which this replay stack lacks: 2 (17.0 s)\n  still judged: 1\n")
+    end
+
+    it "gives the calls only the shell reading parses as their own line, a quote or a redirect" do
+      expect(removed_report(calls))
+        .to include("  of the settled and admitted, parsed only by the shell reading, not the verdict: 2 (20.0 s)")
+    end
+
+    it "counts a quoted call on its own" do
+      report = removed_report([stamped("tu_1", "echo 'a b'", 9), stamped("tu_2", "ls", 6)])
+
+      expect(report).to include("parsed only by the shell reading, not the verdict: 1 (9.0 s)")
+    end
+
+    it "leaves out a settled call neither the shell reading nor the verdict parses" do
+      report = removed_report([stamped("tu_1", "echo $HOME", 9), stamped("tu_2", "echo 'a b'", 6)])
+
+      expect(report).to include("rules: 2 (15.0 s of recorded judge wait)")
+        .and include("parsed only by the shell reading, not the verdict: 1 (6.0 s)")
+    end
+
+    it "counts a redirected call on its own" do
+      report = removed_report([stamped("tu_1", "ls 2>&1", 11), stamped("tu_2", "ls", 6)])
+
+      expect(report).to include("parsed only by the shell reading, not the verdict: 1 (11.0 s)")
+    end
+
+    it "counts a judged call with no ruling before the judge's as no wait" do
+      alone = call("tu_1", "bash", { "command" => "pwd" }, rulings: [judged_at("x", "2026-11-01T10:00:04Z").last])
+
+      expect(removed_report([alone])).to include("surfaces, triage or rules: 1 (0.0 s of recorded judge wait)")
+    end
+
+    it "renders over the committed session, which stamps every record at one instant" do
+      report = replay(auto, arm(:auto)).report
+
+      expect(report).to include("judged in the record: 4\n")
+        .and include("surfaces, triage or rules: 0 (0.0 s of recorded judge wait)")
+        .and include("parsed only by the shell reading, not the verdict: 0 (0.0 s)")
+    end
+
+    it "is left out of an arm that never asks the judge" do
+      expect(replay(ask, arm(:ask, rules: rules_a)).report).not_to include("judged in the record")
+    end
+
+    describe "Call#judge_wait" do
+      def waiting(*stamps)
+        rulings = stamps.map { |rung, ts| { "type" => "escalation", "rung" => rung, "ts" => ts }.compact }
+        call("tu_1", "bash", { "command" => "pwd" }, rulings:).judge_wait
+      end
+
+      it "reads the gap to the ruling just before the judge's" do
+        expect(waiting(["triage", "2026-11-01T10:00:00Z"], ["rules", "2026-11-01T10:00:05Z"],
+                       ["auto", "2026-11-01T10:00:12Z"])).to eq(7.0)
+      end
+
+      it "is no wait when the judge ruled first" do
+        expect(waiting(["auto", "2026-11-01T10:00:12Z"], ["rules", "2026-11-01T10:00:20Z"])).to eq(0.0)
+      end
+
+      it "skips a ruling that carries no timestamp rather than raising" do
+        expect(waiting(["rules", nil], ["auto", "2026-11-01T10:00:12Z"])).to eq(0.0)
+        expect(waiting(["rules", "2026-11-01T10:00:05Z"], ["auto", nil])).to eq(0.0)
+      end
+    end
+  end
 end

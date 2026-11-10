@@ -67,7 +67,39 @@ module Lain
            "  agrees with the live record: #{rows.count { agrees?(_1) }} of #{rows.size}",
            "  prompted: #{rows.count(&:prompted)}, #{rows.count(&:unanswered)} with no recorded answer",
            "  state unknown: #{rows.count { _1.state == "unknown" }} of #{rows.size}",
-           *Rerouting.lines(arm, rows, indent: "  "), *drifted(rows)]
+           *Rerouting.lines(arm, rows, indent: "  "), *drifted(rows), *removed_wait(arm, rows)]
+        end
+
+        def removed_wait(arm, rows)
+          return [] unless arm.approval == :auto
+
+          judged = rows.map { [@calls.fetch(@replay.key(_1)), _1] }.select { |call, _| call.judged }
+          settled = judged.select { |_, row| row.judge.nil? }.map(&:first)
+          admitted = (judged.map(&:first) - settled).select { composed?(_1) }
+          wait_lines(judged.size, settled, admitted)
+        end
+
+        def wait_lines(judged, settled, admitted)
+          parsed = (settled + admitted).select { parsed_only_by_reading?(_1) }
+          ["  judged in the record: #{judged}",
+           "  settled before the judge by surfaces, triage or rules: #{counted(settled)} of recorded judge wait)",
+           "  admitted by the composed term, which this replay stack lacks: #{counted(admitted)})",
+           "  still judged: #{judged - settled.size - admitted.size}",
+           "  of the settled and admitted, parsed only by the shell reading, not the verdict: #{counted(parsed)})"]
+        end
+
+        def counted(calls) = "#{calls.size} (#{format("%.1f", calls.sum(&:judge_wait))} s"
+
+        def composed?(call)
+          call.command && (@term ||= TermArm.today).admits?(call.with(place: call.place || @replay.project))
+        end
+
+        # Quotes, `2>&1` and `;` are read by Shell::Reading, which only the composed term consults.
+        def parsed_only_by_reading?(call)
+          return false unless call.command
+
+          !Shell::Reading.of(call.command, (call.place || @replay.project).cwd).nil? &&
+            !Approval::Rule::Call.for(tool: TermArm::BASH, input: call.input).term?
         end
 
         def line(row)

@@ -86,6 +86,17 @@ module Lain
 
         # @return [Hash, nil] the judge's own ruling on the call, carrying the digests of what it read
         def judged = rulings.reverse.find { _1["rung"] == Approval::Judged::NAME }
+
+        # @return [Float] seconds the judge took, from the ruling before its own; 0 when none came before
+        #   or either carries no timestamp
+        def judge_wait
+          at = rulings.rindex { _1["rung"] == Approval::Judged::NAME }
+          stamps = at&.positive? ? rulings.values_at(at - 1, at).map { _1["ts"] } : []
+          stamps.size == 2 && stamps.all? ? Time.iso8601(stamps.last) - Time.iso8601(stamps.first) : 0.0
+        end
+
+        # @return [String, nil] the shell command a bash call ran
+        def command = (input["command"] if tool == "bash" && input)
       end
     end
   end
