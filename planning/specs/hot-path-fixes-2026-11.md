@@ -1623,3 +1623,16 @@ Spec file: none can fail on prose; the check is `grep -n` for each stale phrase 
 - S3 landed d9cf5750 (attempt 1)
 - 03:24 S3 landed d9cf5750 (attempt 1). Cleanup done.
 - 03:24 Checkpoint: 33 cards landed (A1 A2 R1 U1 A4 J1 G7 U4 J2 A3 R2 U2 U3 J6 U5 S7 S1 G1 G2 J3 G3 J3b U6 R3 G5 G4 S10 G6 S8 A5 S2 S3 S6). In flight: J4 (fix round after high review), S4 (1 mechanical fix). Left: S9 (after J4 and S4), D1, close-out.
+- 03:25 S4 fix done (shared DryRunReads helper; eager-load mutants red). Landing attempt 1.
+- S4 landed 543d5880 (attempt 1)
+- 03:28 S4 landed 543d5880 (attempt 1). Cleanup done.
+- 03:31 Seam report run (LAIN_SEAM_REPORT=1 rake pspec, 10 workers): 33903 examples, 1 failure (seam_report_spec "prints nothing without the variable" inherits the exported variable: a spec defect, folded into S9). 56 files run untagged git (list: land/seam-files.txt), against the card's 6 known. S9 starts after J4 lands.
+- 03:37 J4 fix round done (254/10 red; 3501/0 over 77 files; real chat under default confine: rules rung approves cargo check --locked, then the sandbox denies ~/.cargo/bin/cargo under an isolated HOME). Ruling: path deps, [patch] and workspace members named by an in-root manifest are the project's choice, not refused (FU-12 for the user to confirm). Second review started.
+- 03:48 J4 review 2: REQUEST-CHANGES (opus panel). Blocker: a quoted or escaped TOML key (`"fmt"`, `"workspace"`) got past the alias and workspace checks, and real cargo ran code outside the root. Should-fix: [env]/credential-provider missing from RUNS, 2 untested guards (FIFO, CARGO_HOME on the ascent), and the replay header leaves out a live disk read. Ruling: fail closed, no TOML gem. The crate predicate abstains on any quoted key or \u escape (an abstain only goes to the judge). Every mechanical fix and nit was taken. A third review follows the fix (high risk).
+- 03:48 Ruling: J4 lands without k28-4. The reviewer confirmed that the sandbox refuses ~/.cargo/bin/cargo (read-only grant, HOME_READ) even with the real HOME, so the card saves judge time only once k28-4 lands. FU-13: land k28-4, or the J4 rule approves calls the sandbox then refuses.
+- 03:53 J4 fix round 2 back: abstain on quoted keys, quoted headers and   escapes; env and credential providers in RUNS; FIFO and CARGO_HOME-ascent examples (both mutants killed); replay header line (score.rb added to scope); nits. 2 class examples changed (cargo --version over an in-root Cargo.toml is now approved). Accepted over-refusal: a quoted cfg target header goes to the judge. Red 263/8, green 295/0 + 356/0. Third review sent to the same reviewer.
+- 04:02 J4 review 3: APPROVE-WITH-FIXES, all mechanical. Blocker: a project config's include = [{ path }] loads an unread config (real cargo ran the project binary through an included fmt alias). Fix: abstain on any include key; nits: cargo_home: injection in the spec, score.rb wording. The same implementer fixes and the main session verifies.
+- 04:05 J4 fixes verified by the main session (include abstain over project + own, cargo_home: injection, header wording). Landing J4:1.
+- J4 landed c4dd3792 (attempt 1)
+- 04:08 J4 landed c4dd3792
+- 04:08 S9 started (56 files from the seam report + the seam_report_spec env fix)
