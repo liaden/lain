@@ -108,6 +108,30 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  describe "the judge's memo" do
+    def judged_twice(config: nil)
+      in_tree(config:) do |root, home|
+        asked = []
+        board = board_over(root, home, options: { approval: "auto" }, judge: ->(**) { asked.push(:judge) && :approve })
+
+        2.times { expect(board.policy_switch.call(bash_of("make test", "cwd" => root), nil)).to be(true) }
+        yield asked
+      end
+    end
+
+    it "asks the judge once for an exact repeat on the real auto ladder, and records it as remembered" do
+      judged_twice do |asked|
+        expect(asked).to eq([:judge])
+        expect(rulings.last).to include("rung" => "auto", "verdict" => "allow",
+                                        "reason" => Lain::Approval::Judged::REMEMBERED)
+      end
+    end
+
+    it "asks the judge every time when the project turns it off" do
+      judged_twice(config: "approval judge_memo: false\n") { |asked| expect(asked).to eq(%i[judge judge]) }
+    end
+  end
+
   describe ".classifier" do
     it "anchors the home-relative table at the INJECTED home, not the process's" do
       in_tree do |root, home|

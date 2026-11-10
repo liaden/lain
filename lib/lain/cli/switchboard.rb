@@ -117,6 +117,8 @@ module Lain
       #   stack refuses or holds; no one by default
       # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] the workspace sandbox a call
       #   the judge approves runs under; the toolset's to say, since the arm alone does not build the sandbox
+      # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] the judge's approvals this session, which every
+      #   judged rung settles an exact repeat by; none by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -130,10 +132,11 @@ module Lain
                    approval_timeout: Approval::Parked::Queue::DEFAULT_TIMEOUT, display: Channel::Null.instance, arms: Arms::OFF,
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
                    denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
-                   masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT)
+                   masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT,
+                   memo: Approval::JudgeMemo.off)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
-            request:, secrets:, denied_tools:, stops:, masks:,
+            request:, secrets:, denied_tools:, stops:, masks:, memo:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -244,6 +247,7 @@ module Lain
       # @param denied_tools [Enumerable<String>] as on {.for}; none by default
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
       # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] as on {.for}; none by default
+      # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] as on {.for}; none by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -253,13 +257,13 @@ module Lain
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                      stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
-                     silence: Approval::Silence::DEFAULT)
+                     silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off)
         @attended = attended
         @masks = masks
         @display = display
         @journal = journal
         @spike = spike
-        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
+        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = queue_over(sensitivity, approval_timeout, silence) if @attended
@@ -427,7 +431,7 @@ module Lain
       # workers' included, is built over these two, so `auto` judges alike
       # wherever a call is asked. One breaker for them all, so a requester's
       # count does not restart when its call is asked through another ladder.
-      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:)
+      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:)
         @judge_facts = arms.judge_facts?
         @denials = Approval::DenialBreaker.for(arms.judge_denials, journal: @journal)
         @request = arms.judge_requests? ? request : Approval::Judge::Unrequested
@@ -436,6 +440,7 @@ module Lain
         @classifiers = classifiers
         @verdict = verdict
         @judge = judge
+        @memo = memo
         @sensitivity = sensitivity
       end
 
@@ -559,7 +564,8 @@ module Lain
       def judged(classifiers)
         asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
-                             facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks)
+                             facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks,
+                             memo: @memo)
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

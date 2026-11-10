@@ -12,8 +12,8 @@ module Lain
     # the detected-framework fallback survives, without every caller comparing
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
-                        :env_pass, :approval_timeout, :approval_silence, :judge_timeout, :keys, :todos, :theme,
-                        :think, :review, :budget, :remote_relay, :remote_ntfy) do
+                        :env_pass, :approval_timeout, :approval_silence, :judge_timeout, :judge_memo, :keys, :todos,
+                        :theme, :think, :review, :budget, :remote_relay, :remote_ntfy) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -128,6 +128,7 @@ module Lain
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
         @approval_silence = Config::DEFAULT_APPROVAL_SILENCE
         @judge_timeout = Config::DEFAULT_JUDGE_TIMEOUT
+        @judge_memo = Config::DEFAULT_JUDGE_MEMO
         @remote = {}
       end
 
@@ -143,7 +144,7 @@ module Lain
                   middleware: @tables.fetch(:middleware, Middleware.empty),
                   env_pass: @tables.fetch(:env, []),
                   approval_timeout: @approval_timeout, approval_silence: @approval_silence,
-                  judge_timeout: @judge_timeout,
+                  judge_timeout: @judge_timeout, judge_memo: @judge_memo,
                   think: @tables[:think], remote_relay: @remote[:relay], remote_ntfy: @remote[:ntfy],
                   **small_tables)
       end
@@ -155,11 +156,12 @@ module Lain
         end
       end
 
-      def approval(timeout: nil, judge_timeout: nil, silence: nil, &block)
+      def approval(timeout: nil, judge_timeout: nil, silence: nil, judge_memo: nil, &block)
         declare(:approval, Answers::TABLE) do |at|
           @approval_timeout = timeout_from(timeout, at)
           @approval_silence = silence_from(silence, at)
           @judge_timeout = timeout_from(judge_timeout, at, key: "judge_timeout", current: @judge_timeout)
+          @judge_memo = memo_from(judge_memo, at)
           calls = collect(block, %i[allow deny deny_tool])
           calls.each { |call| Answers.from({ call.verb.to_s => [entry(call)] }, path: located_at(call.line)) }
           Answers.from(calls.group_by(&:verb).to_h { |verb, group| [verb.to_s, group.map { |call| entry(call) }] },
@@ -337,6 +339,14 @@ module Lain
 
         raise Refusal.new("silence must be :hold or :deny, got #{silence.inspect}", path: at, table: Answers::TABLE,
                                                                                     key: "silence")
+      end
+
+      def memo_from(memo, at)
+        return @judge_memo if memo.nil?
+        return memo if [true, false].include?(memo)
+
+        detail = "judge_memo must be true or false, got #{memo.inspect}"
+        raise Refusal.new(detail, path: at, table: Answers::TABLE, key: "judge_memo")
       end
 
       def relay_from(relay, at)

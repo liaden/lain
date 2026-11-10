@@ -152,6 +152,7 @@ RSpec.describe Lain::Config::Builder do
                                                        approval_timeout: 300,
                                                        approval_silence: :hold,
                                                        judge_timeout: 30,
+                                                       judge_memo: true,
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,
                                                        think: nil,
@@ -172,6 +173,15 @@ RSpec.describe Lain::Config::Builder do
     it "refuses a judge timeout that is not a number" do
       expect { build("approval judge_timeout: \"soon\"\n") }
         .to raise_error(Lain::Config::Refusal, /judge_timeout.*must be above 0/)
+    end
+
+    it "remembers the judge's approvals unless the approval table turns it off" do
+      expect([build("").judge_memo, build("approval judge_memo: false\n").judge_memo]).to eq([true, false])
+    end
+
+    it "refuses a judge memo setting that is not a boolean, at its line" do
+      expect { build("\napproval judge_memo: \"yes\"\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2.*judge_memo.*must be true or false, got "yes"/)
     end
 
     it "builds the names env pass hands every child" do

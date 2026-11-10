@@ -27,6 +27,7 @@ module Lain
     class Judged
       NAME = "auto"
       APPROVED = "the judge approved this call"
+      REMEMBERED = "the judge approved this exact call earlier this session"
       DENIED = "the judge refused this call"
       # Not final: the judge is a model, and a human who switches approval can still say yes.
       DENIED_TOLD = "the judge refused this call; that is a model's answer, not a human's, and a human can still " \
@@ -205,10 +206,12 @@ module Lain
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
       # @param denials [DenialBreaker, DenialBreaker::Unbroken] what a judge's deny does; applied by default
       # @param masks [Judgement::Masking, Judgement::Unmasked] the sandbox a call the judge approves runs under
+      # @param memo [JudgeMemo, JudgeMemo::Off] the approvals an exact repeat is settled by; none by default
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
                      facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off,
-                     masks: Judgement::Unmasked)
+                     masks: Judgement::Unmasked, memo: JudgeMemo.off)
         @judge = judge
+        @memo = memo
         @masks = masks
         @denials = denials
         @facts = facts
@@ -250,14 +253,28 @@ module Lain
       def weigh(effect, context, facts)
         return noted(effect, context, BROKEN, BROKEN_NOTE) if @denials.tripped?(requester_of(context))
 
-        cause = nil
         place = place_for(effect, context, facts)
+        key = JudgeMemo.key(tool: effect.name, input: effect.input, place:)
+        return remembered(context) if @memo.approved?(key)
+
+        verdict, cause, read = asked(effect, place)
+        @memo.approve(key) if verdict == :approve
+        ruled(verdict, effect, context, cause, read:)
+      end
+
+      # @return [Array(Symbol, String, Hash)] the verdict, why it faulted, and the digests of what was read
+      def asked(effect, place)
+        cause = nil
         prompt = prompt_of(effect, place)
-        read = digests_of(prompt, place)
         verdict = @judge.call(tool: effect.name, input: effect.input, place:, **{ prompt: }.compact) do |why|
           cause = why
         end
-        ruled(verdict, effect, context, cause, read:)
+        [verdict, cause, digests_of(prompt, place)]
+      end
+
+      def remembered(context)
+        counted(:approve, context)
+        Escalation::Ruling.allow(rung: NAME, because: REMEMBERED)
       end
 
       def ruled(verdict, effect, context, cause, read:)

@@ -89,7 +89,7 @@ module Lain
                                                 model: MODEL, toolset: @toolset, judge:, rules:, sensitivity:,
                                                 test_layout: test_layout(sensitivity),
                                                 classifiers: classifiers(sensitivity), denied_tools:,
-                                                approval_timeout: window,
+                                                approval_timeout: window, memo: ::Lain::Approval::JudgeMemo.new,
                                                 arms: ::Lain::CLI::Arms::OFF.with(judge_denials: arm.denials))
           @window = window
           # Built here for this session alone, so the replay's approver is its only consumer.

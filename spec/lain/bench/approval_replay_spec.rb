@@ -368,6 +368,30 @@ RSpec.describe Lain::Bench::ApprovalReplay do
     end
   end
 
+  describe "a judged call that comes back exactly" do
+    it "asks the recorded judge once, as a chat's memo does" do
+      judge = described_class::RecordedJudge.new
+      asked = 0
+      allow(judge).to(receive(:call).and_wrap_original { |original, **kw| (asked += 1) && original.call(**kw) })
+      approved = { "type" => "escalation", "rung" => "auto", "verdict" => "allow",
+                   "prompt_digest" => "blake3:#{"0" * 64}" }
+      approver = Object.new
+      def approver.answer(pending) = pending.deny(surface: "spec")
+      stack = described_class::Stack.new(place: project, arm: arm(:auto), judge:)
+
+      dispatched = stack.session(approver:) do |dispatch|
+        %w[tu_1 tu_2].map do |id|
+          repeat = call(id, "bash", { "command" => "make test" }, rulings: [approved])
+          judge.answering(repeat) { dispatch.call(repeat) }
+        end
+      end
+
+      expect(asked).to eq(1)
+      expect(dispatched.last.records.select { _1["type"] == "escalation" }.last)
+        .to include("rung" => "auto", "verdict" => "allow", "reason" => Lain::Approval::Judged::REMEMBERED)
+    end
+  end
+
   describe "the judge-denial breaker arm" do
     let(:denied) do
       Array.new(5) do |i|

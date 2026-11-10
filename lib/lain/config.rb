@@ -36,7 +36,7 @@ module Lain
       built = built(root)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
           todos: built.todos, approval_timeout: built.approval_timeout, approval_silence: built.approval_silence,
-          judge_timeout: built.judge_timeout, review: built.review, budget: built.budget,
+          judge_timeout: built.judge_timeout, judge_memo: built.judge_memo, review: built.review, budget: built.budget,
           remote_relay: built.remote_relay, remote_ntfy: built.remote_ntfy)
     end
 
@@ -229,6 +229,9 @@ module Lain
     # A Symbol rather than {Approval::Silence::HOLD}, for {DEFAULT_APPROVAL_TIMEOUT}'s reason.
     DEFAULT_APPROVAL_SILENCE = :hold
 
+    # Whether the `auto` judge's approvals settle an exact repeat, when the approval table does not say.
+    DEFAULT_JUDGE_MEMO = true
+
     attr_reader :epics, :approval, :isolation
 
     # @return [Array<String>] the variables `env pass:` hands every child,
@@ -248,6 +251,9 @@ module Lain
     # @return [Numeric] seconds the `auto` approval judge may take before its call goes to a human
     attr_reader :judge_timeout
 
+    # @return [Boolean] whether the `auto` approval judge's approvals settle an exact repeat this session
+    attr_reader :judge_memo
+
     # @return [Review] the model a document review runs under
     attr_reader :review
 
@@ -262,8 +268,8 @@ module Lain
 
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
                    approval_timeout: DEFAULT_APPROVAL_TIMEOUT, approval_silence: DEFAULT_APPROVAL_SILENCE,
-                   judge_timeout: DEFAULT_JUDGE_TIMEOUT, review: Review.empty, budget: Budget::Table.new,
-                   remote_relay: nil, remote_ntfy: nil)
+                   judge_timeout: DEFAULT_JUDGE_TIMEOUT, judge_memo: DEFAULT_JUDGE_MEMO, review: Review.empty,
+                   budget: Budget::Table.new, remote_relay: nil, remote_ntfy: nil)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
@@ -272,6 +278,7 @@ module Lain
       @approval_timeout = approval_timeout
       @approval_silence = approval_silence
       @judge_timeout = judge_timeout
+      @judge_memo = judge_memo
       @review = review
       @budget = budget
       @remote_relay = remote_relay
@@ -298,8 +305,8 @@ module Lain
     protected
 
     def state
-      [epics, approval, isolation, env_pass, todos, approval_timeout, approval_silence, judge_timeout, review,
-       budget, remote_relay, remote_ntfy]
+      [epics, approval, isolation, env_pass, todos, approval_timeout, approval_silence, judge_timeout, judge_memo,
+       review, budget, remote_relay, remote_ntfy]
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

@@ -1300,7 +1300,7 @@ is never refused: every table is then at its default.
 epics home: :repo, width: 3 do
   gate :research, :hands_off
 end
-approval timeout: 900, judge_timeout: 60, silence: :hold do   # judge_timeout is the auto judge's own limit; 30 when unset
+approval timeout: 900, judge_timeout: 60, silence: :hold, judge_memo: true do   # judge_timeout is the auto judge's own limit; 30 when unset
   allow "bash", command: "bundle exec rspec"
   deny_tool "web_fetch"                         # refuses the tool whatever its tier; no approval lifts it
 end
@@ -1324,6 +1324,11 @@ tests preset: :rspec
   and listed for you while the agent tells you; the prompt warns `postpones`. Under `:deny` both
   are denied as before (`auto-denies`), for an unattended run that should fail closed. A Ctrl-C
   or other cancelled wait is not silence and denies whatever the rule.
+  `judge_memo:` is `true` (the default) or `false`, and anything else is refused by name. While it
+  is on, a call the `auto` judge approved is approved again without asking the judge when the
+  same tool, input, requester, cwd, path classifications and facts come back in the same session;
+  the record's reason is "the judge approved this exact call earlier this session". A deny, a
+  deferral or a judge fault is never remembered, so such a call asks the judge again.
 * `isolation`, `tests`: documented below.
 * `sensitivity`: `denied:`, `gated:` and `exempt:`, each a list of path globs, and `related:`, a
   list of directories (each starting with `~/` or `/`, and each must exist). A read under a related

@@ -89,8 +89,14 @@ module Lain
                           approval_timeout: Config.approval_timeout(root: project.root),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:),
-                          denied_tools: config.approval.deny_tools, stops:, masks:)
+                          denied_tools: config.approval.deny_tools, stops:, masks:, memo: judge_memo(config))
         end
+
+        # One for the board, so every judged rung it builds, a leased worker's included, shares it.
+        #
+        # @param config [Config]
+        # @return [Lain::Approval::JudgeMemo, Lain::Approval::JudgeMemo::Off] off when the project turned it off
+        def judge_memo(config) = config.judge_memo ? Lain::Approval::JudgeMemo.new : Lain::Approval::JudgeMemo.off
 
         # What every agent of the session reads outside the project without
         # asking and never writes: where a spawner spills an oversized answer,

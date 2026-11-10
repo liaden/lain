@@ -195,6 +195,24 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe "the judge memo" do
+    it "is on unset, and read from the approval table" do
+      Dir.mktmpdir do |root|
+        write_config(root, "approval judge_memo: false\n")
+
+        expect([described_class.load(root:).judge_memo, described_class.empty.judge_memo]).to eq([false, true])
+      end
+    end
+
+    it "makes configs differing only in it unequal, with different hashes" do
+      epics = Lain::Config::Epics.new(home: :xdg)
+      plain = described_class.new(epics:)
+      other = described_class.new(epics:, judge_memo: false)
+
+      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+    end
+  end
+
   describe "the env table" do
     it "is read by .load" do
       Dir.mktmpdir do |root|

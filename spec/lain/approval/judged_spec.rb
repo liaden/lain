@@ -1646,4 +1646,113 @@ RSpec.describe Lain::Approval::Judged do
       end
     end
   end
+
+  describe "the memo of the judge's approvals" do
+    let(:memo) { Lain::Approval::JudgeMemo.new }
+
+    # A policy whose verdict on every path can be changed between calls, as an edit to the
+    # project's sensitivity table would change it.
+    let(:reclassing) do
+      Class.new(SimpleDelegator) do
+        attr_writer :reason
+
+        def judge(*, **) = Lain::Sensitivity::Verdict.new(level: :ordinary, reason: @reason || :none)
+        def confined(bounds) = Lain::Sensitivity::Policy::Confined.new(policy: self, bounds:, anchors: { home:, root: })
+      end.new(policy)
+    end
+
+    def remembering(scripted, **) = rung(scripted, memo:, **)
+
+    it "asks the judge once for an exact repeat, and says the second approval was remembered" do
+      scripted = answering("approve")
+
+      first = ruled(remembering(scripted), bash)
+      second = ruled(remembering(scripted), bash)
+
+      expect(scripted.prompts.size).to eq(1)
+      expect([first.verdict, second.verdict, second.authority]).to eq(%i[allow allow automatic])
+      expect([second.rung, second.reason]).to eq(["auto", described_class::REMEMBERED])
+    end
+
+    it "asks again for another requester or another cwd" do
+      scripted = answering("approve")
+      ruled(remembering(scripted), bash)
+
+      ruled(remembering(scripted), bash, within: context.with(requester: "researcher"))
+      ruled(remembering(scripted), bash, within: context.with(worker_env: Lain::WorkerEnv.new(cwd: "#{root}/sub",
+                                                                                              env: {})))
+
+      expect(scripted.prompts.size).to eq(3)
+    end
+
+    it "asks again once a named path's classification changed" do
+      scripted = answering("approve")
+      notes = bash("cat #{root}/notes.txt")
+      ruled(remembering(scripted, under: reclassing), notes)
+
+      reclassing.reason = :exempt
+      ruled(remembering(scripted, under: reclassing), notes)
+
+      expect(scripted.prompts.size).to eq(2)
+    end
+
+    it "never remembers a deny, a defer or a fault" do
+      %w[deny defer].each do |answer|
+        scripted = answering(answer)
+        2.times { settled(remembering(scripted), bash) }
+
+        expect(scripted.prompts.size).to eq(2)
+      end
+      failing = answering { raise "down" }
+      2.times { settled(remembering(failing), bash) }
+
+      expect(failing.prompts.size).to eq(2)
+    end
+
+    it "asks no judge and remembers nothing for a requester the breaker stopped, even for an approved call" do
+      breaker = Lain::Approval::DenialBreaker.for(:breaker, journal:)
+      verdicts = %w[approve deny deny deny].each
+      scripted = answering { verdicts.next }
+      ruled(remembering(scripted, denials: breaker), bash)
+      %w[lint docs site].each { ruled(remembering(scripted, denials: breaker), bash("make #{_1}")) }
+
+      ruled(remembering(scripted, denials: breaker), bash) { |pending| pending.deny(surface: "human_spec") }
+
+      expect(scripted.prompts.size).to eq(4)
+      expect(escalations.last).to include("rung" => "auto", "reason" => described_class::BROKEN)
+      expect(escalations.map { _1["reason"] }).not_to include(described_class::REMEMBERED)
+    end
+
+    it "remembers nothing when it is off" do
+      scripted = answering("approve")
+      2.times { ruled(rung(scripted, memo: Lain::Approval::JudgeMemo.off), bash) }
+
+      expect(scripted.prompts.size).to eq(2)
+    end
+
+    it "counts a remembered approval as an approval to the breaker" do
+      breaker = Lain::Approval::DenialBreaker.for(:breaker, journal:)
+      verdicts = %w[approve deny deny deny].each
+      scripted = answering { verdicts.next }
+      make = bash
+      ruled(remembering(scripted, denials: breaker), make)
+      2.times { ruled(remembering(scripted, denials: breaker), bash("make lint")) }
+      ruled(remembering(scripted, denials: breaker), make)
+      ruled(remembering(scripted, denials: breaker), bash("make docs"))
+
+      expect(breaker.tripped?("main")).to be(false)
+    end
+
+    it "still holds a barred call from the judge, remembered or not" do
+      scripted = answering("approve")
+      ruled(remembering(scripted), bash)
+
+      ruled(remembering(scripted), bash, within: context.with(automatic_approval_barred: true)) do |pending|
+        pending.deny(surface: "human_spec")
+      end
+
+      expect(escalations.last).not_to include("reason" => described_class::REMEMBERED)
+      expect(scripted.prompts.size).to eq(1)
+    end
+  end
 end
