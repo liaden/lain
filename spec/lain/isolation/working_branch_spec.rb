@@ -398,6 +398,33 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
         .to raise_error(described_class::Refused, %r{refs/heads/lain/issue/demo\b.*cannot hold})
     end
 
+    # git's own writers refuse to make this pair, so it is written into packed-refs, the one
+    # place a flat list holds both.
+    it "names a branch above the name before the branches beneath it" do
+      tip = sha("main")
+      File.write(File.join(@repo_root, ".git", "packed-refs"),
+                 "# pack-refs with: peeled fully-peeled sorted \n" \
+                 "#{tip} refs/heads/epic\n#{tip} refs/heads/epic/demo/x\n")
+
+      expect { described_class.epic("demo", repo_root: @repo_root) }
+        .to raise_error(described_class::Refused, %r{clashes with refs/heads/epic, refs/heads/epic/demo/x:})
+    end
+
+    it "checks the nesting with 1 for-each-ref and no rev-parse" do
+      real = Lain::Shell::Out.public_method(:new)
+      seen = []
+      counting = lambda do |*args, **kwargs|
+        seen << args.drop(3)
+        real.call(*args, **kwargs)
+      end
+      held_names = %r{\Arefs/heads/lain(/issue(/demo)?)?\z}
+      nesting = ->(args) { args.include?("--format=%(refname)") || args.last.to_s.match?(held_names) }
+
+      described_class.owned(name, repo_root: @repo_root, from: sha("main"), shell_out_factory: counting)
+
+      expect(seen.select(&nesting).map(&:first)).to eq(["for-each-ref"])
+    end
+
     # git hands stderr back as ASCII-8BIT, so a refusal interpolating it dies of
     # Encoding::CompatibilityError instead of naming itself.
     it "answers its own refusal when git's stderr carries non-ASCII bytes" do

@@ -468,20 +468,25 @@ module Lain
       # named `epic` sits above every one. Deleting either would destroy work
       # nobody asked lain to touch.
       def refuse_nesting_clash
-        clashes = above + beneath
+        clashes = nesting_clashes
         return if clashes.empty?
 
         raise Refused, "#{ref} clashes with #{clashes.join(", ")}: git cannot hold a branch and a branch " \
                        "nested under it at one name. lain deletes none of them; rename or remove them first"
       end
 
-      def beneath = @git.run("for-each-ref", "--format=%(refname)", "#{ref}/").stdout.split("\n")
+      # One listing answers both directions; the patterns are safe to pass because
+      # refuse_unholdable has already refused a name with a glob character.
+      def nesting_clashes
+        listed = @git.run("for-each-ref", "--format=%(refname)", *above_candidates, "#{ref}/").stdout.split("\n")
+        above_candidates.select { |candidate| listed.include?(candidate) } +
+          listed.select { |found| found.start_with?("#{ref}/") }
+      end
 
       # Every shorter name this one would nest under: `epic` for `epic/demo`.
-      def above
+      def above_candidates
         parts = name.split("/")
         (1...parts.size).map { |count| "refs/heads/#{parts.first(count).join("/")}" }
-                        .select { |candidate| resolves?(candidate) }
       end
 
       # The branch first, then the marker: a crash between the two leaves an
