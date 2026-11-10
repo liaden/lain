@@ -115,6 +115,48 @@ RSpec.describe Lain::Isolation::VerifyCheckout, :seam do
       expect(Dir.exist?(checkout.path)).to be(true)
     end
 
+    context "with the git calls counted" do
+      let(:listings) { [] }
+      let(:counted) do
+        lambda { |*argv, **opts|
+          listings << argv if argv.include?("list")
+          Lain::Shell::Out.new(*argv, **opts)
+        }
+      end
+      let(:watched) do
+        described_class.new(repo_root: @repo, path: checkout.path, keep:, shell_out_factory: counted)
+      end
+
+      it "lists worktrees once when it reuses a standing checkout" do
+        sha = commit("one")
+        checkout.at(sha)
+        watched.at(sha)
+
+        expect(listings.size).to eq(1)
+      end
+
+      it "builds a fresh checkout when the tree vanishes between the directory check and the listing" do
+        sha = commit("one")
+        checkout.at(sha)
+        vanishing = lambda { |*argv, **opts|
+          vanish if @armed && !@vanished && argv.include?("list")
+          Lain::Shell::Out.new(*argv, **opts)
+        }
+        rebuilt = described_class.new(repo_root: @repo, path: checkout.path, keep:, shell_out_factory: vanishing)
+
+        @armed = true
+
+        expect { rebuilt.at(sha) }.not_to raise_error
+        expect(head_at(checkout.path)).to eq(sha)
+      end
+
+      def vanish
+        @vanished = true
+        git("worktree", "unlock", checkout.path)
+        git("worktree", "remove", "--force", checkout.path)
+      end
+    end
+
     it "raises when git cannot reset to the sha" do
       checkout.at(commit("one"))
 

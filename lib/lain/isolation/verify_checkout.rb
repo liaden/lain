@@ -38,13 +38,14 @@ module Lain
       # @return [Candidate]
       # @raise [Error] when git will not add the worktree or reset it
       def at(sha)
-        standing? ? reuse(sha) : add(sha)
+        held = standing
+        held ? reuse(held, sha) : add(sha)
         Candidate.new(sha:, path: @path)
       end
 
       private
 
-      def standing? = Dir.exist?(@path) && entry
+      def standing = Dir.exist?(@path) ? entry : nil
 
       def entry
         @registry.entries.find { |registered| spellings(registered.path).intersect?(spellings(@path)) }
@@ -63,8 +64,8 @@ module Lain
 
       # The first drainer's lock may name a dead process, which gc would read
       # as an abandoned tree under this one.
-      def reuse(sha)
-        relock(entry)
+      def reuse(held, sha)
+        relock(held)
         reset(sha)
       end
 
