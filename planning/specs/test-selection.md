@@ -1233,3 +1233,22 @@ After the last card lands, on a quiet box (`pgrep -cf 'mise/installs/ruby/[0-9.]
 - 15:30 T6 landed a75ab704; T7 landed e51939dc; both cleaned up
 - 15:30 T14 cut at e51939dc
 - 15:31 T14 started (sonnet). Checkpoint: landed T19 T12 T11 T17 T6 T7; in flight T1 (fix round), T10 (fix round), T14.
+- 15:31 T10 fix round done (14 examples, no lain); second review started
+- 15:32 T14 handed back; review medium started
+- 15:33 T1 fix round done (12 examples, drive 0 mismatches); second review started
+- 15:33 T10 second review APPROVE-WITH-FIXES (mechanical: 125-at-staged spec, drop dead env); main session verifies
+- 15:33 T14 review APPROVE-WITH-FIXES (substantive: stream output through a new duck method; rescue DryRunFailed). Fix round sent; second review follows.
+- 15:34 T10 last fixes verified; landing
+- 15:37 T10 landed af493bbc (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T10-153508.log)
+- 15:38 T10 landed af493bbc; cleaned up. T14 fix round done (stream duck added); second review started
+- 15:39 T14 second review APPROVE-WITH-FIXES with 1 substantive item (double output on failure); third fix round, then third review. T15 brief must carry: the real runner implements capture and stream (tee to out), with a spec for the tee.
+- 15:39 T14 third fix round done; third review (narrow) started
+- 15:40 T1 second review APPROVE-WITH-FIXES (mechanical: pin before/after(:suite) ordering, drop duplicate comment). Drive: 146 examples, 0 mismatches.
+- 15:40 T14 third review APPROVE; landing
+- 15:45 T14 landed b2af1c82 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T14-154225.log)
+- 15:45 T14 landed b2af1c82; cleaned up
+- 15:52 T1 last fixes done (14 examples); landing
+- 15:52 Ruling: T3 and T4 stack on T2 once it reaches review, because both write through T2's recorder (plan names no interface).
+- 15:54 T1 landed c09a1264 (hook log /home/tara/tmp/lain/claude-1000/-home-tara-dev-lain/ce3ab0b8-f809-43b7-a04d-62afaf9ad894/scratchpad/hook-T1-155216.log)
+- 15:55 T1 landed c09a1264; cleaned up; T2 cut
+- 15:55 T2 started (opus). Checkpoint: landed T19 T12 T11 T17 T6 T7 T10 T14 T1 (9 of 19); in flight T2; next T3 T4 stacked on T2, then T5.
