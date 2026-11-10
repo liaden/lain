@@ -30,6 +30,13 @@ RSpec.describe Lain::Confine::MaskList do
     end.new(policy, asked)
   end
   let(:list) { described_class.new(root:, policy: -> { recording }) }
+  let(:stat_at) { Struct.new(:mtime, :ctime, :ino, :dev, :dir) { def directory? = dir } }
+
+  # Every directory's times read a minute back, so each change lands outside an ask's tick without a sleep.
+  def aged(path)
+    stat = described_class.const_get(:DIRECTORY_STAT).call(path)
+    stat_at.new(stat.mtime - 60, stat.ctime - 60, stat.ino, stat.dev, stat.directory?)
+  end
 
   def write(name, body = "x\n") = File.write(File.join(root, name), body)
 
@@ -323,6 +330,18 @@ RSpec.describe Lain::Confine::MaskList do
       File.write(File.join(nested, "target", "x", "creds.txt"), "x\n")
 
       expect(related_after_masks.masks.map(&:path)).to eq([File.join(nested, "target", "x")])
+    end
+
+    it "keeps a nested repository's pruned directory masked whole on a later ask" do
+      SeedRepo.git(sibling, "init", "-q")
+      nested = File.join(sibling, "nested")
+      FileUtils.mkdir_p(File.join(nested, "target", "x"))
+      SeedRepo.git(nested, "init", "-q")
+      File.write(File.join(nested, "target", "x", "creds.txt"), "x\n")
+      aging = described_class.new(root:, policy: -> { policy }, stat: method(:aged))
+
+      expect(Array.new(2) { related_after_masks(aging).masks.map(&:path) })
+        .to eq([[File.join(nested, "target", "x")]] * 2)
     end
 
     it "masks no pruned directory of the project whole, whose gap is documented" do
@@ -819,6 +838,205 @@ RSpec.describe Lain::Confine::MaskList do
       failing = true
 
       expect(flaky.masks.map(&:path)).to eq([secret])
+    end
+
+    describe "a later ask over directories changed more than a tick before the last one" do
+      let(:list) { described_class.new(root:, policy: -> { recording }, stat: method(:aged)) }
+
+      def nested_tree
+        FileUtils.mkdir_p(%w[d nest/sub].map { File.join(root, _1) })
+        %w[a.txt d/b.txt nest/c.txt nest/sub/e.txt nest/sub/.env].each { write(_1) }
+        File.symlink("a.txt", File.join(root, "lnk"))
+        nested_repo("nest")
+      end
+
+      def lstatted_by_next_ask
+        lstatted = []
+        allow(File).to(receive(:lstat).and_wrap_original { |original, path| original.call(lstatted.push(path.b).last) })
+        [paths, lstatted]
+      end
+
+      it "masks a new secret in an existing directory and beneath a nested repo" do
+        nested_tree
+        expect(paths).to eq([File.join(root, "nest", "sub", ".env")])
+
+        %w[d/.env nest/.env].each { write(_1) }
+
+        expect(paths).to match_array(%w[d/.env nest/.env nest/sub/.env].map { File.join(root, _1) })
+      end
+
+      it "lstats no plain listed name and walks no nested repo again when nothing changed" do
+        nested_tree
+        masked = paths
+        unchanged = %w[a.txt d/b.txt nest/c.txt nest/sub/e.txt nest/sub/.env].map { File.join(root, _1).b }
+
+        again, lstatted = lstatted_by_next_ask
+
+        expect([again, lstatted & unchanged]).to eq([masked, []])
+        expect(lstatted).to include(File.join(root, "lnk").b)
+      end
+
+      it "masks a listed link's new landing once a link it chains through is retargeted outside the checkout" do
+        out = File.join(@base, "out").tap { FileUtils.mkdir_p(_1) }
+        File.symlink(notes, File.join(out, "hop"))
+        File.symlink("../out/hop", File.join(root, "link"))
+        expect(paths).to be_empty
+
+        expect { system("ln", "-sfn", File.join(home, ".ssh", "id_rsa"), File.join(out, "hop"), exception: true) }
+          .not_to(change { File.lstat(root).mtime })
+
+        expect(paths).to eq([secret])
+      end
+
+      it "masks a masked file's new landing once it is swapped for a link out of the checkout" do
+        FileUtils.mkdir_p(File.join(root, "d"))
+        write("d/.env")
+        expect(paths).to eq([File.join(root, "d", ".env")])
+
+        swap_for_link("d/.env", File.join(home, ".ssh", "id_rsa"))
+
+        expect(paths).to eq([secret])
+      end
+
+      it "masks a nested repo link's new landing once a link it chains through is retargeted outside the checkout" do
+        out = File.join(@base, "out").tap { FileUtils.mkdir_p(_1) }
+        File.symlink(notes, File.join(out, "hop"))
+        FileUtils.mkdir_p(File.join(root, "nest"))
+        File.symlink("../../out/hop", File.join(root, "nest", "l0"))
+        nested_repo("nest")
+        expect(paths).to be_empty
+
+        system("ln", "-sfn", File.join(home, ".ssh", "id_rsa"), File.join(out, "hop"), exception: true)
+
+        expect(paths).to eq([secret])
+      end
+
+      it "masks a secret planted beneath a nested repo whose directory's mtime is set back" do
+        nested_tree
+        nest = File.join(root, "nest")
+        expect(paths).to eq([File.join(nest, "sub", ".env")])
+        before = File.stat(nest)
+
+        write("nest/.env")
+        File.utime(before.atime, before.mtime, nest)
+
+        expect(paths).to contain_exactly(File.join(nest, ".env"), File.join(nest, "sub", ".env"))
+      end
+
+      it "lstats no tracked name under a directory swapped for a link when nothing changed" do
+        FileUtils.mkdir_p(%w[d real].map { File.join(root, _1) })
+        %w[d/a.txt real/a.txt].each { write(_1) }
+        git("add", "d/a.txt")
+        FileUtils.rm_r(File.join(root, "d"))
+        File.symlink("real", File.join(root, "d"))
+        masked = paths
+
+        again, lstatted = lstatted_by_next_ask
+
+        expect([again, lstatted & [File.join(root, "d", "a.txt").b]]).to eq([masked, []])
+      end
+
+      it "masks what a listed link's new landing holds once it is retargeted onto another directory in the root" do
+        FileUtils.mkdir_p(%w[keys keys2].map { File.join(root, _1) })
+        %w[keys/notes.txt keys2/config].each { write(_1) }
+        File.symlink("keys", File.join(root, ".ssh"))
+        expect(paths).to be_empty
+
+        system("ln", "-sfn", "keys2", File.join(root, ".ssh"), exception: true)
+
+        expect(paths).to eq([File.join(root, "keys2", "config")])
+      end
+
+      # The link onto its own repo cedes its second crossing to the walk it is already in.
+      it "walks no nested repo again when nothing changed and a link inside lands on the repo itself" do
+        FileUtils.mkdir_p(File.join(root, "nest"))
+        write("nest/config")
+        File.symlink(".", File.join(root, "nest", ".ssh"))
+        nested_repo("nest")
+        masked = paths
+
+        again, lstatted = lstatted_by_next_ask
+
+        expect([again, lstatted & [File.join(root, "nest", "config").b]]).to eq([masked, []])
+      end
+
+      it "masks a new secret 2 levels beneath a nested repo" do
+        FileUtils.mkdir_p(File.join(root, "nest", "sub", "deep"))
+        write("nest/sub/deep/a.txt")
+        nested_repo("nest")
+        expect(paths).to be_empty
+
+        write("nest/sub/deep/.env")
+
+        expect(paths).to eq([File.join(root, "nest", "sub", "deep", ".env")])
+      end
+
+      # The root's .ssh lists before nest/, so it takes the walk into keys that nest/.ssh then cedes.
+      def shared_walk(root_link: true)
+        FileUtils.mkdir_p(%w[keys nest].map { File.join(root, _1) })
+        write("keys/config")
+        File.symlink("keys", File.join(root, ".ssh")) if root_link
+        File.symlink("../keys", File.join(root, "nest", ".ssh"))
+        nested_repo("nest")
+      end
+
+      def keys_config = File.join(root, "keys", "config")
+
+      def fresh_landed_on(path) = described_class.new(root:, policy: -> { policy }).tap(&:masks).landed_on(path)
+
+      it "masks through a nested repo's link once the root link that took the same walk is gone" do
+        shared_walk
+        expect(paths).to eq([keys_config])
+
+        File.unlink(File.join(root, ".ssh"))
+        write("keys/config.new")
+        File.rename(File.join(root, "keys", "config.new"), keys_config)
+
+        expect(policy.judge("nest/.ssh/config", cwd: root)).to be_gated
+        expect(paths).to eq([keys_config])
+      end
+
+      it "names a mask's files as a fresh list does once an earlier link takes a nested repo link's walk" do
+        shared_walk(root_link: false)
+        expect(list.tap(&:masks).landed_on(keys_config)).to include("nest/.ssh/config")
+
+        File.symlink("keys", File.join(root, ".ssh"))
+        list.masks
+
+        expect(list.landed_on(keys_config)).to match_array(fresh_landed_on(keys_config))
+      end
+
+      it "names a mask's files as a fresh list does after an unchanged ask over 2 links sharing a walk" do
+        shared_walk
+
+        2.times { list.masks }
+
+        expect(list.landed_on(keys_config)).to match_array(fresh_landed_on(keys_config))
+      end
+
+      # Replaying the root's first stamp stands for a coarse clock: the rename then moves neither of its times.
+      {
+        "both its times fall 3 ms before the ask, inside the 10 ms tick" => ->(now) { [now - 0.003] * 2 },
+        "only its ctime falls inside the tick" => ->(now) { [now - 60, now - 0.003] },
+        "its whole-second times fall 1 s before the ask, in the 2 s tick" => ->(now) { [Time.at((now - 1).to_i)] * 2 }
+      }.each do |which, times|
+        it "masks a name renamed over when #{which}" do
+          write("plain.txt")
+          frozen = nil
+          stat = lambda do |path|
+            real = File.stat(path)
+            replay = -> { stat_at.new(*times.call(Time.now), real.ino, real.dev, true) }
+            File.identical?(path, root) ? (frozen ||= replay.call) : real
+          end
+          coarse = described_class.new(root:, policy: -> { policy }, stat:)
+          expect(coarse.masks).to be_empty
+
+          File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "swap"))
+          File.rename(File.join(root, "swap"), File.join(root, "plain.txt"))
+
+          expect(coarse.masks.map(&:path)).to eq([secret])
+        end
+      end
     end
   end
 end
