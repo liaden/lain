@@ -52,6 +52,20 @@ RSpec.describe TestMap::Git do
       end
     end
 
+    it "returns UTF-8 text when the process encoding is not UTF-8" do
+      Dir.mktmpdir do |dir|
+        init_repo(dir, "\u00e9.txt")
+        saved = Encoding.default_external
+        Encoding.default_external = Encoding::US_ASCII
+        begin
+          out = described_class.run("-c", "core.quotepath=false", "ls-files", repo: dir)
+          expect([out.encoding, out]).to eq([Encoding::UTF_8, "\u00e9.txt\n"])
+        ensure
+          Encoding.default_external = saved
+        end
+      end
+    end
+
     it "raises with stderr on a non-zero exit" do
       Dir.mktmpdir do |dir|
         expect do

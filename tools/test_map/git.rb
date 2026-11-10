@@ -19,7 +19,7 @@ module TestMap
       out, err, status = Open3.capture3(env, "git", "-C", repo.to_s, *args)
       raise "git #{args.join(" ")} failed: #{err}" unless status.success?
 
-      out
+      out.dup.force_encoding(Encoding::UTF_8).scrub
     end
   end
 end
