@@ -120,6 +120,11 @@ was worth removing.
   markdown, a working indicator, tool-call lines, glyphs, a `theme` table, diff colour, and the macOS
   runtime fixes. Done when the plan's integration checks 7 and 8 pass: an export opens in a browser,
   and the suite runs on the MacBook with only the known skips.
+- **Hot-path fixes (2026-11-09).** `[planned]` `planning/specs/hot-path-fixes-2026-11.md`, 37 cards
+  from the 2026-11 profiling round: a mask list that re-identifies only what moved, a forked chat
+  pre-flight, a cached load path at launch, fewer repeated git calls, a lighter suite, the secret
+  shapes scanned in Rust, fewer allocations per record, and wider bash rules plus a remembered judge
+  approval behind `approval judge_memo:`. Done when its integration checks pass.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
