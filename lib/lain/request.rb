@@ -280,9 +280,12 @@ module Lain
 
     def rolled_states(count, chain)
       seed = chain.seed(model, tools, system).state
-      messages.first(count).each_with_index.with_object([seed]) do |(message, index), states|
+      states = [seed]
+      # Not `with_object`: its destructured pair is an allocation per message.
+      messages.first(count).each_with_index do |message, index|
         states << chain.entry(index, message, states.last).state
       end
+      states
     end
 
     # A marker on a message's final block cuts exactly where the rolling state

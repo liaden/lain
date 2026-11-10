@@ -255,6 +255,29 @@ RSpec.describe Lain::Request do
         expect(digested.size).to eq(9)
         expect(digested.grep(/"messages":/)).to be_empty
       end
+
+      it "digests nothing when a warm chain has seen the request" do
+        req = chained_request(texts: Array.new(8) { |i| "m#{i}" }, caches: [true] * 8)
+        chain = Lain::Request::PrefixChain.new
+        cold = req.prefix_digests(chain:)
+
+        allow(Lain::Canonical).to receive(:digest_bytes).and_call_original
+        expect(req.prefix_digests(chain:)).to eq(cold)
+        expect(Lain::Canonical).not_to have_received(:digest_bytes)
+      end
+
+      it "allocates under 1 object per message when a warm chain walks the request" do
+        texts = Array.new(500) { |i| "m#{i}" }
+        req = chained_request(texts:, caches: ([false] * 499) + [true])
+        chain = Lain::Request::PrefixChain.new
+        req.prefix_digests(chain:)
+
+        before = GC.stat(:total_allocated_objects)
+        req.prefix_digests(chain:)
+        allocated = GC.stat(:total_allocated_objects) - before
+
+        expect(allocated).to be < texts.size
+      end
     end
 
     it "stays deeply frozen and shareable when a journaling Agent rendered it and walked its chain" do
