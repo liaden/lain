@@ -870,26 +870,23 @@ module Lain
         end
       end
 
-      # "Is this one installed, and does it answer?" -- asked of `nvim` for the
-      # cockpit. `--version` is the probe because it is the one flag such a
-      # binary has and does no work for, and ENOENT is the answer that matters:
-      # an absent binary is a DEGRADE here, never an error, so the rescue is the
-      # point of the object rather than a guard on it.
+      # "Is this one installed?" -- asked of `nvim` for the cockpit. Answered by
+      # looking along PATH rather than by running the binary: a launch spawns
+      # nothing to learn it, and an absent binary is a DEGRADE here, never an
+      # error.
       #
-      # Extracted so {Up} owns no shell_out_factory of its own -- no ivar, no
-      # call site -- and every subprocess `lain up` causes goes through an
-      # object named for what it runs.
+      # Extracted so {Up} owns no PATH of its own -- no ivar, no call site.
       class Binaries
-        # @param shell_out_factory [#call] `Shell::Out.new`, or a double
-        def initialize(shell_out_factory:) = @shell_out_factory = shell_out_factory
+        # @param path [String] a PATH value
+        # @param filesystem [#file?, #executable?] the seam {Shell::Path.find} asks
+        def initialize(path: ENV.fetch("PATH", ""), filesystem: File)
+          @path = path
+          @filesystem = filesystem
+        end
 
         # @param binary [String] a command name, resolved against PATH
         # @return [Boolean]
-        def present?(binary)
-          Shell::Out.ok?(@shell_out_factory.call(binary, "--version").tap(&:run_command))
-        rescue Errno::ENOENT
-          false
-        end
+        def present?(binary) = !Shell::Path.find(binary, path: @path, filesystem: @filesystem).nil?
       end
 
       # The planning half of `lain up --nvim`: the shared socket and the nvim
@@ -1359,6 +1356,7 @@ module Lain
                      shell_out_factory: Shell::Out.public_method(:new),
                      preflight_run: ChatPreflight.spawning(shell_out_factory),
                      chat_preflight: ChatPreflight.new(run: preflight_run, cwd:),
+                     binaries: Binaries.new,
                      gc_schedule: GcSchedule.for(cwd:, paths:),
                      relay: Relay.for(cwd:, paths:))
         @session = session
@@ -1372,7 +1370,7 @@ module Lain
         @chat_command = chat_command
         @input_command = input_command
         @cockpit = Cockpit.new(option: nvim, cwd:, paths:)
-        @binaries = Binaries.new(shell_out_factory:)
+        @binaries = binaries
         @chat_preflight = chat_preflight
         @gc_schedule = gc_schedule
         @relay = relay

@@ -42,6 +42,12 @@ FakeShellOut = Struct.new(:exitstatus, :stderr, :stdout) do
   def stdout = self[:stdout] || ""
 end
 
+# The `filesystem:` seam of Shell::Path.find: only the listed paths are executable files.
+FakePathFiles = Struct.new(:files) do
+  def file?(path) = files.include?(path)
+  def executable?(path) = files.include?(path)
+end
+
 RSpec.describe Lain::CLI::Up do
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
 
@@ -1004,14 +1010,11 @@ RSpec.describe Lain::CLI::Up do
     it "orders messages as warnings first, the announcement last" do
       # has-session must miss (nonzero) so #call actually creates -- the
       # announcement under test is "created", not "reattaching".
-      no_nvim = lambda do |*args|
-        raise Errno::ENOENT, "no such file or directory - nvim" if args.first == "nvim"
+      tmux_only = ->(*args) { FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "") }
+      no_nvim = Lain::CLI::Up::Binaries.new(path: "/fake/bin", filesystem: FakePathFiles.new([]))
 
-        FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
-      end
-
-      plan = described_class.new(session: "lain", state_path:, nvim: true,
-                                 shell_out_factory: no_nvim).launch_plan(nested: false)
+      plan = described_class.new(session: "lain", state_path:, nvim: true, shell_out_factory: tmux_only,
+                                 binaries: no_nvim).launch_plan(nested: false)
 
       expect(plan.messages).to eq(
         ["nvim not found on PATH -- opening the plain chat window instead of the cockpit " \
@@ -1303,18 +1306,15 @@ RSpec.describe Lain::CLI::Up do
     def run_up(calls, chat_args: [], preflight: FakeShellOut.new(0, ""), session_exists: false, **keywords)
       spy = lambda do |*args|
         calls << args
-        # Only the launching binary gets the example's answer: `nvim --version`
-        # comes through the same factory, and handing IT a refusal would prove
-        # the wrong thing.
+        # Only the launching binary gets the example's answer; handing tmux a
+        # refusal would prove the wrong thing.
         others = FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
         args.first == $PROGRAM_NAME ? preflight : others
       end
       described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy, **keywords).call
     end
 
-    # By the BINARY, not by "the call that is not tmux": `nvim` is probed
-    # through the same factory, and a helper that matched it would pass for the
-    # wrong reason.
+    # By the BINARY, not by "the call that is not tmux".
     def preflight_call(calls) = calls.find { |args| args.first == $PROGRAM_NAME }
 
     # The raised object, for the examples that assert on the message rather
@@ -1699,9 +1699,7 @@ RSpec.describe Lain::CLI::Up do
 
     # Told apart by tmux VERB rather than by binary: the corpse probe is
     # `display-message`, its capture is `capture-pane`, and `has-session`
-    # drives the create-vs-reattach branch. `nvim --version` falls to the same
-    # else-branch as the ordinary tmux calls, which is what it wants (present,
-    # exit 0). The pre-flight is stubbed out entirely -- the construction-refusal
+    # drives the create-vs-reattach branch. The pre-flight is stubbed out entirely -- the construction-refusal
     # group above is where it is exercised, and the real one would spawn rspec.
     # `input_dead` is nil rather than a status, on purpose: it keeps the
     # input pane's own health independent of the chat's `dead:`/`probe_exit:`
@@ -2105,36 +2103,32 @@ RSpec.describe Lain::CLI::Up do
   # DECISIONS rather than the probe. The probe is where the one interesting
   # rule lives: a binary that is not installed is a degrade, never an error.
   describe "Binaries, the PATH probe the cockpit uses" do
-    def probing(answer)
-      calls = []
-      present = described_class::Binaries.new(shell_out_factory: lambda { |*args|
-        calls << args
-        answer.respond_to?(:call) ? answer.call : answer
-      }).present?("nvim")
-      [present, calls]
+    def binaries(*executables)
+      described_class::Binaries.new(path: "/opt/bin:/usr/bin", filesystem: FakePathFiles.new(executables))
     end
 
-    it "asks with --version, which is the one flag every such binary has and none does work for" do
-      _, calls = probing(FakeShellOut.new(0, ""))
-
-      expect(calls).to eq([%w[nvim --version]])
-    end
-
-    it "answers true when the binary is there and answers" do
-      expect(probing(FakeShellOut.new(0, "")).first).to be true
-    end
-
-    # Installed but broken -- a wrapper on PATH that exits non-zero. Absent for
-    # the caller's purposes, which is the only question being asked.
-    it "answers false when the binary is there but will not answer" do
-      expect(probing(FakeShellOut.new(1, "")).first).to be false
+    it "answers true when an executable of that name sits in a PATH directory" do
+      expect(binaries("/usr/bin/nvim").present?("nvim")).to be true
     end
 
     # THE rule, and the reason this is an object rather than a line: `lain up`
-    # must open a cockpit on a machine with no nvim at all. An ENOENT that
-    # escaped here would fail the launch over a missing editor.
+    # must open a cockpit on a machine with no nvim at all.
     it "answers false rather than raising when the binary is not on PATH at all" do
-      expect(probing(-> { raise Errno::ENOENT, "nvim" }).first).to be false
+      expect(binaries("/usr/bin/vim").present?("nvim")).to be false
+    end
+
+    it "answers false for a PATH that is empty" do
+      empty = described_class::Binaries.new(path: "", filesystem: FakePathFiles.new(["nvim"]))
+
+      expect(empty.present?("nvim")).to be false
+    end
+
+    it "spawns nothing, so a real directory named nvim on PATH is not a binary" do
+      Dir.mktmpdir do |dir|
+        FileUtils.mkdir_p(File.join(dir, "nvim"))
+
+        expect(described_class::Binaries.new(path: dir).present?("nvim")).to be false
+      end
     end
   end
 
@@ -2148,16 +2142,27 @@ RSpec.describe Lain::CLI::Up do
     let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
     let(:cwd) { "/some/project" }
 
-    # `binaries` marks non-tmux probes present (0) or absent (ENOENT); tmux
-    # itself always answers, with has-session missing so #call creates.
+    # `binaries` marks a program present (the default) or absent (false) on a
+    # fake PATH; tmux itself always answers, with has-session missing so #call creates.
     def cockpit_up(calls, nvim:, binaries: {}, chat_args: [], paths: Lain::Paths.new(env: {}))
+      on_path = binaries.fetch("nvim", true) ? ["/fake/bin/nvim"] : []
       spy = lambda do |*args|
         calls << args
-        raise Errno::ENOENT, "no such file - #{args.first}" if binaries.fetch(args.first, true) == false
 
         FakeShellOut.new(args.first == "tmux" && args[1] == "has-session" ? 1 : 0, "", made_pane(args))
       end
-      described_class.new(session: "lain", state_path:, nvim:, cwd:, paths:, chat_args:, shell_out_factory: spy)
+      path_probe = Lain::CLI::Up::Binaries.new(path: "/fake/bin", filesystem: FakePathFiles.new(on_path))
+      described_class.new(session: "lain", state_path:, nvim:, cwd:, paths:, chat_args:, shell_out_factory: spy,
+                          binaries: path_probe)
+    end
+
+    it "builds the editor pane for an nvim on PATH without ever running nvim" do
+      calls = []
+
+      cockpit_up(calls, nvim: "").call
+
+      expect(calls).not_to include(%w[nvim --version])
+      expect(calls.flatten.join(" ")).to include("--listen")
     end
 
     # tmux answers `-P -F '#{pane_id}'` with the id of the pane it has just
