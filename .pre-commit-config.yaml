@@ -36,6 +36,7 @@ repos:
         entry: cargo fmt -- --check
         language: system
         types: [rust]
+        exclude: ^apps/
         pass_filenames: false
 
       - id: cargo-clippy
@@ -43,6 +44,7 @@ repos:
         entry: cargo clippy --all-targets -- -D warnings
         language: system
         types: [rust]
+        exclude: ^apps/
         pass_filenames: false
 
       - id: cargo-test
@@ -50,6 +52,7 @@ repos:
         entry: cargo test
         language: system
         types: [rust]
+        exclude: ^apps/
         pass_filenames: false
 
       # The phone app is a workspace of its own, so the cargo hooks above never see it.
@@ -113,8 +116,10 @@ repos:
         entry: bundle exec rake compile check
         language: system
         types_or: [ruby, rust]
-        # The phone app's Rust never reaches Ruby; its own hooks above check it.
-        exclude: ^apps/
+        # Neither the phone app's Rust nor lain-core's reaches this suite: the app never touches Ruby,
+        # and the only specs that drive lain-core are :core, which the suite excludes. Their own unit
+        # tests are the check for a change inside either.
+        exclude: ^(apps/|crates/lain-core/)
         pass_filenames: false
 
       # The doc defects RuboCop cannot reach, because they are properties of the
