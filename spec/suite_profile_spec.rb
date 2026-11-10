@@ -283,5 +283,17 @@ RSpec.describe SuiteProfile do
       expect(run_probe(code, [path], with_dir.merge("TEST_ENV_NUMBER" => nil)).first).to eq("none")
       expect(run_probe(code, [path], unset).first).to eq("none")
     end
+
+    it "keeps Process.spawn public and tallies a git spawn under the spawns lens" do
+      code = <<~RUBY
+        load ARGV.first
+        pid = Process.spawn("git", "--version", out: File::NULL)
+        Process.wait(pid)
+        print SuiteProfile::SPAWN_TALLY.values.sum
+      RUBY
+      env = unset.merge("SUITE_PROFILE_LENS" => "spawns", "SUITE_PROFILE_DIR" => Dir.mktmpdir)
+
+      expect(run_probe(code, [File.join(dir, "spawn_tally.rb")], env).first).to eq("1")
+    end
   end
 end

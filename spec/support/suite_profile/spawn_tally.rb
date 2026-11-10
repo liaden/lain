@@ -23,6 +23,8 @@ if ENV["SUITE_PROFILE_LENS"] == "spawns"
               .map { |frame| frame.sub(%r{.*/lib/lain/}, "").sub(/:in .*/, "") }.join(" < ")
       end
 
+      public
+
       def spawn(*args, **)
         words = args.flatten.grep(String)
         SPAWN_TALLY[[GitCallers.shape(words), GitCallers.site(caller_locations)]] += 1 if words.any? do |word|
