@@ -355,7 +355,7 @@ Scenario: a limited shape is retried in Rust
 Scenario: a single-line shape is over-masked by line
   Given text where a single-line shape still exhausts the higher limit on 1 line of 10
   When Regions.detect runs
-  Then that line is 1 region with the reason "over-masked: <shape> hit the backtrack limit", and the other 9 lines are masked only as before
+  Then that line is 1 region with the reason "over-masked: <shape> could not be scanned to the end", and the other 9 lines are masked only as before
 
 Scenario: a multi-line shape is over-masked to the end
   Given a closed 1.17 MB PUBLIC KEY block holding a body that is not a key
@@ -1111,3 +1111,13 @@ Spec file: none can fail on prose; the main session greps for "578", "Ruby scann
 - 10:34 User ruling: delete the Ruby scanner once parity is measured; git history is the archive. Added card M5 (after M3, before D1). M3 unchanged: its parity run is the one measurement.
 - 10:54 M3 handed back: no stop fired (0 limited on corpus plus 5,000 random, 6 of 25 multi-line, bench rows unchanged, corpus byte-identical so no MANIFEST diff). Applied docs/rust-bindings.md wiring; ruby_scanner comment left for M5. Surprises sent to review: stack overflow goes to over-mask; openai shape quadratic on 1 long line (7.9 s at 400 KB, predates); credential_scan rows time Ruby. High review (opus) started.
 - 10:54 M5 card gains the docs/rust-bindings.md wiring: drop the Ruby-oracle sentence.
+- 11:12 User asked to start cards blocked on M3. M4 stacked on M3's snapshot 87a990c8 (worktree hfu-M4); C2 cut from HEAD 32ff7f2e (shared spec files only, 3-way at landing). M5 held until M3's review settles (same regions_spec).
+- 11:17 M4 handed back (203/0 card, 1107/0 related, 374/0 ratchet). Surprise: bash and memory_read rescan Regions.detect for the record, ignoring digest releases. Medium review started.
+- 11:21 M3 high review APPROVE-WITH-FIXES. Fix round sent (mechanical): reason text "could not be scanned to the end", 3-element compile entry, drop unreachable guard, cancel check every line, private NO_GROUPS, WHY comments. Main applied the docs sentence (bounded backtracking per search; 2 quadratic shapes named as a known gap). Deferred: lazy retry compile (6 to 26 ms first use), named over-mask row type. Real data: 3393 files plus 19 journals, Rust equals oracle, 3.3 s against 20.9 s.
+- 11:21 C2 handed back (15/0 toml_spec, cargo 358 passed). Wiring: MANIFEST toml.ndjson entry, Rakefile MUTANT_FILES, docs/rust-bindings.md ruling sentence. corpus_generator.rb edits existing lines, so a hand merge with M3 is likely.
+- 11:21 M4 review APPROVE-WITH-FIXES: released digests not excluded from the rescan (substantive, small, inside Files), 2 unpinned record paths (mechanical). Rescan cost 1.1 to 1.4 ms at the 16 KB cap. Fix round sent; 1 second review owed. C2 wiring applied (MANIFEST, bindings sentence, MUTANT_FILES; corpus and toml specs 23/0). C2 medium review started.
+- 11:24 User: another session (lain-04) is adding the lain-remote Android app as a new top-level folder. Main shows no change from it yet. Sent it the landing-gate rule for its commits on main.
+- 11:24 M4 fixes in (released digests rejected, red then green; 2 path examples red with each line backed out; 215/0, 374/0). Second review by the same reviewer started.
+- 11:25 M4 second review APPROVE (each fix red when backed out). M4 waits for M3 to land, then patches from stack base 87a990c8.
+- 11:25 M3 fixes in (540/0, cargo 359). Diff checked against the review copy (over 20 lines). Sent back 1 mechanical change: the new Rust cancel test's margin is 7.5 line-scans, widen to 63 lines. Narrow re-check by the M3 reviewer owed after. C2 review APPROVE-WITH-FIXES, 5 NITs; fix round sent (to_string keeps line and column, a specific message assertion, leaf? type check, baseline header, date-as-text doc line).
+- 11:25 M3 scenario text updated to the new over-mask reason.
