@@ -136,6 +136,30 @@ RSpec.describe Lain::Telemetry do
       end
     end
 
+    it "answers the same String for every instance of a class" do
+      build = -> { Lain::Telemetry::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}) }
+
+      expect(build.call.journal_type).to be(build.call.journal_type)
+    end
+
+    it "keys a journal hash with the attribute names, in declaration order after the type" do
+      record = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi")
+      journal = record.to_journal
+
+      expect(journal.keys).to eq(["type", *record.to_h.keys.map(&:to_s)])
+    end
+
+    it "builds a journal hash without allocating a String per key" do
+      record = Lain::Telemetry::ToolOutput.new(tool_use_id: "t1", stream: :stdout, bytes: "hi")
+      3.times { record.to_journal }
+
+      before = GC.stat(:total_allocated_objects)
+      record.to_journal
+      allocated = GC.stat(:total_allocated_objects) - before
+
+      expect(allocated).to be <= 6
+    end
+
     it "is what a converted event actually reports" do
       expect(Lain::Telemetry::TurnUsage.new(digest: "d", model: nil, stop_reason: :end_turn, usage: {}).journal_type)
         .to eq("turn_usage")

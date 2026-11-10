@@ -24,9 +24,13 @@ module Lain
     # shape. The Journal adds durability and a timestamp; an event only has to
     # describe itself.
     module Journalable
+      # Per class, because the frozen instance cannot memoise and the name never changes.
+      TYPES = {}.compare_by_identity
+      private_constant :TYPES
+
       # @return [Hash{String=>Object}] the attributes, string-keyed, tagged.
       def to_journal
-        { "type" => journal_type }.merge(to_h.transform_keys(&:to_s))
+        { "type" => journal_type }.merge(to_h.transform_keys(&:name))
       end
 
       # Drops a named field only while it equals the carrier's default, so the
@@ -46,7 +50,7 @@ module Lain
       # because recorded journals replay against this discriminator.
       # @return [String]
       def journal_type
-        self.class.name.split("::").last.underscore
+        TYPES[self.class] ||= self.class.name.split("::").last.underscore.freeze
       end
     end
 

@@ -31,6 +31,31 @@ RSpec.describe Lain::Journal do
       )
     end
 
+    it "does not rebuild the keys of an entry that already has String keys" do
+      entry = { "type" => "t", "n" => 1 }
+      allow(entry).to receive(:transform_keys).and_call_original
+
+      journal.record(entry)
+
+      expect(entry).not_to have_received(:transform_keys)
+      expect(JSON.parse(lines.first)).to eq("ts" => "T", "type" => "t", "n" => 1)
+    end
+
+    it "writes every journaled telemetry type as the line and chain digests its string-keyed hash gives" do
+      includers = GenericBuild.value_classes.select { |klass| klass.include?(Lain::Telemetry::Journalable) }
+      records = GenericBuild.partition(includers).first.map(&:last)
+      legacy = records.map { |record| record.to_journal.transform_keys(&:to_s) }
+      write = lambda do |entries|
+        out = StringIO.new
+        chained = described_class.new(io: out, clock: -> { "T" }, chain: described_class::Line::ORIGIN)
+        entries.each { |entry| chained.record(entry) }
+        out.string
+      end
+
+      expect(records.size).to be > 50
+      expect(write.call(records)).to eq(write.call(legacy))
+    end
+
     it "returns self, so records chain" do
       expect(journal.record("a" => 1)).to be(journal)
     end

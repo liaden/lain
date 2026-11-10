@@ -394,8 +394,13 @@ module Lain
     end
 
     def record_hash(entry)
-      hash = { "ts" => timestamp }.merge(self.class.hash_of(entry).transform_keys(&:to_s))
+      hash = { "ts" => timestamp }.merge(string_keyed(self.class.hash_of(entry)))
       @chained && hash.key?(LINK) ? unforged(hash) : hash
+    end
+
+    def string_keyed(hash)
+      hash.each_key { |key| return hash.transform_keys(&:to_s) unless key.is_a?(String) }
+      hash
     end
 
     # Renamed so no entry can supply its own link, and refused when the new name is taken too.
