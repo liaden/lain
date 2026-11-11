@@ -32,7 +32,7 @@ RSpec.describe Lain::CLI::Wiring::Attention do
 
   def attention(agent_states)
     allow(Lain::Notices).to receive(:for).and_return(->(*args) { fed << args })
-    described_class.for(agent_states, switchboard:, root: "/work/demo", paths:, env: {}, focus: window, clock:)
+    described_class.for(agent_states, switchboard, root: "/work/demo", paths:, env: {}, focus: window, clock:)
   end
 
   context "with no tracker" do

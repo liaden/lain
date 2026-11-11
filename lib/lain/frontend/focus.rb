@@ -26,6 +26,35 @@ module Lain
         env["TMUX"].to_s.empty? || env["TMUX_PANE"].to_s.empty? ? Never : new(env:, shell_out:)
       end
 
+      # Where the chat runs decides who is asked: a cockpit inside herdr needs tmux AND herdr, because a
+      # tmux client inside a herdr pane says nothing about whether herdr shows that pane; a plain herdr
+      # pane asks herdr; anything else asks tmux. The resolver is asked at each probe, since the pane
+      # may only be reportable later.
+      class Routed
+        def initialize(tmux:, resolver:, herdr:)
+          @tmux = tmux
+          @resolver = resolver
+          @herdr = herdr
+        end
+
+        def focused?
+          target = @resolver.current
+          return @tmux.focused? unless target
+
+          target.via == :cockpit ? @tmux.focused? && @herdr.call(target).focused? : @herdr.call(target).focused?
+        end
+      end
+
+      # @param env [#[], #slice] the chat process's environment
+      # @param resolver [#current] {Herdr::Target::Resolver}
+      # @param shell_out [#call] builds the tmux command, `Shell::Out.new`'s shape
+      # @param herdr [#call] target to a {Herdr::Focus}
+      # @return [Routed]
+      def self.for(env:, resolver:, shell_out: Shell::Out.public_method(:new),
+                   herdr: ->(target) { Herdr::Focus.new(target:) })
+        Routed.new(tmux: tmux(env:, shell_out:), resolver:, herdr:)
+      end
+
       def initialize(env:, shell_out:)
         @env = env
         @shell_out = shell_out

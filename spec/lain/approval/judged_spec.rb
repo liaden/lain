@@ -214,7 +214,8 @@ RSpec.describe Lain::Approval::Judged do
         Lain::CLI::Wiring.new(
           options: { grace: 5, approval: "auto", judge_facts: "request", prompt: line, non_interactive: true },
           chronicle: Lain::CLI::Chronicle::Null.new, status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
-          project: throwaway_project(dir), stdin: StringIO.new, tty_factory: terminal,
+          project: throwaway_project(dir), stdin: StringIO.new,
+          herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory: terminal),
           paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir })
         )
       end

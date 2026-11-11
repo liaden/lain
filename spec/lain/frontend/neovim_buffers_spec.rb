@@ -506,7 +506,8 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         end
         project = Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project, detected_by: :flag)
         Lain::CLI::Wiring.new(options: { grace: 5, epic: "demo" }, chronicle: Lain::CLI::Chronicle::Null.new,
-                              tty_factory:, project:, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @tmp }),
+                              herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:), project:,
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @tmp }),
                               status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin: input)
       end
 

@@ -25,6 +25,8 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
     end
   end
 
+  def nobody = Struct.new(:current).new(nil)
+
   def reporter(bin)
     target = Lain::Herdr::Target.new(bin:, pane: "w1:p7", socket: File.join(root, "s.sock"), via: :env)
     resolver = Object.new.tap { |answer| answer.define_singleton_method(:current) { target } }
@@ -69,7 +71,7 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
 
   it "masks a reported summary with the chat's own secrets once the terminal is built" do
     subject = reporter(stub_herdr)
-    build_terminal(described_class.new(notes:, reporter: subject), chat_secrets)
+    build_terminal(described_class.new(notes:, reporter: subject, resolver: nobody), chat_secrets)
     report(subject, "bash: psql --password zq7Rk2mWvP9x")
 
     expect(messages.sole).to start_with("bash: psql --password")
@@ -79,7 +81,7 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
   it "says a note held before the terminal existed, and every later one, through the terminal's warning" do
     subject = reporter(stub_herdr(status: 1))
     notes.puts("held before the terminal")
-    build_terminal(described_class.new(notes:, reporter: subject), Lain::Sensitivity::Secrets::Source::DEFAULT)
+    build_terminal(described_class.new(notes:, reporter: subject, resolver: nobody), Lain::Sensitivity::Secrets::Source::DEFAULT)
     report(subject, "bash")
 
     expect(screen.first).to eq("held before the terminal")
@@ -87,6 +89,42 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
   end
 
   it "hands back the terminal the factory built" do
-    expect(build_terminal(described_class.new(notes:, reporter: reporter(stub_herdr)), [])).to be(tty)
+    expect(build_terminal(described_class.new(notes:, reporter: reporter(stub_herdr), resolver: nobody), [])).to be(tty)
+  end
+
+  describe "#focus" do
+    def resolver_for(bin)
+      target = Lain::Herdr::Target.new(bin:, pane: "w1:p7", socket: File.join(root, "s.sock"), via: :env)
+      Struct.new(:current).new(target)
+    end
+
+    def binding_for(resolver, env: {}) = described_class.new(notes:, reporter: reporter(stub_herdr), resolver:, env:)
+
+    it "answers herdr's focus for the pane the resolver names" do
+      bin = File.join(root, "focused-herdr")
+      File.write(bin, "#!/bin/sh\necho '{\"result\":{\"agent\":{\"focused\":true}}}'\n", perm: 0o755)
+
+      expect(binding_for(resolver_for(bin)).focus.focused?).to be(true)
+    end
+
+    it "is not focused when no herdr pane resolves and the environment is outside tmux" do
+      expect(binding_for(Struct.new(:current).new(nil)).focus.focused?).to be(false)
+    end
+  end
+
+  describe "Null" do
+    it "defaults to the stock terminal" do
+      expect(described_class::Null.new(env: {}).tty_factory).to eq(Lain::Frontend::TTY.public_method(:new))
+    end
+
+    it "answers tmux focus from the environment" do
+      expect(described_class::Null.new(env: {}).focus.focused?).to be(false)
+    end
+
+    it "hands back the terminal factory it was given" do
+      factory = ->(**) { :tty }
+
+      expect(described_class::Null.new(tty_factory: factory).tty_factory.call).to eq(:tty)
+    end
   end
 end

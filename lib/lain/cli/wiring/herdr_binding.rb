@@ -3,17 +3,40 @@
 module Lain
   module CLI
     class Wiring
-      # Hands the herdr reporter the chat's screen once the terminal is built: its notes go to the
-      # terminal's warning line, and its message is masked by the terminal's notifier, whose secrets
-      # are the chat's own (a committed .env, a passed connection string). It wraps the terminal
-      # factory because that is the one place both exist and Wiring has no line to spare.
+      # Wiring's one herdr collaborator: everything herdr touches in a chat reaches it through this
+      # object, because Wiring has no line to spare for a keyword apiece. It hands the reporter the
+      # chat's screen once the terminal is built (notes go to the terminal's warning line, the message
+      # is masked by the notifier, whose secrets are the chat's own) by wrapping the terminal factory,
+      # the one place both exist; and it answers focus from the same resolver the reporter reads. A
+      # Wiring built without a launch gets {Null}: the stock terminal and tmux's own focus.
       class HerdrBinding
+        # What a {Wiring} built without a launch uses: the stock terminal and tmux's own focus.
+        class Null
+          # @param tty_factory [#call] builds the terminal
+          # @param env [#[], #slice] the chat process's environment
+          def initialize(tty_factory: Frontend::TTY.public_method(:new), env: ENV)
+            @tty_factory = tty_factory
+            @env = env
+          end
+
+          attr_reader :tty_factory
+
+          def focus = Frontend::Focus.tmux(env: @env)
+        end
+
         # @param notes [HeldNotes] the sink the resolver and the reporter write to
         # @param reporter [Herdr::Reporter]
-        def initialize(notes:, reporter:)
+        # @param resolver [Herdr::Target::Resolver] the one the reporter reads, asked again for focus
+        # @param env [#[], #slice] the chat process's environment
+        def initialize(notes:, reporter:, resolver:, env: ENV)
           @notes = notes
           @reporter = reporter
+          @resolver = resolver
+          @env = env
         end
+
+        # @return [#focused?] whether the human is at the chat's window, by where the chat runs
+        def focus = Frontend::Focus.for(env: @env, resolver: @resolver)
 
         # @param factory [#call] builds the terminal from {Wiring}'s keywords, `tmux:` the notifier among them
         # @return [#call] the same factory, binding the reporter to what it builds

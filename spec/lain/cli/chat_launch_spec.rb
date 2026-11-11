@@ -924,6 +924,55 @@ RSpec.describe Lain::CLI::ChatLaunch do
     resolver.define_singleton_method(:locate) { |selector| refusal.call(selector:) }
     resolver
   end
+
+  describe "the herdr binding handed to the wiring" do
+    around do |example|
+      Dir.mktmpdir("lain-chat-herdr") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def stub_herdr
+      File.join(@dir, "herdr").tap do |path|
+        File.write(path, "#!/bin/sh\necho '{\"result\":{\"agent\":{\"agent\":\"lain-x\",\"focused\":true}}}'\n",
+                   perm: 0o755)
+      end
+    end
+
+    def binding_for(env)
+      seen = []
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+      project = throwaway_project(@dir)
+      launch({ journal: false }, env:, project_factory: -> { project },
+                                 wiring_factory: lambda { |herdr:, **|
+                                   seen << herdr
+                                   wiring
+                                 }).call { |_notice| nil }
+      seen.sole
+    end
+
+    it "answers focus from the herdr pane the launch's own environment names" do
+      env = { "HERDR_ENV" => "1", "HERDR_BIN_PATH" => stub_herdr, "HERDR_PANE_ID" => "w1:p7",
+              "HERDR_SOCKET_PATH" => File.join(@dir, "s.sock") }
+
+      expect(binding_for(env).focus.focused?).to be(true)
+    end
+
+    it "is not focused outside herdr and tmux" do
+      expect(binding_for({}).focus.focused?).to be(false)
+    end
+
+    it "routes focus by the launch's environment" do
+      env = { "TMUX" => "", "MARK" => "launch" }
+      allow(Lain::Frontend::Focus).to receive(:for).and_call_original
+
+      binding_for(env).focus
+
+      expect(Lain::Frontend::Focus).to have_received(:for).with(hash_including(env:))
+    end
+  end
 end
 
 RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do

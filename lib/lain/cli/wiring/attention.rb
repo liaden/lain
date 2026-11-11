@@ -28,8 +28,7 @@ module Lain
         # @param focus [#focused?] whether the human is at the chat's window
         # @param clock [#now] the notices' clock; a spec hands in its own
         # @return [Attention, Immediate]
-        def self.for(agent_states, switchboard:, root:, paths:, env: ENV, focus: Frontend::Focus.tmux(env:),
-                     clock: Time)
+        def self.for(agent_states, switchboard, root:, paths:, focus:, env: ENV, clock: Time)
           secrets = switchboard.guard_inputs.secrets
           return Immediate.new(secrets:, root:, env:) unless agent_states
 

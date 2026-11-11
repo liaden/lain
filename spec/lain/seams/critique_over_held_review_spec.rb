@@ -317,7 +317,9 @@ RSpec.describe "a critique of a held review", :seam do
     holds = []
     project = Lain::Project.new(root: @repo, cwd: @repo, kind: :project, detected_by: :flag)
     @wiring = Lain::CLI::Wiring.new(options: { grace: }, chronicle: Lain::CLI::Chronicle::Null.new, project:,
-                                    tty_factory: tty_factory(output, holds),
+                                    herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(
+                                      tty_factory: tty_factory(output, holds)
+                                    ),
                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                     stdin: StringIO.new("/critique\nquit\n"))
     holds << -> { held_outbox(@wiring.command_surface.outbox) }

@@ -219,7 +219,7 @@ module Lain
       # The frozen {Command::Env} the run's {Command::Surface} assembled once.
       def command_env = @command_surface.env
 
-      # The `tty_factory:` and `conductor_opener:` keywords are #run's
+      # The `herdr:` (its `tty_factory`) and `conductor_opener:` keywords are #run's
       # construction seams: a spec hands in a StringIO-backed TTY factory or a
       # recording opener and drives #run itself -- no send(:build_repl), no
       # instance_variable_set.
@@ -239,7 +239,8 @@ module Lain
       # @param paths [Paths] the state home the default posture's shadow
       #   snapshot store lives under; a spec running tool turns hands in a
       #   throwaway one
-      # @param tty_factory [#call] #run's TTY seam; a spec hands in a StringIO-backed one
+      # @param herdr [HerdrBinding, HerdrBinding::Null] #run's TTY seam and the chat's focus; a spec hands in
+      #   a Null over a StringIO-backed terminal factory
       # @param conductor_opener [#call] #run's Conductor seam
       # @param stdin [IO] what an attended chat's {Frontend::StdinPump} reads;
       #   a spec hands in the lines its human types
@@ -251,7 +252,7 @@ module Lain
       # @param agent_states [AgentStates::Tracker, nil] the chat's tracker when a tee feeds it; its
       #   notices then replace the notifier's own immediate sequence and feed entry
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
-                     project: Project::Resolver.default_project, tty_factory: Lain::Frontend::TTY.public_method(:new),
+                     project: Project::Resolver.default_project, herdr: HerdrBinding::Null.new,
                      conductor_opener: Lain::CLI::Conductor.public_method(:open), agent_states: nil,
                      stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options))
         @options = options
@@ -263,7 +264,7 @@ module Lain
         @run_clock = run_clock
         @paths = paths
         @project = project
-        @tty_factory = tty_factory
+        @herdr = herdr
         @conductor_opener = conductor_opener
         @stdin = stdin
         # Nobody is looking at anything until #run builds a frontend, and that
@@ -364,7 +365,7 @@ module Lain
 
       private
 
-      attr_reader :options, :chronicle, :run_clock
+      attr_reader :options, :chronicle, :run_clock, :paths
 
       def terminal_keywords(agent, notice)
         { channel:, input: Lain::Frontend::StdinPump.keys(@stdin), prompt_renderer: prompt_renderer(agent, notice),
@@ -373,7 +374,7 @@ module Lain
           **Frontend::Theme.on_stdout(paths: @paths).terminal }
       end
 
-      def attention = @attention ||= Attention.for(@agent_states, switchboard: @switchboard, root:, paths: @paths)
+      def attention = @attention ||= Attention.for(@agent_states, @switchboard, root:, paths:, focus: @herdr.focus)
 
       # An Enumerator, so the names are read when completion is first asked, after the command surface exists.
       def typed_names = Enumerator.new { |names| command_names.each { |name| names << name } }
@@ -382,7 +383,7 @@ module Lain
       # its one reader.
       def open_terminal(agent, notice, startup, backend)
         @skill_catalog = backend.library.catalog
-        @tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
+        @herdr.tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
           @human_line = tty.method(:render_wait)
           startup.each(&(human.pane? ? tty.method(:render_warning) : notice))
           human.alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty

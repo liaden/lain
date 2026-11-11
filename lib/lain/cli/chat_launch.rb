@@ -226,7 +226,9 @@ module Lain
 
       def herdr_notes = @herdr_notes ||= Herdr::HeldNotes.new
 
-      def herdr_binding = Wiring::HerdrBinding.new(notes: herdr_notes, reporter: herdr_reporter)
+      def herdr_binding
+        Wiring::HerdrBinding.new(notes: herdr_notes, reporter: herdr_reporter, resolver: herdr_resolver, env: @env)
+      end
 
       # The ONE {Backend} for the run, shared exactly as {#run_clock} and
       # {#project} are. Two halves of the launch need it -- the feed divides
@@ -528,7 +530,7 @@ module Lain
       def converse(backend:, resumed:, &notice)
         @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:,
                                        agent_states: teed_agent_states,
-                                       tty_factory: herdr_binding.tty_factory)
+                                       herdr: herdr_binding)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

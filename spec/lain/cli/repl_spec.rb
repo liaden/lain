@@ -359,7 +359,8 @@ RSpec.describe Lain::CLI::Repl do
     tty_factory = lambda do |channel:, **|
       Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
     end
-    wiring = Lain::CLI::Wiring.new(options:, chronicle:, tty_factory:, paths: spec_state(dir),
+    wiring = Lain::CLI::Wiring.new(options:, chronicle:, herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
+                                   paths: spec_state(dir),
                                    project: throwaway_project(dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                    stdin: StringIO.new(input))
@@ -395,7 +396,10 @@ RSpec.describe Lain::CLI::Repl do
       headless = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider)
       wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
-                                     tty_factory: waiting_terminal(output, dir:), paths: spec_state(dir),
+                                     herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory: waiting_terminal(
+                                       output, dir:
+                                     )),
+                                     paths: spec_state(dir),
                                      project: throwaway_project(dir),
                                      status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                      stdin: StringIO.new("and another thing\n"))
@@ -586,7 +590,8 @@ RSpec.describe Lain::CLI::Repl do
     around { |example| headless_editor("lain-repl-review-spec") { example.run } }
 
     def editor_wiring(tty_factory, dir)
-      Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+      Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+                            herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                             paths: spec_state(dir), project: throwaway_project(dir),
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                             stdin: StringIO.new("quit\n"))
@@ -1073,7 +1078,8 @@ RSpec.describe Lain::CLI::Repl do
         tty_factory = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
-        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+                                       herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                                        paths: spec_state(dir), project: throwaway_project(dir),
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                                        stdin: StringIO.new("quit\n"))

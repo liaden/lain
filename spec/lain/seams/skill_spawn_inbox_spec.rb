@@ -89,7 +89,7 @@ RSpec.describe "a human question raised while a skill spawn is dispatched", :sea
   # A throwaway state home: a tool turn primes the default posture's shadow
   # snapshot store, which lives there.
   def chat_wiring(tty_factory, dir, stdin)
-    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, tty_factory:,
+    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new, herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                           paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
                           project: throwaway_project(dir),
                           status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin:)

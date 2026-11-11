@@ -75,6 +75,60 @@ RSpec.describe Lain::Frontend::Focus do
     end
   end
 
+  describe ".for" do
+    let(:herdr_calls) { [] }
+    let(:herdr_answer) { true }
+    let(:target) { Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :cockpit) }
+    let(:resolver) { Struct.new(:current).new(target) }
+
+    def routed(env: self.env)
+      calls = herdr_calls
+      probe = Struct.new(:focused?).new(herdr_answer)
+      herdr = lambda do |found|
+        calls << found
+        probe
+      end
+      described_class.for(env:, resolver:, shell_out:, herdr:)
+    end
+
+    it "needs both in a cockpit inside herdr" do
+      allow(self).to receive(:herdr_answer).and_return(false)
+
+      expect(routed.focused?).to be(false)
+    end
+
+    it "is focused when tmux and herdr both say so" do
+      expect(routed.focused?).to be(true)
+    end
+
+    it "is not focused when herdr says so and tmux does not" do
+      allow(self).to receive(:answer).and_return("0 2\n")
+
+      expect(routed.focused?).to be(false)
+    end
+
+    it "uses tmux only when no herdr target resolves" do
+      allow(resolver).to receive(:current).and_return(nil)
+
+      expect([routed.focused?, herdr_calls]).to eq([true, []])
+    end
+
+    it "uses herdr only in a plain herdr pane" do
+      env_target = target.with(via: :env)
+      allow(resolver).to receive(:current).and_return(env_target)
+
+      expect([routed(env: {}).focused?, herdr_calls, calls]).to eq([true, [env_target], []])
+    end
+
+    it "asks the resolver on every call, since the target may appear later" do
+      allow(self).to receive(:herdr_answer).and_return(false)
+      allow(resolver).to receive(:current).and_return(nil, target)
+      focus = routed
+
+      expect([focus.focused?, focus.focused?]).to eq([true, false])
+    end
+  end
+
   describe "against a real tmux server", :seam do
     let(:socket) { "lain-fo#{Process.pid}#{SecureRandom.hex(3)}" }
     let(:dir) { @dir ||= Dir.mktmpdir("focus") }

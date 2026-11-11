@@ -386,7 +386,12 @@ RSpec.describe Lain::CLI::Wiring do
 
   after { FileUtils.rm_rf(project_dir) }
 
-  def new_wiring(**kwargs) = described_class.new(project: throwaway_project(project_dir), **kwargs)
+  def null_herdr(tty_factory) = described_class::HerdrBinding::Null.new(tty_factory:)
+
+  def new_wiring(tty_factory: nil, **kwargs)
+    herdr = tty_factory ? { herdr: null_herdr(tty_factory) } : {}
+    described_class.new(project: throwaway_project(project_dir), **herdr, **kwargs)
+  end
 
   def wire_agent
     recorder, session = wiring.run_state(nil)
@@ -4064,6 +4069,27 @@ RSpec.describe Lain::CLI::Wiring do
         expect(screen.string).to include("\e]777;notify;").and include("done: main")
       end
 
+      it "asks the herdr binding's focus when a notice falls due" do
+        allow(Lain::Config).to receive(:attention).and_return(Lain::Config::Attention.new(delay: 0))
+        window = Struct.new(:asked) { def focused? = (self.asked = true) && false }.new
+        herdr = Struct.new(:tty_factory, :focus).new(nil, window)
+        notices = nil
+        Dir.mktmpdir do |dir|
+          herdr.tty_factory = screen_factory(dir)
+          captured = []
+          capture_notices(captured)
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                              herdr:, conductor_opener:, agent_states: tracker)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+          notices = captured.first
+        end
+        done.each { tracker << _1 }
+        notices.tick
+
+        expect(window.asked).to be(true)
+      end
+
       it "keeps today's immediate notices when no tracker was passed" do
         expect(run_with(nil)).to be(Lain::AgentStates::Notices::Never)
         expect(@rung.call("hello")).to be_nil
@@ -4780,7 +4806,8 @@ RSpec.describe Lain::CLI::Wiring do
 
       def run_in(dir, options: { grace: 5 }, &notice)
         wiring = described_class.new(options:, chronicle:, status_feed:,
-                                     tty_factory: tty_factory(dir), stdin: StringIO.new("quit\n"), conductor_opener:)
+                                     herdr: null_herdr(tty_factory(dir)),
+                                     stdin: StringIO.new("quit\n"), conductor_opener:)
         wiring.run(backend: fresh_backend, resumed: nil, nvim: nil, &notice)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -5072,7 +5099,8 @@ RSpec.describe Lain::CLI::Wiring do
     def run_project(project, options: { grace: 5 })
       Dir.mktmpdir("lain-t5-tty") do |dir|
         wiring = described_class.new(options:, chronicle:, status_feed:, project:,
-                                     tty_factory: project_tty_factory(dir), stdin: StringIO.new("quit\n"))
+                                     herdr: null_herdr(project_tty_factory(dir)),
+                                     stdin: StringIO.new("quit\n"))
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -5138,7 +5166,7 @@ RSpec.describe Lain::CLI::Wiring do
             Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
           end
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project: project_at(root, cwd),
-                                       tty_factory: factory, stdin: StringIO.new("quit\n"))
+                                       herdr: null_herdr(factory), stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.hold("/approve")
           wiring.conductor.hold("do this later")
@@ -5424,10 +5452,10 @@ RSpec.describe Lain::CLI::Wiring do
         Dir.mktmpdir do |dir|
           wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
                                        stdin: StringIO.new("hi\nquit\n"),
-                                       tty_factory: lambda { |channel:, **|
+                                       herdr: null_herdr(lambda { |channel:, **|
                                          Lain::Frontend::TTY.new(channel:, output: StringIO.new,
                                                                  history_path: File.join(dir, "history"))
-                                       },
+                                       }),
                                        project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
@@ -5790,10 +5818,10 @@ RSpec.describe Lain::CLI::Wiring do
 
       def seated(options = {})
         described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:,
-                            tty_factory: lambda { |channel:, **|
+                            herdr: null_herdr(lambda { |channel:, **|
                               Lain::Frontend::TTY.new(channel:, output: StringIO.new,
                                                       history_path: File.join(@tmp, "history"))
-                            }, stdin: StringIO.new("quit\n"),
+                            }), stdin: StringIO.new("quit\n"),
                             project: Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project,
                                                        detected_by: :flag))
       end

@@ -35,10 +35,10 @@ module StdinRegularFile
       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
       status_feed: Lain::StatusFeed.new(path: File.join(dir, "state.json")),
       project: Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag),
-      tty_factory: lambda { |channel:, **|
+      herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory: lambda { |channel:, **|
         Lain::Frontend::TTY.new(channel:, pastel: Pastel.new(enabled: false), history_path: File.join(dir, "history"),
                                 state_path: File.join(dir, "state.json"))
-      }
+      })
     )
     begin
       wiring.run(backend:, resumed: nil, nvim: nil)
