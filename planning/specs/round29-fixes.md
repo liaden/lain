@@ -1,6 +1,6 @@
 # Round 29 fixes: one owner per decision
 
-status: draft
+status: in-progress
 commit-mode: orchestrator-commits
 language: ruby (T25 also touches Rust in `apps/lain-remote`)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); the algebra seats (Edward Kmett, Philip Wadler, Conal Elliott) join for T1, T12, T17, T28; Rust (Raph Levien, Andrew Gallant, Ashley Williams) for T25
@@ -1747,4 +1747,14 @@ Spec file: `spec/lain/tools/subagent/stops_spec.rb`, `spec/lain/cli/resume/stopp
 
 ## Execution log
 
-(Written by /execute-plan.)
+### Setup, 2026-11-11 12:24
+
+- Base: `main` at `775b04a9`. 83 worktrees and 96 branches from earlier plans exist (`card/T<id>`, `card/BD` and others); this run uses the prefix `r29-`: worktrees `tmp/worktrees/r29-T<id>`, branches `card/r29-T<id>`. Start lists: `~/tmp/lain/claude-1000/-home-tara-dev-lain/404b67f2-4fc0-4764-9fa7-d72b0e0156cb/scratchpad/r29/start-*.txt`.
+- User work: 13 modified tracked files and many untracked ones stay in the tree, unstaged. 3 staged entries were unstaged for the run. Re-stage at close-out: `git add .gitmodules references/repos/cliffcompaction references/repos/pi`.
+- Hook (`.pre-commit-config.yaml`): `rake compile check` (compile, then `pspec` and `rubocop` together) on any Ruby or Rust outside `apps/` and `crates/lain-core/`; `yard-lint --staged`; `bin/lint-gherkin-docs` on staged plan docs; pre-commit-hooks whitespace and EOF fixers; shellcheck; cargo fmt, clippy and test on Rust; the `apps/lain-remote` cargo trio on the app (T25); `bin/lint-commit-msg` at commit-msg. A Ruby commit takes about 2.5 minutes. `pspec` takes the suite lock in `$XDG_STATE_HOME/lain/locks/suite.lock`, so it never runs beside another pspec. A passing hook prints no count: read `tmp/parallel_runtime_rspec.log` or rerun with the hook output kept in a per-card log.
+- Agent checks on own paths: `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`, `bin/lint-gherkin-docs <plan docs>`, `bin/lint-commit-msg <msg file>`.
+- Ratchet specs: every `spec/*_spec.rb` (the top-level discipline specs, including `gate_decision_fold_discipline_spec.rb`, `output_discipline_spec.rb`, `zeitwerk_spec.rb`, `lain_spec.rb`, `value_object_shareability_spec.rb`, `provider_construction_discipline_spec.rb`), plus `spec/lain/comment_census_spec.rb`, `spec/lain/isolation/checkout_calls_spec.rb`, `spec/lain/landing_calls_spec.rb`, `spec/lain/event_log/guards_spec.rb`, `spec/lain/test_layout/guard_spec.rb`, `spec/lain/boot/frozen_load_path_spec.rb`.
+- Build outputs a fresh worktree needs, copied at cut: `lib/lain/lain.so`, `target/release/lain-fence`, `tmp/parallel_runtime_rspec.log`. Without the fence the confinement seam examples pend or go red.
+- Test-runner pattern for `wait-quiet.sh`: `rspec|parallel_rspec|rake (pspec|check|compile)|cargo (test|build|clippy)`.
+- Concurrency: 15 GB RAM, 16 cores: at most 6 agents, 5 while a landing runs.
+- Paths needing user approval: none named; Integration check 1 touches the user's live session files only with their go-ahead.
