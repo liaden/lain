@@ -96,13 +96,17 @@ module Lain
         #   ahead of `fleet:` because the fleet's own default is built with it:
         #   a row started on one clock and aged against another reads negative.
         # @param fleet [StatusFeed::Fleet] the spawns this buffer draws
-        def initialize(epic: Unmounted, clock: -> { Time.now }, fleet: StatusFeed::Fleet.new(clock:))
+        # @param states [#step, #agents] the fold of each agent's state
+        def initialize(epic: Unmounted, clock: -> { Time.now }, fleet: StatusFeed::Fleet.new(clock:),
+                       states: Journal::Projection::AgentStates.unit)
           @epic = epic
           @fleet = fleet
           @clock = clock
           @epic_lines = nil
           @fleet_lines = nil
           @shown = nil
+          @states = states
+          @states_failure = nil
         end
 
         # @return [Array<String>]
@@ -119,8 +123,10 @@ module Lain
         def update(event)
           refolded = refold?(event)
           @epic_lines = folded if refolded
-          moved = fleet_event?(event)
-          @fleet_lines = observed(event) if moved
+          states_moved = agent_states_moved?(event)
+          fleet_moved = fleet_event?(event)
+          moved = states_moved || fleet_moved
+          @fleet_lines = observed(event, fleet_moved) if moved
           return nil unless refolded || moved || @shown.nil?
 
           lines = composed
@@ -142,20 +148,72 @@ module Lain
         # for is which child is doing what -- so the row says that, and the
         # address stays where a reader of the record can still find it.
         def fleet_listing
-          rows = @fleet.tree
-          ["## fleet", "", *(rows.empty? ? ["(nothing running)"] : drawn(rows))]
+          rows = [*main_row, *drawn(@fleet.tree)]
+          ["## fleet", "", *(rows.empty? ? ["(nothing running)"] : rows), *states_failure_lines]
+        end
+
+        def states_failure_lines
+          @states_failure ? ["", *unavailable("## agent states unavailable", @states_failure)] : []
         end
 
         def drawn(rows)
           now = @clock.call
-          rows.map { |published| StatusFeed::Fleet::Row.at(published, now:).listed("- ") }
+          rows.map { |published| StatusFeed::Fleet::Row.at(blocked(published), now:).listed("- ") }
+        end
+
+        # The fleet knows a child is running; only the waits know it is stuck on the human.
+        def blocked(published)
+          agent = @states.agents.find { |candidate| candidate.id == published["spawn"] }
+          agent&.state == :blocked ? published.merge("state" => cell(agent)) : published
+        end
+
+        def cell(agent) = agent.state == :blocked ? "blocked: #{agent.what}" : agent.state.to_s
+
+        def main_row
+          main = @states.agents.first
+          return [] if main.state == :idle
+
+          [["main", cell(main)].map { |text| Tools::AskHuman::InboxRow.one_line(text) }
+                               .join(StatusFeed::Fleet::Row::GAP).prepend("- ")]
+        end
+
+        # A fold that raises is drawn beside the fleet rather than raised: this runs on the drain
+        # thread, where a raise takes every view dark. The next record that steps cleanly clears it.
+        def agent_states_moved?(event)
+          return false unless reads_states?(event)
+
+          before = @states.agents
+          failed = @states_failure
+          @states = @states.step(stepped(event))
+          @states_failure = nil
+          !failed.nil? || @states.agents != before
+        rescue StandardError => e
+          @states_failure = e
+          true
+        end
+
+        # Only what the fold reads, so a tool's stdout costs no step and no agents rebuild.
+        def reads_states?(event)
+          event.is_a?(Ext::Event) || state_types.any? { |type| event.is_a?(type) }
+        end
+
+        def state_types
+          @state_types ||= [Telemetry::RequestSent, Telemetry::AskSettled, Telemetry::RunInterrupted,
+                            Telemetry::Message, Telemetry::ChildProgress, Telemetry::AwaitingHuman,
+                            Telemetry::QuestionsConsumed, Telemetry::Untyped, Lain::Epic::GateDecision,
+                            Approval::Parked::Queue::Pending, ::Lain::AgentStates::Seen, Hash].freeze
+        end
+
+        # A live spawn or completion is an event; the fold reads the journal's record of it.
+        def stepped(event)
+          event.is_a?(Ext::Event) ? Telemetry::Message.from_event(event) : event
         end
 
         # {#folded}'s reason, for the other half: a malformed `:spawn` or
         # `:message` raises inside the fleet on the same drain thread, so it
         # costs this buffer its fleet listing and nothing else.
-        def observed(event)
-          observe(event)
+        def observed(event, fleet_moved)
+          observe(event) if fleet_moved
           fleet_listing
         rescue StandardError => e
           unavailable("## fleet unavailable", e)

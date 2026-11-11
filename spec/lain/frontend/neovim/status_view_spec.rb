@@ -274,6 +274,99 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
       expect(lines).to include(a_string_including("fleet unavailable"), a_string_including("digest"))
     end
 
+    describe "each agent's state" do
+      def awaiting(spawn, summary)
+        Lain::Telemetry::AwaitingHuman.new(kind: "approval", ref: "call_1", summary:, requester: "child", tool: "bash",
+                                           tool_use_id: "call_1", spawn: spawn.digest)
+      end
+
+      def asked
+        Lain::Telemetry::RequestSent.new(digest: "blake3:r", payload: {}, stream: true, extra: {},
+                                         prefix_digests: nil, prefix_chain_version: nil)
+      end
+
+      def settled = Lain::Telemetry::AskSettled.new(head: "blake3:h", stop_reason: "end_turn", turns: 1, seconds: 1.0)
+
+      it "shows a blocked child's wait in its row" do
+        view = described_class.new
+        view.initial
+        spawn = spawn_event("one")
+        view.update(spawn)
+
+        lines = view.update(awaiting(spawn, "bash"))
+
+        expect(lines).to include(a_string_matching(/\A- subagent  blocked: bash\b/))
+      end
+
+      it "gives the main chat a row once it is done and unseen" do
+        view = described_class.new
+        view.initial
+        view.update(asked)
+
+        expect(view.update(settled)).to include("- main  done")
+      end
+
+      it "draws a wait's summary on one line" do
+        view = described_class.new
+        view.initial
+        spawn = spawn_event("one")
+        view.update(spawn)
+
+        lines = view.update(awaiting(spawn, "rm\r-rf"))
+
+        expect(lines.join("\n")).not_to include("\r")
+      end
+
+      it "clears main's done row when the human has seen it" do
+        view = described_class.new
+        view.initial
+        view.update(asked)
+        view.update(settled)
+
+        lines = view.update(Lain::AgentStates::Seen.new(agent: Lain::AgentStates::MAIN))
+
+        expect(lines).to include("(nothing running)")
+      end
+
+      it "does not step the fold for an event it does not read" do
+        counting = Class.new do
+          attr_reader :stepped
+
+          define_method(:initialize) { |inner| @inner = inner }
+          define_method(:agents) { @inner.agents }
+          define_method(:step) do |record|
+            @stepped = (@stepped || 0) + 1
+            self.class.new(@inner.step(record)).tap { |fresh| fresh.instance_variable_set(:@stepped, @stepped) }
+          end
+        end.new(Lain::Journal::Projection::AgentStates.unit)
+        view = described_class.new(states: counting)
+        view.initial
+
+        view.update(tool_output)
+
+        expect(counting.stepped).to be_nil
+      end
+
+      it "draws a fold that raises beside the fleet, and recovers on the next record" do
+        failing = Class.new do
+          define_method(:agents) { [Lain::Journal::Projection::AgentStates::Agent.new(id: "main", state: :idle, what: nil)] }
+          define_method(:step) { |_record| raise IOError, "torn" }
+        end.new
+        view = described_class.new(states: failing)
+        view.initial
+        spawn = spawn_event("one")
+
+        lines = view.update(spawn)
+
+        expect(lines).to include("## fleet", a_string_including("- subagent  running"),
+                                 "## agent states unavailable", a_string_including("torn"))
+      end
+
+      it "leaves the main chat out while it is idle" do
+        expect(described_class.new.initial).to include("(nothing running)")
+      end
+    end
+
     it "renders nothing new for an event that moves neither the fleet nor the epic" do
       view = described_class.new
       view.initial
