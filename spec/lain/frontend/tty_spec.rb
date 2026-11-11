@@ -1828,6 +1828,19 @@ RSpec.describe Lain::Frontend::TTY do
         expect(stray.string).to be_empty
       end
 
+      it "rings the bell at once and leaves the sequence and the feed to the notices when deferred" do
+        raised << :notify
+        deferred = Lain::Frontend::TTY::Notifier.for(env: { "TERM_PROGRAM" => "iTerm.app" },
+                                                     feed: ->(*args) { fed << args }, project: "demo",
+                                                     deferred: true)
+        described_class.new(channel:, output:, input:, layers: -> { Lain::Mode::LayerSet.new(raised) },
+                            tmux: deferred).tap { channel.push(settled) }.drain_and_render
+
+        expect(output.string).to include("\a")
+        expect(output.string).not_to include("\e]9;")
+        expect(fed).to be_empty
+      end
+
       it "draws the line and rings nothing while the layer is down" do
         channel.push(settled)
 

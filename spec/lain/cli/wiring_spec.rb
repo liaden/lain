@@ -4014,6 +4014,63 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to eq([run_clock])
     end
 
+    # The tracker is the real one and the notices are the ones Wiring built: a done main chat, 31 seconds
+    # old, reaches the terminal as one sequence and the feed as one entry, and the ring itself stayed in the pane.
+    context "with an agent-state tracker", :seam do
+      let(:fed) { [] }
+      let(:screen) { StringIO.new }
+      let(:tracker) { Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new) }
+      let(:done) do
+        telemetry = Lain::Telemetry
+        [telemetry::RequestSent.new(digest: "blake3:#{"e" * 64}", payload: {}, stream: true, extra: {},
+                                    prefix_digests: nil, prefix_chain_version: nil, requester: nil),
+         telemetry::AskSettled.new(head: "blake3:#{"f" * 64}", stop_reason: "end_turn", turns: 1, seconds: 1.0)]
+      end
+
+      def capture_notices(into)
+        allow(Lain::Notices).to receive(:for).and_return(->(*args) { fed << args })
+        allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+          into << kwargs[:notices]
+          original.call(**kwargs)
+        end
+      end
+
+      def screen_factory(dir)
+        lambda do |channel:, tmux:, **|
+          @rung = tmux
+          Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(dir, "history"), tmux:)
+        end
+      end
+
+      def run_with(agent_states)
+        captured = []
+        capture_notices(captured)
+        Dir.mktmpdir do |dir|
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                              tty_factory: screen_factory(dir), conductor_opener:, agent_states:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+        captured.first
+      end
+
+      it "sends a finished agent's notice after the delay, through the terminal and the feed" do
+        allow(Lain::Config).to receive(:attention).and_return(Lain::Config::Attention.new(delay: 0))
+        notices = run_with(tracker)
+        done.each { tracker << _1 }
+        notices.tick
+
+        expect(fed).to match([["lain", String, "done: main"]])
+        expect(screen.string).to include("\e]777;notify;").and include("done: main")
+      end
+
+      it "keeps today's immediate notices when no tracker was passed" do
+        expect(run_with(nil)).to be(Lain::AgentStates::Notices::Never)
+        expect(@rung.call("hello")).to be_nil
+        expect(fed).to match([["lain", String, "hello"]])
+      end
+    end
+
     # {Lain::CLI::Wiring#goal_journal} (wiring.rb:334) resolves the standing-goal
     # driver's destination through {Lain::CLI::Chronicle#record_journal}. Nothing
     # asserted it: replacing the resolution with a fresh /dev/null Journal left

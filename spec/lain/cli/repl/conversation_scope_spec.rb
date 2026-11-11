@@ -120,6 +120,31 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     end
   end
 
+  describe "the notices surface" do
+    def scope_with(notices)
+      described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing), notices:)
+    end
+
+    it "spawns it on the conversation's task and stops it on close" do
+      parked = []
+      notices = Object.new
+      notices.define_singleton_method(:spawn) do |task|
+        ConversationScopeSpecSupport::ParkingSurface.spawn(task).tap { |spawned| parked << spawned }
+      end
+
+      Sync { |task| scope_with(notices).open(task).close }
+
+      expect(parked.size).to eq(1)
+      expect(parked.none?(&:running?)).to be(true)
+    end
+
+    it "spawns nothing by default" do
+      scope = described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing))
+
+      Sync { |task| expect { scope.open(task).close }.not_to raise_error }
+    end
+  end
+
   # The unattended shape: no queue was wired, so the approval seam answers nil
   # rather than an empty set, and there is nothing of it to stop.
   it "survives an approval seam that answers nil" do

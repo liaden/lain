@@ -63,6 +63,21 @@ RSpec.describe Lain::Journal::Projection::AgentStates do
     expect(states.call(spawn_of.call(child), completion.call(child, "settled"))[child]).to eq(:working)
   end
 
+  it "names a finished child by its spawn's role, and no agent before or besides that" do
+    working = described_class.over([spawn_of.call(child)])
+    finished = described_class.over([spawn_of.call(child), completion.call(child, "stopped"), request.call, settled])
+
+    expect([working, finished].map { |fold| fold.agents.map(&:what) }).to eq([[nil, nil], [nil, "reviewer"]])
+  end
+
+  it "reads a spawn whose payload is nil as a child with no role" do
+    bare = telemetry::Message.new(digest: child, kind: :spawn, from: "main", to: nil, payload: nil,
+                                  causal_parents: [], correlation: nil)
+    fold = described_class.over([bare, completion.call(child, "stopped")])
+
+    expect(fold.agents.map(&:to_h)).to include({ id: child, state: :done, what: nil })
+  end
+
   it "rolls up blocked over working and done" do
     fold = described_class.over([request.call, spawn_of.call(child), completion.call(child, "stopped"),
                                  spawn_of.call(other), wait_of.call("call_d1", other)])

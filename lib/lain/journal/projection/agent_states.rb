@@ -17,16 +17,16 @@ module Lain
         # @!attribute [r] state
         #   @return [Symbol] one of {::Lain::AgentStates::ORDER}
         # @!attribute [r] what
-        #   @return [String, nil] what the human is asked, for a blocked agent
+        #   @return [String, nil] what the human is asked, for a blocked agent; the spawn's role, for a finished child
         Agent = Data.define(:id, :state, :what)
 
         # @return [AgentStates]
-        def self.unit = new({ waits: Waits.unit, base: { ::Lain::AgentStates::MAIN => :idle } })
+        def self.unit = new({ waits: Waits.unit, base: { ::Lain::AgentStates::MAIN => :idle }, roles: {} })
 
         # @param record [Telemetry::Journalable, Telemetry::Untyped, ::Lain::AgentStates::Seen]
         # @return [AgentStates]
         def step(record)
-          with(waits: waits.step(record), base: advanced(record))
+          with(waits: waits.step(record), base: advanced(record), roles: named(record))
         end
 
         # A wait naming a spawn with no spawn record is not shown as an agent.
@@ -49,11 +49,20 @@ module Lain
 
         def base = state.fetch(:base)
 
+        def roles = state.fetch(:roles)
+
         def with(**changes) = self.class.new(state.merge(changes))
 
         def agent(id, resting)
           wait = waits.open_for(id).first
-          wait ? Agent.new(id:, state: :blocked, what: wait.summary) : Agent.new(id:, state: resting, what: nil)
+          return Agent.new(id:, state: :blocked, what: wait.summary) if wait
+
+          Agent.new(id:, state: resting, what: resting == :done ? roles[id] : nil)
+        end
+
+        def named(record)
+          spawned = record.is_a?(Telemetry::Message) && record.kind == :spawn && record.payload.to_h["role"]
+          spawned ? { record.digest => spawned }.merge(roles) : roles
         end
 
         def advanced(record)

@@ -1409,6 +1409,29 @@ RSpec.describe Lain::CLI::Repl do
       expect(spawned.none?(&:running?)).to be(true)
     end
 
+    it "opens the notices surface it was given for the conversation and stops it after" do
+      spawned = []
+      notices = Object.new
+      notices.define_singleton_method(:spawn) do |task|
+        task.async { Async::Task.current.sleep(60) }.tap { |running| spawned << running }
+      end
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+
+      Dir.mktmpdir do |dir|
+        tty = tty_for(dir)
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        replies.bind_editor(rail)
+        replies.bind_changeset_review(review)
+        repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                                   chronicle: Lain::CLI::Chronicle::Null.new, conductor:, notices:)
+        Timeout.timeout(10) { repl.run(forks: no_forks, nvim: nil, store: nil, session: nil) }
+      end
+
+      expect(spawned.size).to eq(1)
+      expect(spawned.none?(&:running?)).to be(true)
+    end
+
     it "hands the epic docs reader to the frontend it attaches" do
       docs = Object.new
       allow(Lain::Frontend::Neovim).to receive(:new).and_return(nil)

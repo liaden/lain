@@ -1095,6 +1095,35 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     expect(Lain::Provider::Ollama.new.encode(request)[:options].except(:num_predict)).to eq(num_batch: 2048)
   end
 
+  describe "the tracker handed to the wiring" do
+    def tracker_given(options, live_views_factory)
+      given = []
+      refusing = lambda do |**kwargs|
+        given << kwargs[:agent_states]
+        raise Lain::Error, "stop here"
+      end
+      instance = described_class.new(options, chronicle_factory: spy("chronicle_factory"),
+                                              wiring_factory: refusing, live_views_factory:)
+      expect { instance.call { |_notice| nil } }.to raise_error(Lain::Error, "stop here")
+      given
+    end
+
+    it "is none when no tee exists, so the notifier keeps sending at once" do
+      expect(tracker_given({ journal: false }, ->(**) {})).to eq([nil])
+    end
+
+    it "is the tracker the tee was fed when one does" do
+      teed = []
+      views = lambda do |agent_states:, **|
+        teed << agent_states
+        instance_spy(Lain::CLI::LiveViews, views: nil, fleet: nil)
+      end
+
+      expect(tracker_given({ journal: true }, views)).to eq(teed)
+      expect(teed.first).to be_a(Lain::AgentStates::Tracker)
+    end
+  end
+
   it "threads --btw into Chronicle.for as btw: true" do
     chronicle_factory = spy("chronicle_factory")
     instance = described_class.new({ journal: true, btw: true },

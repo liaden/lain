@@ -207,6 +207,10 @@ module Lain
 
       def agent_states = @agent_states ||= Lain::AgentStates::Tracker.new(clock: run_clock)
 
+      # Nil unless a tee exists to feed it: a tracker nothing feeds would hold the notifier's own
+      # sequence back for a notice that never comes.
+      def teed_agent_states = @live_views && agent_states
+
       # The ONE {Backend} for the run, shared exactly as {#run_clock} and
       # {#project} are. Two halves of the launch need it -- the feed divides
       # occupancy by {Backend#context_window}, the wiring hangs the Agent and
@@ -504,7 +508,8 @@ module Lain
       # Instance state, because the ensure in #call closes the wiring's
       # conductor.
       def converse(backend:, resumed:, &notice)
-        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:)
+        @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:,
+                                       agent_states: teed_agent_states)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

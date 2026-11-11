@@ -44,8 +44,11 @@ module Lain
         # @param surfaces [#watch] {ApprovalSurfaces}, whose `watch` answers nil
         #   under --non-interactive, where no queue was wired
         # @param idle [#spawn] {IdleCompaction}, or its Never for the turn schedule
-        def initialize(supervisor:, replies:, surfaces:, idle: IdleCompaction::Never)
+        # @param notices [#spawn] {AgentStates::Notices}, or its Never for a chat with no tracker
+        def initialize(supervisor:, replies:, surfaces:, idle: IdleCompaction::Never,
+                       notices: AgentStates::Notices::Never)
           @idle = idle
+          @notices = notices
           @supervisor = supervisor
           @replies = replies
           @approvals = surfaces
@@ -64,6 +67,7 @@ module Lain
           @surfaces.push(*@replies.chat_surfaces(task, attention:))
           @surfaces.push(*@approvals.watch(task, attention:))
           @surfaces.push(@idle.spawn(task))
+          @surfaces.push(@notices.spawn(task))
           self
         end
 

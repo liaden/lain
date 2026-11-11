@@ -92,7 +92,44 @@ RSpec.describe Lain::Frontend::TTY::Notifier do
     expect([output.string, other.string]).to eq(["", "\e]777;notify;lain-demo;hi\a"])
   end
 
+  describe "deferred" do
+    it "shows the tmux message at once and writes no sequence and no feed entry" do
+      notifier({}, deferred: true).call("ask settled")
+
+      expect([output.string, displayed, fed]).to eq(["", ["ask settled"], []])
+    end
+
+    it "sends the sequence and the feed entry, and no tmux message, when asked to notify" do
+      notifier({}, deferred: true).notify("blocked: bash")
+
+      expect([output.string, displayed, fed]).to eq(["\e]777;notify;lain-demo;blocked: bash\a", [],
+                                                     [["lain", "lain-demo", "blocked: bash"]]])
+    end
+
+    it "notifies through the output the terminal rebound it to" do
+      other = StringIO.new
+      original = notifier({}, deferred: true)
+      original.bound_to(other)
+      original.notify("hi")
+
+      expect([output.string, other.string]).to eq(["", "\e]777;notify;lain-demo;hi\a"])
+    end
+
+    it "never raises when the output or the feed fails" do
+      boom = ->(*) { raise "boom" }
+
+      expect { described_class.for(env: {}, feed: boom, output: nil, deferred: true).notify("x") }.not_to raise_error
+    end
+  end
+
   describe ".for_chat" do
+    it "defers the sequence and the feed entry when asked" do
+      allow(Lain::Notices).to receive(:for).with(env: {}).and_return(feed)
+      described_class.for_chat([], "/work/demo", env: {}, output:, deferred: true).call("hi")
+
+      expect([output.string, fed]).to eq(["", []])
+    end
+
     it "masks with the secrets the thunk answers at each note, and feeds the project's notify-feed" do
       allow(Lain::Notices).to receive(:for).with(env: {}).and_return(feed)
       secrets = ["alpha-secret-1"]

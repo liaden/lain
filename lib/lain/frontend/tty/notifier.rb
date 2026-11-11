@@ -7,7 +7,9 @@ module Lain
       # escape sequence the terminal turns into a desktop notification, then
       # tmux's message, then the `notify-feed` program. Each step is its own
       # failure domain -- a note rings after it is on the screen, so none may cost
-      # the render or a later step.
+      # the render or a later step. A deferred notifier keeps the first and last
+      # steps for {#notify}, which a chat with an agent-state tracker calls once a
+      # wait has outlasted its delay.
       class Notifier
         SOURCE = "lain"
 
@@ -30,9 +32,11 @@ module Lain
         # @param output [#print, #flush] where the sequence is written; {TTY} rebinds it to its own writer
         # @param project [String, nil] named in the title; absent, the title is the source
         # @param mask [#call] takes the note's text and answers it with secrets masked
-        def self.for(env:, feed:, tmux: TmuxMessage.new, output: $stdout, project: nil, mask: :itself.to_proc)
+        # @param deferred [Boolean] whether {#call} leaves the sequence and the feed to {#notify}
+        def self.for(env:, feed:, tmux: TmuxMessage.new, output: $stdout, project: nil, mask: :itself.to_proc,
+                     deferred: false)
           new(sequence: sequence_for(env), wrap: !env["TMUX"].to_s.empty?, feed:, tmux:, output:, mask:,
-              title: project.to_s.empty? ? SOURCE : project.to_s)
+              title: project.to_s.empty? ? SOURCE : project.to_s, deferred:, bound: [])
         end
 
         # The notifier a chat builds: the machine's `notify-feed`, and the text
@@ -43,9 +47,10 @@ module Lain
         # @param project [#to_s] the project's root, whose basename is the feed title
         # @param env [#[]] the chat process's environment
         # @param output [#print, #flush] where the sequence is written
-        def self.for_chat(secrets, project, env: ENV, output: $stdout)
+        # @param deferred [Boolean] see {.for}
+        def self.for_chat(secrets, project, env: ENV, output: $stdout, deferred: false)
           mask = ->(text) { Sensitivity::TextMask.text(text, secrets:) }
-          self.for(env:, feed: Notices.for(env:), project: File.basename(project.to_s), mask:, output:)
+          self.for(env:, feed: Notices.for(env:), project: File.basename(project.to_s), mask:, output:, deferred:)
         end
 
         def self.sequence_for(env)
@@ -58,21 +63,40 @@ module Lain
 
         def initialize(**parts)
           @parts = parts
-          @sequence, @wrap, @feed, @tmux, @output, @mask, @title = parts.values_at(:sequence, :wrap, :feed, :tmux,
-                                                                                   :output, :mask, :title)
+          @sequence, @wrap, @feed, @tmux, @output, @mask, @title, @deferred, @bound =
+            parts.values_at(:sequence, :wrap, :feed, :tmux, :output, :mask, :title, :deferred, :bound)
         end
 
+        # A deferred notifier remembers the last output it was bound to, because the terminal rebinds
+        # its copy and the original is what the notices hold.
+        #
         # @return [Notifier] this one writing to `output` instead
-        def bound_to(output) = self.class.new(**@parts, output:)
+        def bound_to(output)
+          self.class.new(**@parts, output:).tap { @bound.replace([_1]) }
+        end
 
         # @return [nil]
         def call(note)
           text = plain(note)
+          quietly { deliver(text) } unless @deferred
+          quietly { @tmux.call(text) }
+          nil
+        end
+
+        # The desktop notification and the feed entry, to the output the terminal bound.
+        #
+        # @return [nil]
+        def notify(note)
+          (@bound.first || self).deliver(plain(note))
+          nil
+        end
+
+        protected
+
+        def deliver(text)
           title = plain(@title)
           quietly { write(@sequence.call(title.tr(";", " "), text.tr(";", " "))) }
-          quietly { @tmux.call(text) }
           quietly { @feed.call(SOURCE, title, text) }
-          nil
         end
 
         private

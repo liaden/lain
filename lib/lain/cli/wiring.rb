@@ -248,12 +248,14 @@ module Lain
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
+      # @param agent_states [AgentStates::Tracker, nil] the chat's tracker when a tee feeds it; its
+      #   notices then replace the notifier's own immediate sequence and feed entry
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
-                     project: Project::Resolver.default_project,
-                     tty_factory: Lain::Frontend::TTY.public_method(:new),
-                     conductor_opener: Lain::CLI::Conductor.public_method(:open),
+                     project: Project::Resolver.default_project, tty_factory: Lain::Frontend::TTY.public_method(:new),
+                     conductor_opener: Lain::CLI::Conductor.public_method(:open), agent_states: nil,
                      stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options))
         @options = options
+        @agent_states = agent_states
         @secret_oracle = SecretOracle.new(options)
         @arms = arms
         @chronicle = chronicle
@@ -367,10 +369,11 @@ module Lain
       def terminal_keywords(agent, notice)
         { channel:, input: Lain::Frontend::StdinPump.keys(@stdin), prompt_renderer: prompt_renderer(agent, notice),
           layers: @switchboard.mode_switch.method(:layers), alternate_screen: human.alternate_screen?,
-          tmux: Frontend::TTY::Notifier.for_chat(@switchboard.guard_inputs.secrets, root),
-          completion_sources: Frontend::Completion::Sources.new(skills: typed_names),
+          tmux: attention.notifier, completion_sources: Frontend::Completion::Sources.new(skills: typed_names),
           **Frontend::Theme.on_stdout(paths: @paths).terminal }
       end
+
+      def attention = @attention ||= Attention.for(@agent_states, switchboard: @switchboard, root:, paths: @paths)
 
       # An Enumerator, so the names are read when completion is first asked, after the command surface exists.
       def typed_names = Enumerator.new { |names| command_names.each { |name| names << name } }
@@ -972,7 +975,7 @@ module Lain
                  commands: @command_surface.commands, remote: remote_surface,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: attended? && !human.socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
-                 idle: idle_compaction(agent:, backend:), heard:)
+                 idle: idle_compaction(agent:, backend:), notices: attention.notices, heard:)
       end
 
       def remote_surface
