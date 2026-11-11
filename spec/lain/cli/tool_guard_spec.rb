@@ -1754,7 +1754,8 @@ RSpec.describe Lain::CLI::ToolGuard do
         effect = bash_call(command)
         carried = nil
         env = Lain::Middleware::Env.wrap({ effect:, context: leased_context })
-        Lain::Middleware::ParsedCommand.new.call(env) { |inner| (carried = inner.fetch(:context)) && inner }
+        parser = Lain::Middleware::ParsedCommand.new(scan: Lain::Approval::Disclosure::Unscanned)
+        parser.call(env) { |inner| (carried = inner.fetch(:context)) && inner }
         parses = 0
         allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
           parses += 1 if source == command

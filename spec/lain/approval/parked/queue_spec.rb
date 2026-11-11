@@ -711,7 +711,10 @@ RSpec.describe Lain::Approval::Parked::Queue do
     end
 
     def denied_by_human(effect, context = nil, reason: "not your business")
-      settled(effect, context) { |pending| pending.deny(surface: "spec", authority: :human, reason:) }
+      settled(effect, context) do |pending|
+        yield pending if block_given?
+        pending.deny(surface: "spec", authority: :human, reason:)
+      end
     end
 
     it "answers the human's reason for the denied path and anything under it, for the same requester" do
@@ -879,6 +882,24 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
         expect(remembered_of("/srv/p/x/.env", "/srv/p/x/a.rb"))
           .to eq("/srv/p/x/.env" => "not your business", "/srv/p/x/a.rb" => nil)
+      end
+
+      it "parks a call its stack parsed without parsing the command again" do
+        command = "cd x && cat .env"
+        parses = 0
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
+          parses += 1 if source == command
+          original.call(source, *rest)
+        end
+        face = nil
+        parser = Lain::Middleware::ParsedCommand.new(scan: Lain::Approval::Disclosure::Unscanned)
+        parser.call(Lain::Middleware::Env.wrap({ effect: runs(command), context: in_dir("/srv/p") })) do |env|
+          denied_by_human(runs(command), env.fetch(:context)) { face = _1.cwd_face }
+          env.merge(result: :done)
+        end
+
+        expect([remembered_of("/srv/p/x/.env"), face, parses])
+          .to eq([{ "/srv/p/x/.env" => "not your business" }, 'in "/srv/p"', 1])
       end
 
       it "remembers neither a glob's directory nor a recursive search's root" do
@@ -1129,6 +1150,14 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
     it "gives a pending parked with none an empty list" do
       expect(notes_of(nil)).to eq([])
+    end
+
+    it "follows the ladder's notes with the call's disclosure, in lain's words" do
+      disclosure = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: ["127.0.0.1"], unnameable: false)
+      disclosing = Lain::Approval::Escalation::Noted.new(Struct.new(:disclosure).new(disclosure), "a rung's note")
+
+      expect(notes_of(disclosing)).to eq(["a rung's note", '".env" holds 1 sensitive region',
+                                          'it names "127.0.0.1" as a network destination'])
     end
 
     it "answers reasons with lain's words plain and everyone else's quoted, in the order given" do
@@ -1612,7 +1641,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn]])
+                %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

@@ -2187,8 +2187,8 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         down.call(env)
       end)
       automatic = Lain::Middleware::WithholdAutomaticOutput
-      Lain::Middleware::Stack.new([Lain::Middleware::ParsedCommand.new, middleware,
-                                   automatic.new(bar: automatic::Bar.new), gate])
+      parser = Lain::Middleware::ParsedCommand.new(scan: Lain::Approval::Disclosure::Unscanned)
+      Lain::Middleware::Stack.new([parser, middleware, automatic.new(bar: automatic::Bar.new), gate])
     end
 
     def bash(command, authority:, stack: ruled_stack(authority))

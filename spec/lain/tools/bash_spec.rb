@@ -1208,7 +1208,8 @@ RSpec.describe Lain::Tools::Bash do
       def carrying(command, session)
         effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_p", name: "bash", input: { "command" => command })
         carried = nil
-        Lain::Middleware::ParsedCommand.new.call(Lain::Middleware::Env.wrap({ effect:, context: session })) do |env|
+        parser = Lain::Middleware::ParsedCommand.new(scan: Lain::Approval::Disclosure::Unscanned)
+        parser.call(Lain::Middleware::Env.wrap({ effect:, context: session })) do |env|
           (carried = env.fetch(:context)) && env
         end
         carried

@@ -218,12 +218,12 @@ module DeletionMap
     # for whichever way that decision goes.
     Capability.new(
       key: "disclosure",
-      # `Deferred` is spelled qualified and `Upfront` is not, and the leaf name
-      # is the whole reason: `Epic::Gate::Policy::Deferred` is a live class
-      # ending in the same segment, so a bare `Deferred` here would report four
-      # files of the approval gate as unlisted consumers of a toolset strategy
-      # they have never heard of.
-      constants: %w[Disclosure Upfront Disclosure::Deferred],
+      # `Disclosure` and `Deferred` are spelled qualified and `Upfront` is not,
+      # and the leaf name is the whole reason: `Approval::Disclosure` and
+      # `Epic::Gate::Policy::Deferred` are live classes ending in the same
+      # segment, so a bare name here would report the approval gate's files as
+      # unlisted consumers of a toolset strategy they have never heard of.
+      constants: %w[Toolset::Disclosure Upfront Disclosure::Deferred],
       files: ["lib/lain/toolset/disclosure.rb", "lib/lain/toolset/disclosure/upfront.rb",
               "lib/lain/toolset/disclosure/deferred.rb", "spec/lain/toolset/disclosure_spec.rb",
               "spec/lain/toolset/disclosure/deferred_spec.rb"],
@@ -343,12 +343,14 @@ module TreeSweep
 
   # `(?<!\w)` and not `\b`: the leaf of a qualified name (`Review::Submit`) must
   # match, while a longer identifier that merely ends in it (`EpicSubmit`) must
-  # not.
+  # not. A name spelled qualified (`Toolset::Disclosure`) matches as written, or
+  # as its bare leaf in a file that opens its namespace, where Ruby resolves the
+  # leaf lexically; a leaf another namespace qualifies (`Approval::Disclosure`)
+  # is a different constant and never matches.
   def self.namings
     MEMO.fetch_or_store(:namings) do
       DeletionMap::CAPABILITIES.to_h do |cap|
-        pattern = Regexp.union(cap.constants.map { |name| /(?<!\w)#{Regexp.escape(name)}\b/ })
-        [cap.key, cap.constants.empty? ? [] : code.select { |_path, body| body.match?(pattern) }.keys]
+        [cap.key, code.select { |_path, body| cap.constants.any? { |name| names?(body, name) } }.keys]
       end.freeze
     end
   end
@@ -359,10 +361,33 @@ module TreeSweep
   def self.definings
     MEMO.fetch_or_store(:definings) do
       DeletionMap::CAPABILITIES.to_h do |cap|
-        pattern = Regexp.union(cap.constants.map { |name| /^\s*(?:class|module)\s+#{Regexp.escape(name)}\b/ })
-        [cap.key, cap.constants.empty? ? [] : code.select { |_path, body| body.match?(pattern) }.keys]
+        [cap.key, code.select { |_path, body| cap.constants.any? { |name| defines?(body, name) } }.keys]
       end.freeze
     end
+  end
+
+  def self.names?(body, name)
+    namespace, leaf = split(name)
+    body.match?(/(?<!\w)#{Regexp.escape(name)}\b/) ||
+      (!namespace.nil? && opens?(body, namespace) && body.match?(/(?<![\w:])#{Regexp.escape(leaf)}\b/))
+  end
+
+  def self.defines?(body, name)
+    namespace, leaf = split(name)
+    body.match?(/^\s*(?:class|module)\s+#{Regexp.escape(name)}\b/) ||
+      (!namespace.nil? && opens?(body, namespace) && body.match?(/^\s*(?:class|module)\s+#{Regexp.escape(leaf)}\b/))
+  end
+
+  # Opened whole on one line (`class Epic::Gate`), or one segment at a time, every segment opened.
+  def self.opens?(body, namespace)
+    body.match?(/^\s*(?:class|module)\s+(?:[\w:]*::)?#{Regexp.escape(namespace)}\b/) ||
+      namespace.split("::").all? { |segment| body.match?(/^\s*(?:class|module)\s+#{Regexp.escape(segment)}\b/) }
+  end
+
+  # @return [Array(String, String), Array(nil, String)] the namespace and the leaf; no namespace for a bare name
+  def self.split(name)
+    namespace, _, leaf = name.rpartition("::")
+    [namespace.empty? ? nil : namespace, leaf]
   end
 
   module_function
@@ -478,6 +503,19 @@ RSpec.describe "the deletion map", :seam do
   def testable
     expect(DeletionMap::TESTABLE.map(&:key)).to eq(DeletionMap::KEYS)
     DeletionMap::TESTABLE
+  end
+
+  # A qualified name's bare leaf counts only in a file that opens the whole namespace, so a class
+  # that merely shares the namespace's last segment does not claim another unit's leaf.
+  it "reads a qualified name's bare leaf only inside its whole namespace" do
+    opened = "module Epic\n  class Gate\n    Deferred.new\n  end\nend\n"
+    partly = "class Gate\n  Deferred.new\nend\n"
+    defined = "module Epic\n  class Gate\n    class Deferred; end\n  end\nend\n"
+
+    expect([TreeSweep.names?(opened, "Epic::Gate::Deferred"), TreeSweep.names?(partly, "Epic::Gate::Deferred"),
+            TreeSweep.defines?(defined, "Epic::Gate::Deferred"),
+            TreeSweep.defines?(partly.sub("Deferred.new", "class Deferred; end"), "Epic::Gate::Deferred")])
+      .to eq([true, false, true, false])
   end
 
   it "covers every row the two plans declare deletable" do

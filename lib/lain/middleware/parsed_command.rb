@@ -11,18 +11,30 @@ module Lain
     # the directory differently and name different paths.
     #
     # The ladder is asked a context rather than the env, so the parse also rides
-    # on the context, read by respond_to? as {Approval::Escalation::Noted} is.
+    # on the context, read by respond_to? as {Approval::Escalation::Noted} is,
+    # and so does the call's {Approval::Disclosure}: built here rather than in a
+    # rung, because a rung that adds a note changes what the rungs below it see.
     class ParsedCommand < Base
       # @!attribute parsed_command [Shell::Parse::Result, nil] nil when the call names no command
       # @!attribute named_command [Shell::Named] the paths the gate reads off that parse
+      # @!attribute disclosure [Approval::Disclosure] what the call's files hold and where it sends
       class Parsed < SimpleDelegator
         attr_reader :parsed_command, :named_command
 
-        def initialize(context, parsed, named)
+        # @param context [Object] the context the call was asked in
+        # @param parsed [Shell::Parse::Result, nil]
+        # @param named [Shell::Named]
+        # @param disclose [#call] `-> Approval::Disclosure`, asked at most once
+        def initialize(context, parsed, named, disclose)
           super(context)
           @parsed_command = parsed
           @named_command = named
+          @disclose = disclose
         end
+
+        # Computed on first read, so a call a rule approves never reads its files;
+        # a memo adds no note, so no rung below sees anything it would not have.
+        def disclosure = @disclosure ||= @disclose.call
       end
 
       # @param context [Object]
@@ -45,8 +57,11 @@ module Lain
       end
 
       # @param home [String, nil] for a `~` in the command, as the session's path policy reads it
-      def initialize(home: nil)
+      # @param scan [#call] `path -> Approval::Disclosure::Scanner::Count or nil`, what a file the call
+      #   reads holds; required, so no stack reads the live disk by default
+      def initialize(scan:, home: nil)
         @home = home
+        @scan = scan
         super()
         freeze
       end
@@ -59,10 +74,19 @@ module Lain
         parsed = parse(effect)
         named = Shell::Named.for_call(effect, context, home: @home, parsed:)
         # A caller threading no session has no context to carry it.
-        downstream(env.merge(named:, context: context && Parsed.new(context, parsed, named)), &app)
+        downstream(env.merge(named:, context: context && carrying(context, parsed, named)), &app)
       end
 
       private
+
+      def carrying(context, parsed, named)
+        Parsed.new(context, parsed, named, -> { disclosure(context, parsed, named) })
+      end
+
+      # Named from the session's directory, the one the row shows beside the call.
+      def disclosure(context, parsed, named)
+        Approval::Disclosure.of(named, parsed&.stages || [], cwd: ::Lain::Session.cwd_of(context).to_s, scan: @scan)
+      end
 
       def parse(effect)
         command = Shell::Named.field_of(effect.input, Shell::Named::COMMAND)

@@ -710,7 +710,8 @@ module Lain
       # The parse follows the configured members, which may rewrite the command, so every
       # guard below reads the text that will run.
       def configured_then_parsed(inputs)
-        [*configured(inputs), Middleware::ParsedCommand.new(home: inputs.sensitivity.home)]
+        [*configured(inputs), Middleware::ParsedCommand.new(home: inputs.sensitivity.home,
+                                                            scan: Approval::Disclosure::Scanner.over(inputs.sensitivity))]
       end
 
       # Fresh instances on every call, so no two stacks share one.

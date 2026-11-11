@@ -200,10 +200,12 @@ module Lain
           # process's, as for a call made with no session. `within` is where the
           # gate counted directory names from, see {Sensitivity::Policy.base_of}.
           # `file_facts` is what the path's landing is read off at construction.
+          # `named` is the paths a bash call names, as its stack read them; absent,
+          # they are read off the command when first asked.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
-                         silence: Silence::DENY, spawn: nil)
+                         silence: Silence::DENY, spawn: nil, named: nil)
             @spawn = spawn
             @timeout = timeout
             @silence = silence
@@ -211,7 +213,7 @@ module Lain
             @notes = @reasons.map(&:text).freeze
             @wall = wall
             @humans_only = humans_only == true
-            take(effect)
+            take(effect, named)
             place(cwd, within, file_facts)
             @outstanding = outstanding || Outstanding::NONE
             @identity = identity
@@ -231,7 +233,8 @@ module Lain
           # @return [String] the asking identity as a surface shows it
           def label = identity.to_s
 
-          def take(effect)
+          def take(effect, named)
+            @named = named
             @tool = effect.name
             @tool_use_id = effect.tool_use_id
             @input = effect.input
@@ -379,12 +382,17 @@ module Lain
             value if value.is_a?(String)
           end
 
+          # @return [Shell::Named, nil] the paths a bash call names; nil for any other tool
+          def named
+            return unless tool == BASH
+
+            @named ||= ::Lain::Shell::Named.for_input(input, cwd:, home: Dir.home)
+          end
+
           def relative_path?
             return path.present? && !path.start_with?("/", "~") unless tool == BASH
 
-            ::Lain::Shell::Named.for_input(input, cwd:, home: Dir.home).paths.any? do |named|
-              !named.absolute? && !named.word.start_with?("-")
-            end
+            named.paths.any? { !_1.absolute? && !_1.word.start_with?("-") }
           end
           private :relative_path?
 
@@ -659,12 +667,20 @@ module Lain
                                 timeout: @timeout, wall: @wall, outstanding:,
                                 humans_only: context.respond_to?(:automatic_approval_barred?) &&
                                              context.automatic_approval_barred?,
-                                notes: context.respond_to?(:parked_because) ? context.parked_because : [],
+                                notes: notes_of(context), named: named_of(effect, context),
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
                                 file_facts: @file_facts, silence: @silence,
                                 spawn: context.respond_to?(:spawn) ? context.spawn : nil)
           park(pending)
+        end
+
+        def notes_of(context)
+          [*(context.parked_because if context.respond_to?(:parked_because)), *Disclosure.in(context).notes]
+        end
+
+        def named_of(effect, context)
+          ::Lain::Middleware::ParsedCommand.named_in(effect, context, home: @home) if effect.name == BASH
         end
 
         def park(pending)
@@ -727,7 +743,7 @@ module Lain
         # it was read as carrying.
         def named_files(pending)
           directory = ::Lain::Shell::Named.directory_of(pending.input, cwd: pending.cwd, home: @home)
-          named = ::Lain::Shell::Named.for_input(pending.input, cwd: pending.cwd, home: @home, directory:)
+          named = pending.named
           return [] if named.opaque?
 
           places = [directory, *named.paths.select(&:directory).map(&:resolved)]

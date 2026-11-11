@@ -867,7 +867,8 @@ RSpec.describe Lain::Approval::Escalation do
     let(:carried) do
       session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/srv/project", env: {}))
       held = nil
-      Lain::Middleware::ParsedCommand.new.call(Lain::Middleware::Env.wrap({ effect: call, context: session })) do |env|
+      parser = Lain::Middleware::ParsedCommand.new(scan: Lain::Approval::Disclosure::Unscanned)
+      parser.call(Lain::Middleware::Env.wrap({ effect: call, context: session })) do |env|
         (held = env.fetch(:context)) && env
       end
       held

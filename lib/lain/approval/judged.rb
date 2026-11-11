@@ -182,6 +182,22 @@ module Lain
         end
       end
 
+      # The facts the judge is told, followed by the call's {Disclosure} in the
+      # words its parked row shows, so the judge and the human weigh one account.
+      class Disclosed < SimpleDelegator
+        HEADER = "disclosure (computed by lain, not by the model):"
+
+        # @param facts [Judge::Facts]
+        # @param notes [Array<Parked::Queue::Reason>]
+        def initialize(facts, notes)
+          super(facts)
+          @notes = notes
+        end
+
+        # @return [String]
+        def to_s = "#{__getobj__}\n#{HEADER}\n#{@notes.join("\n")}\n"
+      end
+
       # A ruling that also names, by digest, what the judge read, so the ladder's
       # record of it carries the same fields as the records this rung writes itself.
       class Read < Escalation::Ruling
@@ -366,9 +382,14 @@ module Lain
         cwd = ::Lain::Session.cwd_of(context)
         Judge::Place.new(root:, cwd:, requester: requester_of(context),
                          outside: outside(effect, context, cwd),
-                         facts:, request: @request.call(context),
+                         facts: disclosed(facts, context), request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root),
                          read_roots: read_roots(context), classified: classified(effect, context, cwd))
+      end
+
+      def disclosed(facts, context)
+        notes = Disclosure.in(context).notes
+        notes.empty? ? facts : Disclosed.new(facts, notes)
       end
 
       def read_roots(context) = held_to(context).bounds.readable
