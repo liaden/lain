@@ -119,7 +119,49 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
     end
   end
 
+  describe "#window_surface" do
+    def listing_bin(plugins)
+      File.join(root, "listing-herdr").tap { |bin| File.write(bin, "#!/bin/sh\necho '#{plugins}'\n", perm: 0o755) }
+    end
+
+    def binding_over(bin, via: :env)
+      target = Lain::Herdr::Target.new(bin:, pane: "w1:p7", socket: File.join(root, "s.sock"), via:)
+      described_class.new(notes:, reporter: reporter(stub_herdr), resolver: Struct.new(:current).new(target))
+    end
+
+    it "is a herdr surface for a plain pane with lain linked, the same one on every ask" do
+      subject = binding_over(listing_bin('{"result":{"plugins":[{"plugin_id":"lain","enabled":true}]}}'))
+
+      expect(subject.window_surface.windows_from_here?({})).to be(true)
+      expect(subject.window_surface).to be(subject.window_surface)
+    end
+
+    it "is a tmux surface for a cockpit target" do
+      surface = binding_over(listing_bin("{}"), via: :cockpit).window_surface
+
+      expect(surface.windows_from_here?({})).to be(false)
+    end
+
+    it "asks herdr nothing until a window is wanted" do
+      subject = binding_over(stub_herdr)
+      subject.window_surface
+
+      expect(File.exist?(calls_path)).to be(false)
+    end
+
+    it "holds the note about a missing link for the chat's screen" do
+      binding_over(listing_bin('{"result":{"plugins":[]}}')).window_surface.windows_from_here?({})
+      notes.bind(screen.method(:<<))
+
+      expect(screen).to eq([Lain::CLI::WindowSurface::NOT_LINKED])
+    end
+  end
+
   describe "Null" do
+    it "answers a tmux window surface" do
+      expect(described_class::Null.new.window_surface).to be_a(Lain::CLI::TmuxSurface)
+    end
+
     it "defaults to the stock terminal" do
       expect(described_class::Null.new(env: {}).tty_factory).to eq(Lain::Frontend::TTY.public_method(:new))
     end

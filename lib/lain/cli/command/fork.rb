@@ -52,7 +52,7 @@ module Lain
 
         def name = "fork"
 
-        def usage = "/fork -- fork this session at its head into a new tmux window (persistent sibling chat)"
+        def usage = "/fork -- fork this session at its head into a new tmux or herdr window (persistent sibling chat)"
 
         def call(args, env)
           target = args.to_s.strip
@@ -111,7 +111,7 @@ module Lain
         def open_fork(env)
           selector = anchored_selector(env)
           printable = "lain chat --fork #{Shellwords.escape(selector)}"
-          inside_tmux? ? place_window(env, selector, printable) : outside_tmux(printable)
+          opens_windows?(env) ? place_window(env, selector, printable) : outside_tmux(printable)
         end
 
         # The WINDOW command is {PaneCommand.call}'s recipe, not the printable
@@ -137,14 +137,15 @@ module Lain
           selector
         end
 
-        def inside_tmux? = !@environment["TMUX"].to_s.empty?
+        def opens_windows?(env) = env.tmux_surface.windows_from_here?(@environment)
 
         def outside_tmux(command)
-          "not inside tmux, so no window can open here; run the fork yourself:\n  #{command}"
+          "not inside tmux or a herdr pane with lain herdr link, so no window can open here; " \
+            "run the fork yourself:\n  #{command}"
         end
 
         def placed(placement, command)
-          "forked into tmux #{placement.kind} #{placement.target}: #{command}"
+          "forked into #{placement.kind} #{placement.target}: #{command}"
         end
 
         def window_name(selector)

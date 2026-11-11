@@ -28,6 +28,14 @@ end
 WINDOW_NAME_FORMAT = '#{window_name}' # rubocop:disable Lint/InterpolationCheck
 
 RSpec.describe Lain::CLI::TmuxSurface do
+  describe "#windows_from_here?" do
+    it "is true only when TMUX is set in the environment asked about" do
+      expect(described_class.new.windows_from_here?({ "TMUX" => "/tmp/tmux-1000/default,1,0" })).to be(true)
+      expect(described_class.new.windows_from_here?({ "TMUX" => "" })).to be(false)
+      expect(described_class.new.windows_from_here?({})).to be(false)
+    end
+  end
+
   def tmux_present? = system("tmux", "-V", out: File::NULL, err: File::NULL)
 
   describe "against a real tmux server" do

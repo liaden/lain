@@ -7,6 +7,15 @@ require "tmpdir"
 # The herdr binary is a stub script on a temp path: it logs each call and answers from files the
 # examples write, so nothing here reaches a real herdr.
 RSpec.describe Lain::CLI::HerdrSurface do
+  let(:surface) do
+    described_class.new(target:, status_dir:,
+                        shell_out_factory: lambda { |*argv, **opts|
+                          Lain::Shell::Out.new(*argv, **opts, environment: opts[:environment].merge("STUB_DIR" => dir))
+                        })
+  end
+  let(:target) { Lain::Herdr::Target.new(bin: File.join(dir, "herdr"), pane: "w1:p1", socket: "/run/herdr.sock", via: :env) }
+  let(:status_dir) { File.join(dir, "status") }
+  let(:dir) { Dir.mktmpdir("herdr-surface-spec", ENV.fetch("TMPDIR", nil)) }
   let(:stub_herdr) do
     <<~'SH'
       #!/bin/sh
@@ -29,15 +38,7 @@ RSpec.describe Lain::CLI::HerdrSurface do
     SH
   end
 
-  let(:dir) { Dir.mktmpdir("herdr-surface-spec", ENV.fetch("TMPDIR", nil)) }
-  let(:status_dir) { File.join(dir, "status") }
-  let(:target) { Lain::Herdr::Target.new(bin: File.join(dir, "herdr"), pane: "w1:p1", socket: "/run/herdr.sock", via: :env) }
-  let(:surface) do
-    described_class.new(target:, status_dir:,
-                        shell_out_factory: lambda { |*argv, **opts|
-                          Lain::Shell::Out.new(*argv, **opts, environment: opts[:environment].merge("STUB_DIR" => dir))
-                        })
-  end
+  after { FileUtils.remove_entry(dir) }
 
   before do
     File.write(File.join(dir, "herdr"), stub_herdr)
@@ -46,7 +47,13 @@ RSpec.describe Lain::CLI::HerdrSurface do
     tabs([])
   end
 
-  after { FileUtils.remove_entry(dir) }
+  describe "#windows_from_here?" do
+    it "is true whatever the environment, since it is chosen only for a linked herdr pane" do
+      target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
+
+      expect(described_class.new(target:).windows_from_here?({})).to be(true)
+    end
+  end
 
   def answer_open(pane, tab)
     reply = { "id" => "cli:plugin",
@@ -235,7 +242,7 @@ RSpec.describe Lain::CLI::HerdrSurface do
     it "serves /fork" do
       reply = Lain::CLI::Command::Fork.new(environment: { "TMUX" => "x" }).call("", env)
 
-      expect(reply).to start_with("forked into tmux window fork-ab12ab12ab12")
+      expect(reply).to start_with("forked into window fork-ab12ab12ab12")
       expect(calls.last).to eq("tab rename w1:t5 fork-ab12ab12ab12")
     end
 

@@ -324,6 +324,81 @@ RSpec.describe Lain::CLI::ChatLaunch do
 
       expect { instance.call { |_notice| nil } }.not_to raise_error
     end
+
+    context "with a plain herdr pane and no tmux" do
+      around do |example|
+        Dir.mktmpdir("lain-chat-herdr") do |dir|
+          @herdr_dir = File.realpath(dir)
+          example.run
+        end
+      end
+
+      let(:linked) do
+        '{"id":"cli:plugin","result":{"plugins":[{"name":"lain","plugin_id":"lain","enabled":true,' \
+          '"panes":[{"id":"run"}]}]}}'
+      end
+      let(:unlinked) { '{"id":"cli:plugin","result":{"plugins":[]}}' }
+
+      def herdr_env(plugins)
+        bin = File.join(@herdr_dir, "herdr")
+        File.write(bin, <<~SH, perm: 0o755)
+          #!/bin/sh
+          if [ "$1" = agent ]; then echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; fi
+          echo "$*" >> "#{@herdr_dir}/plugin-probes"
+          echo '#{plugins}'
+        SH
+        { "HERDR_ENV" => "1", "HERDR_BIN_PATH" => bin, "HERDR_PANE_ID" => "w1:p1",
+          "HERDR_SOCKET_PATH" => File.join(@herdr_dir, "s.sock") }
+      end
+
+      def probes = File.exist?("#{@herdr_dir}/plugin-probes") ? File.readlines("#{@herdr_dir}/plugin-probes") : []
+
+      def launch_windows(env, windows: true, **factories)
+        wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+        allow(wiring).to receive(:run)
+        project = throwaway_project(@herdr_dir)
+        launch({ windows:, journal: true, provider: "ollama" },
+               wiring_factory: ->(**) { wiring }, env:, project_factory: -> { project }, **factories)
+      end
+
+      it "does not refuse --windows when the lain plugin is linked" do
+        instance = launch_windows(herdr_env(linked))
+
+        expect { instance.call { |_notice| nil } }.not_to raise_error
+      end
+
+      it "refuses --windows when the plugin is not linked, naming both ways in" do
+        instance = launch_windows(herdr_env(unlinked))
+
+        expect { instance.call { |_notice| nil } }
+          .to raise_error(Lain::Error, /\$TMUX.*herdr pane with lain herdr link/m)
+      end
+
+      it "never asks herdr for its plugin list in a chat that opens no window" do
+        launch_windows(herdr_env(linked), windows: false).call { |_notice| nil }
+
+        expect(probes).to be_empty
+      end
+
+      it "probes the plugin list once across the whole launch" do
+        launch_windows(herdr_env(linked)).call { |_notice| nil }
+
+        expect(probes).to eq(["plugin list --json\n"])
+      end
+
+      it "hands the live views the window surface chosen for this chat" do
+        given = nil
+        factory = lambda { |window_surface:, **kwargs|
+          given = window_surface
+          Lain::CLI::LiveViews.new(window_surface:, **kwargs)
+        }
+
+        launch_windows(herdr_env(linked), live_views_factory: factory).call { |_notice| nil }
+
+        expect(given.windows_from_here?({})).to be(true)
+        expect(given).to respond_to(:popup)
+      end
+    end
   end
 
   describe "the ensure-close bracket" do

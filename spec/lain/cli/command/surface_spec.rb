@@ -47,10 +47,22 @@ RSpec.describe Lain::CLI::Command::Surface do
                         status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
 
-  it "hands the reporter it was given to the env its commands read" do
+  it "hands the herdr binding's reporter and window surface to the env its commands read" do
     reporter = Object.new
+    window_surface = Object.new
+    herdr = Struct.new(:reporter, :window_surface).new(reporter, window_surface)
 
-    expect(build_surface(Dir.pwd, reporter:).env.reporter).to be(reporter)
+    env = build_surface(Dir.pwd, herdr:).env
+
+    expect(env.reporter).to be(reporter)
+    expect(env.tmux_surface).to be(window_surface)
+  end
+
+  it "gets tmux windows and no reporting when built without a launch" do
+    env = build_surface(Dir.pwd).env
+
+    expect(env.tmux_surface).to be_a(Lain::CLI::TmuxSurface)
+    expect(env.reporter).to eq(Lain::Herdr::Reporter::Null.new)
   end
 
   describe "/held" do

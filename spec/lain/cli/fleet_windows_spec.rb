@@ -784,6 +784,18 @@ RSpec.describe Lain::CLI::FleetWindows do
         .to be_a(described_class)
     end
 
+    it "answers a live sink over a herdr surface with the flag and no $TMUX" do
+      target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
+      herdr = Lain::CLI::HerdrSurface.new(target:)
+
+      expect(described_class.for({ windows: true }, env: {}, surface: herdr)).to be_a(described_class)
+    end
+
+    it "answers the Null sink for a tmux surface outside tmux, whatever surface it is handed" do
+      expect(described_class.for({ windows: true }, env: {}, surface: Lain::CLI::TmuxSurface.new))
+        .to be_a(described_class::Null)
+    end
+
     it "gives the Null the same duck: <<, notice=, drain_pending" do
       null = described_class::Null.new
       null.notice = notices

@@ -189,7 +189,8 @@ module Lain
         # opens neither and stays byte-identical.
         return unless @options[:nvim] || @options[:journal]
 
-        @live_views = @live_views_factory.call(options: @options, chronicle:, status_feed:, agent_states:)
+        @live_views = @live_views_factory.call(options: @options, chronicle:, status_feed:, agent_states:,
+                                               window_surface: herdr_binding.window_surface)
       end
 
       # The ONE StatusFeed for the run, built here so it can sit in the tee's
@@ -227,7 +228,8 @@ module Lain
       def herdr_notes = @herdr_notes ||= Herdr::HeldNotes.new
 
       def herdr_binding
-        Wiring::HerdrBinding.new(notes: herdr_notes, reporter: herdr_reporter, resolver: herdr_resolver, env: @env)
+        @herdr_binding ||= Wiring::HerdrBinding.new(notes: herdr_notes, reporter: herdr_reporter,
+                                                    resolver: herdr_resolver, env: @env)
       end
 
       # The ONE {Backend} for the run, shared exactly as {#run_clock} and
@@ -438,10 +440,11 @@ module Lain
       # this refusal is what keeps that degrade from reading as a `--windows`
       # that silently did nothing.
       def refuse_windows_outside_tmux!
-        return unless @options[:windows] && @env["TMUX"].to_s.empty?
+        return unless @options[:windows] && !herdr_binding.window_surface.windows_from_here?(@env)
 
         raise Lain::Error, "--windows opens panes in the tmux session this process is already inside, " \
-                           "and $TMUX is not set -- start tmux first, or drop --windows"
+                           "and $TMUX is not set -- start tmux first, run lain in a herdr pane with " \
+                           "lain herdr link done, or drop --windows"
       end
 
       # A headless chat reads no line, so a run with nothing seeded has nothing

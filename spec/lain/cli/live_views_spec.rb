@@ -55,6 +55,17 @@ RSpec.describe Lain::CLI::LiveViews do
     end
   end
 
+  describe "#fleet" do
+    it "opens its windows through the surface it was given, with no $TMUX needed" do
+      target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
+      surface = Lain::CLI::HerdrSurface.new(target:)
+      views = described_class.new(options: { journal: true, windows: true }, chronicle:, status_feed:, agent_states:,
+                                  window_surface: surface)
+
+      expect(views.fleet.instance_variable_get(:@pump).surface).to be(surface)
+    end
+  end
+
   # Streamed tool bytes are a VIEW, not a record: the durable copy already
   # rides the turn's tool_result (Tools::Bash.render_output), so this fan-out
   # reaches channels only and never the journal.

@@ -34,6 +34,7 @@ RSpec.describe Lain::CLI::Command::Fork do
   let(:placement) { Lain::CLI::TmuxSurface::Placement.new(kind: :window, target: "fork-ab12ab12ab12", degraded: false, reason: nil) }
   let(:tmux_surface) do
     surface = instance_double(Lain::CLI::TmuxSurface)
+    allow(surface).to receive(:windows_from_here?) { |environment| !environment["TMUX"].to_s.empty? }
     allow(surface).to receive(:window) {
       calls << :window
       placement
@@ -206,6 +207,10 @@ RSpec.describe Lain::CLI::Command::Fork do
   describe "outside tmux" do
     subject(:fork_command) { described_class.new(environment: {}) }
 
+    it "names herdr as the other way to get windows" do
+      expect(fork_command.call("", env)).to include("not inside tmux or a herdr pane with lain herdr link")
+    end
+
     it "prints the exact `lain chat --fork ...` command instead of failing" do
       text = fork_command.call("", env)
 
@@ -218,6 +223,28 @@ RSpec.describe Lain::CLI::Command::Fork do
 
       expect(calls.first).to eq(:catch_up)
       expect(fork_point).to have_received(:call).with(selector)
+    end
+  end
+
+  describe "in a herdr pane, outside tmux" do
+    subject(:fork_command) { described_class.new(environment: {}) }
+
+    let(:tmux_surface) do
+      target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
+      surface = Lain::CLI::HerdrSurface.new(target:)
+      allow(surface).to receive(:window) {
+        calls << :window
+        placement
+      }
+      surface
+    end
+
+    it "opens the window through the herdr surface instead of printing the command" do
+      text = fork_command.call("", env)
+
+      expect(calls).to include(:window)
+      expect(text).to include("forked into", command_line)
+      expect(text).not_to include("tmux")
     end
   end
 
@@ -299,7 +326,7 @@ RSpec.describe Lain::CLI::Command::Fork, "the child's backend" do
   end
 
   def composed_command
-    surface = instance_double(Lain::CLI::TmuxSurface)
+    surface = instance_double(Lain::CLI::TmuxSurface, windows_from_here?: true)
     placement = Lain::CLI::TmuxSurface::Placement.new(kind: :window, target: "fork", degraded: false, reason: nil)
     composed = nil
     allow(surface).to receive(:window) do |command:, **|

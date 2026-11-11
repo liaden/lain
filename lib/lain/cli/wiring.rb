@@ -1003,7 +1003,7 @@ module Lain
       def assemble_surface(agent:, library:, window:, endpoint:, middleware:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
-                             cwd: project.cwd, middleware:, rail: @rail, reporter: @herdr.reporter,
+                             cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor,
                                                          endpoint:),

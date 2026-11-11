@@ -443,9 +443,9 @@ RSpec.describe Lain::Herdr::Reporter do
       end
     RUBY
 
-    define_method(:chat_in_herdr) do |bin|
+    define_method(:chat_in_herdr) do |bin, lines = "first prompt\nrun the command\ny\n"|
       prompts = File.join(dir, "prompts.txt")
-      File.write(prompts, "first prompt\nrun the command\ny\n")
+      File.write(prompts, lines)
       log = File.join(dir, "output.log")
       env = { "HERDR_ENV" => "1", "HERDR_PANE_ID" => "w1:p7", "HERDR_BIN_PATH" => bin, "HERDR_SOCKET_PATH" => socket,
               "XDG_STATE_HOME" => File.join(dir, "state"), "XDG_CONFIG_HOME" => File.join(dir, "config"),
@@ -467,6 +467,14 @@ RSpec.describe Lain::Herdr::Reporter do
       expect(calls.map { _1.first(2) }.uniq).to contain_exactly(%w[agent get], %w[pane report-agent],
                                                                 %w[pane release-agent])
       expect(calls.flatten.grep(/herdr:|integration|plugin|config|server/)).to be_empty
+    end
+
+    it "asks herdr for its plugin list once, and only when a window is first wanted" do
+      output, status = chat_in_herdr(stub_herdr, "first prompt\n/fork\n/fork\n")
+
+      expect(status).to be_success, output
+      expect(calls.select { _1.first == "plugin" }).to eq([%w[plugin list --json]])
+      expect(calls.flatten.grep(/herdr:|integration|config|server/)).to be_empty
     end
 
     it "says a failed report on the chat's own screen, never through the exe's notice block" do

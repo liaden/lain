@@ -23,6 +23,9 @@ module Lain
 
           def focus = Frontend::Focus.tmux(env: @env)
 
+          # @return [TmuxSurface]
+          def window_surface = TmuxSurface.new
+
           # @return [Herdr::Reporter::Null]
           def reporter = Herdr::Reporter::Null.new
         end
@@ -43,6 +46,9 @@ module Lain
 
         # @return [#focused?] whether the human is at the chat's window, by where the chat runs
         def focus = Frontend::Focus.for(env: @env, resolver: @resolver)
+
+        # @return [WindowSurface::Lazy] chooses once, on first use, so the probe and its note are not repeated
+        def window_surface = @window_surface ||= WindowSurface::Lazy.new(resolver: @resolver, notes: @notes)
 
         # @param factory [#call] builds the terminal from {Wiring}'s keywords, `tmux:` the notifier among them
         # @return [#call] the same factory, binding the reporter to what it builds

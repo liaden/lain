@@ -189,6 +189,10 @@ module Lain
         self
       end
 
+      # @param env [#[]] the environment a window would be opened from
+      # @return [Boolean] whether tmux is attached there, which exports TMUX into every pane
+      def windows_from_here?(env) = !env["TMUX"].to_s.empty?
+
       # A pane gets the SERVER's environment, so a credential in the launching
       # shell but not here never reaches it. Asks by name only, so no value
       # ever sits on a command line.

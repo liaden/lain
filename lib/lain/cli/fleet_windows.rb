@@ -302,17 +302,18 @@ module Lain
         def perform(command) = command.perform(self)
       end
 
-      # Live only when the operator asked (--windows) AND there is a tmux to
-      # open windows in.
+      # Live only when the operator asked (--windows) AND there is somewhere to
+      # open windows in: a tmux, or a herdr surface.
       #
       # @param options [Hash] the invoked command's parsed flags
       # @param env [Hash] the process environment, read for TMUX
+      # @param surface [#window] where windows open; {WindowSurface}'s choice for this chat
       # @option options [Boolean] :windows whether the operator asked for windows
       # @return [FleetWindows, Null]
-      def self.for(options, env: ENV)
-        return Null.new if !options[:windows] || env["TMUX"].to_s.empty?
+      def self.for(options, env: ENV, surface: TmuxSurface.new)
+        return Null.new unless options[:windows] && surface.windows_from_here?(env)
 
-        new(surface: TmuxSurface.new)
+        new(surface:)
       end
 
       # @param surface [TmuxSurface] the one object that shells out to tmux

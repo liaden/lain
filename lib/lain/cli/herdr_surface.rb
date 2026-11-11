@@ -80,6 +80,10 @@ module Lain
         self
       end
 
+      # @param _env [#[]] unread: this surface is chosen only for a linked plain herdr pane
+      # @return [true]
+      def windows_from_here?(_env) = true
+
       # herdr panes inherit the server's own environment, so there is nothing to inspect.
       def missing_from_global_environment(_names) = []
 
