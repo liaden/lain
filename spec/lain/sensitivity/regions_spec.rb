@@ -1466,6 +1466,45 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
   end
 
+  describe ".detect over content-addressed paths" do
+    it "finds nothing in a cargo test runner line" do
+      expect(detect("Running unittests src/lib.rs (target/debug/deps/word_count-46e9759e7fd1a230)")).to eq([])
+    end
+
+    it "finds nothing in nix store, docker overlay and huggingface snapshot paths" do
+      paths = ["/nix/store/b6gvzjyb2pg0kjfwrjmg1vfhh54ad73z-firefox-33.1/bin/firefox",
+               "/var/lib/docker/overlay2/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/diff/etc",
+               "/home/u/.cache/huggingface/hub/models--Qwen--Qwen3-8B/snapshots/" \
+               "a09a35458c702b33eeacc393d103063234e8bc28/config.json"]
+
+      expect(paths.map { detect(_1) }).to eq([[], [], []])
+    end
+
+    it "still finds a random name beside a store hash" do
+      paths = ["/nix/store/99z78g3bp6wcp3zvyq5hyjpkgp71s8aw-kyYkQLeM9SYCejEkarNcH4XUwLCrh4EnDkrVvs8f",
+               "/hub/models--q4OcfcoKRsvjDlhedWm1vqbskfhiFY/snapshots/790011175d4b2d4056f53ca55913bcd5961b0014/config"]
+
+      expect(paths.map { detect(_1).size }).to eq([1, 1])
+    end
+
+    it "still finds a random segment after a store path" do
+      path = "/nix/store/2a44rhiqhi3dpqrf0259pbkf5k9krv3b-x/q4OWMDxU9jWPGJplU7cyegdl"
+
+      expect(detect(path).size).to eq(1)
+    end
+
+    it "still finds a key-width hex segment in a URL" do
+      keys = %w[9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08 cf588750bd0289e64e97338301006fdc]
+      urls = ["https://api.example.com/keys/#{keys[0]}/send", "https://hooks.example.com/notify/#{keys[1]}"]
+
+      expect(urls.map { detect(_1).map(&:bytes) }).to match([[include(keys[0])], [include(keys[1])]])
+    end
+
+    it "still finds a random mixed-case path segment" do
+      expect(detect("files/Xk9mP2qR7vL4nT8wZ3bY6cH1/data").map(&:bytes)).to eq(["files/Xk9mP2qR7vL4nT8wZ3bY6cH1/data"])
+    end
+  end
+
   describe ".detect over-masking" do
     def over_masked_reason(shape) = "over-masked: #{shape} could not be scanned to the end"
 

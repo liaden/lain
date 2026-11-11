@@ -34,6 +34,23 @@ module Lain
       # fit a looser word; a segment still needs 1 such word, not only acronyms.
       REAL_WORD = /[A-Z][a-z]{2,}/
       CAMEL_PIECE = /\A(?:[A-Z][a-z]{2,}|[A-Z]{2,}|\d+[A-Z]?)+\z/
+      # A name with a build hash after a dash, as cargo names an artifact
+      # (`word_count-46e9759e7fd1a230`). The hex is capped at a build hash's
+      # width so a longer run behind a word is judged as a word segment.
+      WORD_HEX = /\A[a-z][a-z0-9_]*(?:-[a-z][a-z0-9_]*)*-[0-9a-f]{8,16}\z/
+      # Stores that name a directory by its content hash, each as the run of
+      # segments that holds the hash. A hash segment is let through only in its
+      # place in a run, so the same hex anywhere else in a URL is still a key.
+      # A `name` group is the part a person chose, so it is judged as words.
+      # The bare huggingface run is for a token that starts inside a repo name
+      # cut at its dot (`models--Qwen--Qwen2.5-7B-Instruct`).
+      CONTENT_ADDRESSED = [
+        [/\Anix\z/, /\Astore\z/, /\A[0-9a-df-np-sv-z]{32}-(?<name>.+)\z/].freeze,
+        [/\Agit\z/, /\Aobjects\z/, /\A[0-9a-f]{2}\z/, /\A(?:[0-9a-f]{38}|[0-9a-f]{62})\z/].freeze,
+        [/\Aoverlay2\z/, /\A[0-9a-f]{64}\z/].freeze,
+        [/\A(?:models|datasets|spaces)--(?<name>[\w-]+)\z/, /\Asnapshots\z/, /\A[0-9a-f]{40}\z/].freeze,
+        [/\Asnapshots\z/, /\A[0-9a-f]{40}\z/].freeze
+      ].freeze
       # An alphabet literal (base64's, a charset table) is maximally varied and
       # wholly predictable; no generator emits 16 consecutive code points. The
       # runs must cover most of the token, or a key glued onto one goes too.
@@ -64,14 +81,14 @@ module Lain
           return token.length >= HEX_LENGTH && shannon(token) >= HEX_ENTROPY if token.match?(HEX)
 
           token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY &&
-            !slash_joined_words?(token)
+            !predictable_path?(token)
         end
 
         # @param token [String]
         # @param hinted [Boolean] true when a name beside the token hints at a
         #   secret, which is the evidence a digest-width run otherwise lacks
         def predictable?(token, hinted: false)
-          slash_joined_words?(token) || alphabet_run?(token) || (!hinted && token.match?(DIGEST_HEX))
+          predictable_path?(token) || alphabet_run?(token) || (!hinted && token.match?(DIGEST_HEX))
         end
 
         def hinted?(token)
@@ -92,14 +109,36 @@ module Lain
 
         private
 
-        def slash_joined_words?(token)
+        def predictable_path?(token)
           segments = token.split("/").reject(&:empty?)
 
-          segments.size >= 2 && segments.all? { word_segment?(_1) }
+          segments.size >= 2 &&
+            segments.each_index.all? { word_segment?(segments[_1]) || addressed_at?(segments, _1) }
+        end
+
+        def addressed_at?(segments, index)
+          CONTENT_ADDRESSED.any? do |layout|
+            layout.each_with_index.any? do |shape, offset|
+              start = index - offset
+              segments[index].match?(shape) && start >= 0 && start + layout.size <= segments.size &&
+                addressed_run?(segments, start, layout)
+            end
+          end
+        end
+
+        def addressed_run?(segments, start, layout)
+          layout.each_index.all? { addressed?(segments[start + _1], layout[_1]) }
+        end
+
+        def addressed?(segment, shape)
+          return segment.match?(shape) if shape.names.empty?
+
+          match = shape.match(segment)
+          !match.nil? && match[:name].split("--").reject(&:empty?).all? { word_segment?(_1) }
         end
 
         def word_segment?(segment)
-          (segment.match?(WORD_SEGMENT) && !high?(segment)) || camel_name?(segment)
+          (segment.match?(WORD_SEGMENT) && !high?(segment)) || segment.match?(WORD_HEX) || camel_name?(segment)
         end
 
         def camel_name?(segment)

@@ -149,6 +149,48 @@ RSpec.describe Lain::Sensitivity::Entropy do
     end
   end
 
+  describe ".predictable? over path segments" do
+    it "is true for a cargo artifact path, whose crate name carries a hash suffix" do
+      expect(described_class.predictable?("target/debug/deps/word_count-46e9759e7fd1a230")).to be(true)
+    end
+
+    {
+      "nix store" => "/nix/store/b6gvzjyb2pg0kjfwrjmg1vfhh54ad73z-firefox-33",
+      "git object" => "git/objects/a0/9a35458c702b33eeacc393d103063234e8bc28",
+      "docker overlay" => "lib/docker/overlay2/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/diff",
+      "git sha256 object" => "git/objects/48/252ddff0e5089bd97927c6886df5f7f3d85c82d84ebf6ae75c520bb239fd37",
+      "huggingface snapshot" => "hub/models--Qwen--Qwen3-8B/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/config",
+      "huggingface repo with dashed names" =>
+        "hub/models--meta-llama--Meta-Llama-3-8B/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/config",
+      "huggingface snapshot cut at a dot in its repo name" =>
+        "5-7B-Instruct/snapshots/6fbdb2765e2d88513dc1825bdd5b168c26453ddd/config"
+    }.each do |layout, path|
+      it "is true for a #{layout} path" do
+        expect(described_class.predictable?(path)).to be(true)
+      end
+    end
+
+    it "is false for a name glued to a hex run wider than a build hash" do
+      path = "hook/webhook_signing_secret-cf588750bd0289e64e97338301006fdc/run"
+
+      expect(described_class.predictable?(path)).to be(false)
+    end
+
+    it "is false for a key-width hex segment outside a known layout" do
+      path = "com/keys/9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08/send"
+
+      expect(described_class.predictable?(path)).to be(false)
+    end
+
+    it "is false for a hash segment in a layout's place but not its shape" do
+      expect(described_class.predictable?("var/lib/docker/overlay2/Xk9mP2qR7vL4nT8wZ3bY6cH1/diff")).to be(false)
+    end
+
+    it "is false for a random mixed-case segment" do
+      expect(described_class.predictable?("files/Xk9mP2qR7vL4nT8wZ3bY6cH1/data")).to be(false)
+    end
+  end
+
   describe ".shannon" do
     it "is 0 for one repeated character" do
       expect(described_class.shannon("aaaa")).to eq(0.0)
