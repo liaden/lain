@@ -176,6 +176,9 @@ Only the main session edits these. Cards hand back 1-line diffs.
   doesn't get lain's records twice. That is dotfiles work, not this repo, and no card depends on
   it.
 
+- lain://status folds its own agent states and never sees Seen, so main "done" there never clears
+  (T5 review). The tracker owns Seen. Raised at close-out.
+
 ## Dependency graph
 
 ```mermaid
@@ -342,7 +345,7 @@ end
   That is a behaviour change, not a refactor. Report it rather than edit the expectation.
 - A closing record can't be told apart by its `type` once it is `Untyped`.
 
-### T3: Fold each agent's state from the chat's records          [risk: medium]
+### [x] T3: Fold each agent's state from the chat's records          [risk: medium]
 
 **Depends on:** T2
 **Files:** `lib/lain/agent_states.rb` (new), `lib/lain/journal/projection/agent_states.rb` (new),
@@ -421,7 +424,7 @@ end
 - A completion `Message` read from a file isn't a `Telemetry::Message` (the watch reads it with
   `strict: false`). Then match it by type there, as T2 does.
 
-### T4: Track agent states once per chat and publish them          [risk: medium]
+### [x] T4: Track agent states once per chat and publish them          [risk: medium]
 
 **Depends on:** T3
 **Files:**
@@ -495,7 +498,7 @@ end
   with no `agents` key.
 - A plugin spec reads the `contain_exactly` key list of `status_feed_spec.rb:1999` as a schema.
 
-### T5: Show each agent's state in `lain://status`          [risk: low]
+### [x] T5: Show each agent's state in `lain://status`          [risk: low]
 
 **Depends on:** T3
 **Files:** `lib/lain/frontend/neovim/status_view.rb`, `spec/lain/frontend/neovim/status_view_spec.rb`
@@ -616,7 +619,7 @@ Config::Attention = Data.define(:delay) # seconds, Numeric >= 0
 - `builder.rb` trips a `Metrics/*` limit. Treat it as a smell per `CLAUDE.md`, never an inline
   disable.
 
-### T8: Send delayed desktop and feed notices for blocked and done          [risk: medium]
+### [x] T8: Send delayed desktop and feed notices for blocked and done          [risk: medium]
 
 **Depends on:** T4, T6, T7
 **Files:**
@@ -820,7 +823,7 @@ Spec file: `spec/lain/cli/up_spec.rb` (the first scenario on a real `tmux -L` se
 **Stop and report if:**
 - `up_spec.rb:2526-2528` (verb order) or `:3541` (the `ChatRestart` regex) breaks.
 
-### T11: Report the chat's state and resume command to herdr          [risk: high]
+### [x] T11: Report the chat's state and resume command to herdr          [risk: high]
 
 **Depends on:** T4, T9
 **Files:** `lib/lain/herdr/reporter.rb` (new), `spec/lain/herdr/reporter_spec.rb` (new),
@@ -1082,7 +1085,7 @@ Spec files: `spec/lain/cli/command/park_spec.rb`, `spec/lain/herdr/reporter_spec
 - `pane report-metadata` can't clear a token on 0.9.5. Then send an empty value and record what
   herdr shows.
 
-### T16: Hint at an unclosed session when `lain up` builds a cockpit          [risk: low]
+### [x] T16: Hint at an unclosed session when `lain up` builds a cockpit          [risk: low]
 
 **Depends on:** T10
 **Files:** `lib/lain/cli/up.rb`, `spec/lain/cli/up_spec.rb`
@@ -1122,7 +1125,7 @@ Resume::Selector#unclosed(except: nil) = ... # a path or nil
 - `Resume::Selector` needs a constructed `Resume` with chat options to list candidates. Then report
   the extraction before doing it.
 
-### T17: Restart the cockpit chat on a named session with `/resume`          [risk: medium]
+### [x] T17: Restart the cockpit chat on a named session with `/resume`          [risk: medium]
 
 **Depends on:** T16
 **Files:** `lib/lain/cli/up.rb`, `lib/lain/cli/command/resume_session.rb` (new),
@@ -1575,3 +1578,43 @@ Scenario: the example holds on a loaded box
 - 21:46 T16 fix round done (UnusableHome red then green; vanished-file red on ENOENT; 13/0, 1609/0). Second review (same reviewer) started.
 - 21:49 T2 landed d6a17d83 (attempt 2)
 - 21:49 T2 landed d6a17d83 (attempt 2). Cleanup done.
+- 21:49 T16 review 2 APPROVE-WITH-FIXES: rescue and nil-header guard each red alone; order and closed? rescue unpinned. Sent: drop the order claim, pin the rescue. Main verifies.
+- 21:49 T3 started, cut at 703fe863.
+- 21:51 T16 last fixes done (36/1 red; 1610/0). Main verified. Landing attempt 1.
+- 21:55 T16 landed 59e96c9c (attempt 1)
+- 21:55 T16 landed 59e96c9c (attempt 1). Cleanup done. T17 started, cut at 59e96c9c.
+- 21:56 T3 handed back (NameError red; 17/0, 615/0; new fixture spec/fixtures/waits/agent_states.ndjson). Medium review started.
+- 21:58 T3 medium review APPROVE-WITH-FIXES: 10 of 15 mutants red, 4 survivors need examples (read-back interrupt, repeated spawn, late progress, finished-by-result: keep only if a real shape needs it), use RequestSent#agent?, 1 MAIN home, orphan note. Real data: 5 files, 0 orphans, sensible ends; zeitwerk-census 0. Sent; main verifies.
+- 22:00 T17 handed back (unknown-keyword + load error red; 274/0, 557/0). Main applied surface.rb (reshaped to a normal def for Style/EndlessMethod), surface_spec, docs wiring (65/0). Medium review started.
+- 22:00 T3 fixes done (each mutant 21/1 red; 619/0; finished? kept: older completions on disk lack lifecycle). Main verified. Landing attempt 1.
+- 22:03 T3 landed 9a6cc060 (attempt 1)
+- 22:04 T3 landed 9a6cc060 (attempt 1). Cleanup done. T4 and T5 started, cut at 9a6cc060.
+- 22:05 T17 medium review APPROVE-WITH-FIXES: escaping unpinned (seam logs via echo); real drive shows quotes, $ and ; survive and a later /clear drops --resume. Sent with 2 nits; main verifies.
+- 22:07 T5 handed back (23/3 red; 23/0, 928/0); main row only when not idle. Low review started.
+- 22:07 T17 fixes done (escape removed: seam red; 831/0). Main verified. Landing attempt 1.
+- 22:08 T5 low review APPROVE-WITH-FIXES: hidden non-short-circuit |, fold-raise and Seen unspecced, per-event step on the drain thread (early-out), duplicated cell text, silent fold failure (show a marker). Seen never reaches the status view's own fold, so main 'done' there never clears; recorded for close-out. Sent; main verifies.
+- 22:13 T17 landed d6efe5bd (attempt 1)
+- 22:13 T17 landed d6efe5bd (attempt 1). Cleanup done.
+- 22:15 T5 fixes done (26/2 red; 931/0). Main verified. Landing attempt 1.
+- 22:18 T4 handed back (load error + 363/9 red; 453/0, 5776/0). Wiring in chat_launch.rb and live_views.rb applied in the worktree by the implementer; main confirmed it matches the plan. Medium review started.
+- 22:20 T5 landed f891af71 (attempt 1)
+- 22:21 T5 landed f891af71 (attempt 1). Cleanup done.
+- 22:24 T4 medium review APPROVE-WITH-FIXES: LiveViews nil keyword (make required, 6 spec files join Files), one failing observer starves the rest, non-Hash rows raise in done_agents, a WHAT comment. Departures accepted. Sent; main verifies.
+- 22:29 T4 fixes done (52/2 red; 5784/0). Main verified. Landing attempt 1.
+- 22:32 T4 landed 54ce3618 (attempt 1)
+- 22:32 T4 landed 54ce3618 (attempt 1). Cleanup done. T8 and T11 (opus) started, cut at 54ce3618.
+- 22:38 T8 partial stop: Repl#name_lifetimes is the only path to ConversationScope and the card omits repl.rb; done child names by digest. Rulings: Files widened to repl.rb and its spec, and to projection/agent_states.rb and its spec (child keeps spawn role or task as what); wiring applied in the worktree with notifier and Notices together. Continued.
+- 22:47 T11 handed back (NameError red; 2543/0, e2e 50/0; release-agent needs --agent, per --help). Gaps: notes had no human sink, mask lacked env secrets, CockpitSession had no red. Rulings: notes forward to ChatLaunch#call's notice block; mask with env-derived literals plus regions (stop if that needs Wiring); red for CockpitSession. Continued; high review after.
+- 22:48 T8 handed back with Wiring ClassLength 316/306 and no focus passed to Notices. Ruling: extract Wiring::Attention (notifier + notices, null form for no tracker), pass Focus.tmux. Continued.
+- 22:51 T11 rulings done (18/2 red; CockpitSession 2/2 red; 2545/0). Notes forward to the notice block from the worker thread; mask is Secrets::Source::DEFAULT. High review (opus) started.
+- 22:53 T8 extraction done (Wiring::Attention + Immediate; focus passed; Wiring 306/306 after a reflow; 2057/0, 527/0). Medium review started.
+- 23:00 T8 medium review APPROVE-WITH-FIXES: tee-only tracker hand-off unguarded, nil spawn payload unguarded, protected deliver, YARD order, inject clock. Wiring reflow judged honest. 2 wiring_spec 'resume notices on the chat screen' examples red in the reviewer's copy and on a git-archive HEAD copy (InputSocket::Unusable), green in landings: copy-path artefact, watch at landing. Sent; main verifies.
+- 23:03 T11 high review REQUEST-CHANGES: BLOCKER, notes from the worker thread scribble the raw-mode prompt; mask misses .env and env pass; seam is not a real chat; 7 surviving mutants; stale journal path after --btw promote. Real drive: only agent get, report-agent, release-agent; a Claude pane got 1 agent get and nothing else. Ruling: late-bound notes and mask bound by Wiring at open_terminal (logic in a wiring/ collaborator, Wiring has 0 headroom); T8 lands first and T11's wiring.rb lines apply on top. Fix round sent; second review follows.
+- 23:04 T8 fixes done (each red by mutant; 2060/0, 661/0; 17 files clean). Main verified. Landing attempt 1.
+- 23:07 T8 landed e7f9f5c1 (attempt 1)
+- 23:08 T8 landed e7f9f5c1 (attempt 1). Cleanup done. T11's worktree (cut at 54ce3618) shares chat_launch.rb and wiring.rb with T8: it gets moved onto HEAD by a 3-way apply before its second review.
+- 23:20 T11 fix round done (HeldNotes + HerdrBinding via tty_factory, 0 lines in wiring.rb; 12 mutants killed; 7689/1 then the scrub fix 9/0; e2e 50/0). Main moved the worktree onto e7f9f5c1 (move-T11.sh), resolved 3 union conflicts in chat_launch.rb and notifier.rb; 570/0 on the merged tree. Second review (same reviewer) started.
+- 23:26 T11 review 2 APPROVE-WITH-FIXES (merge sound; PTY drive: note held until the prompt closes; Claude pane 1 agent get only; 16 of 17 mutants killed; seam can fail via on_change and tty_factory mutants). 4 mechanical sent: launch-level promote example, held-note drop documented, mask a fault message, future mtimes. Main verifies.
+- 23:29 T11 last fixes done (promote example red by the fixed-path mutant; fault mask 29/1 red; mtimes reset; 767/0). Main verified. Landing attempt 1.
+- 23:42 T11 landed bfc398b1 (attempt 1)
+- 23:42 T11 landed bfc398b1 (attempt 1). Cleanup done; probes kept in t11-probes/. Branch deleted with -D: it was moved by fast-forward to e7f9f5c1, an ancestor of main, and its content landed as the T11 commit.
