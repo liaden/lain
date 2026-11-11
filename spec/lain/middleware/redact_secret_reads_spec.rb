@@ -1677,6 +1677,13 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       Sync { dispatch(call, tool:) }.fetch(:result)
     end
 
+    it "masks a token printed with no final newline when stderr follows" do
+      result = bash("printf #{token}; echo oops >&2")
+
+      expect(result.content).to include("--- stdout ---\n<redacted:1>\n--- stderr ---\noops\n")
+      expect(result.content).not_to include(token)
+    end
+
     it "masks a token in the output, says so in a trailer, and parks nothing" do
       result = bash("echo #{token}")
 

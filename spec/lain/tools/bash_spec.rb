@@ -1205,6 +1205,18 @@ RSpec.describe Lain::Tools::Bash do
 
     def render(**streams) = described_class.render_output(Lain::Exec::Capture.new(**streams))
 
+    it "ends an unterminated stdout line before the stderr frame" do
+      rendered = render(exit_status: 0, stdout: "no newline", stderr: "err\n")
+
+      expect(rendered.content).to eq("exit status: 0\n--- stdout ---\nno newline\n--- stderr ---\nerr\n")
+    end
+
+    it "leaves the frame as it was when stdout already ends a line" do
+      rendered = render(exit_status: 0, stdout: "line\n", stderr: "err\n")
+
+      expect(rendered.content).to eq("exit status: 0\n--- stdout ---\nline\n--- stderr ---\nerr\n")
+    end
+
     it "renders valid UTF-8 bytes as text" do
       rendered = render(exit_status: 0, stdout: "✅ ok".b, stderr: "")
 

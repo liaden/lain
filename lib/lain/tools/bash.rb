@@ -196,9 +196,19 @@ module Lain
         return refused_stream(*refused.first, exit_status) unless refused.empty?
 
         Tool::Result.ok("exit status: #{exit_status}\n" \
-                        "--- stdout ---\n#{streams.fetch(:stdout)}" \
+                        "--- stdout ---\n#{ended_line(streams.fetch(:stdout))}" \
                         "--- stderr ---\n#{streams.fetch(:stderr)}")
       end
+
+      # A token's boundary lookahead needs a following character, so one at the
+      # end of stdout would sit against the frame's dash and escape the mask.
+      def self.ended_line(text)
+        text = text.to_s
+        return text if text.empty? || text.end_with?("\n")
+
+        "#{text}\n"
+      end
+      private_class_method :ended_line
 
       # The lower of this tool's bound and the capture's own ceiling: a backend
       # that held less than the tool admits must still be refused past what it
