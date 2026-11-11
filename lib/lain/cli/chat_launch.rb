@@ -183,6 +183,7 @@ module Lain
       def open_chronicle
         @chronicle = @chronicle_factory.call(enabled: @options[:journal], btw: @options[:btw] || false,
                                              root: project.root)
+        agent_states.on_change(&herdr_reporter)
         # A tee is built for --nvim (its Channel) OR --journal (the state feed
         # publishes for the tmux HUD), so a pure --no-journal --no-nvim run
         # opens neither and stays byte-identical.
@@ -210,6 +211,22 @@ module Lain
       # Nil unless a tee exists to feed it: a tracker nothing feeds would hold the notifier's own
       # sequence back for a notice that never comes.
       def teed_agent_states = @live_views && agent_states
+
+      def herdr_resolver
+        @herdr_resolver ||= Herdr::Target::Resolver.new(env: @env, interactive: !@options[:non_interactive],
+                                                        notes: herdr_notes)
+      end
+
+      def herdr_reporter
+        @herdr_reporter ||= Herdr::Reporter.new(resolver: herdr_resolver, session: chronicle,
+                                                root: project.root,
+                                                up_session: Herdr::Reporter::CockpitSession.new(env: @env),
+                                                notes: herdr_notes)
+      end
+
+      def herdr_notes = @herdr_notes ||= Herdr::HeldNotes.new
+
+      def herdr_binding = Wiring::HerdrBinding.new(notes: herdr_notes, reporter: herdr_reporter)
 
       # The ONE {Backend} for the run, shared exactly as {#run_clock} and
       # {#project} are. Two halves of the launch need it -- the feed divides
@@ -316,6 +333,7 @@ module Lain
       end
 
       def close_session
+        @herdr_reporter&.release
         close_record
         # Last-resort release of a held capped-overflow notice: the closers
         # land in the RAW journal, not the tee, so a failure path may never
@@ -509,7 +527,8 @@ module Lain
       # conductor.
       def converse(backend:, resumed:, &notice)
         @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:,
-                                       agent_states: teed_agent_states)
+                                       agent_states: teed_agent_states,
+                                       tty_factory: herdr_binding.tty_factory)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

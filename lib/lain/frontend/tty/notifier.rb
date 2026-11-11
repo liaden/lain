@@ -67,6 +67,17 @@ module Lain
             parts.values_at(:sequence, :wrap, :feed, :tmux, :output, :mask, :title, :deferred, :bound)
         end
 
+        # Masked before it is cut, so a cut cannot split a secret into
+        # something no mask recognises. The note is model-written.
+        #
+        # @param note [#to_s]
+        # @param mask [#call] takes the text and answers it with secrets masked
+        # @return [String] 1 line of at most {TmuxMessage::LIMIT} characters
+        def self.plain(note, mask:) = mask.call(note.to_s.scrub).gsub(CONTROL, " ")[0, TmuxMessage::LIMIT]
+
+        # @return [#call] takes a note's text and answers it with secrets masked
+        attr_reader :mask
+
         # A deferred notifier remembers the last output it was bound to, because the terminal rebinds
         # its copy and the original is what the notices hold.
         #
@@ -101,9 +112,7 @@ module Lain
 
         private
 
-        # Masked before it is cut, so a cut cannot split a secret into
-        # something no mask recognises. The note is model-written.
-        def plain(note) = @mask.call(note.to_s.scrub).gsub(CONTROL, " ")[0, TmuxMessage::LIMIT]
+        def plain(note) = self.class.plain(note, mask: @mask)
 
         def write(sequence)
           @output.print(@wrap ? "#{ESC}Ptmux;#{sequence.gsub(ESC, ESC * 2)}#{ESC}\\" : sequence)

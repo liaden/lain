@@ -34,6 +34,14 @@ RSpec.describe Lain::Exec::ChildEnv do
       expect(child_env.call(parent)).to include("EDITOR" => nil, "GITHUB_TOKEN" => nil)
     end
 
+    it "withholds herdr's pane variables, so a bash child cannot report into lain's pane" do
+      herdr = { "HERDR_ENV" => "1", "HERDR_PANE_ID" => "w1:p7", "HERDR_BIN_PATH" => "/opt/herdr",
+                "HERDR_SOCKET_PATH" => "/run/herdr.sock" }
+
+      expect(described_class.new(env: parent.merge(herdr)).call(parent.merge(herdr)).compact.keys.grep(/\AHERDR_/))
+        .to be_empty
+    end
+
     it "withholds a secret the caller omitted, which would otherwise be inherited" do
       expect(child_env.call({})).to include("OLLAMA_API_KEY" => nil, "SSH_AUTH_SOCK" => nil, "GITHUB_TOKEN" => nil)
     end
