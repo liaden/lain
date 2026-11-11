@@ -2259,6 +2259,12 @@ XDG path relative, which put machine state back inside the user's repository)
     Last, stream P (added by the user): lain-core grown into a tailnet relay, 1 agenda of everything waiting on a human,
     paired and revocable phones, an ntfy buzz that opens the app, and a sideloaded Dioxus app in
     `apps/lain-remote`.
+75. **Planned (2026-11-11, panel-reviewed)**: `planning/specs/round29-fixes.md`, 42 cards in 6 streams from
+    `planning/qa-findings-round29-2026-11-11.md` and `planning/round29-sibling-bugs-research-2026-11.md`, MEDIUM and up.
+    1 owner per decision that several sites made on their own: 1 parse per bash effect; a bash approval that releases
+    nothing, a disclosure on the row, and contained human approvals with an explicit network answer; `Epic::GateView`
+    over the `Signoff` fold for every gate reader; `Backend::Tier` for every secondary model call, paying into
+    `--max-cost`; `ChildArgv` for every lain child command line; checked git reads. Then the copies are deleted.
 
 ## Map of the documents
 
