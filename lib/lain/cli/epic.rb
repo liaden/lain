@@ -169,6 +169,19 @@ module Lain
         end
       end
 
+      # The one sentence a stage approved at bytes it no longer holds is reported in, so `lain epic status` and
+      # the planning view cannot word it two ways.
+      #
+      # @param stage [#to_s] an epic-wide stage
+      # @param view [Lain::Epic::GateView] its gate against the artifact's digest now
+      # @return [String, nil] nil where the approval still covers the artifact, or there is none
+      def self.unsubmitted_note(stage, view)
+        case view.phase
+        when :edited then "#{stage} was approved at other bytes and must be submitted again"
+        when :gone then "#{stage} was approved but its file is gone; restore it, then submit it again"
+        end
+      end
+
       # `root:` defaults to the RESOLVED project's, not to `Dir.pwd`. A
       # `lain chat` mounts its epic under {Project::Resolver.default_project}'s
       # root, and this command must ask the same object or the two go blind to
@@ -261,6 +274,18 @@ module Lain
       # @raise [Lain::Error] from the home or the fold
       def progress(slug)
         Lain::Epic::Progress.fold(journals_for(slug).to_a, graph: home_for(slug).read_epic, epic_slug: slug)
+      end
+
+      # The digest a gate is read against: the artifact as it stands, or for an implementation, whose changeset
+      # has no artifact in the epic home to re-read, the standing digest.
+      #
+      # @param partition [Lain::Epic::SignoffQueue::Partition]
+      # @param standing [Lain::Epic::Signoff::Standing, nil] the partition's newest settling verdict
+      # @return [String, nil] nil where the artifact is gone
+      def digest_now(partition, standing)
+        return standing&.digest if partition.stage == "implementation"
+
+        artifact_digest(partition.epic_slug, partition.stage, partition.issue_id)
       end
 
       # The stage {#progress} would read, from the same journals but without
@@ -425,8 +450,18 @@ module Lain
         home = home_for(slug)
         walked = journals_for(slug)
         progress = Lain::Epic::Progress.fold(walked.to_a, graph: home.read_epic, epic_slug: slug)
-        Report.new(slug:, path: home.path, sessions: walked.where, progress:,
-                   note: untracked_note(home.path), closed: closed_stage_note(slug, progress.stage, walked.to_a)).to_s
+        Report.new(slug:, path: home.path, sessions: walked.where, progress:, note: untracked_note(home.path),
+                   closed: [closed_stage_note(slug, progress.stage, walked.to_a),
+                            *unsubmitted_notes(slug, walked.to_a)].reject(&:empty?).join("\n")).to_s
+      end
+
+      # A stage standing approved at bytes its artifact no longer holds opens nothing: the boundary
+      # reads it as not approved, and only a fresh submit settles it.
+      def unsubmitted_notes(slug, records)
+        signoff = Lain::Epic::Signoff.from_journal(records)
+        (Lain::Epic::STAGES - Lain::Epic::ISSUE_STAGES).filter_map do |stage|
+          self.class.unsubmitted_note(stage, gate_view(signoff, slug, stage, nil))
+        end
       end
 
       # An issue-scoped earlier stage is approved per issue, so no single
@@ -619,8 +654,8 @@ module Lain
       # @param after [Epic::Graph] the graph the edit built
       # @raise [GatedIssue] naming the id and the gate holding it
       def refuse_gated_edit!(slug, fiber, before, after)
-        records = records_for(slug)
-        (fiber.preimage | rewritten_ids(before, after)).each { |issue_id| refuse_if_gated!(slug, records, issue_id) }
+        signoff = Lain::Epic::Signoff.from_journal(records_for(slug))
+        (fiber.preimage | rewritten_ids(before, after)).each { |issue_id| refuse_if_gated!(slug, signoff, issue_id) }
       end
 
       # A gate's digest is the {Epic::IssueView}'s bytes, which carry the derived
@@ -635,30 +670,45 @@ module Lain
         Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "").digest
       end
 
-      def refuse_if_gated!(slug, records, issue_id)
-        state, stage, digest = held_gate(records, slug, issue_id)
-        return unless state
+      # The phases that stale what a human is looking at when the issue is rewritten: a draft waiting on
+      # them, a hold asking the work to wait, or an approval of the bytes as they stand. An approval of
+      # other bytes, or of a file that is gone, covers nothing the edit could stale.
+      REFUSED_PHASES = %i[parked held approved].freeze
+      private_constant :REFUSED_PHASES
 
-        remedy = state == "parked" ? "approve or deny it" : "discard or re-approve it"
-        raise GatedIssue, "issue #{issue_id.inspect} holds a #{state} #{stage} gate (#{digest}) -- " \
-                          "#{remedy} before editing this epic's graph"
+      REMEDIES = { parked: "approve or deny it", held: "answer or release the hold",
+                   approved: "discard or re-approve it" }.freeze
+      private_constant :REMEDIES
+
+      def refuse_if_gated!(slug, signoff, issue_id)
+        gated = Lain::Epic::ISSUE_STAGES.map { |stage| gate_view(signoff, slug, stage, issue_id) }
+                                        .find { |view| REFUSED_PHASES.include?(view.phase) }
+        return unless gated
+
+        raise GatedIssue, "issue #{issue_id.inspect} holds a #{gated.phase} #{gated.partition.stage} gate " \
+                          "(#{gate_digest_of(gated)}) -- #{REMEDIES.fetch(gated.phase)} " \
+                          "before editing this epic's graph"
       end
 
-      # Parked first, then an approval the issue's partition still stands on: the
-      # queue forgets an address the moment a decision drains it, so an approved
-      # plan or implementation is found by its standing, which a later deny revokes.
-      #
-      # @return [Array(String, String, String), nil] state, stage and digest,
-      #   or nil when the issue holds no gate at all
-      def held_gate(records, slug, issue_id)
-        queue = Lain::Epic::SignoffQueue.from_journal(records)
-        parked = Lain::Epic::ISSUE_STAGES.filter_map { |stage| queue.parked(slug, stage, issue_id:).first }.first
-        return ["parked", parked.stage, parked.artifact_digest] if parked
+      # @param slug [String] a real epic slug, already resolved
+      # @param stage [#to_s] the stage whose artifact is asked about
+      # @param issue_id [String, nil] the issue, for an issue-scoped stage
+      # @return [String, nil] the artifact's digest as it stands now; nil where it is gone
+      def artifact_digest(slug, stage, issue_id)
+        EpicSubmit::Digests.new(config: @config, paths: @paths, root: @root).digest(slug, stage, issue_id)
+      end
 
-        Lain::Epic::ISSUE_STAGES.filter_map do |stage|
-          standing = queue.standing(slug, stage, issue_id:)
-          ["approved", stage, standing.digest] if standing&.verdict&.approved?
-        end.first
+      def gate_view(signoff, slug, stage, issue_id)
+        partition = Lain::Epic::SignoffQueue::Partition.new(epic_slug: slug, stage:, issue_id:)
+        signoff.view(partition, current: digest_now(partition, signoff.standing(partition)))
+      end
+
+      def gate_digest_of(view)
+        case view.phase
+        when :parked then view.waiting.first
+        when :held then view.held.first
+        else view.standing.digest
+        end
       end
 
       # A lent journal is the caller's to close. Otherwise opened and closed

@@ -430,6 +430,68 @@ RSpec.describe Lain::CLI::Epic do
     end
   end
 
+  describe "the phase of a stage's gate" do
+    def approval(stage, digest)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:,
+                                   verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
+                                   policy: "interactive", latency: 1.0)
+    end
+
+    def digest_now(stage) = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest("alpha", stage, nil)
+
+    def home = Lain::Epic::Home.resolve(config:, paths:, root:, slug: "alpha")
+
+    # Scenario: an edited plan is not shown approved
+    it "says an approved epic plan was approved at other bytes once its graph was split" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", approval("epic_plan", digest_now("epic_plan")))
+      command.split("b", "b1,b2", "alpha")
+
+      expect(command.status).to include("epic_plan was approved at other bytes and must be submitted again")
+    end
+
+    it "tells the model's epic_status the same, since the tool prints this report" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", approval("epic_plan", digest_now("epic_plan")))
+      command.split("b", "b1,b2", "alpha")
+      homes = Lain::CLI::EpicMount::Homes.new(journal: Lain::Journal.new(io: StringIO.new), root:, paths:,
+                                              config: config(:xdg))
+      tool = Lain::Tools::EpicStatus.new(homes:)
+
+      result = tool.call({ "slug" => "alpha" }, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance))
+
+      expect(result.content).to include("epic_plan was approved at other bytes and must be submitted again")
+    end
+
+    # Scenario: a research gate on stale bytes
+    it "says the research approval is for other bytes once research.md changed" do
+      write_epic("alpha", chain)
+      home.research.write("first findings")
+      session("gates.ndjson", approval("research", digest_now("research")))
+      home.research.write("other findings")
+
+      expect(command.status).to include("research was approved at other bytes and must be submitted again")
+    end
+
+    it "says an approved stage whose file is gone must be restored and submitted again" do
+      write_epic("alpha", chain)
+      home.research.write("first findings")
+      session("gates.ndjson", approval("research", digest_now("research")))
+      FileUtils.rm(home.research.path)
+
+      expect(command.status).to include("research was approved but its file is gone")
+    end
+
+    it "says nothing of a stage whose approval is of the bytes it holds now" do
+      write_epic("alpha", chain)
+      home.research.write("first findings")
+      session("gates.ndjson", approval("research", digest_now("research")),
+              approval("epic_plan", digest_now("epic_plan")))
+
+      expect(command.status).not_to include("other bytes")
+    end
+  end
+
   describe "choosing an epic" do
     it "takes the only epic in the home when no slug is given" do
       write_epic("alpha", chain)
@@ -946,6 +1008,19 @@ RSpec.describe Lain::CLI::Epic do
                                    answered_by: "human", policy:, latency: 1.0, issue_id:)
     end
 
+    # An approval of the issue's plan at the bytes the issue holds now, which is what a real submit records.
+    def approved_plan(id, stage: "issue_plan")
+      epic_home.issue(id).write("")
+      current = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest("alpha", stage, id)
+      gate_decision(stage:, issue_id: id, approved: true, digest: current)
+    end
+
+    def hold_decision(id, digest: "blake3:#{"b" * 64}", stage: "issue_plan")
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:,
+                                   verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"),
+                                   answered_by: "human", policy: "interactive", latency: 1.0, issue_id: id)
+    end
+
     # Scenario: an edit over a parked gate refuses
     it "refuses to split an issue holding a parked implementation gate, naming the gate" do
       write_epic("alpha", chain)
@@ -960,7 +1035,7 @@ RSpec.describe Lain::CLI::Epic do
     it "refuses to split an ungated issue whose approved neighbour's bytes the split changes" do
       write_epic("alpha", chain)
       before = epic_home.epic.read
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+      session("gates.ndjson", approved_plan("a"))
 
       expect { command.split("b", "b1,b2", "alpha") }
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
@@ -971,7 +1046,7 @@ RSpec.describe Lain::CLI::Epic do
     it "refuses to split an issue whose approved downstream neighbour's derived Blocked by line the split changes" do
       write_epic("alpha", chain)
       before = epic_home.epic.read
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "c", approved: true))
+      session("gates.ndjson", approved_plan("c"))
 
       expect { command.split("b", "b1,b2", "alpha") }
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"c".*approved.*issue_plan/m)
@@ -980,7 +1055,7 @@ RSpec.describe Lain::CLI::Epic do
 
     it "refuses to merge 2 ungated issues when an approved neighbour's bytes the merge changes" do
       write_epic("alpha", graph_of(issue("a", blocks: ["b"]), issue("b"), issue("c"), issue("d", blocks: ["c"])))
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+      session("gates.ndjson", approved_plan("a"))
 
       expect { command.merge("b", "c", "alpha", as: "bc") }
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
@@ -988,7 +1063,7 @@ RSpec.describe Lain::CLI::Epic do
 
     it "refuses to split an ungated issue whose approved neighbour only relates to it" do
       write_epic("alpha", graph_of(issue("a", related: ["b"]), issue("b")))
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+      session("gates.ndjson", approved_plan("a"))
 
       expect { command.split("b", "b1,b2", "alpha") }
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
@@ -1006,7 +1081,7 @@ RSpec.describe Lain::CLI::Epic do
     # Scenario: a split that changes no gated issue goes through
     it "splits an ungated issue when the only gated issue is not a neighbour" do
       write_epic("alpha", graph_of(issue("a"), issue("b"), issue("c")))
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+      session("gates.ndjson", approved_plan("a"))
 
       command.split("b", "b1,b2", "alpha")
 
@@ -1015,7 +1090,7 @@ RSpec.describe Lain::CLI::Epic do
 
     it "refuses to merge an issue holding an approved issue_plan gate, naming the gate" do
       write_epic("alpha", chain)
-      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true))
+      session("gates.ndjson", approved_plan("b"))
 
       expect { command.merge("a", "b", "alpha", as: "ab") }
         .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*approved.*issue_plan/m)
@@ -1031,12 +1106,69 @@ RSpec.describe Lain::CLI::Epic do
       expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
     end
 
-    it "does not refuse an issue whose only gate decision is a hold" do
+    it "refuses an issue whose only gate decision is a hold, naming the hold" do
       write_epic("alpha", chain)
-      held = Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
-                                          stage: "issue_plan", verdict: Lain::Approval::Verdict::Hold.new,
-                                          answered_by: "human", policy: "interactive", latency: 1.0, issue_id: "b")
-      session("gates.ndjson", held)
+      session("gates.ndjson", hold_decision("b"))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*held.*issue_plan.*#{"b" * 64}/m)
+      expect(graph_revisions).to be_empty
+    end
+
+    it "reads an approval with a hold on other bytes over it as held" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", approved_plan("b"), hold_decision("b"))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*held.*issue_plan/m)
+    end
+
+    it "names the standing digest when an approval refuses the edit" do
+      write_epic("alpha", chain)
+      decision = approved_plan("b")
+      session("gates.ndjson", decision)
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*approved.*issue_plan.*#{decision.artifact_digest}/m)
+    end
+
+    it "does not refuse an issue whose approval is of other bytes than the issue holds now" do
+      write_epic("alpha", chain)
+      epic_home.issue("b").write("")
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
+    end
+
+    it "does not refuse an issue whose approved plan file is gone" do
+      write_epic("alpha", chain)
+      decision = approved_plan("b")
+      FileUtils.rm(epic_home.issue("b").path)
+      session("gates.ndjson", decision)
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
+    end
+
+    it "names the issue_plan gate when the issue also has a parked implementation" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", approved_plan("b"),
+              gate_decision(stage: "implementation", issue_id: "b", approved: false))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }.to raise_error(Lain::CLI::Epic::GatedIssue) do |error|
+        expect(error.message).to include("holds a approved issue_plan gate")
+      end
+    end
+
+    it "refuses an issue whose approved implementation stands, since a changeset has no bytes to go stale" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "implementation", issue_id: "b", approved: true))
+
+      expect { command.merge("a", "b", "alpha", as: "ab") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"b".*approved.*implementation/m)
+    end
+
+    it "does not refuse an issue no gate was ever opened for" do
+      write_epic("alpha", chain)
 
       expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
     end
@@ -1105,7 +1237,7 @@ RSpec.describe Lain::CLI::Epic do
 
       it "refuses a link while the far end holds a gate, since both ends are in the digest" do
         write_epic("alpha", chain)
-        session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "c", approved: true))
+        session("gates.ndjson", approved_plan("c"))
 
         expect { command.link("blocks", "a", "c", "alpha") }
           .to raise_error(Lain::CLI::Epic::GatedIssue, /"c".*approved.*issue_plan/m)

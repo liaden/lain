@@ -173,16 +173,37 @@ RSpec.describe Lain::Frontend::Neovim::StatusView do
 
     it "folds the records the injected handle answers for the mounted slug" do
       write_demo
+      Lain::Epic::Home.resolve(config:, paths:, root:, slug: "demo").issue("a").write("")
+      current = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest("demo", "issue_plan", "a")
       asked = []
       handle = lambda do |slug|
         asked << slug
-        [{ "type" => "gate_decision", "artifact_digest" => "blake3:a", "epic_slug" => "demo", "stage" => "issue_plan",
+        [{ "type" => "gate_decision", "artifact_digest" => current, "epic_slug" => "demo", "stage" => "issue_plan",
            "issue_id" => "a", "verdict" => "approve", "policy" => "interactive" }]
       end
       epic = described_class::Mounted.new(slug: "demo", status:, records: handle)
 
       expect(epic.roadmap.map { |row| [row.id, row.gate] }).to eq([%w[a approved], %w[b draft]])
       expect(asked).to eq(["demo"])
+    end
+  end
+
+  describe "the roadmap beside an edited research file" do
+    it "reads the research approval against the file as it stands, through the real status" do
+      write_demo
+      home = Lain::Epic::Home.resolve(config:, paths:, root:, slug: "demo")
+      home.research.write("first findings")
+      digest = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest("demo", "research", nil)
+      approval = Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "research",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "cli",
+                                              policy: "interactive", latency: 1)
+      another_process_writes("approved.ndjson", approval)
+      home.research.write("other findings")
+      mounted = Lain::CLI::Wiring::PlanningBuild.mounted(slug: "demo", root:, paths:, status:)
+
+      lines = mounted.roadmap.map(&:line)
+
+      expect(lines).to include("research was approved at other bytes and must be submitted again")
     end
   end
 

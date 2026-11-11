@@ -13,6 +13,8 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
   def status_for(graph)
     Class.new do
       define_method(:progress) { |slug| Lain::Epic::Progress.fold([], graph:, epic_slug: slug) }
+      # The digest `decided` approves by, so an issue's approval reads as of the bytes it holds now.
+      define_method(:digest_now) { |partition, _standing| partition.issue_id && "blake3:#{partition.issue_id}" }
     end.new
   end
 
@@ -63,6 +65,13 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
       expect(row(lines, "a")).to include("issue_plan, parked")
       expect(row(lines, "a")).not_to include("held")
       expect(row(lines, "b")).to include("draft")
+    end
+
+    it "draws an approved implementation gate, whose changeset has no artifact digest to re-read" do
+      records = [decided("a", verdict: "approve").merge("stage" => "implementation")]
+      lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial
+
+      expect(row(lines, "a")).to include("implementation, approved")
     end
 
     it "reads a hold as held with its note, not as a denial" do
@@ -117,6 +126,94 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
       lines = described_class.new(epic: epic(graph_of(issue("a")), [foreign])).initial
 
       expect(row(lines, "a")).to include("draft")
+    end
+  end
+
+  describe "the phase of a gate against the bytes now" do
+    # The digest source answers #digest_now as CLI::Epic does; `asked` collects each partition it was asked about.
+    def lines_with(records, current, asked: [])
+      source = Class.new do
+        define_method(:digest_now) do |partition, _standing|
+          asked << partition
+          current
+        end
+      end.new
+      progress = Lain::Epic::Progress.fold([], graph: graph_of(issue("a")), epic_slug: "demo")
+      Lain::Frontend::Neovim::PlanningView::Roadmap.rows(progress, records, digests: source).map(&:line)
+    end
+
+    def stage_approval(stage, digest)
+      decided(nil, verdict: "approve", digest:).merge("stage" => stage)
+    end
+
+    it "reads an approval of the bytes now as approved" do
+      row = row(lines_with([decided("a", verdict: "approve", digest: "blake3:v1")], "blake3:v1"), "a")
+
+      expect(row).to include("issue_plan, approved")
+      expect(row).not_to include("other bytes")
+    end
+
+    it "reads an approval of other bytes as approved at other bytes" do
+      expect(row(lines_with([decided("a", verdict: "approve", digest: "blake3:v1")], "blake3:v2"), "a"))
+        .to include("issue_plan, approved at other bytes")
+    end
+
+    it "reads an approval whose file is gone as gone" do
+      expect(row(lines_with([decided("a", verdict: "approve", digest: "blake3:v1")], nil), "a"))
+        .to include("issue_plan, approved but its file is gone")
+    end
+
+    it "ranks a parked draft before a hold on another draft, as every other reader does" do
+      records = [decided("a", verdict: "deferred", digest: "blake3:v1", policy: "deferred"),
+                 decided("a", verdict: "hold", digest: "blake3:v2", reason: "later")]
+
+      row = row(lines_with(records, "blake3:v2"), "a")
+
+      expect(row).to include("issue_plan, parked")
+      expect(row).not_to include("held")
+    end
+
+    it "reads the digest once for an issue however many records its gate has" do
+      asked = []
+      records = Array.new(50) { decided("a", verdict: "approve", digest: "blake3:v1") }
+
+      lines_with(records, "blake3:v1", asked:)
+
+      expect(asked.count { |partition| partition.issue_id == "a" }).to eq(1)
+    end
+
+    it "reads no digest for an issue id a split retired from the graph" do
+      asked = []
+      retired = Array.new(50) { |n| decided("old#{n}", verdict: "approve", digest: "blake3:v1") }
+
+      lines_with([*retired, decided("a", verdict: "approve", digest: "blake3:v1")], "blake3:v1", asked:)
+
+      expect(asked.count { |partition| partition.stage == "issue_plan" }).to eq(1)
+    end
+
+    it "reads no digest for an epic stage nothing approved" do
+      asked = []
+
+      lines_with([stage_approval("epic_plan", "blake3:v1")], "blake3:v1", asked:)
+
+      expect(asked.map(&:stage)).to eq(["epic_plan"])
+    end
+
+    # Scenario: an edited plan is not shown approved
+    it "says an approved epic plan was approved at other bytes and must be submitted again" do
+      lines = lines_with([stage_approval("epic_plan", "blake3:v1")], "blake3:v2")
+
+      expect(lines.first).to eq("epic_plan was approved at other bytes and must be submitted again")
+    end
+
+    it "says the same of research" do
+      lines = lines_with([stage_approval("research", "blake3:v1")], "blake3:v2")
+
+      expect(lines).to include("research was approved at other bytes and must be submitted again")
+    end
+
+    it "says nothing of a stage approved at the bytes it holds now" do
+      expect(lines_with([stage_approval("epic_plan", "blake3:v1")], "blake3:v1").size).to eq(1)
     end
   end
 
@@ -185,6 +282,43 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
                                                          status: Lain::CLI::Epic.new(root:, paths:, config:))
 
       expect(described_class.new(epic: mounted).initial).to include(a_string_matching(/`a`.*denied: needs tests/))
+    end
+
+    it "draws the roadmap for an approved implementation gate through the real status" do
+      root = File.join(@tmp, "project")
+      paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"), "HOME" => @tmp })
+      config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
+      Lain::Epic::Home.resolve(config:, paths:, root:, slug: "demo").write_epic(graph_of(issue("a")))
+      FileUtils.mkdir_p(paths.filing_dir(root:))
+      approval = Lain::Epic::GateDecision.new(artifact_digest: "0123abcd", epic_slug: "demo", stage: "implementation",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "cli",
+                                              policy: "interactive", latency: 1, issue_id: "a")
+      File.open(File.join(paths.filing_dir(root:), "other.ndjson"), "w") { |io| Lain::Journal.new(io:).record(approval) }
+      mounted = Lain::CLI::Wiring::PlanningBuild.mounted(slug: "demo", root:, paths:,
+                                                         status: Lain::CLI::Epic.new(root:, paths:, config:))
+
+      expect(described_class.new(epic: mounted).initial).to include(a_string_matching(/`a`.*implementation, approved/))
+    end
+
+    # Scenario: an edited plan is not shown approved
+    it "says the plan was approved at other bytes once the graph was split" do
+      root = File.join(@tmp, "project")
+      paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@tmp, "state"), "HOME" => @tmp })
+      config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg))
+      Lain::Epic::Home.resolve(config:, paths:, root:, slug: "demo").write_epic(graph_of(issue("a"), issue("b")))
+      FileUtils.mkdir_p(paths.filing_dir(root:))
+      digest = Lain::CLI::EpicSubmit::Digests.new(config:, paths:, root:).digest("demo", "epic_plan", nil)
+      approval = Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "demo", stage: "epic_plan",
+                                              verdict: Lain::Approval::Verdict::Approve.new, answered_by: "cli",
+                                              policy: "interactive", latency: 1)
+      File.open(File.join(paths.filing_dir(root:), "other.ndjson"), "w") { |io| Lain::Journal.new(io:).record(approval) }
+      status = Lain::CLI::Epic.new(root:, paths:, config:,
+                                   ignores: instance_double(Lain::CLI::Epic::GitIgnores, reason: ""))
+      status.split("b", "b1,b2", "demo")
+      mounted = Lain::CLI::Wiring::PlanningBuild.mounted(slug: "demo", root:, paths:, status:)
+
+      expect(described_class.new(epic: mounted).initial)
+        .to include("epic_plan was approved at other bytes and must be submitted again")
     end
   end
 end

@@ -43,7 +43,7 @@ module Lain
         # never disagree about which issue is ready.
         class Mounted
           # @param slug [String] the epic the chat is mounted into, already resolved
-          # @param status [#progress] folds that slug from disk ({CLI::Epic})
+          # @param status [#progress, #digest_now] folds that slug from disk and reads each gate's digest now ({CLI::Epic})
           # @param records [#call] answers a slug with the journal records the
           #   gates of its issues are read from; none by default, so every issue reads as a draft
           def initialize(slug:, status:, records: ->(_slug) { [] })
@@ -54,7 +54,9 @@ module Lain
 
           # @return [Array<PlanningView::Row>] one row per issue, in graph order
           # @raise [StandardError] whatever the fold raises; {PlanningView} draws it
-          def roadmap = PlanningView::Roadmap.rows(@status.progress(@slug), @records.call(@slug))
+          def roadmap
+            PlanningView::Roadmap.rows(@status.progress(@slug), @records.call(@slug), digests: @status)
+          end
 
           # @return [Array<String>] the progress text and the mermaid fence
           # @raise [StandardError] whatever the fold raises; {StatusView} draws it
