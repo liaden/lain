@@ -159,6 +159,34 @@ RSpec.describe Lain::Isolation::Spike, :seam do
       expect(File.read(File.join(taken.worker_env.checkout, "notes.md"))).to eq("plan work\n")
     end
 
+    describe "discarding, as at quit" do
+      def locked_worktrees = git("worktree", "list", "--porcelain").lines.grep(/\Alocked/)
+
+      # Nobody is left to come back for the work, and what it wrote may be a
+      # secret, so neither the branch nor a locked worktree may stay behind.
+      it "removes a spike that committed nothing, its uncommitted files with it" do
+        taken = spike.acquire
+        File.write(File.join(taken.worker_env.checkout, ".env"), "TOKEN=sk-live-0123456789abcdef\n")
+
+        told = spike.release(taken, discard: true)
+
+        expect([told, refs(taken), File.exist?(taken.origin.path), locked_worktrees]).to eq(["", [], false, []])
+      end
+
+      it "keeps a branch holding commits and names it, and keeps its uncommitted work in the worktree" do
+        taken = spike.acquire
+        checkout = taken.worker_env.checkout
+        head = commit_in(checkout)
+        File.write(File.join(checkout, "notes.md"), "plan work\n")
+
+        told = spike.release(taken, discard: true)
+
+        expect(git("rev-parse", "refs/heads/#{branch_of(taken)}")).to eq(head)
+        expect(told).to include(branch_of(taken), head[0, 12], checkout, "uncommitted changes")
+        expect(File.read(File.join(checkout, "notes.md"))).to eq("plan work\n")
+      end
+    end
+
     # Another run moved the branch after the spike was cut: it is not the
     # spike's to move, and the words must not blame the spike's history.
     it "leaves a branch another run moved where it is, and says it was moved" do

@@ -315,6 +315,14 @@ module Lain
         self
       end
 
+      # The run's quit closer: a plan-scope spike nothing would come back for
+      # is given back, so no branch or locked worktree outlives the session.
+      #
+      # @return [String] the quit line: what became of the spike's branch and
+      #   worktree, or of the scratch directory; "" outside plan, or when
+      #   nothing is left to say
+      def give_back = @mode_switch.give_back
+
       # This board's contribution to the {Command::Surface}: the two switches a
       # command WRITES, plus /approve's inline drain prompt over the SAME
       # conductor-routed reader the Repl's watch surface uses (see
@@ -647,6 +655,10 @@ module Lain
         # left, and nothing for every other flip.
         def said = @said || ""
 
+        # Under the flip lock, so the give-back never lands inside a flip
+        # half done.
+        def give_back = @lock.synchronize { @scoping.give_back }
+
         private
 
         def switched(mode, surface:)
@@ -685,6 +697,11 @@ module Lain
         end.new.freeze
 
         UNBOUND = "no session is bound to this board to confine"
+
+        # The spike of a board whose scope was given back at quit.
+        GIVEN_BACK = Class.new do
+          def acquire = raise(Error, "this session has quit and given its plan scope back")
+        end.new.freeze
 
         # The checkout scope, and the ladders the board was built with.
         Home = Data.define(:ladders) do
@@ -758,6 +775,17 @@ module Lain
           planned ? entering : Move.new(ladders: @home.ladders, commit: -> { leave })
         end
 
+        # Gives a held spike back with its uncommitted work, and closes the
+        # scoping: the mode still reads plan after the quit, so a later flip
+        # into plan is refused rather than cutting a spike nothing gives back.
+        #
+        # @return [String] what became of the held spike; "" when none is held
+        def give_back
+          @state.plan? ? leave(discard: true) : ""
+        ensure
+          @spike = GIVEN_BACK
+        end
+
         private
 
         # Any failure from the lease on is the scope being unavailable, and a
@@ -790,12 +818,12 @@ module Lain
           ""
         end
 
-        def leave
+        def leave(discard: false)
           held = @state
           @state = @home
           @session.rescope(::Lain::Session::Unconfined)
           @snapshots.rebind(root: @home_root)
-          @spike.release(held.lease)
+          @spike.release(held.lease, discard:)
         end
       end
 

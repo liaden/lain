@@ -12,13 +12,19 @@ module Lain
     #
     # The directory is the lease's checkout, so a worker's commands are judged
     # in it exactly as they are in a leased worktree. Releasing the lease
-    # deletes nothing: what a spike wrote there is the only copy of its work.
+    # deletes nothing, since what a spike wrote there is the only copy of its
+    # work, unless the release discards it, as a quit does.
     class Scratch
       ROOT = File.join(Dir.tmpdir, "lain", "scratch")
 
       # Names a release lists before it only counts, so a child that writes
       # thousands of files cannot flood its parent's context.
       LISTED = 50
+
+      DISCARDED = "the plan scope's scratch directory %<dir>s was discarded, with everything written there"
+
+      UNDISCARDED = "the plan scope's scratch directory %<dir>s could not be discarded, so what is left of it " \
+                    "stays: %<reason>s"
 
       # @param root [String] the directory each lease is made under
       # @param prefix [String] what each directory's name starts with, so a
@@ -67,21 +73,34 @@ module Lain
       end
 
       # Gives the lease back and keeps the directory, which is the only copy of
-      # what was written there.
+      # what was written there, unless the release discards it.
       #
       # @param lease [Lease]
+      # @param discard [Boolean] delete the directory, as at quit, when nobody
+      #   is left to come back for what was written there
       # @return [String] the files written under it, absolute, 1 per line, the
-      #   first {LISTED} and a count of the rest; empty when there are none
-      def release(lease)
-        lease.release
-        dir = lease.worker_env.cwd
+      #   first {LISTED} and a count of the rest; empty when there are none.
+      #   A discarding release says the directory went instead.
+      def release(lease, discard: false)
+        lease.release(discard:)
+        discard ? discarded(lease.origin.path) : listed(lease.worker_env.cwd)
+      end
+
+      private
+
+      def discarded(dir)
+        FileUtils.rm_r(dir, secure: true)
+        format(DISCARDED, dir:)
+      rescue SystemCallError => e
+        format(UNDISCARDED, dir:, reason: Error.reason_of(e))
+      end
+
+      def listed(dir)
         written = Dir.glob("**/*", File::FNM_DOTMATCH, base: dir, sort: true)
                      .map { |name| File.join(dir, name) }
                      .reject { |path| File.lstat(path).directory? }
         (written.first(LISTED) + elided(written.size, dir)).join("\n")
       end
-
-      private
 
       def elided(count, dir)
         count > LISTED ? ["... and #{count - LISTED} more under #{dir}"] : []

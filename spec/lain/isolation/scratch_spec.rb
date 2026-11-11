@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "tmpdir"
 
 RSpec.describe Lain::Isolation::Scratch do
@@ -109,6 +110,40 @@ RSpec.describe Lain::Isolation::Scratch do
 
       expect([scratch.release(lease), scratch.release(lease)].uniq.size).to eq(1)
       expect(lease).to be_released
+    end
+
+    describe "discarding, as at quit" do
+      it "deletes the lease's directory and nothing beside or behind it" do
+        lease = scratch.acquire
+        sibling = scratch.acquire.worker_env.cwd
+        outside = File.join(File.dirname(@root), "outside").tap { FileUtils.mkdir_p(_1) }
+        File.write(File.join(outside, "kept.txt"), "kept\n")
+        File.symlink(outside, File.join(lease.origin.path, "link"))
+
+        told = scratch.release(lease, discard: true)
+
+        expect(told).to include(lease.origin.path, "was discarded")
+        expect([File.exist?(lease.origin.path), File.directory?(sibling), File.directory?(@root)])
+          .to eq([false, true, true])
+        expect(File.read(File.join(outside, "kept.txt"))).to eq("kept\n")
+      end
+
+      # A claim that the directory went while a file survived would hide the
+      # very secret the discard is for.
+      it "says the directory could not be discarded, and why, when part of it stays" do
+        lease = scratch.acquire
+        locked = File.join(lease.origin.path, "locked").tap { FileUtils.mkdir_p(_1) }
+        File.write(File.join(locked, ".env"), "TOKEN=x\n")
+        File.chmod(0o500, locked)
+
+        told = scratch.release(lease, discard: true)
+
+        expect(told).to include(lease.origin.path, "could not be discarded", "ermission denied")
+        expect(told).not_to include("was discarded")
+        expect(File.exist?(File.join(locked, ".env"))).to be(true)
+      ensure
+        File.chmod(0o700, locked) if locked && File.directory?(locked)
+      end
     end
 
     it "answers nothing when nothing was written, and keeps the directory" do

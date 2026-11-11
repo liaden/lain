@@ -158,8 +158,9 @@ module Lain
           def reminder(lease) = @sources.fetch(lease).reminder(lease)
 
           # @param lease [Lain::Isolation::Lease]
+          # @param discard [Boolean] as on {Lain::Isolation::Spike#release}
           # @return [String]
-          def release(lease) = @sources.delete(lease).release(lease)
+          def release(lease, discard: false) = @sources.delete(lease).release(lease, discard:)
 
           private
 

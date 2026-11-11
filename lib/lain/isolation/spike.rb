@@ -108,13 +108,16 @@ module Lain
       # Gives the lease back, and the branch with it.
       #
       # @param lease [Lease] one {#acquire} answered
+      # @param discard [Boolean] reclaim a spike that committed nothing even
+      #   with uncommitted work, as at quit, when nobody is left to come back
+      #   for it; a spike with commits keeps its branch and worktree regardless
       # @return [String] what became of the branch, when it was kept; "" when
       #   it was deleted
-      def release(lease)
+      def release(lease, discard: false)
         origin = lease.origin
         head = head_of(origin.path)
         kept = head == origin.base ? nil : keep(origin, head)
-        lease.release
+        lease.release(discard: discard && kept.nil?)
         [kept || discard(origin), retained(origin.path)].reject(&:empty?).join("; ")
       end
 

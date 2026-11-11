@@ -134,6 +134,30 @@ module Lain
         def self.close = self
       end
 
+      # What a run gives back at quit: the checkouts stopped children kept,
+      # then the plan scope's spike, whose words are the quit line. The scope
+      # goes back even when the checkouts raise.
+      class Stops
+        # @param leases [#close] the stopped children's kept checkouts
+        # @param board [#give_back] gives the scope back, answering what
+        #   the human is told of it, "" for nothing
+        # @param tty [#render_warning] where the quit line is said
+        def initialize(leases, board, tty:)
+          @leases = leases
+          @board = board
+          @tty = tty
+        end
+
+        # @return [self]
+        def close
+          @leases.close
+          self
+        ensure
+          told = @board.give_back
+          @tty.render_warning(told) unless told.empty?
+        end
+      end
+
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,

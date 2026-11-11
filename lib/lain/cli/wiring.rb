@@ -306,7 +306,7 @@ module Lain
       def open_conductor(tty, rail)
         @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
                                countdown: Conductor::RailCountdown.where(rail:, socketed: human.socket_name),
-                               stops: @toolset_build.spawn_leases)
+                               stops: Conductor::Stops.new(@toolset_build.spawn_leases, @switchboard, tty:))
       end
 
       # @param resumed [#recorder, #session, nil] the resumed chat, nil when fresh

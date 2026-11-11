@@ -1382,3 +1382,36 @@ RSpec.describe Lain::CLI::Conductor do
     end
   end
 end
+
+RSpec.describe Lain::CLI::Conductor::Stops do
+  let(:tty) { instance_spy(Lain::Frontend::TTY) }
+
+  def board_saying(words, given = [])
+    Object.new.tap { |board| board.define_singleton_method(:give_back) { words.tap { given << :scope } } }
+  end
+
+  def leases(&close) = Object.new.tap { |stub| stub.define_singleton_method(:close, &close) }
+
+  it "gives the checkouts back, then the scope, and says what the scope's give-back told" do
+    order = []
+
+    described_class.new(leases { order << :leases }, board_saying("lain/plan/x is kept", order), tty:).close
+
+    expect(order).to eq(%i[leases scope])
+    expect(tty).to have_received(:render_warning).with("lain/plan/x is kept")
+  end
+
+  it "says nothing when the scope's give-back has nothing to tell" do
+    described_class.new(leases { nil }, board_saying(""), tty:).close
+
+    expect(tty).not_to have_received(:render_warning)
+  end
+
+  it "still gives the scope back when the checkouts raise, and lets the raise through" do
+    given = []
+    stops = described_class.new(leases { raise Lain::Error, "refused" }, board_saying("", given), tty:)
+
+    expect { stops.close }.to raise_error(Lain::Error, "refused")
+    expect(given).to eq([:scope])
+  end
+end

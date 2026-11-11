@@ -1684,8 +1684,11 @@ RSpec.describe Lain::CLI::Switchboard do
 
         def reminder(lease) = "confined to #{lease.worker_env.checkout}"
 
-        def release(lease)
+        def discarded = @discarded ||= []
+
+        def release(lease, discard: false)
           lease.release
+          discarded << lease if discard
           "gave back #{lease.worker_env.checkout}"
         end
       end.new(@base)
@@ -1800,6 +1803,39 @@ RSpec.describe Lain::CLI::Switchboard do
         board.mode_switch.switch(Lain::Mode.new, surface: "tty")
 
         expect(board.policy_switch.current).to be(board.ladder)
+      end
+    end
+
+    describe "giving the scope back at quit" do
+      it "discards the spike's uncommitted work and says what became of it" do
+        plan!
+
+        told = board.give_back
+
+        expect(told).to eq("gave back #{spike.leases.first.worker_env.checkout}")
+        expect(spike.discarded).to eq(spike.leases)
+        expect(spike.leases.first).to be_released
+      end
+
+      it "says nothing and gives nothing back outside plan" do
+        expect(board.give_back).to eq("")
+        expect(spike.leases).to be_empty
+      end
+
+      it "gives the spike back once however often the quit closes" do
+        plan!
+
+        expect([board.give_back, board.give_back]).to match([start_with("gave back"), ""])
+      end
+
+      # The mode still reads plan after the quit, so a flip that stays in plan
+      # would otherwise cut a second spike nothing gives back.
+      it "refuses to enter plan again once the scope was given back" do
+        plan!
+        board.give_back
+
+        expect { plan!(:bypass) }.to raise_error(Lain::Mode::Scope::Unavailable)
+        expect(spike.leases.size).to eq(1)
       end
     end
 
@@ -1991,6 +2027,52 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(policy).to be_a(Lain::CLI::Switchboard::Leased)
         expect(policy.current.label).to eq("plan bypass")
       end
+    end
+  end
+
+  # The scope given back by the closer the run's quit runs, over a real
+  # spike: what plan scope wrote must not outlive the session.
+  describe "plan scope at quit, over git", :seam do
+    around do |example|
+      Dir.mktmpdir("lain-board-quit") do |dir|
+        base_dir = File.realpath(dir)
+        @repo = File.join(base_dir, "repo").tap { FileUtils.mkdir_p(_1) }
+        FileUtils.cp_r("#{SeedRepo.at({ "a.rb" => "one\n" })}/.", @repo)
+        @spike = Lain::Isolation::Spike.new(repo_root: @repo, root: File.join(base_dir, "worktrees"), cwd: @repo)
+        example.run
+      end
+    end
+
+    let(:tty) { instance_spy(Lain::Frontend::TTY) }
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @repo, env: {})) }
+
+    def git(*args, dir: @repo) = SeedRepo.git(dir, *args).stdout.strip
+
+    def quit!
+      board = switchboard(spike: @spike).bind_session(session)
+      board.mode_switch.switch(Lain::Mode.new(scope: :plan), surface: "tty")
+      yield session.worker_env.checkout
+      Lain::CLI::Conductor::Stops.new(Lain::Isolation::Leases.new, board, tty:).close
+    end
+
+    def plan_branches = git("for-each-ref", "--format=%(refname:short)", "refs/heads/lain/plan/").split
+
+    it "removes an uncommitted spike: no plan branch and no locked worktree remain" do
+      quit! { |spiked| File.write(File.join(spiked, ".env"), "TOKEN=sk-live-0123456789abcdef\n") }
+
+      expect([plan_branches, git("worktree", "list", "--porcelain").lines.grep(/\Alocked/)]).to eq([[], []])
+      expect(tty).not_to have_received(:render_warning)
+    end
+
+    it "keeps a committed spike's branch and names it on the quit line" do
+      quit! do |spiked|
+        File.write(File.join(spiked, "plan.md"), "work\n")
+        git("add", "plan.md", dir: spiked)
+        git("-c", "user.email=t@example.com", "-c", "user.name=T", "commit", "-q", "-m", "work", dir: spiked)
+      end
+
+      expect(plan_branches).to contain_exactly(start_with("lain/plan/"))
+      expect(tty).to have_received(:render_warning).with(include(plan_branches.first))
     end
   end
 

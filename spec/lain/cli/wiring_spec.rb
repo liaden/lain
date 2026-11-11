@@ -3500,6 +3500,53 @@ RSpec.describe Lain::CLI::Wiring do
       expect(round_budget_basis(options: { round_budget: "off", round_dedup: "off" })).to eq([])
     end
 
+    # The quit is the last thing that could give a plan-scope spike back: one
+    # left behind holds a branch, and a locked worktree, nothing else removes.
+    describe "a quit in plan scope", :seam do
+      let(:screen) { StringIO.new }
+
+      def quit_in_plan(state)
+        terminal = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: screen, history_path: File.join(state, "history"))
+        end
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("/mode plan\nquit\n"),
+                            tty_factory: terminal, conductor_opener:,
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }))
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      def git(*args) = SeedRepo.git(project_dir, *args).stdout
+
+      def locked_worktrees = git("worktree", "list", "--porcelain").lines.grep(/\Alocked/)
+
+      it "leaves no plan branch and no locked worktree in a git project" do
+        FileUtils.cp_r("#{SeedRepo.at({ "a.rb" => "one\n" })}/.", project_dir)
+
+        Dir.mktmpdir("lain-wiring-quit") { |state| quit_in_plan(File.realpath(state)) }
+
+        expect([git("for-each-ref", "refs/heads/lain/plan/"), locked_worktrees]).to eq(["", []])
+        expect(opened.sole).to be_closed
+      end
+
+      # Outside git there are no commits to keep, and what plan scope wrote
+      # there may be a secret.
+      it "discards the scratch directory in a project git does not hold, and says so" do
+        scratches = []
+        allow(Lain::Isolation::Scratch).to receive(:new).and_wrap_original do |original, **kwargs|
+          original.call(**kwargs).tap do |scratch|
+            allow(scratch).to(receive(:acquire).and_wrap_original { |acquire| acquire.call.tap { scratches << _1 } })
+          end
+        end
+
+        Dir.mktmpdir("lain-wiring-quit") { |state| quit_in_plan(File.realpath(state)) }
+
+        dir = scratches.sole.worker_env.cwd
+        expect([File.exist?(dir), opened.sole]).to match([false, be_closed])
+        expect(screen.string).to include(dir, "discarded")
+      end
+    end
+
     # The epic driver's supervisor, retirement and landing queue all journal
     # into what these seams carry, and a chat can only reach that driver through
     # a slash command, so nothing else here would notice a display Channel there.
