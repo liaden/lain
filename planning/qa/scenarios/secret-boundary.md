@@ -601,7 +601,7 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
 ```
 
 1. Approve it. The tool result the model sees, the journal's `tool_result` and the chat display carry `<redacted:1>` in place of the
-   token, and the result ends with `1 region was masked in this command's output; a command's output cannot be released.` No approval
+   token, and the result ends with `1 region was masked in this command's output; a value a file holds is shown once read_file releases it, and /release lets a declined file ask again.` No approval
    prompt follows. The live pane is masked as it streams, by the boundary (`Sensitivity::Display`; a26-3 fixed, T27, T28), so it shows `<redacted:N>` too; past about 1 MiB of live output the display stops with one note line (`[the live display stopped here; the result is bounded as before]`), and the recorded result keeps its bound and masking.
 2. **A session secret masks even when no pattern matches it.** With `OLLAMA_API_KEY=abc123lowentropyvalue` in the launching environment,
    printing it comes back masked. Since round 28 typing the value into the command (`echo abc123lowentropyvalue`) is refused at egress before anything runs, so print it from a file instead (`cat notes/k1.txt`). A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.

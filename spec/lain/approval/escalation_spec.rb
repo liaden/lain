@@ -270,17 +270,15 @@ RSpec.describe Lain::Approval::Escalation do
 
     def over(rung) = ladder(rung, described_class::Surfaces.new(queue))
 
-    it "names the surface that answered on its ruling" do
+    # The queue's own decision journals which surface answered; a ruling releases nothing that needs it.
+    it "names who answered on its ruling, and no surface" do
       Sync do |task|
         asked = task.async { described_class::Surfaces.new(queue).call(effect, nil) }
         task.with_timeout(1) { queue.dequeue }.approve(surface: "tty", authority: :human)
 
-        expect(asked.wait).to have_attributes(surface: "tty", authority: :human)
+        expect(asked.wait).to have_attributes(authority: :human, reason: include("(tty)"))
+        expect(asked.wait).not_to respond_to(:surface)
       end
-    end
-
-    it "names the rung as the surface of a ruling no surface made" do
-      expect(described_class::Ruling.allow(rung: "rules", because: "ok").surface).to eq("rules")
     end
 
     it "settles a deterministic allow with no queue entry created" do

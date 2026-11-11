@@ -90,7 +90,7 @@ module Lain
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
       Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable,
-                           :surface, :builds)
+                           :builds)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -148,14 +148,10 @@ module Lain
         # parks, and never the model: the ladder hands it down as {Noted}, and it
         # is left off `told` and `said` so no refusal can carry it.
         #
-        # `surface` names who answered, as the queue's decision does, so a
-        # release journaled from this ruling says which human said yes; a
-        # ruling no surface made names its rung.
-        #
         # `builds` carries a rule's word that its allow runs a build, which the sandbox reads to choose a
         # profile that can write.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil, note: nil, liftable: false, surface: nil, builds: false)
+                       said: nil, rule: nil, note: nil, liftable: false, builds: false)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -165,8 +161,7 @@ module Lain
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
-                note: spoken(note), liftable: liftable == true, surface: -(surface || rung).to_s,
-                builds: builds == true)
+                note: spoken(note), liftable: liftable == true, builds: builds == true)
         end
 
         def allow? = verdict == :allow
@@ -926,12 +921,10 @@ module Lain
           pending = @queue.adjudicate(effect, context)
           authority = pending.authority
           surface = pending.surface
-          if pending.approved?
-            return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{surface})", authority:, surface:)
-          end
+          return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{surface})", authority:) if pending.approved?
           return postponed(pending) if pending.postponed?
 
-          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:, surface:,
+          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:,
                       said: pending.timed_out? ? pending.lapse : pending.reason)
         end
 
@@ -945,7 +938,7 @@ module Lain
           @denials.denied(pending.requester)
           lapsed = pending.timed_out?
           Ruling.deny(rung: NAME, because: "#{lapsed ? LAPSED : POSTPONED} (#{pending.surface})",
-                      authority: pending.authority, surface: pending.surface, final: true, liftable: true,
+                      authority: pending.authority, final: true, liftable: true,
                       told: format(POSTPONED_TOLD, by: lapsed ? "" : " by the human",
                                                    said: pending.reason&.then { ": #{_1}" }))
         end

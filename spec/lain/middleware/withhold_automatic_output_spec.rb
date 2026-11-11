@@ -87,13 +87,11 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(record).to be_deeply_frozen
     end
 
-    it "names the shape that matched, and that a human's approval shows only what the named files hold" do
+    it "names the shape that matched, and read_file as the way to a file's values" do
       env, = run(call_of("cat notes.txt"), authority: :automatic)
 
-      expect(env.fetch(:result).content).to include("1 pem private key block")
-      expect(env.fetch(:result).content)
-        .to include("a human's approval shows only the values the files the command names hold")
-      expect(env.fetch(:result).content).to include("a respelling does not help")
+      expect(env.fetch(:result).content).to include("1 pem private key block", "read_file")
+      expect(env.fetch(:result).content).not_to match(/approval shows|respelling/)
     end
 
     it "names an entropy-only match as a high-entropy token" do
@@ -319,18 +317,11 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(seen.__getobj__).to be(Lain::Session::Null.instance)
     end
 
-    # A layer above reads who approved the call, and the context it sees has no ruling on it.
-    it "hands the gate's ruling up the stack beside the result" do
+    # Who approved a call releases nothing above this layer, so no ruling travels up.
+    it "hands no ruling up the stack beside the result" do
       env, = run(call_of("ls"), authority: :human)
 
-      expect([env.fetch(:automatic_output_ruling).allow?, env.fetch(:automatic_output_ruling).human?])
-        .to eq([true, true])
-    end
-
-    it "hands up a ruling that allowed nothing for a call no ladder ruled on" do
-      env, = run(call_of("ls"))
-
-      expect(env.fetch(:automatic_output_ruling).allow?).to be(false)
+      expect(env.to_h).not_to have_key(:automatic_output_ruling)
     end
 
     it "hands the caller's own context back up the stack" do
