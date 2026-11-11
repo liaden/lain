@@ -37,9 +37,10 @@ module Lain
       #   deterministically instead of sleeping
       # @param probe [Liveness::Probe] asks whether the session's writer runs
       # @param project [#root, #cwd] whose sessions are searched when `path` is nil
+      # @param env [Hash{String=>String}] where a herdr pane to report the watched child to is looked for
       def initialize(selector:, sink:, path: nil, paths: Paths.new, view: View.new,
                      sleeper: ->(seconds) { sleep(seconds) }, probe: Liveness::Probe.new,
-                     project: Project::Resolver.default_project)
+                     project: Project::Resolver.default_project, env: ENV.to_h)
         # A bare selector would anchor on the first spawn in the file -- a guess
         # wearing a match's clothes -- so it is refused before any read happens.
         raise Error, "selector must be a spawn-digest prefix, got #{selector.inspect}" if selector.to_s.empty?
@@ -47,6 +48,7 @@ module Lain
         @selector = selector
         @noticed = false
         @sink = sink
+        @say = Mutex.new
         @path = path
         @paths = paths
         @project = project
@@ -54,6 +56,7 @@ module Lain
         @sleeper = sleeper
         @probe = probe
         @writer = Liveness::Writer::UNRECORDED
+        @reporting = Reporting.for(env:, root: project.root, notes: Notes.new(method(:say)))
         @filter = LineageFilter.new(selector:, on_shadowed: ->(digest) { shadowed(digest) })
       end
 
@@ -67,6 +70,8 @@ module Lain
       rescue Errno::EPIPE
         # `lain watch | head -1`: the reader leaving is how this watch ends.
         0
+      ensure
+        @reporting.release
       end
 
       private
@@ -113,6 +118,7 @@ module Lain
       def closed_by?(record)
         @writer = Liveness::Writer.from_header(record) if header?(record)
         render(record) if @filter.admit?(record)
+        @reporting.step(record, @filter.anchor)
         closer?(record)
       end
 
@@ -146,8 +152,10 @@ module Lain
       # A file or pipe sink is block-buffered, so without the flush a watch
       # redirected to a file shows nothing until the process exits.
       def say(line)
-        @sink.puts(line)
-        @sink.flush if @sink.respond_to?(:flush)
+        @say.synchronize do
+          @sink.puts(line)
+          @sink.flush if @sink.respond_to?(:flush)
+        end
       end
 
       def journal_path
@@ -187,6 +195,83 @@ module Lain
 
       def watchable(dir)
         durable_names(dir).reject { |name| Journal.empty?(Paths.session_file(name, dir:)) }.sort
+      end
+
+      Notes = Data.define(:say) do
+        def puts(line) = say.call(line)
+      end
+      private_constant :Notes
+
+      # Tells herdr how the watched child is doing, from the tab `lain watch` runs in, under the
+      # name `lain-<role>-<spawn prefix>`. The prefix is what tells two watch tabs for one role apart.
+      # A watch beside a tmux window reports nothing: only a herdr tab is its own pane.
+      class Reporting
+        # The reporter asks its session for a path; a watch has none, and resume: false is the stated intent.
+        NO_SESSION = Data.define(:journal_path).new(journal_path: nil)
+        private_constant :NO_SESSION
+
+        PREFIX_WIDTH = 4
+
+        FALLBACK_NAME = "child"
+
+        Off = Data.define do
+          def step(_record, _anchor) = nil
+          def release = nil
+        end
+
+        # @return [Reporting, Off]
+        def self.for(env:, root:, notes:)
+          env["HERDR_ENV"] == "1" && env["TMUX"].to_s.empty? ? new(env:, root:, notes:) : Off.new
+        end
+
+        def initialize(env:, root:, notes:)
+          @env = env
+          @root = root
+          @notes = notes
+          @tracker = Lain::AgentStates::Tracker.new(clock: RunClock.new)
+          @reporter = nil
+        end
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped] one record of the whole file
+        # @param anchor [String, nil] the watched spawn's digest, once a spawn has matched
+        # @return [nil]
+        def step(record, anchor)
+          start(record) if anchor && spawn_of?(record, anchor)
+          @tracker << record if @reporter
+          nil
+        end
+
+        # @return [nil]
+        def release
+          @reporter&.release
+          nil
+        end
+
+        private
+
+        def spawn_of?(record, anchor)
+          record.is_a?(Telemetry::Message) && record.kind == :spawn && record.digest == anchor
+        end
+
+        def start(record)
+          return if @reporter
+
+          resolver = Herdr::Target::Resolver.new(env: @env, interactive: true, notes: @notes)
+          @reporter = Herdr::Reporter.new(resolver:, session: NO_SESSION, root: @root, agent: agent_for(record),
+                                          resume: false, notes: @notes)
+          @tracker.on_change { |change| tell(change, record.digest) }
+        end
+
+        # A watch reports one agent: the rollup of the whole file belongs to the chat that wrote it.
+        def tell(change, spawn)
+          @reporter.call(change.with(rollup: change.agent.state)) if change.agent.id == spawn
+        end
+
+        def agent_for(record)
+          payload = record.payload.to_h
+          prefix = record.digest.delete_prefix("blake3:")[0, PREFIX_WIDTH]
+          "#{Herdr::AGENT}-#{payload["role"] || payload["prefix"] || FALLBACK_NAME}-#{prefix}"
+        end
       end
 
       # The fd tail as an Enumerable of the records of COMPLETE ("\n"-terminated)

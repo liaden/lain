@@ -827,4 +827,148 @@ RSpec.describe Lain::CLI::Watch do
       expect(tail_from_subdirectory).to eq(0)
     end
   end
+
+  describe "reporting the watched child to herdr" do
+    let(:child) { "blake3:3f2a#{"b" * 60}" }
+    let(:sibling) { "blake3:7e1c#{"d" * 60}" }
+    let(:herdr_dir) { @herdr_dir ||= File.realpath(Dir.mktmpdir("watch-herdr")) }
+    let(:calls_path) { File.join(herdr_dir, "calls") }
+    let(:session) { File.join(herdr_dir, "child.ndjson") }
+    let(:herdr_env) do
+      { "HERDR_ENV" => "1", "HERDR_PANE_ID" => "w1:p9", "HERDR_BIN_PATH" => stub_herdr,
+        "HERDR_SOCKET_PATH" => File.join(herdr_dir, "herdr.sock") }
+    end
+
+    after { FileUtils.remove_entry(@herdr_dir) if @herdr_dir }
+
+    def stub_herdr
+      path = File.join(herdr_dir, "herdr")
+      File.write(path, <<~SH, perm: 0o755)
+        #!/bin/sh
+        printf '%s\\037' "$@" >> #{calls_path.shellescape}
+        printf '\\n' >> #{calls_path.shellescape}
+        if [ "$1" = agent ]; then echo '{"error":{"code":"agent_not_found"}}' >&2; exit 1; fi
+        exit 0
+      SH
+      path
+    end
+
+    def calls
+      return [] unless File.exist?(calls_path)
+
+      File.readlines(calls_path, chomp: true).map { |line| line.split("\x1f") }
+    end
+
+    def reports = calls.select { _1.first(2) == %w[pane report-agent] }
+
+    def flag(call, name) = call.index(name)&.then { call[_1 + 1] }
+
+    def spawn_of(digest, **payload)
+      Lain::Telemetry::Message.new(
+        digest:, kind: :spawn, from: parent_correlation, to: nil,
+        payload: { "prefix" => "worker", "posture" => "trusted", "only" => nil, "role" => "dev",
+                   "spawned_from" => parent_chain.head_digest, "lifecycle" => "launched" }
+                   .merge(payload.stringify_keys),
+        causal_parents: [parent_chain.head_digest], correlation: parent_correlation
+      ).to_journal
+    end
+
+    def blocked_on_bash(spawn, id)
+      Lain::Telemetry::AwaitingHuman.new(kind: "approval", ref: id, summary: "bash: make", requester: "dev",
+                                         tool: "bash", tool_use_id: id, spawn:).to_journal
+    end
+
+    def main_request
+      Lain::Telemetry::RequestSent.new(digest: "blake3:#{"e" * 64}", payload: {}, stream: true, extra: {},
+                                       prefix_digests: nil, prefix_chain_version: nil, requester: nil).to_journal
+    end
+
+    def decided(id) = { "type" => "approval_decision", "tool_use_id" => id }
+
+    def child_done
+      message_record(digest: "blake3:9#{child[8..]}", from: child, to: parent_correlation, text: "done",
+                     causal_parents: [child], lifecycle: "stopped")
+    end
+
+    # A sibling blocks and the main chat works around the watched child, whose own states are the only ones told.
+    def child_session(spawn: dev_spawn)
+      [header_record, main_request, spawn, spawn_of(sibling), blocked_on_bash(sibling, "call_9"),
+       blocked_on_bash(child, "call_1"), decided("call_1"), child_done, decided("call_9"), closed_record]
+    end
+
+    def dev_spawn = spawn_of(child)
+
+    def append_session(spawn: dev_spawn)
+      File.write(session, child_session(spawn:).map { "#{JSON.generate(_1)}\n" }.join)
+    end
+
+    def watch_with(env, notes: output, spawn: dev_spawn)
+      append_session(spawn:)
+      described_class.new(selector: "3f2a", path: session, sink: notes, paths:, env:).run
+    end
+
+    it "reports the child under its own name, working, blocked, working, idle, with no resume command" do
+      expect(watch_with(herdr_env)).to eq(0)
+
+      expect(reports.map { flag(_1, "--state") }).to eq(%w[working blocked working idle])
+      expect(reports.map { [flag(_1, "--source"), flag(_1, "--agent")] }.uniq).to eq([%w[lain lain-dev-3f2a]])
+      expect(reports.map { _1.include?("--") }).to all(be(false))
+    end
+
+    it "releases the pane when the watch ends" do
+      watch_with(herdr_env)
+
+      releases = calls.select { _1.first(2) == %w[pane release-agent] }
+      expect(releases.map { _1[2] }).to eq(["w1:p9"])
+      expect(flag(releases.first, "--agent")).to eq("lain-dev-3f2a")
+    end
+
+    it "spawns no herdr process in a tmux window, nor asks tmux anything" do
+      tmux_log = File.join(herdr_dir, "tmux.log")
+      File.write(File.join(herdr_dir, "tmux"), "#!/bin/sh\necho called >> #{tmux_log.shellescape}\n", perm: 0o755)
+      path = "#{herdr_dir}:#{ENV.fetch("PATH")}"
+
+      with_env("PATH" => path) do
+        expect(watch_with(herdr_env.merge("TMUX" => "/tmp/tmux-1/default,1,0", "TMUX_PANE" => "%3"))).to eq(0)
+      end
+
+      expect([calls, File.exist?(tmux_log)]).to eq([[], false])
+    end
+
+    it "names a child with no role by its prefix label, and one with neither by a fixed word" do
+      watch_with(herdr_env, spawn: spawn_of(child, role: nil))
+      expect(reports.map { flag(_1, "--agent") }.uniq).to eq(["lain-worker-3f2a"])
+
+      File.delete(calls_path)
+      watch_with(herdr_env, spawn: spawn_of(child, role: nil, prefix: nil))
+      expect(reports.map { flag(_1, "--agent") }.uniq).to eq(["lain-child-3f2a"])
+    end
+
+    it "spawns no herdr process outside herdr" do
+      expect(watch_with({})).to eq(0)
+
+      expect(calls).to be_empty
+    end
+
+    it "says on the watch's own output when herdr cannot be told" do
+      env = herdr_env.merge("HERDR_BIN_PATH" => File.join(herdr_dir, "missing"))
+
+      expect(watch_with(env)).to eq(0)
+      expect(output.string).to match(/herdr: reporting to pane w1:p9 failed|herdr did not answer/)
+    end
+
+    it "reports from a real lain watch process over a real session file", :seam do
+      append_session
+      log = File.join(herdr_dir, "watch.log")
+      env = herdr_env.merge("TMUX" => nil, "TMUX_PANE" => nil, "XDG_STATE_HOME" => @state_home)
+      exe = File.expand_path("../../../exe/lain", __dir__)
+      pid = Process.spawn(env, RbConfig.ruby, exe, "watch", "3f2a", "--session", session,
+                          chdir: herdr_dir, in: File::NULL, %i[out err] => log)
+      _, status = Process.wait2(pid)
+
+      expect(status).to be_success, File.read(log)
+      expect(reports.map { flag(_1, "--state") }).to eq(%w[working blocked working idle]), File.read(log)
+      expect(calls.count { _1.first(2) == %w[pane release-agent] }).to eq(1)
+    end
+  end
 end
