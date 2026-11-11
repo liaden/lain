@@ -244,7 +244,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "denies and journals a park for a human, awaited under a question naming manual acceptance" do
       expect(manual_decision).to be(false)
 
-      expect(decisions.first).to include("verdict" => "deny", "policy" => "deferred")
+      expect(decisions.first).to include("verdict" => "deferred", "policy" => "deferred")
       expect(journal_records(journal_io, "awaiting_human"))
         .to contain_exactly(include("deferred" => true, "issue_id" => "a", "summary" => /manual acceptance/))
     end
@@ -278,8 +278,25 @@ RSpec.describe Lain::Epic::Gate::Policy do
     it "answers false and journals answered_by deferred, approved false" do
       expect(decide(policy)).to be(false)
 
-      expect(decisions.first).to include("verdict" => "deny", "answered_by" => "deferred",
+      expect(decisions.first).to include("verdict" => "deferred", "answered_by" => "deferred",
                                          "policy" => "deferred")
+    end
+
+    it "answers with the deferred verdict itself, so no reader of its record compares the policy" do
+      verdict = described_class::Deferred::SURFACE.ask("q").await.verdict
+
+      expect(verdict).to eq(Lain::Epic::GateDecision::Deferred.new)
+    end
+
+    it "hands the gate a park as what an interrupted wait journals" do
+      spy = Object.new.tap do |recorder|
+        recorder.define_singleton_method(:call) { |_artifact, **kwargs| (@calls ||= []) << kwargs and false }
+        recorder.define_singleton_method(:calls) { @calls }
+      end
+
+      Sync { policy.decide(plan, gate: spy, stage: "research", epic_slug: "alpha") }
+
+      expect(spy.calls.map { _1[:interrupted] }).to eq([Lain::Epic::GateDecision::Deferred.new])
     end
 
     it "parks one item for that digest and stage" do

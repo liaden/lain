@@ -201,6 +201,25 @@ RSpec.describe Lain::Epic::Gate do
       expect(subject_gate.approved?(plan.digest)).to be(false)
     end
 
+    it "parks an interrupted wait whose policy parks, leaving the standing approval of that digest standing" do
+      subject_gate = gate(timeout: 30)
+      call(subject_gate, asker: approve_asker, stage: "research", epic_slug: "demo")
+
+      waits = journal_records(journal_io, "awaiting_human").size
+      Sync do |task|
+        asking = task.async do
+          subject_gate.call(plan, asker: silent_asker, stage: "research", epic_slug: "demo", policy: "deferred",
+                                  interrupted: Lain::Epic::GateDecision::Deferred.new)
+        end
+        task.yield until asking.finished? || journal_records(journal_io, "awaiting_human").size > waits
+        asking.stop
+      end
+
+      expect(decisions.last.values_at("verdict", "answered_by"))
+        .to eq(["deferred", described_class::INTERRUPTED_SURFACE])
+      expect(subject_gate.approved?(plan.digest)).to be(true)
+    end
+
     it "still withdraws the question and leaves a real asker free" do
       asker = Lain::Tools::AskHuman.new(parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) })
 
@@ -637,6 +656,12 @@ RSpec.describe Lain::Epic::Gate do
       call(gate, asker: approve_asker, reason: "the caller's note")
 
       expect(decisions.first).to include("reason" => "the caller's note")
+    end
+
+    it "carries a policy's deferral, which approves nothing" do
+      parked = described_class::Answer.deferred("deferred")
+
+      expect([parked.verdict, parked.approved?]).to eq([Lain::Epic::GateDecision::Deferred.new, false])
     end
 
     it "keeps a carried reason frozen, so the answer stays shareable" do

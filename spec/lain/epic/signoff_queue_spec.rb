@@ -48,7 +48,10 @@ RSpec.describe Lain::Epic::SignoffQueue do
                                  answered_by: policy, policy:, latency: 0.1, **overrides)
   end
 
-  def deferral(**overrides) = decision(policy: described_class::DEFERRED_POLICY, **overrides)
+  def deferral(**overrides)
+    decision(policy: described_class::DEFERRED_POLICY, verdict: Lain::Epic::GateDecision::Deferred.new, **overrides)
+  end
+
   def settle(queue, **overrides) = queue.apply(decision(policy: "signoff", **overrides).to_journal)
   def approval(**overrides) = decision(policy: "signoff", verdict: Lain::Approval::Verdict::Approve.new, **overrides)
 
@@ -549,11 +552,26 @@ RSpec.describe Lain::Epic::SignoffQueue do
       expect(queue.held("alpha", "research")).to be_empty
     end
 
-    it "refuses a record written before decisions carried a verdict, saying so" do
+    it "refuses a record written before decisions carried a verdict as one missing its verdict" do
       old = decision(policy: "signoff").to_journal.except("verdict").merge("approved" => true)
 
-      expect { described_class.from_journal([old]) }
-        .to raise_error(described_class::UnreadableRecord, /approved boolean.*no verdict.*lain epic rewrite-verdicts/)
+      expect { described_class.from_journal([old]) }.to raise_error(described_class::UnreadableRecord) { |error|
+        expect(error.message).to include("verdict must be one of")
+        expect(error.message).not_to include("rewrite")
+      }
+    end
+
+    it "parks a record by its deferred verdict, whatever policy it names" do
+      raw = decision(policy: "signoff").to_journal.merge("verdict" => "deferred")
+
+      expect(described_class.from_journal([raw]).parked("alpha", "research").map(&:artifact_digest))
+        .to eq(["blake3:plan"])
+    end
+
+    it "settles a deny under the deferred policy rather than parking it" do
+      raw = deferral.to_journal.merge("verdict" => "deny")
+
+      expect(described_class.from_journal([raw]).parked("alpha", "research")).to be_empty
     end
 
     it "keys on the whole partition: another epic, stage or issue vouches for nothing" do

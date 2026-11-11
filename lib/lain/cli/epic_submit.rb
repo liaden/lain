@@ -421,9 +421,7 @@ module Lain
 
         # @param digest [String] the submitted artifact's address
         # @return [Boolean] whether this command's own latest decision on the digest deferred it
-        def deferred?(digest)
-          latest(digest)&.policy == Lain::Epic::SignoffQueue::DEFERRED_POLICY
-        end
+        def deferred?(digest) = latest(digest)&.deferred? || false
 
         def each(&block) = @readings.call.each(&block)
 

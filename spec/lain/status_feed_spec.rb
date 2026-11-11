@@ -682,7 +682,7 @@ RSpec.describe Lain::StatusFeed do
       expect(published["waiting"]).to eq(1)
     end
 
-    # A deferred park is journaled after the denial that closed its gate, so
+    # A deferred park is journaled after the decision that parked its gate, so
     # nothing later in this run would ever close it.
     it "does not count a gate parked for the morning review" do
       feed = described_class.new(path:)

@@ -6,6 +6,14 @@ require "stringio"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
 module AdjudicatorSpecSupport
+  # The real gate, asked through a surface that never answers, so a spec can stop it mid-wait whatever
+  # outcome the adjudicator reached.
+  class StalledGate < SimpleDelegator
+    SILENT = Object.new.tap { |asker| asker.define_singleton_method(:ask) { |_question| Lain::Promise.new } }
+
+    def call(artifact, **) = __getobj__.call(artifact, **, asker: SILENT)
+  end
+
   # A {SignoffQueue} that records the ONE question the stage-boundary rule
   # asks. `#drained?` is asked once per PRECEDING stage per check, so a rule
   # with two call sites on one path asks it twice per stage -- which is the
@@ -141,6 +149,31 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   def decisions = journal_records(journal_io, "gate_decision")
   def evidence_records = journal_records(journal_io, "gate_evidence")
 
+  describe "a wait stopped before the gate settles" do
+    def stalled(verdict)
+      described_class.new(role_spawn: spawn_stub(verdict:), gate: AdjudicatorSpecSupport::StalledGate.new(gate),
+                          queue:, digests: current, journal:, brief:, decisions: journaled)
+    end
+
+    def stopped(verdict)
+      subject_under_test = stalled(verdict)
+      Sync do |task|
+        asking = task.async { subject_under_test.call(plan, stage: "epic_plan", epic_slug: "alpha") }
+        task.yield until asking.finished? || journal_records(journal_io, "awaiting_human").any?
+        asking.stop
+      end
+      decisions.map { _1.values_at("verdict", "answered_by") }
+    end
+
+    it "journals a park when the adjudicator deferred" do
+      expect(stopped("APPROVE, probably")).to eq([["deferred", Lain::Epic::Gate::INTERRUPTED_SURFACE]])
+    end
+
+    it "journals a deny when the adjudicator reached a terminal verdict" do
+      expect(stopped("APPROVE")).to eq([["deny", Lain::Epic::Gate::INTERRUPTED_SURFACE]])
+    end
+  end
+
   describe "a clean APPROVE closes the gate with evidence" do
     it "approves the artifact" do
       expect(adjudicate).to be(true)
@@ -237,7 +270,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     it "journals a deferred decision, so the queue stays a subset of the journal's fold" do
       adjudicate(adjudicator(spawn_stub(verdict: hedged)))
 
-      expect(decisions.first).to include("verdict" => "deny",
+      expect(decisions.first).to include("verdict" => "deferred",
                                          "policy" => Lain::Epic::SignoffQueue::DEFERRED_POLICY)
       expect(decisions.first["evidence_digest"]).to eq(Lain::Canonical.digest(evidence_text))
     end

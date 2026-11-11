@@ -72,6 +72,15 @@ RSpec.describe Lain::Journal::Projection::Waits do
                 wait.new(ref: "blake3:q", kind: "question", agent: child, summary: "Which?")])
     end
 
+    it "closes a live gate wait on its deferred decision, live and read back, and counts nothing waiting" do
+      parked = gate_decision.call("blake3:plan", Lain::Epic::GateDecision::Deferred.new)
+      untyped = Lain::Telemetry.read(JSON.parse(JSON.generate(parked.to_journal)), strict: false)
+
+      outcomes = [parked, untyped].map { described_class.over([gate_wait.call("blake3:plan"), _1]) }
+
+      expect(outcomes.map { [_1.open, _1.waiting] }).to eq([[[], 0], [[], 0]])
+    end
+
     it "keeps a held gate open and opens a deferred gate" do
       waits = described_class.over([gate_wait.call("blake3:held"),
                                     gate_decision.call("blake3:held", Lain::Approval::Verdict::Hold.new(note: "later")),

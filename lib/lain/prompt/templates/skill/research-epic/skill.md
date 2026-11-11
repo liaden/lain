@@ -96,8 +96,8 @@ gate policy, not your choice:
 - `interactive` — a human answers.
 - `hands_off` — approved immediately, and audibly: the decision still lands in the Journal
   attributed to the policy that gave itself the answer.
-- `deferred` — refuses now and parks the question for a human to sign off later. The refusal is
-  a real, journaled denial: deferring is not a soft yes, and nothing about it opens a gate.
+- `deferred` — refuses now and parks the question for a human to sign off later. The park is
+  journaled as a `deferred` verdict: deferring is not a soft yes, and nothing about it opens a gate.
   What parks is the artifact's address and its question: no spike runs and **no model is
   asked.** A reviewer coming to it later reads the question and goes and looks.
 - `adjudicated` — tries to answer the question before parking it. A read-only spike gathers

@@ -7,8 +7,8 @@ module Lain
     # only where the partition stands approved at other bytes than the issue holds now, so an edit
     # that restores the approved bytes, or one made before any approval, journals nothing.
     #
-    # The record is a deferred denial, never a settled one: {SignoffQueue} parks it and leaves the
-    # standing approval alone, which is what keeps a deny of this shape from reading as a human's.
+    # The record is a {GateDecision::Deferred}, never a deny: {SignoffQueue} parks it and leaves the
+    # standing approval alone, where a deny would revoke it.
     class Reopen
       STAGE = "issue_plan"
       NOTE = "reopened by an edit"
@@ -88,7 +88,7 @@ module Lain
 
       def journal(epic_slug, issue_id, digest)
         @journal.record(GateDecision.new(artifact_digest: digest, epic_slug:, stage: STAGE, issue_id:,
-                                         verdict: Approval::Verdict::Deny.new(note: NOTE), answered_by: SURFACE,
+                                         verdict: GateDecision::Deferred.new(note: NOTE), answered_by: SURFACE,
                                          policy: SignoffQueue::DEFERRED_POLICY, latency: 0))
         @journal.record(Telemetry::AwaitingHuman.new(kind: "gate", ref: digest, deferred: true, epic_slug:,
                                                      stage: STAGE, issue_id:, summary: SUMMARY % issue_id))

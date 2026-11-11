@@ -29,7 +29,7 @@ RSpec.describe Lain::Epic::Reopen do
 
       expect(journal_records(io, "gate_decision")).to contain_exactly(
         a_hash_including("artifact_digest" => "blake3:new", "epic_slug" => "alpha", "stage" => "issue_plan",
-                         "issue_id" => "a", "policy" => "deferred", "verdict" => "deny",
+                         "issue_id" => "a", "policy" => "deferred", "verdict" => "deferred",
                          "reason" => "reopened by an edit", "answered_by" => "epic_write")
       )
     end
@@ -68,7 +68,7 @@ RSpec.describe Lain::Epic::Reopen do
     let(:current) { { "a" => "blake3:old" } }
 
     def parked_at(digest)
-      records.push(decided(digest, verdict: Lain::Approval::Verdict::Deny.new, policy: "deferred"))
+      records.push(decided(digest, verdict: Lain::Epic::GateDecision::Deferred.new, policy: "deferred"))
     end
 
     it "drains the item the edit parked and leaves the approval standing" do

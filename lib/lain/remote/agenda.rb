@@ -152,8 +152,7 @@ module Lain
 
         # Not false: false says another surface answered first, and this item stays listed.
         def unanswerable(message)
-          "this item reports a gate journal that cannot be read, and no answer reaches a gate through it; " \
-            "a record from before verdicts is rewritten by `lain epic rewrite-verdicts`: #{message}"
+          "this item reports a gate journal that cannot be read, and no answer reaches a gate through it: #{message}"
         end
 
         def unreadable(id, message)

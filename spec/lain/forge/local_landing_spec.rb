@@ -110,7 +110,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
 
   def deny(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Approval::Verdict::Deny.new, policy: "signoff")
 
-  def park(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Approval::Verdict::Deny.new, policy: "deferred")
+  def park(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Epic::GateDecision::Deferred.new, policy: "deferred")
 
   def implementation_digest(issue_id, sha)
     Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
@@ -477,13 +477,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
         expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
       end
 
-      it "refuses a decision written before verdicts were recorded, naming the command that rewrites it" do
+      it "refuses a decision written before verdicts were recorded as one missing its verdict" do
         approve("a", "a" * 40)
         old = decisions.first.to_journal.except("verdict").merge("approved" => true)
 
         expect { described_class::Approvals.from([old]) }
-          .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord,
-                          /approved boolean.*no verdict.*lain epic rewrite-verdicts/)
+          .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /verdict must be one of/) { |error|
+            expect(error.message).not_to include("rewrite")
+          }
       end
 
       it "still lands a commit approved before the hold on the same digest" do

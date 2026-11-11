@@ -29,8 +29,8 @@ module Lain
         end
 
         # A gate's stage is whichever of its records came last, and a wait
-        # reopens it: a deferred wait is the one written after the denial that
-        # closed the gate, so it reads as parked, as `lain epic status` counts
+        # reopens it: a deferred wait is the one written after the decision that
+        # parked the gate, so it reads as parked, as `lain epic status` counts
         # it. What a decision left is the sign-off queue's answer for that
         # issue, so this row and every other reader agree.
         module Roadmap

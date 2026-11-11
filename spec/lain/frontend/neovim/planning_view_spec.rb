@@ -76,7 +76,7 @@ RSpec.describe Lain::Frontend::Neovim::PlanningView do
     # Scenario: readers agree on the standing -- the row is Epic::Signoff's answer,
     # never a second reading of the newest record.
     it "reads a denial of a draft the approval superseded as approved, as the sign-off queue does" do
-      records = [decided("a", verdict: "deny", digest: "blake3:v1", policy: "deferred"),
+      records = [decided("a", verdict: "deferred", digest: "blake3:v1", policy: "deferred"),
                  decided("a", verdict: "approve", digest: "blake3:v2"),
                  decided("a", verdict: "deny", digest: "blake3:v1", reason: "stale draft")]
       lines = described_class.new(epic: epic(graph_of(issue("a")), records)).initial

@@ -231,7 +231,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       command.submit("implementation", issue: "a", digest: commit_sha)
 
       implementation = gate_decisions.find { |record| record["stage"] == "implementation" }
-      expect(implementation).to include("verdict" => "deny", "policy" => "deferred")
+      expect(implementation).to include("verdict" => "deferred", "policy" => "deferred")
       expect(session_records.select { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" })
         .to include(include("deferred" => true, "summary" => /manual acceptance/))
     end

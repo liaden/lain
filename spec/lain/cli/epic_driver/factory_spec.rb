@@ -693,7 +693,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(result.reported.last.reason).to include("committed no work")
       expect(result.reported.first.reason).to include("parked", "lain epic queue")
       parked = journaled_decisions.select { |entry| entry.values_at("issue_id", "stage") == %w[a implementation] }
-      expect(parked).to contain_exactly(include("verdict" => "deny", "policy" => "deferred"))
+      expect(parked).to contain_exactly(include("verdict" => "deferred", "policy" => "deferred"))
     end
 
     # The same rebase, over an issue that did commit work: its rebased red

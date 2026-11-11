@@ -257,7 +257,7 @@ RSpec.describe Lain::Tools::EpicSubmit do
       parked = Lain::Epic::GateDecision.new(
         artifact_digest: Lain::Epic::Submission.research(text: "# findings\n", slug: "frugirl-mvp").digest,
         epic_slug: "frugirl-mvp", stage: "research",
-        verdict: Lain::Approval::Verdict::Deny.new, answered_by: "deferred",
+        verdict: Lain::Epic::GateDecision::Deferred.new, answered_by: "deferred",
         policy: "deferred", latency: 1.0
       )
       FileUtils.mkdir_p(paths.filing_dir(root: @dir))

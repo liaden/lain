@@ -21,7 +21,7 @@ module GateDecisionFoldDiscipline
     /["']gate_decision["']/,
     /%w\[[^\]]*\bgate_decision\b/,
     /GateDecision\.verdict_in/,
-    /(is_a\?\(|when +)(::)?(Lain::)?(Epic::)?GateDecision\b/
+    /(is_a\?\(|when +)(::)?(Lain::)?(Epic::)?GateDecision\b(?!::)/
   ].freeze
 
   # Reading a verdict off a record is what a fold of the standing does.
@@ -30,6 +30,13 @@ module GateDecisionFoldDiscipline
   # A record's verdict field read raw, which a reader could fold by without
   # ever naming verdict_in.
   VERDICT_FIELD = /\[["']verdict["']\]|(fetch|dig|key\?)\(["']verdict["']/
+
+  # A parked gate says so in its verdict, so the policy that reached it is never what a reader branches on.
+  # Spelt any of the ways the policy can be: the constant, the policy's NAME, or the word itself.
+  DEFERRED_NAME = /(?:\S+::)?(?:DEFERRED_POLICY|Deferred::NAME)\b|["']deferred["']/
+  DEFERRED_POLICY_COMPARE = /(?:==|!=|===|eql\?\(?|\bwhen)\s*#{DEFERRED_NAME}|#{DEFERRED_NAME}\s*(?:==|!=|===)|
+                             %w\[[^\]]*\bdeferred\b[^\]]*\]\.include\?|
+                             \[[^\]]*#{DEFERRED_NAME}[^\]]*\]\.include\?|include\?\(\s*#{DEFERRED_NAME}/x
 
   FOLD = "lain/epic/signoff.rb"
 
@@ -58,8 +65,7 @@ module GateDecisionFoldDiscipline
     "lain/bench/epic_metrics.rb" => "counts decisions per partition",
     "lain/journal/projection/waits.rb" => "closes a waiting item on a decision event, live or read back",
     "lain/cli/epic_queue.rb" => "reads a deferral as the evidence a parked item has a record behind it",
-    "lain/cli/gate_verdict_rewrite.rb" => "rewrites records written before verdicts",
-    "lain/cli/session_journals.rb" => "refuses and locates records written before verdicts"
+    "lain/cli/session_journals.rb" => "names gate_decision among the records a torn or misfiled line refuses"
   }.freeze
 
   # The files that may read a `verdict` field raw: where a gate decision's word
@@ -68,9 +74,9 @@ module GateDecisionFoldDiscipline
   # is folding a verdict outside Signoff.
   VERDICT_FIELDS = {
     "lain/epic/gate_decision.rb" => "verdict_in parses the journaled word: where a record becomes a verdict",
-    "lain/cli/gate_verdict_rewrite.rb" => "finds records written before verdicts",
-    "lain/cli/session_journals.rb" => "finds records written before verdicts",
-    "lain/journal/projection/waits.rb" => "a hold closes no wait; records from before verdicts still close theirs",
+    "lain/cli/epic_queue.rb" => "picks out a deferral by its word, as the evidence a parked item has a record " \
+                                "behind it; the parked state is the sign-off queue's",
+    "lain/journal/projection/waits.rb" => "a hold closes no wait",
     "lain/bench/approval_replay.rb" => "an approval_decision record's verdict",
     "lain/bench/approval_replay/call.rb" => "an approval_decision record's verdict",
     "lain/bench/approval_replay/recorded_judge.rb" => "a recorded judge's verdict",
@@ -98,6 +104,8 @@ module GateDecisionFoldDiscipline
   def readers = sources.select { |_, lines| lines.any? { |line| READS.any? { line.match?(_1) } } }.keys.sort
 
   def verdict_readers = sources.select { |_, lines| lines.any? { _1.match?(VERDICT) } }.keys.sort
+
+  def deferred_policy_comparers = sources.select { |_, lines| lines.any? { _1.match?(DEFERRED_POLICY_COMPARE) } }.keys
 
   def verdict_field_readers = sources.select { |_, lines| lines.any? { _1.match?(VERDICT_FIELD) } }.keys.sort
 end
@@ -134,6 +142,20 @@ RSpec.describe "gate decision fold discipline" do
   it "names no verdict field reader that no longer reads one" do
     expect(GateDecisionFoldDiscipline::VERDICT_FIELDS.keys - GateDecisionFoldDiscipline.verdict_field_readers)
       .to be_empty
+  end
+
+  it "compares no policy to the deferred policy to decide a verdict: the deferred policy writes the park itself" do
+    expect(GateDecisionFoldDiscipline.deferred_policy_comparers).to be_empty
+  end
+
+  it "finds a deferred policy compare by the constant, the NAME or the word (self-test)" do
+    lines = ["policy == SignoffQueue::DEFERRED_POLICY", 'record["policy"] == "deferred"',
+             "Deferred::NAME == policy", "when 'deferred' then park", '%w[deferred].include?(decision["policy"])',
+             '[SignoffQueue::DEFERRED_POLICY, "x"].include?(policy)', 'parked_policies.include?("deferred")',
+             "policy: SignoffQueue::DEFERRED_POLICY"]
+
+    expect(lines.map { _1.match?(GateDecisionFoldDiscipline::DEFERRED_POLICY_COMPARE) })
+      .to eq([true, true, true, true, true, true, true, false])
   end
 
   it "skips prose, and finds a reader by its code (self-test)" do

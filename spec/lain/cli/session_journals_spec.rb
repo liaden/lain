@@ -51,29 +51,17 @@ RSpec.describe Lain::CLI::SessionJournals do
     end
   end
 
-  # A record written before gate decisions carried a verdict is refused where
-  # its file is known, naming the file and the command that rewrites it.
+  # The fold refuses a record that carries no verdict; this reader only finds it.
   describe "a gate_decision written before verdicts" do
     let(:old) do
       JSON.generate("ts" => "2026-07-27T09:00:00Z", "type" => "gate_decision", "artifact_digest" => "blake3:a",
                     "epic_slug" => "alpha", "stage" => "research", "policy" => "interactive", "approved" => true)
     end
 
-    it "is refused naming its file, its line and lain epic rewrite-verdicts, by a strict reader and a tolerant one" do
-      write("20260727T090000-1.ndjson", [record(type: "gate_decision", at: "2026-07-27T08:00:00Z", id: "a"), old])
-      path = File.join(@dir, "20260727T090000-1.ndjson")
-
-      [journals, tolerant].each do |reader|
-        expect { reader.to_a }.to raise_error(described_class::Unreadable) { |error|
-          expect(error.message).to include(path, "line 2", "lain epic rewrite-verdicts")
-        }
-      end
-    end
-
-    it "is not refused by a reader that does not read gate decisions" do
+    it "is handed to the fold as it was written, for the fold to refuse" do
       write("20260727T090000-1.ndjson", [old])
 
-      expect(described_class.new(dirs: @dir, types: %w[gate_evidence]).to_a).to be_empty
+      expect(journals.to_a).to contain_exactly(include("artifact_digest" => "blake3:a", "approved" => true))
     end
   end
 

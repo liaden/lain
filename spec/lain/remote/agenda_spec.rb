@@ -205,7 +205,7 @@ RSpec.describe Lain::Remote::Agenda do
 
     def deferral(digest, issue_id, at)
       Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "issue_plan",
-                                   verdict: Lain::Approval::Verdict::Deny.new, answered_by: "deferred",
+                                   verdict: Lain::Epic::GateDecision::Deferred.new, answered_by: "deferred",
                                    policy: "deferred", latency: 0.0, issue_id:).to_journal.merge("ts" => at)
     end
 
@@ -229,7 +229,7 @@ RSpec.describe Lain::Remote::Agenda do
   describe "a journal holding a gate record from before verdicts" do
     def gate_record
       Lain::Epic::GateDecision.new(artifact_digest: digest_a, epic_slug: "alpha", stage: "research",
-                                   verdict: Lain::Approval::Verdict::Deny.new, answered_by: "deferred",
+                                   verdict: Lain::Epic::GateDecision::Deferred.new, answered_by: "deferred",
                                    policy: "deferred", latency: 0.0).to_journal
                               .merge("ts" => "2026-11-02T08:00:00.000000Z")
     end
@@ -241,13 +241,14 @@ RSpec.describe Lain::Remote::Agenda do
 
     def write_old_gate_record = write_gate_record(gate_record.except("verdict").merge("approved" => false))
 
-    it "lists the parked calls and questions, and 1 gate item naming the rewrite" do
+    it "lists the parked calls and questions, and 1 gate item naming the record and no rewrite command" do
       write_old_gate_record
       Sync do |task|
         park(task)
 
         expect(kinds(agenda.snapshot)).to contain_exactly("ParkedCall", "Question", "GateQuestion")
-        expect(listed("GateQuestion")).to have_attributes(issues: [], question: /lain epic rewrite-verdicts/)
+        expect(listed("GateQuestion")).to have_attributes(issues: [], question: /#{digest_a}.*verdict/)
+        expect(listed("GateQuestion").question).not_to include("rewrite")
         task.stop
       end
     end
@@ -258,11 +259,14 @@ RSpec.describe Lain::Remote::Agenda do
       expect(listed("GateQuestion").releases).to eq(0)
     end
 
-    it "refuses any answer to that gate item, naming the rewrite" do
+    it "refuses any answer to that gate item, naming no rewrite command" do
       write_old_gate_record
 
       expect { agenda.answer(listed("GateQuestion").id, Lain::Approval::Verdict::Approve.new) }
-        .to raise_error(ArgumentError, /lain epic rewrite-verdicts/)
+        .to raise_error(ArgumentError) { |error|
+          expect(error.message).to include("cannot be read")
+          expect(error.message).not_to include("rewrite")
+        }
     end
 
     it "lists a gate record whose verdict it cannot read the same way, beside the calls and questions" do
@@ -288,6 +292,16 @@ RSpec.describe Lain::Remote::Agenda do
                                            "reason" => "wrong crate", "answered_by" => "human",
                                            "policy" => "signoff")
       expect(listed("GateQuestion").issues).to eq(%w[a])
+    end
+
+    it "offers the phone approve, hold and deny only, and refuses a deferred answer to a deferred gate" do
+      defer_wave
+
+      expect(gate_records.map { _1["verdict"] }.uniq).to eq(["deferred"])
+      expect(Lain::Remote::Wire::Verdict::VARIANTS.values)
+        .to eq([Lain::Approval::Verdict::Approve, Lain::Approval::Verdict::Hold, Lain::Approval::Verdict::Deny])
+      expect { agenda.answer(listed("GateQuestion").id, Lain::Epic::GateDecision::Deferred.new) }
+        .to raise_error(ArgumentError, /not a verdict/)
     end
 
     it "leaves a held gate parked, journaling nothing" do

@@ -45,19 +45,14 @@ module Lain
     class SignoffQueue
       include Enumerable
 
-      # It lives here rather than on the policy because the FOLD is what
-      # depends on the string; {Gate::Policy::Deferred::NAME} reads it back, so
-      # the two can never drift.
-      #
-      # `policy` and not `answered_by`: policy names HOW a verdict was reached,
-      # exactly the axis "parked" versus "settled" lies on. A later human
-      # sign-off journals `policy: "signoff"` with a real surface, and is
-      # terminal here.
+      # The policy that parks for a human; {Gate::Policy::Deferred::NAME} reads
+      # it back, so the two can never drift. The fold does not branch on it: a
+      # park journals {GateDecision::Deferred} as its verdict, and that is what
+      # parks.
       DEFERRED_POLICY = "deferred"
 
       # How a human answering from `lain epic queue` reaches a verdict: no
-      # configurable policy, so no {Gate::Policies} row names it, and it is
-      # terminal here like every policy but {DEFERRED_POLICY}.
+      # configurable policy, so no {Gate::Policies} row names it.
       SIGNOFF_POLICY = "signoff"
 
       # The record type the fold reads (Journalable's discriminator for
@@ -392,15 +387,15 @@ module Lain
       def apply(decision)
         Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"])
         verdict = GateDecision.verdict_in(decision)
-        verdict.held? ? hold(decision, verdict) : fold(decision)
+        verdict.held? ? hold(decision, verdict) : fold(decision, verdict)
         self
       end
 
       private
 
-      def fold(decision)
+      def fold(decision, verdict)
         unhold(decision)
-        deferred?(decision) ? park(**parked_attributes(decision)) : settle(decision)
+        GateDecision.deferred?(verdict) ? park(**parked_attributes(decision)) : settle(decision)
       end
 
       # Drained first: it refuses a nil digest with the ArgumentError a live
@@ -437,7 +432,7 @@ module Lain
         Telemetry::Untyped.new(fields: { "type" => JOURNAL_TYPE, "artifact_digest" => item.artifact_digest,
                                          "epic_slug" => item.epic_slug, "stage" => item.stage,
                                          "issue_id" => item.issue_id, "policy" => DEFERRED_POLICY,
-                                         "verdict" => GateDecision.word(Approval::Verdict::Deny.new) })
+                                         "verdict" => GateDecision.word(GateDecision::Deferred.new) })
       end
 
       # Dropped here, not when read: a later approval of another digest moves the
@@ -462,8 +457,6 @@ module Lain
       def answered?(partition, digest)
         @signoff.approved?(partition, digest) || @parked.fetch(partition, {}).key?(digest)
       end
-
-      def deferred?(decision) = decision["policy"].to_s == DEFERRED_POLICY
 
       # A record written before decisions named their issue has no key at all,
       # which reads as nil -- the epic-wide reading, which is what it was.

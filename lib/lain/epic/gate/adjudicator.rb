@@ -55,9 +55,8 @@ module Lain
         # alone.
         CONTEXT_MODE = :fresh
 
-        # It must NOT be {SignoffQueue::DEFERRED_POLICY}: that string is the
-        # fold's park/drain discriminator, so a terminal verdict labelled
-        # "deferred" would rebuild as a parked sign-off nobody ever answered.
+        # Not {SignoffQueue::DEFERRED_POLICY}: {Decided} finds a terminal
+        # adjudication by this label, and a park must never read as one.
         TERMINAL_POLICY = "adjudicated"
 
         # The WHOLE stripped answer must be a verdict token, a trailing period
@@ -334,6 +333,9 @@ module Lain
           # A terminal verdict has nothing awaiting sign-off, so the caller
           # never asks whether to enqueue.
           def park(_queue, **) = nil
+
+          # @return [Approval::Verdict::Deny, GateDecision::Deferred] what an interrupted wait journals
+          def interrupted = Approval::Verdict::Deny.new
         end
 
         # Doubt, in every form it arrives in. It parks and settles NOTHING: a
@@ -342,6 +344,8 @@ module Lain
         # catch.
         class Deferral < Outcome
           def park(queue, **attributes) = queue.park(**attributes)
+
+          def interrupted = GateDecision::Deferred.new
         end
 
         # @param role_spawn [#call, #never_parking] the
@@ -428,7 +432,8 @@ module Lain
         def settle(artifact, outcome, evidence, gated, **scope)
           approved = @gate.call(artifact, asker: outcome.asker, stage: gated[:stage],
                                           epic_slug: gated[:epic_slug], policy: outcome.policy,
-                                          evidence_digest: evidence.digest, reason: outcome.reason, **scope)
+                                          evidence_digest: evidence.digest, reason: outcome.reason,
+                                          interrupted: outcome.interrupted, **scope)
           # Journal first, park second: the queue is a fold of journaled
           # deferrals, so a park with no record behind it vanishes on restart
           # and leaves a partition that reads drained.
@@ -496,7 +501,7 @@ module Lain
           case verdict
           when :approve then Outcome.new(answer: Answer.approve(SURFACE), policy: TERMINAL_POLICY, reason: nil)
           when :deny then Outcome.new(answer: Answer.deny(SURFACE), policy: TERMINAL_POLICY, reason: nil)
-          else Deferral.new(answer: Answer.deny(SURFACE), policy: SignoffQueue::DEFERRED_POLICY, reason:)
+          else Deferral.new(answer: Answer.deferred(SURFACE), policy: SignoffQueue::DEFERRED_POLICY, reason:)
           end
         end
 

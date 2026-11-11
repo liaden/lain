@@ -122,7 +122,7 @@ module Lain
 
         digest = fields["artifact_digest"].to_s
         SignoffQueue::Contracts::Item.check!(artifact_digest: digest)
-        fields["policy"] == SignoffQueue::DEFERRED_POLICY ? Park.new(digest:) : Settle.new(digest:, verdict:)
+        GateDecision.deferred?(verdict) ? Park.new(digest:) : Settle.new(digest:, verdict:)
       end
 
       def partition(fields)

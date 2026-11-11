@@ -97,7 +97,7 @@ module Lain
           asked(record, wait)
         end
 
-        # A deferred gate is journaled after the denial that closed it and only the morning review
+        # A deferred gate is journaled after the decision that parked it and only the morning review
         # answers it, so it is open but not counted. A live ask for the same artifact replaces it,
         # and a deferred park landing on a live ask adds nothing, which keeps the counts the feed
         # published before this fold.

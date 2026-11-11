@@ -452,7 +452,7 @@ made, not the queue: with an earlier submit of the same artifact left parked (`p
 `deferred … parked in demo/research … review it: lain epic queue` after the human's `n`, 2 of 2, while the journal held
 `interactive/human/false` and the queue was empty. Drive it: park a deferral (`gate :research, :deferred`, submit), switch to
 `interactive`, submit the same artifact, answer `n`. Expect `denied`, with no `review it: lain epic queue` line, and read the
-`gate_decision`: `policy: interactive`, `answered_by: human`, `approved: false`.
+`gate_decision`: `policy: interactive`, `answered_by: human`, `verdict: deny`.
 
 What §9 CAN check is that a second terminal verdict on the same address is refused. Drive `approve`
 twice on one digest.
@@ -923,7 +923,7 @@ An issue whose actor committed nothing but its failing tests named its red ancho
 
 **`land` offers only the newest attempt's commits, and never a denied one** (round 27, h27-4, fixed). When attempt 1's commit was denied and attempt 2 anchored only its red commit, `lain epic land <issue> <epic>` used to say to approve attempt 1's denied sha; it now says to re-run the issue and names no sha. A digest approved and then denied does not count as approved. Drive it: deny attempt 1's gate, retry to a red-only anchor, run `land`, and read that no sha is named.
 
-h28-3, open (the same filter, worse in effect): with `gate :implementation, :deferred` and the issue's gate PARKED (`lain epic queue` lists it), `lain epic land <issue> <epic>` says `no worker commit is anchored for issue X ... re-run the issue through the epic driver` and exits 1, while `refs/lain/worker/issue.<epic>.<issue>.1-<hash>` holds the commit and `lain worktrees gc` keeps it as anchored. A deferred park journals `approved: false`, so `land` reads it as denied. Expected: name the sha, or better `lain epic approve <digest>`. Control: after `lain epic approve <digest>` the same `land` lands the commit. Following the printed remedy re-runs the issue and supersedes the commit nobody had read yet. h28-4, open: `lain epic queue` for that parked gate reads `question: <not recoverable from the journal>` and `evidence: <none -- no spike ran>`, so a human approving from the queue never sees that `tests_ran` for the sha reports `1 error`.
+h28-3, open (the same filter, worse in effect): with `gate :implementation, :deferred` and the issue's gate PARKED (`lain epic queue` lists it), `lain epic land <issue> <epic>` says `no worker commit is anchored for issue X ... re-run the issue through the epic driver` and exits 1, while `refs/lain/worker/issue.<epic>.<issue>.1-<hash>` holds the commit and `lain worktrees gc` keeps it as anchored. A deferred park journaled a denial then, so `land` read it as denied; it now journals `verdict: deferred` and reads as parked. Expected: name the sha, or better `lain epic approve <digest>`. Control: after `lain epic approve <digest>` the same `land` lands the commit. Following the printed remedy re-runs the issue and supersedes the commit nobody had read yet. h28-4, open: `lain epic queue` for that parked gate reads `question: <not recoverable from the journal>` and `evidence: <none -- no spike ran>`, so a human approving from the queue never sees that `tests_ran` for the sha reports `1 error`.
 
 `lain epic land` takes an **issue id, never a commit**. The SHA argument is gone: the commit it
 lands is the one anchored when the implementation gate approved it — found, not named. So confirm
@@ -1087,11 +1087,11 @@ histogram, patience, minimal, myers`), `conflict_style: :zdiff`, and an unknown 
 refuses the same file (§13a), so drive them through `lain epic` or `lain worktrees gc` and `lain chat`
 and read the same line. Then set `rebase_retries: 0` and confirm worker self-sync is genuinely off.
 
-## 14: Round 3 changes: a stopped run, a held gate, a revoking deny, a fresh research gate, old records
+## 14: Round 3 changes: a stopped run, a held gate, a revoking deny, a fresh research gate
 
 **Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/command/stop.rb`, `cli/epic_driver/factory.rb`,
-`cli/epic_submit.rb`, `epic/gate.rb`, `epic/signoff.rb`, `epic/stage.rb`, `epic/gate/policy.rb`,
-`cli/gate_verdict_rewrite.rb`). Nothing here has been driven; every "Expect" is a prediction read off the code.
+`cli/epic_submit.rb`, `epic/gate.rb`, `epic/signoff.rb`, `epic/stage.rb`, `epic/gate/policy.rb`).
+Nothing here has been driven; every "Expect" is a prediction read off the code.
 
 **14a: `/stop` ends an epic run.** Start `/implement-epic` over a two-issue epic on a local model and type `/stop` while an issue
 runs. Expect one `stopped epic issue <id>` line per issue it ended, no further issue launched, and the chat still at `you>`
@@ -1123,13 +1123,8 @@ Delete `research.md` instead and expect `research's file is missing; restore it,
 approve research and the stage reopens. An `epic.md` edit (a status change, an `epic add`) must NOT close the issue gates: the
 later stages keep their standing approval. **Wrong looks like:** the three entry points giving 3 different answers.
 
-**14e: `lain epic rewrite-verdicts`.** On a copy of a session written before verdicts (a `gate_decision` with no verdict
-field), any epic reader refuses by naming the file and `lain epic rewrite-verdicts`. Run it with a live chat holding that
-file: expect a refusal naming the file and `end that session`, and no file touched. End the chat and run it again: expect
-`<file>: N gate_decision records rewritten, original kept at <file>.pre-verdict.bak`, plus a `tip OLD -> NEW` line for a
-chained file, and `lain verify` passing on the result. A third run says `no gate_decision record written before verdicts in
-<dir>; nothing changed`. Plant a `.pre-verdict.bak` first and expect a refusal; break a chain and expect a refusal naming
-`lain verify`. **Wrong looks like:** a half-rewritten set after a refusal.
+**14e: a deferred gate journals a park.** With `gate :research, :deferred`, submit research. Expect the `gate_decision` to
+read `verdict: deferred`, `policy: deferred`, and `lain epic queue` to list it. **Wrong looks like:** `verdict: deny` on a park.
 
 **14f: `epic_status` and `epic_show` as tools.** In a chat with the epic mounted, have the model call `epic_status` and `epic_show`
 (the `plan-epic` and `create-epic-issues` skills do, instead of asking for a shell). Expect `epic_status` to return the text

@@ -2320,12 +2320,13 @@ Open link and nothing of the item. The announced set lives in the chat, so an it
 after a chat restarts is announced again.
 
 **Every reader of an epic gate reads one fold.** A `gate_decision` record carries an
-`Approval::Verdict`, and `Epic::Signoff` folds those records per partition into what stands:
+`Approval::Verdict` or, for a gate that parked, `Epic::GateDecision::Deferred`, and `Epic::Signoff`
+folds those records per partition into what stands:
 `SignoffQueue`, `Epic::Gate`, the held-gate check, landing approvals, the planning view and the
 adjudicator all ask it, so a deny revokes an earlier approval everywhere, only the standing digest
 counts as approved, and a hold settles nothing. `spec/gate_decision_fold_discipline_spec.rb` names every
-other `lib/` reader of gate decisions. A record written before verdicts is refused by name, and
-`lain epic rewrite-verdicts` rewrites it in place. The stage boundary reads research at the digest
+other `lib/` reader of gate decisions. A park is read off its verdict, never off its policy, and a
+record with no verdict is refused as unreadable. The stage boundary reads research at the digest
 `research.md` holds now, from one digest source shared by `epic_submit`, `lain epic approve` and the
 adjudicator, so an edited research document closes the plan stage again; later stages keep their
 standing approval, since `epic.md` carries statuses routine work rewrites. `epic_review` journals an

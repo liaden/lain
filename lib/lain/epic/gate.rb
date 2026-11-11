@@ -6,7 +6,7 @@ module Lain
   module Epic
     module Contracts
       # Only the surface: {Gate::Answer} coerces its verdict through
-      # {Approval::Verdict.coerce} after this check, so `"yes"` still never
+      # {Epic::GateDecision.coerce} after this check, so `"yes"` still never
       # reaches a gate as a truthy approval.
       class Answer < Declarative::Carrier
         attribute :surface
@@ -14,7 +14,7 @@ module Lain
       end
 
       # The verdict is not an attribute here: {Epic::GateDecision} coerces it
-      # through {Approval::Verdict.coerce} before this check runs.
+      # through {Epic::GateDecision.coerce} before this check runs.
       class GateDecision < Declarative::Carrier
         attribute :artifact_digest
         attribute :epic_slug
@@ -186,17 +186,22 @@ module Lain
       # The verdict's note is what the ANSWERING side knows about its own
       # verdict, and it is journaled over whatever reason the caller
       # forwarded, because it is the more specific account.
+      #
+      # A human's reply is read through {Approval::Reply}, which knows only
+      # approve, hold and deny, so {.deferred} is a policy's answer alone.
       Answer = Data.define(:verdict, :surface) do
         def self.approve(surface) = new(verdict: Approval::Verdict::Approve.new, surface:)
         def self.deny(surface) = new(verdict: Approval::Verdict::Deny.new, surface:)
+        def self.deferred(surface) = new(verdict: GateDecision::Deferred.new, surface:)
 
-        # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
+        # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny,
+        #   GateDecision::Deferred]
         # @param surface [#to_s] who gave it
         def initialize(verdict:, surface:)
           surface = -surface.to_s
           Contracts::Answer.check!(surface:)
 
-          super(verdict: Approval::Verdict.coerce(verdict), surface:)
+          super(verdict: GateDecision.coerce(verdict), surface:)
         end
 
         def approved? = verdict.approved?
@@ -221,7 +226,7 @@ module Lain
       # What a wave's one answer decided, issue by issue, and who gave it.
       Outcome = Data.define(:verdicts, :surface) do
         def initialize(verdicts:, surface:)
-          super(verdicts: verdicts.to_h { |id, verdict| [-id.to_s, Approval::Verdict.coerce(verdict)] }.freeze,
+          super(verdicts: verdicts.to_h { |id, verdict| [-id.to_s, GateDecision.coerce(verdict)] }.freeze,
                 surface: -surface.to_s)
         end
 
@@ -295,19 +300,23 @@ module Lain
       #   deferred gate parks with, or why a denial denied
       # @param issue_id [String, nil] the issue an issue-scoped gate is about
       # @param criteria_digest [String, nil] the criteria the artifact carries
+      # @param interrupted [Approval::Verdict::Deny, GateDecision::Deferred] what a cancelled wait journals: a
+      #   deny by default, a park for a policy that parks, so an interrupt never revokes an approval a park would keep
       # @return [Boolean, Outcome] whether the artifact was approved, or for a
       #   wave (an artifact answering `#submissions`) which of its issues were
       # @raise [UnknownStage] when `stage` is not a pipeline stage, before anyone is asked
       def call(artifact, asker:, stage:, epic_slug:, policy: DEFAULT_POLICY, evidence_digest: nil, reason: nil,
-               issue_id: nil, criteria_digest: nil)
+               issue_id: nil, criteria_digest: nil, interrupted: Approval::Verdict::Deny.new)
         Stage.new(stage)
         decided = { epic_slug:, stage:, policy:, evidence_digest:, reason:, issue_id:, criteria_digest: }
         started = @clock.call
         asked = asker.ask(artifact.gate_question)
-        answer, latency = awaited(asked, asker, started, artifact, **decided) do |unheard|
-          withdrawn(asker, asked)
-          retired(asked)
-          asked = asker.ask(GateReply.again(unheard, artifact.gate_question))
+        answer, latency = interruptible(artifact, started, interrupted, decided) do
+          awaited(asked, asker, started, artifact, **decided) do |unheard|
+            withdrawn(asker, asked)
+            retired(asked)
+            asked = asker.ask(GateReply.again(unheard, artifact.gate_question))
+          end
         end
 
         # Journal FIRST, register second, never the other way round: a journal
@@ -320,7 +329,7 @@ module Lain
         # its bytes are down (an io_uring submit, a Monitor wait), and a
         # cancellation landing in that gap -- an answer already in hand, no
         # record of it yet -- must not leave an answered question with NO
-        # decision at all, which is worse than the duplicate {#awaited}'s own
+        # decision at all, which is worse than the duplicate {#interruptible}'s own
         # rescue already guards against. Deferral holds the cancellation off
         # until this block runs to completion, THEN raises it; it does not
         # swallow it.
@@ -475,7 +484,7 @@ module Lain
 
       # SCOPED TO THE WAIT ALONE, never the whole of {#call}. A cancellation
       # arriving before this runs -- inside `asker.ask`, which {#call} calls
-      # before `awaited` -- has no verdict to journal and must propagate
+      # before the wait -- has no verdict to journal and must propagate
       # untouched, not compute `@clock.call - started` against a `started`
       # this method was never handed. And one arriving AFTER `await` has
       # already returned a real answer is already journaled by {#call}'s own
@@ -485,7 +494,13 @@ module Lain
       #
       # The wait is journaled inside the same scope, so a cancellation landing
       # while that record is written still closes it with a decision.
-      #
+      def interruptible(artifact, started, verdict, decided)
+        yield
+      rescue Async::Cancel
+        interrupted(artifact, started, verdict, **decided)
+        raise
+      end
+
       # A reply that decided nothing is handed to the block, which asks again
       # and answers the new promise; the new wait gets only what is left of
       # the window opened for the first.
@@ -495,21 +510,18 @@ module Lain
         heard = await(asked, started, artifact, window)
         heard = await(yield(heard.first), started, artifact, window) while heard.first.is_a?(Unheard)
         heard
-      rescue Async::Cancel
-        interrupted(artifact, started, **decided)
-        raise
       end
 
       # A CANCELLED WAIT IS A DECIDED ONE. Async turns a real Ctrl-C into
       # exactly this exception while a fiber is parked in `await`, ahead of
       # the plain Interrupt the human actually sent -- that one only
       # re-emerges once every task has unwound, at the CALLER's reactor
-      # boundary, which is where a name for it belongs. {#awaited}'s rescue
+      # boundary, which is where a name for it belongs. {#interruptible}'s rescue
       # re-raises right after this returns: swallowing the cancellation
       # instead would leave the reactor's shutdown sweep waiting on a task
       # that never finishes.
-      def interrupted(artifact, started, **decided)
-        settle(artifact, Answer.new(verdict: Approval::Verdict::Deny.new(note: INTERRUPTED_SURFACE),
+      def interrupted(artifact, started, verdict, **decided)
+        settle(artifact, Answer.new(verdict: verdict.class.new(note: verdict.note || INTERRUPTED_SURFACE),
                                     surface: INTERRUPTED_SURFACE),
                latency: @clock.call - started, **decided)
       end
@@ -573,7 +585,7 @@ module Lain
       # 0.3-second window.
       #
       # `started` comes from the CALLER rather than being read here again: a
-      # cancelled wait unwinds through {#awaited}'s own rescue, which needs
+      # cancelled wait unwinds through {#interruptible}'s own rescue, which needs
       # the same reference to report the same elapsed time this method would
       # have.
       def await(promise, started, artifact, window)

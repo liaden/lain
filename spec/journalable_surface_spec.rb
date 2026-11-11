@@ -81,7 +81,8 @@ RSpec.describe Lain::Telemetry::Journalable do
     it "reads back a GateDecision and a StageTransition, the records a sign-off rests on" do
       decision = Lain::Epic::GateDecision.new(artifact_digest: "blake3:plan", epic_slug: "alpha",
                                               stage: "research",
-                                              verdict: Lain::Approval::Verdict::Deny.new, answered_by: "deferred",
+                                              verdict: Lain::Epic::GateDecision::Deferred.new,
+                                              answered_by: "deferred",
                                               policy: "deferred", latency: 0.1)
       transition = Lain::Epic::StageTransition.new(epic_slug: "alpha", stage: "research", event: "started")
 

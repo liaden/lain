@@ -20,7 +20,7 @@ module Lain
         answered_by = interned(answered_by)
         policy = interned(policy)
         issue_id = SignoffQueue::IssueId.read(issue_id)
-        verdict = noted(Approval::Verdict.coerce(verdict), reason)
+        verdict = noted(GateDecision.coerce(verdict), reason)
         Contracts::GateDecision.check!(artifact_digest:, epic_slug:, stage:, answered_by:, policy:,
                                        latency:, issue_id:)
 
@@ -35,6 +35,8 @@ module Lain
       def approved? = verdict.approved?
 
       def held? = verdict.held?
+
+      def deferred? = GateDecision.deferred?(verdict)
 
       # @return [Hash{String=>Object}] the verdict as its word, its note as `reason`
       def to_journal
@@ -67,9 +69,10 @@ module Lain
     # INDEPENDENT: a `"deferred"` policy still journals a real surface, and
     # reading either off the other would be a guess.
     #
-    # `verdict` is an {Approval::Verdict}, journaled as its word in {WORDS};
-    # `reason` is that verdict's note, journaled beside it. A hold is a verdict
-    # of its own, never a denial under a surface name.
+    # `verdict` is an {Approval::Verdict} or {Deferred}, journaled as its word in
+    # {WORDS}; `reason` is that verdict's note, journaled beside it. A hold is a
+    # verdict of its own, never a denial under a surface name, and a park is
+    # {Deferred}, never a denial under a policy name.
     #
     # `evidence_digest` and `reason` are nullable, and nullable is a value here
     # ("nothing was gathered", "no rationale was given"), not a missing field.
@@ -85,28 +88,42 @@ module Lain
     # This reopen holds the verdict's wire form, and the one place a journaled
     # decision becomes a verdict again.
     class GateDecision
+      # A gate that parked for a human: it settles nothing, and a human answer
+      # is never one, so it lives here and not among {Approval::Verdict}'s
+      # variants. It shares their base so a note is cleaned by the one rule.
+      Deferred = Class.new(Approval::Verdict.const_get(:Base)) { def deferred? = true }
+
+      VARIANTS = [*Approval::Verdict::VARIANTS, Deferred].freeze
+
       WORDS = { Approval::Verdict::Approve => "approve", Approval::Verdict::Hold => "hold",
-                Approval::Verdict::Deny => "deny" }.freeze
+                Approval::Verdict::Deny => "deny", Deferred => "deferred" }.freeze
 
-      BEFORE_VERDICTS = "it carries an approved boolean and no verdict, so it was written before gate decisions " \
-                        "recorded one -- run `lain epic rewrite-verdicts` to rewrite its session in place"
-      private_constant :BEFORE_VERDICTS
+      # @param value [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred]
+      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred] the same value
+      # @raise [ArgumentError] for anything that is not one of {VARIANTS}
+      def self.coerce(value)
+        return value if VARIANTS.any? { value.is_a?(_1) }
 
-      # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny]
-      # @return [String] approve, hold or deny
+        raise ArgumentError, "not a gate verdict: #{value.inspect}; expected Approve, Hold, Deny or Deferred"
+      end
+
+      # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred]
+      # @return [String] approve, hold, deny or deferred
       def self.word(verdict) = WORDS.fetch(verdict.class)
 
-      # A record from before verdicts is refused rather than read off its
-      # boolean: a `false` there was a denial or a hold, and only the surface
-      # name told them apart.
+      # The one test for a park, since a human's verdicts carry no `deferred?` of their own.
       #
+      # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred]
+      # @return [Boolean] whether the verdict parks rather than settles
+      def self.deferred?(verdict) = verdict.respond_to?(:deferred?) && verdict.deferred?
+
       # @param record [Hash{String=>Object}] one journaled gate_decision
-      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny] with `reason` as its note
+      # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred] with
+      #   `reason` as its note
       # @raise [ArgumentError] when `verdict` is not one of {WORDS}' words
       def self.verdict_in(record)
         kind = WORDS.key(record["verdict"])
         return kind.new(note: record["reason"]) if kind
-        raise ArgumentError, "verdict is missing: #{BEFORE_VERDICTS}" if record.key?("approved")
 
         raise ArgumentError, "verdict must be one of #{WORDS.values.join(", ")}, got #{record["verdict"].inspect}"
       end

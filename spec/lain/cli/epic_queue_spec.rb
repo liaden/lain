@@ -40,7 +40,7 @@ RSpec.describe Lain::CLI::EpicQueue do
 
   # Built through the real producers, so the fixture cannot drift from the wire
   # shape production actually writes (the sessions_spec `header` idiom).
-  def decision(digest:, at:, policy:, verdict: Lain::Approval::Verdict::Deny.new, slug: "alpha", stage: "research",
+  def decision(digest:, at:, policy:, verdict: Lain::Epic::GateDecision::Deferred.new, slug: "alpha", stage: "research",
                answered_by: "gate_adjudicator", evidence_digest: nil, reason: nil, **scope)
     Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, verdict:,
                                  answered_by:, policy:, latency: 1.5, evidence_digest:, reason:, **scope)
@@ -535,6 +535,18 @@ RSpec.describe Lain::CLI::EpicQueue do
       expect(rows.map(&:reason)).to eq([second])
     end
 
+    it "keeps the deferral's reason and park time when a human later holds the parked digest" do
+      records = [decision(digest: digest_c, at: "2026-07-28T06:20:00.000000Z", policy: "deferred",
+                          answered_by: "deferred", reason: "unsure at park"),
+                 decision(digest: digest_c, at: "2026-07-28T07:20:00.000000Z", policy: "signoff",
+                          verdict: Lain::Approval::Verdict::Hold.new, answered_by: "human", reason: "human hold note")]
+
+      rows = described_class.const_get(:Review).new(records, now:).rows
+
+      expect(rows.map { [_1.reason, _1.parked_at] })
+        .to eq([["unsure at park", Time.iso8601("2026-07-28T06:20:00Z")]])
+    end
+
     it "walks the records once to build every row" do
       commit = "8b6b677"
       records = [*approvals("research", "epic_plan", "issue_plan"),
@@ -697,7 +709,7 @@ RSpec.describe Lain::CLI::EpicQueue do
                      decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "deferred",
                               answered_by: "deferred", stage: "epic_plan"),
                      decision(digest: digest_b, at: "2026-07-28T06:30:00.000000Z", policy: "signoff",
-                              answered_by: "human")])
+                              verdict: Lain::Approval::Verdict::Deny.new, answered_by: "human")])
     end
 
     # A deny advances nothing, so it drains a later stage whatever stands

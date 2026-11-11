@@ -145,21 +145,24 @@ module Lain
           decided(artifact, issue_id, criteria_digest).each do |_item, id, _criteria|
             @boundary.ensure_open!(stage, epic_slug:, issue_id: id)
           end
-          gate.call(artifact, asker: surface, stage:, epic_slug:, policy: name, issue_id:, criteria_digest:)
+          gate.call(artifact, asker: surface, stage:, epic_slug:, policy: name, issue_id:, criteria_digest:,
+                              interrupted:)
         end
 
         # Read off the subclass's own NAME rather than derived from the class
-        # name: these are durable journal values and one ({Deferred::NAME}) is a
-        # fold discriminator, so a rename must break loudly at the constant
-        # instead of quietly re-labelling records nobody can join anymore.
+        # name: these are durable journal values, so a rename must break loudly
+        # at the constant instead of quietly re-labelling records nobody can
+        # join anymore.
         #
         # It is the CONFIGURED name. {Adjudicated} and {HandsOff} are the
-        # exceptions and have to be: each answers its own name here, but a
-        # decision it PARKS journals `policy: "deferred"`, because a parked
-        # sign-off must wear the discriminator {SignoffQueue}'s fold reads.
+        # exceptions: each answers its own name here, but a decision it PARKS
+        # goes through {Deferred} and journals `policy: "deferred"`.
         def name = self.class::NAME
 
         private
+
+        # What a wait cancelled before its answer journals: fail-closed, so a deny.
+        def interrupted = Approval::Verdict::Deny.new
 
         # @return [Array<Array(#digest, String, String)>] item, issue and criteria
         def decided(artifact, issue_id, criteria_digest)
@@ -248,9 +251,10 @@ module Lain
           end
         end
 
-        # Refuse now, decide later: journaled as a REAL denial and parked for
-        # human sign-off, so a caller holding an irreversible action still hits
-        # {Gate#ensure_approved!} and still refuses. Deferring is not a soft yes.
+        # Refuse now, decide later: journaled as {GateDecision::Deferred} and
+        # parked for human sign-off. It approves nothing, so a caller holding an
+        # irreversible action still hits {Gate#ensure_approved!} and still
+        # refuses. Deferring is not a soft yes.
         #
         # Journal first, park second. The queue is a FOLD of journaled
         # deferrals, so a park with no record behind it would vanish on restart
@@ -259,7 +263,7 @@ module Lain
         # fold.
         class Deferred < Policy
           NAME = SignoffQueue::DEFERRED_POLICY
-          SURFACE = StandingAnswer.new(Answer.deny(NAME)).freeze
+          SURFACE = StandingAnswer.new(Answer.deferred(NAME)).freeze
 
           # @param queue [#park] see {Policy#initialize}
           # @param digests [#digest] see {Policy#initialize}
@@ -290,6 +294,9 @@ module Lain
           private
 
           def surface = SURFACE
+
+          # A park interrupted is still a park: a deny here would revoke the approval it parked beside.
+          def interrupted = GateDecision::Deferred.new
 
           def journal_park(artifact, stage:, epic_slug:, issue_id:)
             sha = artifact.changeset if artifact.respond_to?(:changeset)

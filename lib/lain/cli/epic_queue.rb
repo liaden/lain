@@ -390,10 +390,11 @@ module Lain
         # and the most recent attempt carries the hesitation a reader wants.
         class Deferrals < LatestBy
           TYPE = Lain::Epic::SignoffQueue::JOURNAL_TYPE
+          DEFERRED = Lain::Epic::GateDecision::WORDS.fetch(Lain::Epic::GateDecision::Deferred)
 
           private
 
-          def admits?(record) = super && record["policy"].to_s == Lain::Epic::SignoffQueue::DEFERRED_POLICY
+          def admits?(record) = super && record["verdict"] == DEFERRED
         end
 
         # Only a deferred gate's wait: a live gate's is closed by its own decision.

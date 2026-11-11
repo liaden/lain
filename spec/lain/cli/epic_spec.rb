@@ -401,7 +401,8 @@ RSpec.describe Lain::CLI::Epic do
 
     it "says the stage is not open while an earlier stage still holds a parked sign-off" do
       write_epic("alpha", chain)
-      parked = verdict(approved: false, at: "2026-01-01T00:00:01Z").merge("policy" => "deferred")
+      parked = verdict(approved: false, at: "2026-01-01T00:00:01Z").merge("policy" => "deferred",
+                                                                          "verdict" => "deferred")
       session("one.ndjson", stage_event("epic_plan"), parked)
 
       expect(command.status).to include("epic_plan is not open: research still holds parked sign-offs")
@@ -939,9 +940,9 @@ RSpec.describe Lain::CLI::Epic do
     end
 
     def gate_decision(stage:, issue_id:, approved:, policy: approved ? "interactive" : "deferred",
-                      digest: "blake3:#{"a" * 64}")
-      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:,
-                                   verdict: approved ? Lain::Approval::Verdict::Approve.new : Lain::Approval::Verdict::Deny.new,
+                      digest: "blake3:#{"a" * 64}",
+                      verdict: approved ? Lain::Approval::Verdict::Approve.new : Lain::Epic::GateDecision::Deferred.new)
+      Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, verdict:,
                                    answered_by: "human", policy:, latency: 1.0, issue_id:)
     end
 
@@ -967,7 +968,8 @@ RSpec.describe Lain::CLI::Epic do
     it "does not refuse to merge an issue whose issue_plan approval a later deny revoked" do
       write_epic("alpha", chain)
       session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true),
-              gate_decision(stage: "issue_plan", issue_id: "b", approved: false, policy: "interactive"))
+              gate_decision(stage: "issue_plan", issue_id: "b", approved: false, policy: "interactive",
+                            verdict: Lain::Approval::Verdict::Deny.new))
 
       expect { command.merge("a", "b", "alpha", as: "ab") }.not_to raise_error
     end
@@ -1059,7 +1061,8 @@ RSpec.describe Lain::CLI::Epic do
       session("park.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false),
               at: "2026-01-01T00:00:00Z")
       session("deny.ndjson", gate_decision(stage: "implementation", issue_id: "a", approved: false,
-                                           policy: "interactive"), at: "2026-01-01T00:00:01Z")
+                                           policy: "interactive", verdict: Lain::Approval::Verdict::Deny.new),
+              at: "2026-01-01T00:00:01Z")
 
       expect { command.split("a", "a1,a2", "alpha") }.not_to raise_error
     end
@@ -1305,35 +1308,6 @@ RSpec.describe Lain::CLI::Epic do
     it "lists the document names it accepts when given an unknown one" do
       expect { command.show("notes") }
         .to raise_error(Lain::CLI::Epic::UnknownDocument, %r{research, epic, issues/ID or sources/NAME\z})
-    end
-  end
-
-  # The command line's wiring, end to end: Thor dispatch, the real paths and
-  # the project resolved from the working directory.
-  describe "lain epic rewrite-verdicts" do
-    def rewrite_via_cli
-      with_env("XDG_STATE_HOME" => state_home, "HOME" => state_home) do
-        Dir.chdir(root) do
-          original = $stdout
-          $stdout = StringIO.new
-          LainCLI.start(%w[epic rewrite-verdicts], debug: true)
-          $stdout.string
-        ensure
-          $stdout = original
-        end
-      end
-    end
-
-    it "rewrites an old gate_decision in this project's sessions and says which file" do
-      old = { "type" => "gate_decision", "artifact_digest" => "blake3:#{"a" * 64}", "epic_slug" => "alpha",
-              "stage" => "research", "approved" => true, "answered_by" => "human", "policy" => "signoff",
-              "latency" => 1.5, "reason" => nil }
-      path = session("old.ndjson", old)
-
-      said = rewrite_via_cli
-
-      expect(said).to include(path, "1 gate_decision records rewritten")
-      expect(JSON.parse(File.readlines(path).last)).to include("verdict" => "approve")
     end
   end
 end

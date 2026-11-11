@@ -294,7 +294,7 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
       parked = Lain::Epic::GateDecision.new(
         artifact_digest: Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: sha).digest,
         epic_slug: "demo", stage: "implementation",
-        verdict: Lain::Approval::Verdict::Deny.new, answered_by: "none", policy: "deferred",
+        verdict: Lain::Epic::GateDecision::Deferred.new, answered_by: "none", policy: "deferred",
         latency: 0.0, issue_id: "a"
       )
       session(plan_approval("a"), parked)

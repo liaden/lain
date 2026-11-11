@@ -3,6 +3,7 @@
 RSpec.describe Lain::Epic::Signoff do
   verdicts = Lain::Approval::Verdict
   deferred = Lain::Epic::SignoffQueue::DEFERRED_POLICY
+  parked = Lain::Epic::GateDecision::Deferred.new
   journaled = lambda do |verdict, digest: "blake3:d1", stage: "issue_plan", issue_id: "a", policy: "signoff"|
     Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage:, verdict:,
                                  answered_by: policy, policy:, latency: 0.1, issue_id:).to_journal
@@ -16,8 +17,8 @@ RSpec.describe Lain::Epic::Signoff do
 
   palette = [decided.call(verdicts::Approve.new), decided.call(verdicts::Deny.new(note: "too broad")),
              decided.call(verdicts::Approve.new, digest: "blake3:d2"), decided.call(verdicts::Hold.new),
-             decided.call(verdicts::Deny.new, policy: deferred),
-             decided.call(verdicts::Deny.new, digest: "blake3:d2", policy: deferred),
+             decided.call(parked, policy: deferred),
+             decided.call(parked, digest: "blake3:d2", policy: deferred),
              decided.call(verdicts::Approve.new, stage: "research", issue_id: nil, digest: "blake3:r1"), turn,
              message]
   g = PropCheck::Generators
@@ -28,7 +29,7 @@ RSpec.describe Lain::Epic::Signoff do
   digests = %w[blake3:v1 blake3:v2]
   partitions = [research, issue_a]
   shapes = [verdicts::Approve.new, verdicts::Deny.new, verdicts::Hold.new].map { [_1, "signoff"] } +
-           [[verdicts::Deny.new, deferred], [verdicts::Hold.new, deferred]]
+           [[parked, deferred], [verdicts::Hold.new, deferred]]
   any_decision = g.tuple(g.one_of(*shapes.map { g.constant(_1) }), g.one_of(*digests.map { g.constant(_1) }),
                          g.one_of(*partitions.map { g.constant(_1) }))
                   .map do |(verdict, policy), digest, partition|
@@ -73,7 +74,7 @@ RSpec.describe Lain::Epic::Signoff do
   end
 
   it "keeps a newer approval standing when a draft it superseded is denied" do
-    signoff = described_class.over([decided.call(verdicts::Deny.new, digest: "blake3:v1", policy: deferred),
+    signoff = described_class.over([decided.call(parked, digest: "blake3:v1", policy: deferred),
                                     decided.call(verdicts::Approve.new, digest: "blake3:v2"),
                                     decided.call(verdicts::Deny.new, digest: "blake3:v1")])
 
@@ -82,16 +83,16 @@ RSpec.describe Lain::Epic::Signoff do
   end
 
   it "withdraws the approval when a superseded draft is deferred again and then denied" do
-    signoff = described_class.over([decided.call(verdicts::Deny.new, digest: "blake3:v1", policy: deferred),
+    signoff = described_class.over([decided.call(parked, digest: "blake3:v1", policy: deferred),
                                     decided.call(verdicts::Approve.new, digest: "blake3:v2"),
-                                    decided.call(verdicts::Deny.new, digest: "blake3:v1", policy: deferred),
+                                    decided.call(parked, digest: "blake3:v1", policy: deferred),
                                     decided.call(verdicts::Deny.new, digest: "blake3:v1")])
 
     expect(signoff.approved?(issue_a, "blake3:v2")).to be(false)
   end
 
   it "withdraws the approval when a re-approved draft is denied, as the sign-off queue does" do
-    session = [decided.call(verdicts::Deny.new, digest: "blake3:v2", policy: deferred),
+    session = [decided.call(parked, digest: "blake3:v2", policy: deferred),
                decided.call(verdicts::Approve.new, digest: "blake3:v3"),
                decided.call(verdicts::Approve.new, digest: "blake3:v2"),
                decided.call(verdicts::Deny.new, digest: "blake3:v2")]
@@ -102,7 +103,7 @@ RSpec.describe Lain::Epic::Signoff do
   end
 
   it "withdraws a later approval when a draft already denied out of the queue is denied again" do
-    session = [decided.call(verdicts::Deny.new, digest: "blake3:v1", policy: deferred),
+    session = [decided.call(parked, digest: "blake3:v1", policy: deferred),
                decided.call(verdicts::Deny.new, digest: "blake3:v1"),
                decided.call(verdicts::Approve.new, digest: "blake3:v2"),
                decided.call(verdicts::Deny.new, digest: "blake3:v1")]
@@ -113,7 +114,7 @@ RSpec.describe Lain::Epic::Signoff do
   end
 
   it "keeps that approval when the halves are folded apart and combined" do
-    left = described_class.over([decided.call(verdicts::Deny.new, digest: "blake3:v1", policy: deferred),
+    left = described_class.over([decided.call(parked, digest: "blake3:v1", policy: deferred),
                                  decided.call(verdicts::Approve.new, digest: "blake3:v2")])
     right = described_class.over([decided.call(verdicts::Deny.new, digest: "blake3:v1")])
 
@@ -133,9 +134,30 @@ RSpec.describe Lain::Epic::Signoff do
 
   it "leaves a standing approval standing through a hold or a deferral of it" do
     approved = described_class.over([decided.call(verdicts::Approve.new)])
-    later = [decided.call(verdicts::Hold.new), decided.call(verdicts::Deny.new, policy: deferred)]
+    later = [decided.call(verdicts::Hold.new), decided.call(parked, policy: deferred)]
 
     expect(approved.over(later).approved?(issue_a, "blake3:d1")).to be(true)
+  end
+
+  describe "a deferred record" do
+    raw = lambda { |verdict, digest:, policy:|
+      journaled.call(verdicts::Deny.new, digest:, policy:).merge("verdict" => verdict)
+    }
+
+    it "parks by its verdict whatever its policy says, so a superseded draft's later deny leaves the approval" do
+      session = [raw.call("deferred", digest: "blake3:v1", policy: "signoff"),
+                 journaled.call(verdicts::Approve.new, digest: "blake3:v2"),
+                 journaled.call(verdicts::Deny.new, digest: "blake3:v1")]
+
+      expect(described_class.from_journal(session).approved?(issue_a, "blake3:v2")).to be(true)
+    end
+
+    it "settles a deny journaled under the deferred policy, because no reader compares the policy string" do
+      session = [raw.call("deny", digest: "blake3:v1", policy: deferred)]
+
+      expect(described_class.from_journal(session).standing(issue_a))
+        .to eq(described_class::Standing.new(digest: "blake3:v1", verdict: verdicts::Deny.new))
+    end
   end
 
   it "answers itself for a typed record that is not a gate decision" do

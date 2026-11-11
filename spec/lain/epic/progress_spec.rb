@@ -39,7 +39,7 @@ RSpec.describe Lain::Epic::Progress do
   def gate(policy: "deferred", approved: false, stage: "research", epic_slug: "alpha", digest: "blake3:plan",
            **scope)
     Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug:, stage:,
-                                 verdict: Lain::Approval::Verdict.const_get(approved ? :Approve : :Deny).new,
+                                 verdict: approved ? Lain::Approval::Verdict::Approve.new : Lain::Epic::GateDecision::Deferred.new,
                                  answered_by: policy, policy:, latency: 0.1, **scope)
   end
 
@@ -177,7 +177,7 @@ RSpec.describe Lain::Epic::Progress do
                   "stage" => "research", "approved" => "maybe", "policy" => "signoff" }
 
       expect { fold(journaled(transition(issue_id: "a"), damaged), graph: chain) }
-        .to raise_error(Lain::Error, /gate_decision.*blake3:plan.*approved/)
+        .to raise_error(Lain::Error, /gate_decision.*blake3:plan.*verdict/)
     end
 
     # The epic filter must not become the silent skip the rules above forbid. A
