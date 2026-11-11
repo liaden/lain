@@ -1321,8 +1321,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 11 documented verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos` and `remote`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 14 documented verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos`, `think`, `review`, `budget` and `remote`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -1599,6 +1599,15 @@ and the line. A `bright_` style falls back to its base colour on a terminal belo
 # ~/.config/lain/config.rb
 theme response: %w[green], tool_header: %w[magenta bold]
 ```
+
+### attention
+
+`attention delay: 30` sets how many seconds an agent must stay blocked, or finished and unseen, before lain
+sends a desktop and morning-feed notice for it. It is a verb of the user's `$XDG_CONFIG_HOME/lain/config.rb`
+only, after `lain trust --user`: how long to wait before interrupting belongs to the person, not to a project, so a
+project's `.lain/config.rb` that says `attention` is refused naming the file, the line and the user's config.rb.
+The value is a number of seconds, 0 or more, and defaults to 30. A negative or non-numeric value, or an unknown
+key, is refused by name.
 
 ### todos
 

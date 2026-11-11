@@ -17,11 +17,11 @@ module Lain
   # crashing three call frames deep.
   #
   # The user's `$XDG_CONFIG_HOME/lain/config.rb` is read by {.middleware},
-  # {.keys} and {.theme}, under its own trust, and may declare nothing but
-  # middleware, keys and theme.
+  # {.keys}, {.theme} and {.attention}, under its own trust, and may declare
+  # nothing but middleware, keys, theme and attention.
   class Config
     # The evaluated file, memoised on its path and trusted bytes: a `lain chat`
-    # startup asks the four readers below for one file, and an edit is new
+    # startup asks the readers below for one file, and an edit is new
     # bytes, so it is evaluated afresh once trusted. Nothing is evicted; the
     # entries are bounded by the roots one process resolves and the edits made
     # while it runs. The cop cannot see that the mutex below guards the table.
@@ -135,6 +135,14 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] naming the user's file and line
     def self.theme(paths: Paths.new) = user(paths).theme
+
+    # How long a blocked or finished chat waits before it asks for the person. Only the user's config.rb may declare it.
+    #
+    # @param paths [Paths] where the user's config.rb lives
+    # @return [Attention] a 30 second delay when the file or the table is absent
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] naming the user's file and line
+    def self.attention(paths: Paths.new) = user(paths).attention
 
     # Where this project keeps its tests, which the layout guard holds a test
     # file's path to. With no table the layout falls back to the preset of a

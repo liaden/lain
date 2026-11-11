@@ -155,6 +155,7 @@ RSpec.describe Lain::Config::Builder do
                                                        judge_memo: true,
                                                        todos: Lain::Config::Todos.empty,
                                                        theme: Lain::Config::Theme.empty,
+                                                       attention: Lain::Config::Attention.empty,
                                                        think: nil,
                                                        review: Lain::Config::Review.empty,
                                                        budget: Lain::Budget::Table.new,
@@ -451,7 +452,17 @@ RSpec.describe Lain::Config::Builder do
 
     it "lists only the user's verbs as known" do
       expect { build_user("\nmiddlewear { }\n") }
-        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme\z/)
+        .to raise_error(Lain::Config::Refusal,
+                        /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme, attention\z/)
+    end
+
+    it "builds an attention table" do
+      expect(build_user("attention delay: 5\n").attention.delay).to eq(5)
+    end
+
+    it "refuses attention in a project's config.rb" do
+      expect { build("\nattention delay: 5\n") }
+        .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*attention belongs in the user's config\.rb/)
     end
 
     it "builds a keys table" do

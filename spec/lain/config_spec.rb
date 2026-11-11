@@ -1018,6 +1018,30 @@ RSpec.describe Lain::Config do
         .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(paths.user_config)}:2: .*respnse/)
     end
 
+    it "reads the attention delay the user declared" do
+      write_user("attention delay: 5\n")
+
+      expect(described_class.attention(paths:).delay).to eq(5)
+    end
+
+    it "is a 30 second attention delay when the user has no config.rb" do
+      expect(described_class.attention(paths:).delay).to eq(30)
+    end
+
+    it "refuses a bad attention delay at the user's file and line" do
+      write_user("\nattention delay: -1\n")
+
+      expect { described_class.attention(paths:) }
+        .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(paths.user_config)}:2: .*delay.*-1/)
+    end
+
+    it "refuses attention in a project's config.rb" do
+      write_config(root, "attention delay: 5\n", paths:)
+
+      expect { described_class.middleware(root:, paths:) }
+        .to raise_error(Lain::Config::Refusal, /attention belongs in the user's config\.rb/)
+    end
+
     it "refuses theme in a project's config.rb" do
       write_config(root, "theme response: %w[green]\n", paths:)
 

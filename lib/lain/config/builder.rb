@@ -13,7 +13,7 @@ module Lain
     # against {TestLayout::None}.
     Built = Data.define(:epics, :approval, :isolation, :sensitivity, :shell, :search, :tests, :middleware,
                         :env_pass, :approval_timeout, :approval_silence, :judge_timeout, :judge_memo, :keys, :todos,
-                        :theme, :think, :review, :budget, :remote_relay, :remote_ntfy) do
+                        :theme, :attention, :think, :review, :budget, :remote_relay, :remote_ntfy) do
       # @param framework [String, nil] a detected test framework
       # @return [TestLayout] the declared layout, else what the framework implies
       def test_layout(framework: nil) = tests || TestLayout.from(nil, path: nil, framework:)
@@ -51,7 +51,7 @@ module Lain
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
-      USER_VERBS = %i[middleware keys theme].freeze
+      USER_VERBS = %i[middleware keys theme attention].freeze
 
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
@@ -212,6 +212,10 @@ module Lain
 
       def theme(**table) = declare(:theme, Theme::TABLE, table) { |at| Theme.from(shaped(table), path: at) }
 
+      def attention(**table)
+        declare(:attention, Attention::TABLE, table) { |at| Attention.from(shaped(table), path: at) }
+      end
+
       # `env pass: %w[DATABASE_URL RAILS_ENV]` hands those variables, from the
       # environment lain started under, to every command the bash tool runs.
       #
@@ -253,7 +257,8 @@ module Lain
 
       def small_tables
         { keys: @tables.fetch(:keys) { Keys.empty }, todos: @tables.fetch(:todos) { Todos.empty },
-          theme: @tables.fetch(:theme) { Theme.empty }, review: @tables.fetch(:review) { Review.empty },
+          theme: @tables.fetch(:theme) { Theme.empty }, attention: @tables.fetch(:attention) { Attention.empty },
+          review: @tables.fetch(:review) { Review.empty },
           budget: @tables.fetch(:budget) { Lain::Budget::Table.new } }
       end
 
