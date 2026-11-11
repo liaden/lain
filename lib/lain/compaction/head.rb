@@ -83,12 +83,14 @@ module Lain
       #   a signal measured over it never fires on bytes no compaction reclaims
       # @param widening [#claims] a wider arm's claimant, asked only when
       #   `claimant` took nothing, for {#widens?}
-      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE, claimant: Whole, widening: Nothing)
+      # @param lead [Integer] messages the next prompt will add, as {Boundary} takes it
+      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE, claimant: Whole, widening: Nothing,
+                     lead: 0)
         # A `Boundary` is a pure function of `(messages, keep_last)`, which is
         # what makes "one answer, two consumers" hold across two objects that
         # cannot pass an instance between them: {Context::Compact} receives its
         # messages per `#call`, long after it was frozen.
-        @boundary = Boundary.new(messages:, keep_last:)
+        @boundary = Boundary.new(messages:, keep_last:, lead:)
         unpinned = unpinned(messages, pins)
         claimed = unpinned & claimed(messages, claimant)
         @unclaimed = !unpinned.empty? && claimed.empty?

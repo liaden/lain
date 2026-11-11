@@ -289,6 +289,29 @@ RSpec.describe Lain::Compaction::Boundary do
   end
 
   # Scenario: a non-positive keep_last is refused at construction
+  describe "a lead of messages the next prompt will add" do
+    it "counts the keep window back from the prompt that is not there yet" do
+      expect(described_class.new(messages: alternating(2), keep_last: 2, lead: 1).index).to eq(1)
+    end
+
+    it "lets a keep_last of 1 drop everything on the chain now" do
+      boundary = described_class.new(messages: alternating(4), keep_last: 1, lead: 1)
+
+      expect([boundary.index, boundary.declined?]).to eq([4, false])
+    end
+
+    it "still moves off a tool pair the lead's window would split" do
+      messages = [message("user", "ask"), tool_use_message("t1"), tool_result_message("t1")]
+
+      expect(described_class.new(messages:, keep_last: 2, lead: 1).index).to eq(1)
+    end
+
+    it "still refuses a non-positive keep_last" do
+      expect { described_class.new(messages: alternating(4), keep_last: 0, lead: 1) }
+        .to raise_error(ArgumentError, "keep_last must be positive, got 0")
+    end
+  end
+
   describe "a non-positive keep_last" do
     it "refuses zero, naming the value" do
       expect { described_class.new(messages: alternating(4), keep_last: 0) }

@@ -133,9 +133,11 @@ module Lain
       # @param journal [#<<] where the derivation edge lands; the Null channel
       #   by default, so no caller guards `if journal`.
       # @param placement [#message] how a replacement reaches the model; {Recap.for} names the arms
-      def initialize(strategy:, keep_last:, journal: Channel::Null.instance, placement: Recap.for("framed"))
+      # @param lead [Integer] messages the next prompt will add, as {Boundary} takes it
+      def initialize(strategy:, keep_last:, journal: Channel::Null.instance, placement: Recap.for("framed"), lead: 0)
         @strategy = strategy
         @keep_last = keep_last
+        @lead = lead
         @journal = journal
         @placement = placement
         freeze
@@ -171,7 +173,7 @@ module Lain
       #   value when a block is given
       def derive(source, into: source.store, walk: nil, cut: UNCUT, resume: nil)
         refuse_foreign(source, into)
-        plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last, cut:)
+        plan = Plan.over(strategy: @strategy, walk: walk || Walk.of(source), keep_last: @keep_last, cut:, lead: @lead)
         collapsed = plan.collapsed
         derived = resume&.covers?(plan, into) ? extended(plan, resume) : committed(plan, collapsed, into)
         @journal << edge(plan, source, derived)
@@ -324,8 +326,8 @@ module Lain
       # same reason each range is COLLAPSED once ({#collapsed}), and both the
       # writes and the seam read that one answer.
       Plan = Data.define(:strategy, :walk, :boundary, :held, :floor, :held_ranges, :live_ranges) do
-        def self.over(strategy:, walk:, keep_last:, cut:)
-          boundary = Boundary.new(messages: walk.messages, keep_last:)
+        def self.over(strategy:, walk:, keep_last:, cut:, lead: 0)
+          boundary = Boundary.new(messages: walk.messages, keep_last:, lead:)
           at = walk.turns.each_with_index.to_h { |turn, index| [turn.digest, index] }
           floor = cut.digest.nil? ? 0 : held_index(at, cut.digest) + 1
           refuse_past(boundary, floor, cut)

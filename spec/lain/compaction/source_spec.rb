@@ -3820,6 +3820,44 @@ RSpec.describe Lain::Compaction::Source do
       expect(of_type("compaction_prepared").first["idle_seconds"]).to be_a(Integer)
     end
 
+    [1, 2, 4].each do |keep|
+      context "with a keep_last of #{keep}" do
+        let(:keep_last) { keep }
+        let(:line) do
+          timeline(keep.even? ? keep + 3 : keep + 4) do |index|
+            { "type" => "text", "text" => "x" * (400 + index) }
+          end
+        end
+        let(:threshold) { Lain::Compaction::Head.new(messages: messages_of(line), keep_last:).bytesize + 1 }
+        let(:built) do
+          source(need: build_need(byte_threshold: threshold), cold: build_cold(ttl: nil), hard_cap: 1_000_000,
+                 strategy: Lain::Compaction::Strategy::Summarizing.new(oracle:))
+        end
+
+        before do
+          built
+          clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)
+        end
+
+        it "prepares a cut whose head only the next prompt pushes over the threshold" do
+          expect(prepare(built, line)).to be(true)
+          expect(session.compaction_cuts.last.collapses.last.fetch("span").last).to eq(line.to_a[-keep].digest)
+        end
+
+        it "applies that cut to the next ask without paying a second summary" do
+          prepare(built, line)
+          asked = oracle.asks
+          prompted = ask(line, line.to_a.size + 1)
+
+          render(context_for(built, prompted), prompted)
+
+          expect(oracle.asks).to eq(asked)
+          expect(of_type("compaction_applied"))
+            .to contain_exactly(include("cut_digest" => session.compaction_cuts.last.address))
+        end
+      end
+    end
+
     it "journals the prepared record after the cut it names" do
       built = idling
       clock.advance(Lain::Compaction::Source::IdleGate::FLOOR)

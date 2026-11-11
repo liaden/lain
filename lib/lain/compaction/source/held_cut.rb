@@ -69,13 +69,15 @@ module Lain
         # @param timeline [Ext::Timeline] this turn's chain
         # @param derived [Derived] the run's derive-and-substitute step
         # @param arm [String] the name of the arm this run collapses under
+        # @param lead [Integer] messages the next prompt will add: an idle prepare measures the
+        #   keep window from that prompt, as the ask will
         # @return [HeldCut]
-        def self.on(session:, timeline:, derived:, arm:)
+        def self.on(session:, timeline:, derived:, arm:, lead: 0)
           walk = Derivation::Walk.of(timeline)
           at = walk.turns.each_with_index.to_h { |turn, index| [turn.digest, index] }
           boundary = Boundary.new(messages: walk.messages, keep_last: derived.keep_last).index
           held = session.compaction_cuts.reverse_each.find { |cut| holds?(cut, arm, at, boundary) }
-          new(session:, timeline:, walk:, derived:, arm:, lineage: lineage(session, held), at:)
+          new(session:, timeline:, walk:, derived:, arm:, lineage: lineage(session, held), at:, lead:)
         end
 
         def self.holds?(cut, arm, at, boundary)
@@ -123,11 +125,12 @@ module Lain
         # @return [Range] the indices that collapse covers
         def self.indices(at, span) = at.fetch(span.first)..at.fetch(span.last)
 
-        def initialize(session:, timeline:, walk:, derived:, arm:, lineage:, at:)
+        def initialize(session:, timeline:, walk:, derived:, arm:, lineage:, at:, lead: 0)
           @session = session
           @timeline = timeline
           @walk = walk
           @derived = derived
+          @lead = lead
           @arm = arm
           @at = at
           @lineage = lineage
@@ -144,6 +147,9 @@ module Lain
 
         # @return [Derivation::Seam] what holds, or {Derivation::UNCUT}
         attr_reader :seam
+
+        # @return [Integer] the messages the next prompt will add, as {.on} takes it
+        attr_reader :lead
 
         # @return [Telemetry::CompactionCut, nil] the newest recorded cut holding on this chain
         def in_force = @lineage.last

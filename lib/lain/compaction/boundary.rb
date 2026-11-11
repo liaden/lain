@@ -77,8 +77,13 @@ module Lain
       #   answers, as {Head#droppable} does AFTER its own slice. Holding it in
       #   an inert ivar was tried and reverted -- a non-frozen duck-typed pins
       #   collaborator would make this object fail `Ractor.shareable?`.
-      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE) # rubocop:disable Lint/UnusedMethodArgument
+      # @param lead [Integer] messages the next prompt will add and that this
+      #   list does not hold yet. The window counts back from them, so an idle
+      #   chat measures the head the next ask will. Never validated: it is not
+      #   configuration, and `keep_last` alone is what must stay positive.
+      def initialize(messages:, keep_last:, pins: Context::PinnedMessages::NONE, lead: 0) # rubocop:disable Lint/UnusedMethodArgument
         @keep_last = Compaction.validate_keep_last(keep_last)
+        @lead = lead
         @index, @declined, @moved = snapped(messages)
         freeze
       end
@@ -112,9 +117,9 @@ module Lain
       # it, which nothing in `lib/` emits. Declining there is the safe answer
       # for a shape whose pairing this object cannot honour.
       def snapped(messages)
-        raw = [messages.size - @keep_last, 0].max
+        raw = (messages.size + @lead - @keep_last).clamp(0, messages.size)
         return [0, false, 0] if raw.zero?
-        return [raw, false, 0] unless splits_pair?(messages, raw)
+        return [raw, false, 0] if raw == messages.size || !splits_pair?(messages, raw)
 
         off = raw - 1
         off.positive? && !splits_pair?(messages, off) ? [off, false, 1] : [0, true, raw]

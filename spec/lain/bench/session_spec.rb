@@ -245,30 +245,40 @@ RSpec.describe Lain::Bench::Session do
     end
   end
 
-  # A cut committed while the human is away collapses the held cuts into one, and the
-  # next request is sent holding that collapse.
-  describe "a session whose idle prepare committed a collapse" do
+  # What the human types next is 1 message the idle history does not hold yet, so the idle tick
+  # measures its head with that prompt counted. Whether the tick then commits a collapse of the
+  # held cuts or an advance over what the prompt makes droppable depends on whether the strategy
+  # claims anything in that head.
+  describe "a session whose idle prepare committed a cut" do
     let(:clock_at) { [Time.at(1_700_000_000).utc] }
     let(:session) { Lain::Session.new(journal:) }
+    let(:arm) { "elide" }
     let(:source) do
       Lain::Compaction::Source.new(
         need: Lain::Compaction::Need.new(byte_threshold: 3_000), hard_cap: 3_000, keep_last: 2, journal:,
         cold: Lain::Compaction::Cold.new(cache_profile: { ttl: nil }, journal:), clock: -> { clock_at.first },
         context_window: Lain::ContextWindow.new(windows: { "claude" => 10_000 }),
-        strategy: Lain::Compaction::Source::Collapse.new(policy: Lain::Compaction::Strategy::Elide.new, name: "elide")
+        strategy: Lain::Compaction::Source::Collapse.new(policy: Lain::Compaction::Strategy::Elide.new, name: arm)
       )
     end
+    let(:final_asks) { [] }
+    let(:pinned_before_idle) { 0 }
     let(:run) do
       full = Lain::Usage.new(input_tokens: 9_500)
       calls = Array.new(7) do |index|
         tool_response(["tu_#{index}", "echo", { "text" => "hi #{index} " * 120 }], usage: full)
       end
-      provider = Lain::Provider::Mock.new(responses: calls + [text_response("done", usage: full),
-                                                              text_response("welcome back", usage: full)])
+      provider = Lain::Provider::Mock.new(responses: calls + Array.new(3) do |i|
+        text_response("reply #{i}", usage: full)
+      end)
       stack = Lain::Middleware::Stack.new([Lain::Middleware::JournalRequests.new(journal:)])
       agent = Lain::Agent.new(provider:, toolset:, context:, workspace:, session:, pipeline_source: source,
                               journal: Lain::CLI::JournalTee.new(journal, source), model_middleware: stack)
       agent.ask("please echo a lot " * 20)
+      final_asks.each { |text| agent.ask(text * 10) }
+      agent.timeline.to_a.last(pinned_before_idle + 1).first(pinned_before_idle).each do |turn|
+        session.record_pin(turn.digest)
+      end
       clock_at[0] += Lain::Compaction::Source::IdleGate::FLOOR
       Lain::CLI::Repl::IdleCompaction.new(agent:, sink: StringIO.new, sleeper: ->(_seconds) {}).tick
       agent.ask("the human is back " * 10)
@@ -276,18 +286,38 @@ RSpec.describe Lain::Bench::Session do
     end
 
     before do
-      write_session(compaction: { "compact_strategy" => "elide", "compact_keep" => 2, "compact_schedule" => "turn" })
+      write_session(compaction: { "compact_strategy" => arm, "compact_keep" => 2, "compact_schedule" => "turn" })
     end
 
-    it "sends its last request holding the collapse" do
-      expect(session.compaction_cuts.map(&:kind).last).to eq("collapse")
-      expect(cuts_in_force(parsed_records).last).to eq(session.compaction_cuts.last.address)
+    shared_examples "an idle cut that is sent and replayed" do
+      it "sends its last request holding the cut" do
+        expect(cuts_in_force(parsed_records).last).to eq(session.compaction_cuts.last.address)
+      end
+
+      it "re-renders every step to its recorded request and names the cut on the last" do
+        recording = load_session
+        expect(recording.dry_replay.diff(recording.context)).to be_identical
+        expect(recording.dry_replay.each_step.map { |step| step.cut&.address }).to eq(cuts_in_force(parsed_records))
+      end
     end
 
-    it "re-renders every step to its recorded request and names the collapse on the last" do
-      recording = load_session
-      expect(recording.dry_replay.diff(recording.context)).to be_identical
-      expect(recording.dry_replay.each_step.map { |step| step.cut&.address }).to eq(cuts_in_force(parsed_records))
+    context "when the last exchange is a tool round the prompt makes droppable" do
+      it_behaves_like "an idle cut that is sent and replayed"
+
+      it "advances over it" do
+        expect(session.compaction_cuts.map(&:kind).last).to eq("advance")
+      end
+    end
+
+    context "when the exchange the prompt makes droppable is pinned" do
+      let(:final_asks) { ["a plain question "] }
+      let(:pinned_before_idle) { 3 }
+
+      it_behaves_like "an idle cut that is sent and replayed"
+
+      it "collapses the held cuts" do
+        expect(session.compaction_cuts.map(&:kind).last).to eq("collapse")
+      end
     end
   end
 

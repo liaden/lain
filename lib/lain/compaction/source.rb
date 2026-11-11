@@ -746,7 +746,9 @@ module Lain
       private
 
       HANDOFF_DECLINED = "declined"
-      private_constant :HANDOFF_DECLINED
+      # The human's next line is 1 message the idle history does not hold yet.
+      NEXT_PROMPT = 1
+      private_constant :HANDOFF_DECLINED, :NEXT_PROMPT
 
       # The window must be a measured or published one: a handoff is an irreversible rewrite, and
       # a guessed denominator is how a small local runner got its history rewritten at 75% full.
@@ -805,8 +807,9 @@ module Lain
 
       def prepared_cut(base:, timeline:, usage:, session:, fixed_bytes:)
         before = session.compaction_cuts.last
-        held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
-        decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session), cold: true, fixed_bytes:)
+        held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy, lead: NEXT_PROMPT)
+        decide(base:, held_cut:, usage:, session:, pins: session_pinned(held_cut.walk, session), cold: true,
+               fixed_bytes:)
         cut = session.compaction_cuts.last
         cut unless cut.equal?(before)
       end
@@ -875,7 +878,7 @@ module Lain
       # not droppable again, so a threshold measures only what it has not.
       def decide(base:, held_cut:, usage:, session:, pins:, cold:, fixed_bytes:)
         head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
-                        claimant: @derived.claimant(pins:), widening: @derived.widening(pins:))
+                        claimant: @derived.claimant(pins:), widening: @derived.widening(pins:), lead: held_cut.lead)
         resolution = window_for(base)
         need = need_for(head:, fixed_bytes:, usage:, session:, resolution:, ceiling: base.max_tokens)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
@@ -1036,7 +1039,7 @@ module Lain
         return collapsed(held_cut, pins) if head.empty?
 
         @derived.over(held_cut.timeline, walk: held_cut.walk, pins:, cut: held_cut.seam,
-                                         snapshot: snapshot_of(head.messages))
+                                         snapshot: snapshot_of(head.messages), lead: held_cut.lead)
       end
 
       def collapsed(held_cut, pins)

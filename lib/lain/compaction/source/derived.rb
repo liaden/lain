@@ -152,9 +152,10 @@ module Lain
         #   turn; read only by the un-flagged default policy
         # @param cut [Derivation::Seam] the seam still holding on this chain;
         #   the policy is offered only what follows it
+        # @param lead [Integer] messages the next prompt will add, as {Boundary} takes it
         # @return [Outcome] whose `seam` is the cut this chain would commit
-        def over(timeline, walk:, pins:, snapshot:, cut:)
-          replayed(PinCuts.new(inner: @strategy || Held.new(snapshot), pins:), timeline, walk, cut)
+        def over(timeline, walk:, pins:, snapshot:, cut:, lead: 0)
+          replayed(PinCuts.new(inner: @strategy || Held.new(snapshot), pins:), timeline, walk, cut, lead)
         end
 
         # What a {Head} measures: this run's policy cut at the pins, exactly as
@@ -236,8 +237,9 @@ module Lain
         # strategy, and that order is load-bearing: read alongside the call
         # instead, and every journalled rate shifts back one turn, permanently
         # and silently, with the whole suite still green.
-        def replayed(policy, timeline, walk, cut)
-          outcome = derivation(policy).derive(timeline, walk:, cut:, resume: resumable(policy)) do |derived, seam, kept|
+        def replayed(policy, timeline, walk, cut, lead = 0)
+          outcome = derivation(policy, lead).derive(timeline, walk:, cut:,
+                                                              resume: resumable(policy)) do |derived, seam, kept|
             @resume = resumable(policy, kept)
             Outcome.new(replay: Replay.new(EventLog::Messages.project(derived.to_a)), seam:,
                         hits: policy.hits, misses: policy.misses,
@@ -264,8 +266,8 @@ module Lain
         # A fresh {Derivation} per turn, because the policy it is frozen around
         # is this turn's -- {PinCuts} closes over a pin set that moves. Both
         # are cheap frozen values.
-        def derivation(policy)
-          Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal, placement: @placement)
+        def derivation(policy, lead)
+          Derivation.new(strategy: policy, keep_last: @keep_last, journal: @journal, placement: @placement, lead:)
         end
 
         # {Derivation::Invalid} and NOTHING wider. `NotAPartition`, `NotBlocks`,
