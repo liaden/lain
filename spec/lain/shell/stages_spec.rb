@@ -74,6 +74,40 @@ RSpec.describe Lain::Shell::Stages do
     expect(read.stages.last.executable.klass).to eq(:unresolved)
   end
 
+  describe "a leading assignment" do
+    def bin(*names)
+      dir = File.join(@root, "bin")
+      FileUtils.mkdir_p(dir)
+      names.each do |name|
+        File.write(File.join(dir, name), "#!/bin/sh\n")
+        File.chmod(0o755, File.join(dir, name))
+      end
+      dir
+    end
+
+    it "reads as an env wrapper, resolving the program it runs" do
+      dir = bin("env", "cargo")
+      placed = Lain::WorkerEnv.new(cwd: @root, env: { "PATH" => dir })
+
+      stage = described_class.of("RUST_BACKTRACE=1 cargo test --locked", worker_env: placed, resolver:).stages.sole
+
+      expect(stage.argv).to eq(%w[env RUST_BACKTRACE=1 cargo test --locked])
+      expect(stage.executable).to have_attributes(name: "cargo", resolved: File.join(dir, "cargo"))
+      expect(stage.executable.wrappers.map(&:resolved)).to eq([File.join(dir, "env")])
+    end
+
+    it "leaves a shell builtin after an assignment to the shell" do
+      FileUtils.mkdir_p(File.join(@root, "sub"))
+
+      expect(of("LANG=C cd sub && ls").stages.map { [_1.argv, _1.directory] })
+        .to eq([[%w[ls], File.join(@root, "sub")]])
+    end
+
+    it "cannot tell for an assignment no program follows" do
+      expect(of("PATH=/tmp && ls")).to equal(described_class::UNKNOWN)
+    end
+  end
+
   it "cannot tell for a recursive glob, an expansion, a NUL byte or a command that is not a String" do
     ["ls **/x", "cat $X", "ls\0x", 5, nil].each do |command|
       expect(of(command)).to equal(described_class::UNKNOWN), command.inspect

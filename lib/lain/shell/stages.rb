@@ -5,6 +5,8 @@ module Lain
     # The programs a bash command would exec, each resolved in the directory its
     # stage runs in, read off {Named.stages} so the quoting bash undoes is undone
     # once. Builtins are left out: the shell runs them, not a file PATH finds.
+    # A stage's leading assignments read as an `env` that lends them, so the
+    # resolver finds the program under the env they give it.
     #
     # What it cannot tell it answers {UNKNOWN}, never a guess: the journal reads
     # that as no claim, and a gate that must know what runs refuses it.

@@ -779,6 +779,40 @@ RSpec.describe Lain::Confine::Profiles do
             .to have_attributes(name: :workspace, connect_ports: [], unix_dirs: [])
         end
 
+        def installed_cargo
+          File.join(home, ".cargo/bin/cargo").tap do |path|
+            FileUtils.mkdir_p(File.dirname(path))
+            File.write(path, "#!/bin/sh\n")
+            File.chmod(0o755, path)
+          end
+        end
+
+        def assigned_stage(command)
+          resolver = Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh)
+          worker_env = Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "#{File.dirname(installed_cargo)}:/usr/bin" })
+          Lain::Shell::Stages.of(command, worker_env:, resolver:).stages.sole
+        end
+
+        it "runs the cargo a leading assignment wraps, under the workspace a rule's approval earns" do
+          command = "RUST_BACKTRACE=1 cargo build --locked"
+          stage = assigned_stage(command)
+          string_arm = [Lain::Shell::Executable.unresolved(command)]
+          profile = profiles.for(request(ruling("rules"), executables: string_arm, grants: [stage.executable]))
+
+          expect(profile).to have_attributes(name: :workspace, connect_ports: [])
+          expect(profile.exec_files).to eq([installed_cargo])
+        end
+
+        it "gives a cargo stage a leading assignment wraps no build grant, though its own argv would earn one" do
+          wrapped = assigned_stage("RUST_BACKTRACE=1 cargo build --locked").executable
+
+          names = [wrapped, wrapped.with(wrappers: [])].map do |executable|
+            profile_of(%w[cargo build --locked], executable, rung: "rules").name
+          end
+
+          expect(names).to eq(%i[workspace grant])
+        end
+
         it "withdraws the grant once code the build loads was written, though no run file names it" do
           fresh_paths << File.join(root, "lib/lain/version.rb")
 

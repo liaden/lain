@@ -6,9 +6,9 @@ module Lain
     # shell could not read it another way: plain words, single quotes, double
     # quotes holding nothing a shell interprets, each stage followed only by
     # `2>&1` or a /dev/null discard, joined by `|`, `&&` and `;`, after any
-    # number of `cd`s to one literal directory each. Inside double quotes
-    # a backslash before anything but `$`, a backquote, `"`, `\` or a newline
-    # is kept as written, so grep's `\|` reads as bash passes it.
+    # number of `cd`s to one literal directory each. A word is read as
+    # {Named::Word} reads it, with no glob, tilde or fill, so grep's `\|`
+    # inside double quotes reads as bash passes it.
     #
     # {Verdict} abstains on all of this, and an approving rule that reads the
     # term here still hands the backend the model's string: the call runs
@@ -19,8 +19,6 @@ module Lain
       # Spelled out whole: `&>` is bash's, and a dash `sh` reads `cmd &>/dev/null`
       # as "background cmd, then truncate /dev/null".
       REDIRECTS = ["2>&1", "2>#{File::NULL}", ">#{File::NULL}"].freeze
-      SPAN = /'([^'\0]*)'|"((?:[^"$`\\!\0]|\\[^"$`\\!\0\n])*)"|([^'"\\$`{}*?\[\]!\0\s]+)/
-      WORD = /\A(?:#{SPAN})+\z/
       # bash expands a tilde at a word's start, and after `=` or `:` in a word
       # it takes for an assignment.
       TILDE = /(?:\A|[=:])~/
@@ -61,10 +59,10 @@ module Lain
       end
 
       def self.text(raw)
-        return unless raw.match?(WORD) && !raw.match?(TILDE)
+        literal = Named::Word.read(raw)
+        return if literal.nil? || literal.glob? || literal.tilde || literal.filled || raw.match?(TILDE)
 
-        text = raw.scan(SPAN).map { |single, double, bare| single || double || bare }.join
-        text unless text.empty?
+        literal.text unless literal.text.empty?
       end
       private_class_method :literal?, :joins, :words, :text
 

@@ -80,6 +80,10 @@ module Lain
       REDIRECT = "file_redirect"
       DESCRIPTOR = "redirect_descriptor"
       TARGET = "redirect_target"
+      ASSIGNMENT = "variable_assignment"
+      HEREDOC = "heredoc_redirect"
+      HEREDOC_START = "heredoc_start"
+      HEREDOC_OPERATOR = /\A<<-?/
 
       # One query, compiled once per thread by the extension, one FFI crossing. The
       # ERROR/MISSING alternation is first and carries two capture names, so a
@@ -89,10 +93,12 @@ module Lain
         *KINDS.map { |kind| "(#{kind}) @#{kind}" },
         "[#{OPERATORS.map(&:inspect).join(" ")}] @#{SEPARATOR}",
         "(#{REDIRECT} descriptor: (file_descriptor) @#{DESCRIPTOR})",
-        "(#{REDIRECT} destination: (_) @#{TARGET})"
+        "(#{REDIRECT} destination: (_) @#{TARGET})",
+        "(#{HEREDOC} (#{HEREDOC_START}) @#{HEREDOC_START})"
       ].join("\n").freeze
 
-      private_constant :COMMAND, :SEPARATOR, :REDIRECT, :DESCRIPTOR, :TARGET
+      private_constant :COMMAND, :SEPARATOR, :REDIRECT, :DESCRIPTOR, :TARGET, :ASSIGNMENT, :HEREDOC, :HEREDOC_START,
+                       :HEREDOC_OPERATOR
 
       # Why a parse cannot be trusted. `:error_node` and `:missing_node` name
       # which of the two tree-sitter signals fired; `:too_long` and
@@ -117,9 +123,17 @@ module Lain
       # range is the only thing that orders the two lists against each other.
       Separator = Data.define(:text, :byte_range)
 
+      # A heredoc, by its operator, its delimiter as written, the rest of the
+      # line after it, and each line after that up to the one the grammar ended
+      # it on. The grammar folds into the heredoc whatever shares that line, a
+      # word or a whole command after `&&`, so neither shows up as a stage.
+      Heredoc = Data.define(:operator, :delimiter, :rest_of_line, :lines, :byte_range)
+
       # `redirects` is every redirect, including one no stage owns, such as a
-      # redirect after a dangling `&&`.
-      Result = Data.define(:source, :stages, :kinds, :separators, :redirects, :uncovered, :breakages) do
+      # redirect after a dangling `&&`; `assignments` the byte range of every
+      # outermost `NAME=value`, inside a stage or standing alone.
+      Result = Data.define(:source, :stages, :kinds, :separators, :redirects, :heredocs, :assignments, :uncovered,
+                           :breakages) do
         # The grammar reported a defect, or nothing could be parsed at all.
         def broken? = !breakages.empty?
 
@@ -207,7 +221,8 @@ module Lain
       # success a refusal must never look like.
       def refused(source, breakage)
         Result.new(source:, stages: [].freeze, kinds: [].freeze, separators: [].freeze, redirects: [].freeze,
-                   uncovered: Reading.runs((0...source.bytesize).to_a), breakages: [breakage].freeze)
+                   heredocs: [].freeze, assignments: [].freeze, uncovered: Reading.runs((0...source.bytesize).to_a),
+                   breakages: [breakage].freeze)
       end
 
       # The flat capture list, read as a tree. {Ext::TreeSitter} returns captures
@@ -259,7 +274,7 @@ module Lain
         def result
           redirects = self.redirects
           Result.new(source: @source, stages: stages(redirects), kinds:, separators:,
-                     redirects: redirects.values.freeze, uncovered:, breakages:)
+                     redirects: redirects.values.freeze, heredocs:, assignments:, uncovered:, breakages:)
         end
 
         private
@@ -341,6 +356,29 @@ module Lain
           end)
           ordered(words.reject { |word| target&.contains?(word) }).map(&:text).freeze
         end
+
+        def heredocs
+          ordered(@spans.fetch(HEREDOC, [])).map do |span|
+            start = inside(span, HEREDOC_START).first
+            from = start&.range&.end || span.range.end
+            Heredoc.new(operator: span.text[HEREDOC_OPERATOR].freeze, delimiter: start&.text || NOT_WRITTEN,
+                        rest_of_line: rest_of_line(from), lines: lines_after(from, span.range.end),
+                        byte_range: span.range)
+          end.freeze
+        end
+
+        def rest_of_line(from) = @source.byteslice(from..)[/\A[^\n]*/].freeze
+
+        # Whole lines, so text the grammar left after its end on the same line is kept.
+        def lines_after(from, to)
+          first = @source.byteindex("\n", from)
+          return [].freeze if first.nil? || first >= to
+
+          last = @source.byteindex("\n", to) || @source.bytesize
+          @source.byteslice((first + 1)...last).split("\n", -1).map(&:freeze).freeze
+        end
+
+        def assignments = ordered(outermost(@spans.fetch(ASSIGNMENT, []))).map(&:range).freeze
 
         def inside(span, name) = @spans.fetch(name, []).select { |part| span.contains?(part) }
 

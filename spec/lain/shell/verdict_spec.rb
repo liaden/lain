@@ -557,7 +557,7 @@ RSpec.describe Lain::Shell::Verdict do
         source: "echo",
         stages: [Lain::Shell::Parse::Stage.new(argv: ["echo", ""].freeze, byte_range: 0...4, redirects: [])].freeze,
         kinds: %w[command command_name program word].freeze, separators: [].freeze, redirects: [].freeze,
-        uncovered: [].freeze, breakages: [].freeze
+        heredocs: [].freeze, assignments: [].freeze, uncovered: [].freeze, breakages: [].freeze
       )
       expect(empty_term).to be_covered
       clean = described_class.new(parse: instance_double(Lain::Shell::Parse, call: empty_term))
@@ -578,7 +578,8 @@ RSpec.describe Lain::Shell::Verdict do
     let(:refusal) do
       Lain::Shell::Parse::Result.new(
         source: "", stages: [stage].freeze, kinds: %w[command command_name word].freeze,
-        separators: [].freeze, redirects: [].freeze, uncovered: [].freeze, breakages: [breakage].freeze
+        separators: [].freeze, redirects: [].freeze, heredocs: [].freeze, assignments: [].freeze,
+        uncovered: [].freeze, breakages: [breakage].freeze
       )
     end
     let(:stage) { Lain::Shell::Parse::Stage.new(argv: %w[ls].freeze, byte_range: 0...2, redirects: []) }

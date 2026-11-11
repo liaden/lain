@@ -141,28 +141,14 @@ module Lain
         Walk.new(LoopReading.unrolled(result) || result, cwd:, home:).named
       end
 
-      # Read by the same walk that binds each `cd`, so a stage is placed only
-      # where {.from} would name its paths.
-      #
-      # @param result [Parse::Result]
-      # @param cwd [String] absolute directory the call runs in
-      # @param home [String, nil] as for {.of}
-      # @return [Array<String, nil>] one per stage: the directory it runs in,
-      #   nil from the first stage that may run somewhere else on
-      def self.directories(result, cwd:, home:)
-        return Array.new(result.stages.size) unless cwd.is_a?(String) && cwd.start_with?("/")
-
-        Walk.new(result, cwd:, home:).directories
-      end
-
-      # Read by the same walk as {.directories}, so a stage's words and its directory come from one reading.
+      # Read by the same walk that binds each `cd`, so a stage's words and its directory come from one reading.
+      # A plain glob is expanded as bash would, sorted, and kept as written when
+      # it matches nothing. A stage's assignments are handed to `env`, unless
+      # the program is a builtin.
       #
       # @param result [Parse::Result]
       # @param cwd [String] absolute directory the call runs in
       # @param home [String, nil] what a leading `~` names; with none, a `~` word cannot be told
-      # A plain glob is expanded as bash would, sorted, and kept as written when
-      # it matches nothing.
-      #
       # @return [Array<Array(Array<String>, String)>, nil] one per stage: its words as bash passes them, and
       #   the directory it runs in or nil; nil for a `**` or brace, an expansion, an escape, a word that is not
       #   literal, or a glob in a stage it cannot place
@@ -184,11 +170,13 @@ module Lain
       # single-quoted span as written, a double-quoted one only when it holds
       # nothing bash would interpret but `$?`, `$$` or `$#`, and bare text with
       # no backslash, expansion or brace. A quoted `*` is a file name and a bare
-      # one is not, so the pattern escapes what was quoted.
+      # one is not, so the pattern escapes what was quoted. Inside double
+      # quotes a backslash bash would not remove is kept, and `!` is text: a
+      # shell that is not interactive expands no history.
       class Word
         SINGLE = /'([^'\0]*)'/
         DIGITS = /\$[?$#]/
-        DOUBLE = /"((?:[^"$`\\!\0]|#{DIGITS})*)"/
+        DOUBLE = /"((?:[^"$`\\\0]|\\[^"$`\\\0\n]|#{DIGITS})*)"/
         DOUBLE_PARTS = /(#{DIGITS})/
         BARE = /[^'"\\$`{\0]+/
         GLOB = /[*?\[]/
@@ -1193,14 +1181,31 @@ module Lain
       # One pass over a parse, stage by stage, carrying the directory a bound
       # `cd` moved to. Mutable while it walks; what it hands back is frozen.
       class Walk
-        # Literal structure only. Anything else -- an assignment, an expansion,
-        # a heredoc, a compound statement -- is read as opaque. A simple
-        # expansion is here only because {Word} reads the few it can and
-        # refuses every other.
+        # Literal structure only. Anything else -- an expansion, a compound
+        # statement -- is read as opaque. A simple expansion, an assignment and
+        # a heredoc are here only because {Word}, {HARMLESS_ASSIGNMENT} and the heredoc
+        # check read the few they can and refuse every other.
         READABLE_KINDS = %w[
           program list pipeline command command_name word number concatenation
           raw_string string simple_expansion file_redirect redirected_statement comment
+          variable_assignment heredoc_redirect
         ].freeze
+
+        # An allowlist, because a name nobody listed may choose the program
+        # (`PATH`), load code (`LD_PRELOAD`, `BASH_ENV`) or name a file the
+        # words do not; a value with no slash keeps a locale or zone off disk.
+        HARMLESS_ASSIGNMENT = /\A(?:RUST_BACKTRACE|RUST_LOG|NO_COLOR|FORCE_COLOR|CLICOLOR(?:_FORCE)?|COLUMNS|
+                                LANG|LANGUAGE|LC_[A-Z]+|TZ)=[A-Za-z0-9_.,:@+-]*\z/x
+        # Quoted whole, so the body is not expanded and the word bash ends it on is known for certain.
+        QUOTED_DELIMITER = /\A(?:'(\w+)'|"(\w+)"|\\(\w+))\z/
+        BLANK_LINE = /\A[ \t]*\z/
+        DASHED = "<<-"
+        LEADING_TABS = /\A\t+/
+        ENV = "env"
+        # bash expands a `~` after the `=` or a `:` of an assignment, which the argv would not show.
+        ASSIGNED_TILDE = /[=:]~/
+        # A builtin's prefix assignments can outlive the stage, and these run another command in the shell.
+        IN_THE_SHELL = %w[exec command builtin eval source .].freeze
 
         DIRECTORY_CHANGERS = %w[cd pushd popd].freeze
         # Each changes how bash expands the words after it: `dotglob` lets `*`
@@ -1262,8 +1267,27 @@ module Lain
 
         def readable?
           @result.covered? && (@result.kinds - READABLE_KINDS).empty? &&
-            @result.stages.sum { _1.redirects.size } == @result.redirects.size
+            @result.stages.sum { _1.redirects.size } == @result.redirects.size &&
+            @result.heredocs.all? { literal_heredoc?(_1) } && @result.assignments.all? { prefixes_a_stage?(_1) }
         end
+
+        # The rest of its line must be blank, since a word or command there is
+        # folded into the heredoc and would run unread. The grammar also ends
+        # one on lines bash does not, ` EOF` or `EOF;x`, so the line it ended
+        # on must be the word exactly. And it can run past an exact end line,
+        # as it does after a lone `\` line, so no body line may match the word.
+        def literal_heredoc?(heredoc)
+          word = heredoc.delimiter[/\w+/] if heredoc.delimiter.match?(QUOTED_DELIMITER)
+          lines = heredoc.lines.map { heredoc.operator == DASHED ? _1.sub(LEADING_TABS, "") : _1 }
+          *body, ending = lines
+          !word.nil? && heredoc.rest_of_line.match?(BLANK_LINE) && ending == word &&
+            body.none? { _1.match?(/\A\s*#{word}(?:[\s;&|#]|\z)/) }
+        end
+
+        # One standing alone sets the variable for every stage after it.
+        def prefixes_a_stage?(range) = @result.stages.any? { _1.byte_range.cover?(range.begin) }
+
+        def assigned(stage) = stage.argv.take(@result.assignments.count { stage.byte_range.cover?(_1.begin) })
 
         # @return [Boolean, nil] nil once the rest of the command is opaque
         def step(index)
@@ -1272,17 +1296,41 @@ module Lain
           stage = @result.stages[index]
           words = words_of(stage)
           @directories << @dir
-          return halt if SHELL_OPTIONS.include?(words.texts.first)
+          return halt if changes_the_shell?(stage, words)
           return change_directory(index, words) if DIRECTORY_CHANGERS.include?(words.texts.first)
 
           name(stage, words)
           true
         end
 
+        def changes_the_shell?(stage, words)
+          assigned = assigned(stage)
+          program = words.texts.first
+          !assigned.all?(HARMLESS_ASSIGNMENT) || (assigned.any? && in_the_shell?(program)) ||
+            SHELL_OPTIONS.include?(program)
+        end
+
+        def in_the_shell?(program)
+          (Verdict.builtin?(program) || IN_THE_SHELL.include?(program)) && !DIRECTORY_CHANGERS.include?(program)
+        end
+
         def argv_of(stage, directory)
           literals = words_of(stage).literals
-          literals.flat_map { |literal| literal.glob? ? expanded(literal, directory) : [bash_text(literal)] } unless
-            literals.any? { _1.nil? || _1.filled }
+          return if assigned(stage).any? { _1.match?(ASSIGNED_TILDE) }
+
+          assignments = assigned(stage).map { Word.read(_1) }
+          return if [*literals, *assignments].any? { _1.nil? || _1.filled }
+
+          argv = literals.flat_map { |literal| literal.glob? ? expanded(literal, directory) : [bash_text(literal)] }
+          wrapped(assignments.map(&:text), argv)
+        end
+
+        # A stage's own assignments reach its program as `env` would lend them,
+        # and a cd's stay with the shell, which runs it; nil for any other builtin.
+        def wrapped(assignments, argv)
+          return argv if assignments.empty? || argv.empty? || DIRECTORY_CHANGERS.include?(argv.first)
+
+          [ENV, *assignments, *argv] unless in_the_shell?(argv.first)
         end
 
         def expanded(literal, directory)
@@ -1299,7 +1347,7 @@ module Lain
         end
 
         def words_of(stage)
-          raws = [*stage.argv, *stage.redirects.flat_map(&:extra_words)]
+          raws = [*stage.argv.drop(assigned(stage).size), *stage.redirects.flat_map(&:extra_words)]
           Words.new(raws:, literals: raws.map { Word.read(_1) })
         end
 
@@ -1570,7 +1618,7 @@ module Lain
         def stage_end(stage) = [stage.byte_range.end, *stage.redirects.map { _1.byte_range.end }].max
       end
 
-      private_constant :Word, :Argv, :GitWrite, :Program, :AwkScript, :SedScript, :Walk
+      private_constant :Argv, :GitWrite, :Program, :AwkScript, :SedScript, :Walk
     end
   end
 end

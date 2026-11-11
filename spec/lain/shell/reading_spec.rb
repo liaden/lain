@@ -31,6 +31,10 @@ RSpec.describe Lain::Shell::Reading do
         .to eq(term([["grep", "-n", "leak\\|ggml", "a.md"]]))
     end
 
+    it "reads a bang as written, bare or inside double quotes" do
+      expect(described_class.of('grep "a!b\\." x!', nil).first).to eq(term([["grep", "a!b\\.", "x!"]]))
+    end
+
     it "reads single quotes as written and a word joined from quoted and bare spans" do
       expect(described_class.of("git log --format='%h %s' -3", nil).first)
         .to eq(term([["git", "log", "--format=%h %s", "-3"]]))
@@ -55,7 +59,7 @@ RSpec.describe Lain::Shell::Reading do
       commands = ['grep "$HOME" a', "grep x *.md", "cat a > out", "grep {a,b}.md x",
                   "cat ~/a", "cat a=~/b", "cat a:~/b", "cat 'a'\ncat b", "grep x\\ y a", "grep '' a",
                   "grep `id` a", "cat $(id)", 'grep "a\\$HOME" x', 'grep "a\\"b" x', "grep 'a' # c",
-                  "cat !x", "cat <<< a", "(cat a)"]
+                  "cat <<< a", "(cat a)", "cat \"a\\\\b\"", "LANG=C cat a", "cat a <<'E'\nb\nE\n"]
 
       expect(commands.map { described_class.of(_1, nil) }).to eq([nil] * commands.size)
     end
@@ -141,6 +145,12 @@ RSpec.describe Lain::Shell::Reading do
         command = "git status --short; ls -a"
 
         expect(ran(shell, command, %w[git ls], failing: %w[git])).to eq(read_argvs(command))
+      end
+
+      it "passes a bang and a kept backslash as the reading reads them under #{shell}" do
+        command = 'grep "a!b\\." x! && sed -n "s/a!/b\\./p" y'
+
+        expect(ran(shell, command, %w[grep sed])).to eq(read_argvs(command))
       end
     end
   end

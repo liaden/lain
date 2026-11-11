@@ -7,6 +7,13 @@ RSpec.describe Lain::Shell::Parse do
 
   def result_for(command) = parse.call(command)
 
+  it "builds no Result that leaves out its heredocs or its assignments" do
+    expect do
+      described_class::Result.new(source: "", stages: [], kinds: [], separators: [], redirects: [], uncovered: [],
+                                  breakages: [])
+    end.to raise_error(ArgumentError, /heredocs, :assignments/)
+  end
+
   describe "a clean literal command" do
     let(:result) { result_for("git status --short") }
 

@@ -770,10 +770,19 @@ RSpec.describe Lain::Shell::Named do
       expect(resolved('cat a"b c"d')).to eq(["/p/ab cd"])
     end
 
-    it "makes the command opaque when a double-quoted span holds $, a backtick, a backslash or !" do
-      ['cat "$HOME/.ssh/id_rsa"', 'cat "a`id`"', 'cat "a\\"b"', 'cat "a!b"'].each do |command|
+    it "makes the command opaque when a double-quoted span holds $, a backtick or an escaping backslash" do
+      ['cat "$HOME/.ssh/id_rsa"', 'cat "a`id`"', 'cat "a\\"b"', 'cat "a\\$b"', 'cat "a\\\\b"',
+       'echo "$!"'].each do |command|
         expect(named(command)).to be_opaque, command
       end
+    end
+
+    it "reads a bang, and a backslash bash keeps, inside double quotes" do
+      result = named('sed -i "s/a!/b\\./" notes.txt')
+
+      expect(result).not_to be_opaque
+      expect(result.written.map(&:resolved)).to eq(["/p/notes.txt"])
+      expect(resolved('cat "a!b" "c\\.d"')).to eq(["/p/a!b", "/p/c\\.d"])
     end
 
     it "makes the command opaque on a backslash outside quotes" do
@@ -1101,7 +1110,7 @@ RSpec.describe Lain::Shell::Named do
 
     it "keeps every other expansion opaque, quoted or not" do
       ['echo "$(id)"', 'echo "$x"', 'echo "$1"', 'echo "${?}"', "echo $?", 'echo "$$$x"', 'echo "$?`id`"',
-       'echo "$?\\n"', 'echo "$!"', 'echo "$@"', 'echo "$-"'].each { expect(named(_1)).to be_opaque, _1 }
+       'echo "$!"', 'echo "$@"', 'echo "$-"'].each { expect(named(_1)).to be_opaque, _1 }
     end
 
     it "keeps a git -C opaque that another option moves, that names no literal directory, or that runs code" do
@@ -1162,8 +1171,43 @@ RSpec.describe Lain::Shell::Named do
       expect(described_class.of("cat $x", cwd: "relative", home: nil)).to equal(described_class::UNREADABLE)
     end
 
-    it "makes an assignment before the program opaque" do
-      expect(named("LD_PRELOAD=/tmp/x.so cat f")).to be_opaque
+    it "makes an assignment before the program opaque when it could change what runs or what it opens" do
+      ["LD_PRELOAD=/tmp/x.so cat f", "LD_PRELOAD=x.so ls", "PATH=/tmp cat f", "LANG=C BASH_ENV=x cat f",
+       "LANG+=x cat f", "LANG=$x cat f"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "makes an assignment no program follows opaque, with whatever comes after it" do
+      ["PATH=/tmp && cat f", "LANG=C; cat f", "LANG=C"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "reads past an assignment that changes only how the program reports" do
+      result = named("RUST_BACKTRACE=1 LC_ALL=C cat a > o")
+
+      expect(result).not_to be_opaque
+      expect(result.paths.map { [_1.resolved, _1.written] }).to eq([["/p/a", false], ["/p/o", true]])
+    end
+
+    it "reads a cd after an assignment that changes only how it reports" do
+      expect(resolved("LANG=C cd x && cat a")).to eq(%w[/p/x /p/x/a])
+    end
+
+    it "makes any other builtin after an assignment opaque, since a declaration there outlives the stage" do
+      ["LANG=C export PATH=/tmp/evil && touch b", "LANG=C declare -x PATH=/tmp && touch b",
+       "LANG=C typeset -x PATH=/tmp && touch b", "LANG=C local PATH=/tmp && touch b",
+       "LANG=C readonly PATH=/tmp && touch b", "LANG=C unset PATH && touch b", "LANG=C export -n PATH && touch b",
+       "LANG=C let x=1 && touch b", "LANG=C hash -p /tmp/evil touch && touch b", "LANG=C exec touch b",
+       "LANG=C command touch b", "LANG=C builtin cd /tmp && touch b", "LANG=C eval touch b",
+       "LANG=C source x && touch b", "LANG=C . x && touch b", "LANG=C trap 'touch c' EXIT && touch b"]
+        .each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "makes an unquoted heredoc opaque, since bash expands its body" do
+      expect(named("cat > crates/a/build.rs <<E\nfn main() {}\nE\n")).to be_opaque
+    end
+
+    it "makes a quoted heredoc opaque when more of the command shares its line" do
+      ["cat > a <<'E' && rm -rf b\nbody\nE\n", "cat <<'E' b\nbody\nE\n", "cat <<'E' | sh\nbody\nE\n"]
+        .each { expect(named(_1)).to be_opaque, _1 }
     end
 
     it "makes a parse with only readable kinds but uncovered bytes opaque" do
@@ -1199,35 +1243,43 @@ RSpec.describe Lain::Shell::Named do
     expect(named("cd x && cat 'a b' > o")).to be_deeply_frozen
   end
 
-  describe ".directories" do
-    def directories(command, cwd: "/p")
-      described_class.directories(Lain::Shell::Parse.new.call(command), cwd:, home: nil)
+  describe "a quoted heredoc" do
+    it "is opaque when its end line is one bash would not end it on" do
+      [" EOF", "\tEOF", "EOF ", "EOF;x", "EOF&&x", "EOF # c"].each do |ending|
+        command = "cat > t.txt <<'EOF'\n#{ending}\ncat > u.txt <<'X'\nEOF\nhidden after\nX\n"
+
+        expect(named(command)).to be_opaque, command.inspect
+      end
     end
 
-    it "names the directory each stage runs in, a cd's own stage included" do
-      expect(directories("cd x && cat a | grep b")).to eq(%w[/p /p/x /p/x])
+    it "is opaque when a body line nearly ends it" do
+      ["EOF ", " EOF", "EOF;", "EOF&", "EOF|x", "EOF#"].each do |near|
+        command = "cat > a <<'EOF'\n#{near}\nEOF\n"
+
+        expect(named(command)).to be_opaque, command.inspect
+      end
     end
 
-    it "names a repeated cd's directory as many times as it runs" do
-      expect(directories("cd /a && cd /b && cd /a && ls")).to eq(%w[/p /a /b /a])
+    it "is opaque when the grammar runs past an exact end line, as it does after a lone backslash line" do
+      expect(named("cat > t.txt <<'EOF'\n\\\nEOF\nhidden after\nEOF\n")).to be_opaque
     end
 
-    it "knows no directory past a join after which a stage may run where the cd failed to leave" do
-      expect(directories("cd x && ls\ncargo")).to eq(["/p", "/p/x", nil])
-      expect(directories("cd x && ls ; cargo")).to eq(["/p", "/p/x", nil])
+    it "is opaque for a delimiter it cannot unquote for certain" do
+      expect(named("cat > a <<'E'\"F\"\nbody\nEF\n")).to be_opaque
     end
 
-    it "knows no directory after a cd it cannot bind" do
-      expect(directories("ls && cd - && ls")).to eq(["/p", "/p", nil])
+    it "names the file the command writes from it" do
+      ["cat > crates/a/build.rs <<'E'\nfn $(main)() {}\nE\n", "cat > crates/a/build.rs <<\"E\"\nbody\nE\n",
+       "cat > crates/a/build.rs <<\\E\nbody\nE\n", "cat > crates/a/build.rs <<-'E'\n\tbody\n\tE\n"].each do |command|
+        result = named(command)
+
+        expect(result).not_to be_opaque, command
+        expect(result.written.map(&:resolved)).to eq(["/p/crates/a/build.rs"]), command
+      end
     end
 
-    it "keeps the call's directory across any join when nothing changes it" do
-      expect(directories("ls ; pwd")).to eq(%w[/p /p])
-    end
-
-    it "knows none for a command it cannot read, or a relative cwd" do
-      expect(directories("echo $(id) && ls")).to eq([nil, nil])
-      expect(directories("ls", cwd: "p")).to eq([nil])
+    it "reads the stage after the heredoc's end" do
+      expect(resolved("cat > a <<'E'\nbody\nE\ncat b\n")).to eq(%w[/p/a /p/b])
     end
   end
 
@@ -1254,8 +1306,13 @@ RSpec.describe Lain::Shell::Named do
       expect(stages("cat ~/notes.txt", home: "/home/u")).to eq([[%w[cat /home/u/notes.txt], "/p"]])
     end
 
-    it "cannot tell for a recursive glob, a brace, an expansion, an escape, an assignment or a tilde with no home" do
-      ["ls **/*.rb", "ls lib/**", "cat $X", "cat a\\ b", "X=1 ls", "echo $(id)", "cat ~/x", "cat {a,b}"]
+    it "hands a stage's assignments to env, which the resolver reads as a wrapper" do
+      expect(stages(%(X="a b" Y=1 ls))).to eq([[["env", "X=a b", "Y=1", "ls"], "/p"]])
+    end
+
+    it "cannot tell for a recursive glob, a brace, an expansion, an escape, a lone assignment or a homeless tilde" do
+      ["ls **/*.rb", "ls lib/**", "cat $X", "cat a\\ b", "X=1 && ls", "X=$Y ls", "PATH=~/fakebin:/usr/bin ls",
+       "X=a:~/b ls", "LANG=C exec ls", "LANG=C eval ls", "LANG=C command ls", "echo $(id)", "cat ~/x", "cat {a,b}"]
         .each { |command| expect(stages(command)).to be_nil, command }
     end
 
