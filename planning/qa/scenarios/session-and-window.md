@@ -16,6 +16,8 @@ is the fastest way to tell whether the bench is honest before spending a session
 
 **Needs:** `bench.md` up. A project directory. No nvim required.
 
+**Added 2026-11-11 (§10):** the session record's re-entry note, and what `lain sessions` and a resume read back from it.
+
 ---
 
 ## 1 — Launch-level refusals (no model call, no cockpit)
@@ -624,6 +626,38 @@ header above, `--confine off --tripwire off` wrote none, and `--confine bogus` r
 - **`lain up PATH -- --context-pipeline <typo>`** refuses in the pre-flight, on the operator's own
   terminal rather than in a dead tmux pane, and creates no session. **Driven by round 17** — it held
   as written.
+
+## 10: The re-entry note is in the record, and `lain sessions` and a resume read it back
+
+**Status:** written 2026-11-11 from the code at HEAD (`5100c953`: `telemetry/reentry_note.rb`, `session.rb`,
+`session_record/replay.rb`, `journal/projection/session_row.rb`, `cli/sessions.rb`, `cli/resume.rb`,
+`bench/session/loader.rb`). Nothing here has been driven; every "Expect" is a prediction read off the code. It needs no model
+call: write the sessions with `/park` over a mock-provider or a one-token local ask. `repl-commands.md` §11 drives `/park`
+itself; this section checks what the record and its readers say.
+
+**10a: the record's shape.** After `/park waiting on review`, the session file holds one line of type `reentry_note` whose
+`note` is that text, and nothing else about the line is new. Park `""` (a bare `/park`) and the record's note is the empty
+string. Check with `grep reentry_note "$S"`.
+
+**10b: `lain sessions` shows the note.** Three sessions in one project: P parked with `waiting on review`, Q parked then
+cleared, R never parked.
+
+- **Happy path.** P's row ends with `  parked: waiting on review`, after the head digest and any damage marker. The row's
+  other fields are as before.
+- **Unhappy path 1, a long note.** Park a 300 character note. The row shows its first 60 characters and an ellipsis, and the
+  record still holds all 300.
+- **Unhappy path 2, cleared and unparked.** Q's and R's rows have no `parked:` and equal the row an unparked session had before
+  this feature: compare R's row with a row of a session written by the previous commit if one is on disk, else with R's row
+  minus its tail.
+- **Unhappy path 3, a damaged file.** Truncate P's last line. The row keeps its `-` damage marker and must not raise; a note
+  in a torn record is simply not shown.
+- **`/sessions` in a chat** prints the same rows as `lain sessions`, since both read one listing.
+
+**10c: what a resume and a fork do with it.** `lain chat --resume P` prints `parked: waiting on review` as the first notice;
+`lain chat --resume Q` and `--resume R` print none. A fork of P keeps the note. A replay of a session with 2 notes reads the
+later one. **The bench's session loader** (`Bench::Session::Loader`, reached by `lain bench` over a sessions directory holding P) must read P without error: a record type it does
+not know is skipped, never refused, so a bench round with a parked session in its directory still loads. **Wrong looks like:** a
+`reentry_note` that turns a session into "unknown record" in `lain sessions` or the bench loader.
 
 ## What this scenario does not cover
 

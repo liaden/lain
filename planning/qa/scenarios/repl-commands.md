@@ -4,7 +4,8 @@
 `/pin`, `/unpin`, `/keep`, `/btw`, `/rewind`, `/undo`, `/fork`, `/goal`, `/meta`, `/review-submit`,
 `/introspect`, `/stop`, `/qa`, and, since round 3, `/deny`, `/held` and `/clear` (§10), alongside the commands that other
 scenarios touch only in passing (`/status`, `/sessions`, `/mode`, `/model`, `/approve`, `/quit`, `/ruby`, `/inbox`,
-`/review`, `/survey`, `/implement-epic`, and `/label`, `/release` and `/share`). The whole registry is 31 commands as of
+`/review`, `/survey`, `/implement-epic`, and `/label`, `/release` and `/share`), and, since 2026-11-11, `/park` and `/resume`
+(§11). Both add to the roster, so the 31 below is stale until a round re-derives it from the surface spec. The whole registry is 31 commands as of
 2026-11-04 (earlier rounds counted 23, then 25), pinned as a literal roster in
 `spec/lain/cli/command/surface_spec.rb` ("registers the whole shipped command set"). Count `/help`'s
 rows against 31 rather than trusting this number (round 25: `/help` lists 25; re-derive the count from the registry each
@@ -144,7 +145,9 @@ lighter is history; the same drive today answers `checkout auto: ...` or `checko
   notify (BELL)`, and `/mode -notify` back. `cockpit-surfaces.md` §5 drives the bell itself —
   including that a `--no-nvim` chat's inline `[y/N]` is not an arrival line and does not ring.
   Since the notifier landed the layer also writes a terminal escape sequence and runs `notify-feed`, so "nothing else" above
-  is the older shape; `notifications.md` owns those two channels.
+  is the older shape; `notifications.md` owns those two channels. Since 2026-11-11 those two no longer fire on a ring in a
+  chat that has a tracker: they wait for an agent to stay blocked or finished past `attention delay:`, and they do not need
+  this layer at all (only `quiet` stops them). The bell and the tmux message here stay immediate.
 
 `/help` describes the command, not the values: `/mode [scope] [approval] [+layer] [-layer] [!] --
 show the mode, switch its scope or approval, toggle a layer, or reset`.
@@ -461,6 +464,12 @@ making that call"**. The hedge is the point: what the door sees is a parked ques
 tool, and those coincide at `human>` and come apart at `you>`. An earlier draft asserted the call
 *was* still being made — a fact the door does not have. **A refusal that has regained the confident
 phrasing is a regression**, even though it reads better.
+
+`/fork` also opens a **herdr tab** when the chat runs in a plain herdr pane with lain's plugin linked and `TMUX` empty. That
+half, and its refusals, are in `herdr.md` §8; it needs an isolated herdr, not tmux. Its usage line now reads `/fork -- fork
+this session at its head into a new tmux or herdr window (persistent sibling chat)`, and with no window available the
+sentence reads `not inside tmux or a herdr pane with lain herdr link, so no window can open here; run the fork yourself:`
+followed by the printed command.
 
 Then `/btw`, which opens a tmux popup running an ephemeral fork:
 
@@ -792,3 +801,64 @@ is armed, and no restart later. Type it twice quickly: at most 1 restart is arme
 gone) and expect `the restart could not be set up, so this chat stays: ...` with the chat alive. In a plain `lain chat` expect
 `/clear restarts the chat pane of a `lain up` cockpit, and this plain chat has no cockpit pane to restart -- use /rewind 0 to empty
 its context in place`. **Wrong looks like:** a dead pane after `/clear`, the old session file reused, or a lease left held.
+
+## 11: `/park` and `/resume`: a note for when you come back, and a restart on a session
+
+**Status:** written 2026-11-11 from the code at HEAD (`5100c953`: `cli/command/park.rb`, `cli/command/resume_session.rb`,
+`telemetry/reentry_note.rb`, `session_record/replay.rb`, `cli/resume.rb`, `cli/up.rb` `ChatRestart`). Nothing here has been
+driven; every "Expect" is a prediction read off the code. Both commands are zero-model-turn paths. The herdr half of `/park`
+(the `lain_parked` token) is `herdr.md` §5, and `lain sessions` showing the note is `session-and-window.md` §10.
+
+**11a: `/park`, the note.** In any chat with a journal:
+
+```
+you> /park waiting on review from X; next: address comments
+you> /park                      (no text)
+```
+
+- **Happy path.** The reply is `noted: waiting on review from X; next: address comments`. The journal holds one
+  `reentry_note` record with that text (`grep reentry_note $S`). `feed.log` (the `notify-feed` stand-in of
+  `notifications.md` §0) gains at once, with no delay, argv `[lain] [<project basename>]` and body `parked: waiting on review
+  from X; next: address comments`. The body arrives on stdin.
+- **The latest note wins.** Park 2 different notes: the journal holds 2 records and a replay (§11b) reads the second only.
+- **Unhappy path 1, clearing.** `/park` with no text answers `cleared the re-entry note`, journals a `reentry_note` with an
+  empty note, and writes nothing to the feed. A resume then prints no `parked:` line.
+- **Unhappy path 2, a secret in the note.** `/park the key is <a value from the sandbox's OLLAMA_API_KEY>` with that variable
+  set in the chat's environment. The feed body must hold the masked form and 0 hits of the value. The journal record keeps the
+  text as typed, because it is the human's own line; record what it holds rather than assuming it is masked.
+- **Unhappy path 3, no feed program.** With no `notify-feed` on `PATH` the reply is still `noted: ...` and nothing else is
+  said. A missing feed must not turn a note into an error.
+- **Outside herdr** `/park` runs no herdr process (`herdr.md` §0's stub logs nothing).
+
+**11b: the note on resume.** Park `waiting on CI`, `/quit`, then `lain chat --resume <session file>`. Expect the first notice
+on the screen to read `parked: waiting on CI`, before any other resume notice. Park again, then park with no text, resume
+again: no `parked:` notice. A `/fork` of the parked session carries the note, so `lain chat --fork <selector>` shows it too.
+**Wrong looks like:** the note printed after the other notices, a cleared note that still prints, or a fork that loses it.
+
+**11c: `/resume` in a cockpit.** Needs a `lain up` cockpit (`cockpit-surfaces.md` §0) and 2 older session files in the
+project's directory: S1, closed (`session_closed` present), and S2, whose chat was killed with `kill -9` so it has no
+`session_closed` and its writer is dead.
+
+- **Happy path, named.** In the cockpit's input pane type `/resume S1` (the file name, as `lain sessions` prints it). The chat
+  quits through the same path `/clear` uses: a `session_closed` record, leases released, then the pane respawns the chat. Read
+  the respawn with `tmux -L "$QA_SOCK" list-panes -F '#{pane_start_command}'`: it ends with `--resume S1`, shell-escaped. The
+  input and nvim panes are untouched, and the new chat's first notice names the resumed session.
+- **Happy path, unnamed.** `/resume` alone takes the newest session other than this one, only if that session is unclosed and
+  its writer is dead: S2 here. A newer closed session hides an older unclosed one (the search stops at the newest), so make S2
+  the newest before expecting it, and expect `no unclosed session to resume, so this chat stays` when the newest is closed.
+- **Unhappy path 1, a live writer.** Name a session another running chat has open. Expect `<S> is still open in process <pid>,
+  so this chat stays` and the chat stays, with no restart armed.
+- **Unhappy path 2, an unknown name.** `/resume nosuch` answers the selector's refusal ending `, so this chat stays`.
+- **Unhappy path 3, the restart cannot be armed.** Break the tmux socket as §10c does; expect `the restart could not be set up,
+  so this chat stays: ...` with the chat alive.
+- **Unhappy path 4, at a reply prompt, and twice.** At a parked `ask_human` expect a refusal before anything is armed. Type
+  `/resume S1` twice quickly after a `/clear`: at most 1 restart is armed, and a `/resume` after a `/clear` must not be a silent
+  no-op (record which).
+- **`/clear` afterwards starts fresh.** In the resumed chat type `/clear`: the respawn command has no `--resume`, and a NEW
+  session file is used.
+
+**11d: `/resume` in a plain chat.** In `lain chat` started by hand (no `lain up`), type `/resume S1`. Expect a refusal that says
+`/resume` restarts the chat pane of a `lain up` cockpit, that this plain chat has no cockpit pane to restart, and to run
+`lain chat --resume S1`, ending `, so this chat stays`. The chat stays live. A session with a live writer is refused with the
+process sentence first, before the plain-chat sentence. No `session_closed` is written and no process restarts. **Wrong looks
+like:** a plain chat that quits for a restart nobody will perform, leaving a dead pane.

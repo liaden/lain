@@ -869,7 +869,9 @@ the chat pane and, inside `$TMUX`, runs `tmux display-message` with the arrival 
 notifier behind it. Read the bell off a `pipe-pane` capture of the chat pane rather than by ear, and
 the message off a `tmux` wrapper on the chat's `PATH` that logs its arguments (a detached test
 server has no client to show it on). Since the notifier landed (round 28 predates it) the layer also writes a terminal escape sequence and
-runs `notify-feed`, so "no desktop notifier" is the older shape; `notifications.md` owns those two channels. *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
+runs `notify-feed`, so "no desktop notifier" is the older shape; `notifications.md` owns those two channels, and since
+2026-11-11 it also says that in a cockpit those two wait for `attention delay:` and skip a window the human is at, while the
+bell and the tmux message stay immediate. *Driven 2026-09-14* in a `--no-nvim` chat inside tmux with
 `/mode +notify` (recorded 2026-09-14 as `accept_edits: no layers active -> accept_edits: notify
 (BELL)`; a mode reads `checkout ask: notify (BELL)` since round 18), for the parent's
 own `ask_human`:
@@ -1315,7 +1317,7 @@ snapshot in scrollback, not a live widget, so a value that does not tick is not 
 What is worth checking:
 
 - At `you>` between turns the HUD reads `❄ fleet:N inbox:N ctx:N% run:<tokens>`, plus `ASK`, `model:Ns`,
-  `tool:x` and `approve:N` when they apply. It carries no model name and no `idle Ns`: a bullet or sample below that
+  `tool:x`, `approve:N` and, last, `done:N` when they apply (§10a drives `done:N`). It carries no model name and no `idle Ns`: a bullet or sample below that
   says `<model> ctx N% idle Ns` is stale (round 25).
 - At the prompt of a parked `ask_human` — `human>` in a `--no-nvim` chat, `command>` in a cockpit
   (§5b): the HUD must show no in-flight slot that has ended, and no `idle` (it no longer exists). Driven
@@ -1552,3 +1554,71 @@ journal is the only evidence.
 **What wrong looks like:** the chat pane of b dead on 127; a cockpit that needs `$QA/bin/lain` to come up at all;
 a `.venv` call that is seconds slower than the same call without it; a launch that appears hung beside the
 `.venv` with the HUD never drawn. Restore the tree (`mv .venv.off .venv`) and kill the server when done.
+
+## 10: Agent states: `done:N`, the status rows, the `lain up` hint
+
+**Status:** written 2026-11-11 from the code at HEAD (`5100c953`: `agent_states/tracker.rb`,
+`journal/projection/agent_states.rb`, `status_feed.rb` `published_agents`, `status_feed/reading.rb` `done_agents`,
+`frontend/neovim/status_view.rb` `main_row`, `cli/up.rb` `unclosed_hint`, `resume/selector.rb` `unclosed`). Nothing here has
+been driven; every "Expect" is a prediction read off the code. Needs a live cockpit (§0) with a model for 10a and 10b. 10c needs
+no model.
+
+**The four states.** Each agent is `blocked`, `working`, `done` or `idle`, folded from records the chat already writes. The
+main chat is `working` from its own request to the ask that settles it (the judge's and the summarizer's requests do not count),
+`done` after the settle, and `idle` once seen, interrupted or fresh. A child is `working` from its spawn to a terminal
+completion, then `done`. An agent with an open wait on the human is `blocked`, whatever else it was doing. The rollup is the
+most urgent of them, in the order blocked, working, done, idle.
+
+**10a: `done:N` in the HUD.** Read it from the status file, the tmux `status-right` and the input pane header:
+`ruby -rjson -e 'puts JSON.parse(File.read(ARGV[0])).slice("hud","agents").to_json' <state.json>` (the path is the
+`HUD state:` line `lain up` prints).
+
+- **Happy path.** Ask a short question. When it settles, the HUD ends with ` done:1 ` (a leading space, a trailing space, and
+  none of `"`, `\` or `#` anywhere in the string). `state.json` has `agents.rollup` `"done"` and a row with `id` `"main"` and
+  `state` `"done"`. Ask again: while the model works the rollup reads `working` and `done:` is gone; the HUD of a chat with
+  nothing finished is byte-identical to what it was before agents existed.
+- **Two finished agents.** Run a task that finishes 2 children before the main chat settles: `done:` counts the children that
+  are done and unseen. Record the count at each moment, because the rows move one record at a time.
+- **Clearing.** The count falls only when something marks the agents seen: the human at the window past the delay
+  (`notifications.md` §8), or a new request making `main` work again. Switching panes does not clear it, so a `done:1` that
+  stays while you read the answer is correct.
+- **Unhappy path 1, a blocked child.** Park an approval from a child (`/mode ask`, a subagent that needs `bash`). Expect
+  `agents.rollup` `"blocked"` and a row for the child with `state` `"blocked"` and `what` holding the wait's summary. The HUD
+  keeps its other segments (`approve:1`) and gains no `done:`.
+- **Unhappy path 2, an old state file.** Copy a `state.json` written before this change (no `agents` key) over the live one and
+  read the HUD from it: it renders as it always did, with no `done:` and no error, and the tmux status line does not blank.
+- **Unhappy path 3, a chat with no tracker.** `lain chat --no-journal --no-nvim` has no tee feeding the tracker, so if it
+  publishes a `state.json` at all, `agents.rollup` reads `"idle"` for the whole chat and the HUD never carries `done:`. Record
+  whether a file is written; the code builds the feed for every run but nothing steps the tracker.
+
+**10b: the status rows in `lain://status`.** The fleet half is the tree of §1. Predictions for the agent states:
+
+- **Happy path, blocked child.** With a child blocked on a `bash` approval, its row reads `blocked: <summary>` where the state
+  column was `running`. When the approval is answered the row returns to the fleet's own state word.
+- **Happy path, the main row.** When `main` is done, a row reading `main` then `done` (columns joined as every fleet row is)
+  heads the list, above the children. When `main` is idle there is no `main` row, and a fresh chat shows `(nothing running)`.
+- **Unhappy path 1, a known gap to record.** The human at the window clears `done:1` from the HUD, but the status view folds its
+  own copy of the stream and the seen marker never reaches it, so predict that `main  done` stays in `lain://status` until the
+  next request. A mismatch between the HUD and the view here is the finding to write down, with the two readings and the time.
+  If the row clears too, say so and delete this bullet.
+- **Unhappy path 2, a fold that fails.** The view draws `## agent states unavailable` and the reason beside the fleet instead of
+  going dark, and the next record that folds cleanly clears it. There is no safe way to force a fold failure from chat, so say
+  that this is read off the spec and not driven.
+- **Unhappy path 3, a wait naming an unknown spawn.** A wait with no spawn record is not shown as an agent. Read it off
+  `state.json`: no row appears for a digest the fleet has never listed.
+
+**10c: the `lain up` hint for an unclosed session.** Needs no model. Make S1 by running a chat, then `kill -9` its chat process,
+so the file has no `session_closed` and its writer is dead (`lain sessions` lists it as `open`).
+
+- **Happy path.** With no tmux session of that name running, `lain up $QA/proj` creates the cockpit and its launch messages
+  include `last session <S1 file name> was not closed: lain up -- --resume <S1 file name>`. The new chat starts fresh: its journal
+  is a NEW file, not S1. Running the printed command in a second terminal resumes S1.
+- **Unhappy path 1, reattaching.** `lain up $QA/proj` again against the live cockpit prints no hint.
+- **Unhappy path 2, a live writer.** Leave S1's chat running in another process, kill the cockpit and `lain up` again: no hint,
+  because the newest session is open in a running process.
+- **Unhappy path 3, a closed newest.** Quit S1 properly (`/quit`) and leave an older unclosed S0 behind it: no hint. The search
+  judges only the newest session, on purpose, so an old open file that a later chat resumed past is not news.
+- **Unhappy path 4, the chat asks for something else.** `lain up $QA/proj -- --resume S0` and `lain up $QA/proj -- --fork ...`
+  print no hint, because the chat is not starting fresh.
+- **Unhappy path 5, a home that cannot resolve.** Launch with `HOME=/`. The launch must still come up, with no hint and no
+  error from the hint path; a hint must never stop the launch it decorates.
