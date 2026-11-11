@@ -525,6 +525,66 @@ RSpec.describe Lain::CLI::Consolidate do
     end
   end
 
+  # A value a project's sensitive path held in git history reaches no reader
+  # through a file read, and no detector shapes it, so the pass masks it as a
+  # chat's board does: under the built-in table and under the project's own.
+  describe "the values a project's sensitive paths hold in history" do
+    let(:history) { "plainhistoryvalue" }
+    let(:table) { "customtablevalue" }
+    let(:root) { File.join(@root, "repo") }
+    let(:project) { Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag) }
+    let(:ollama) { Lain::CLI::RunProfile.from_options({ provider: "ollama", model: "qwen3:4b" }) }
+
+    # HEAD~1 committed both files and HEAD deleted them, so only history holds
+    # the values. Only the project's own table marks creds.txt secret.
+    def seed_history
+      SeedRepo.derived("consolidate history secrets", into: root) do |dir|
+        FileUtils.mkdir_p(File.join(dir, "deploy"))
+        File.write(File.join(dir, ".env"), "SERVICE_PASSWORD=#{history}\n")
+        File.write(File.join(dir, "deploy", "creds.txt"), "DEPLOY_TOKEN=#{table}\n")
+        SeedRepo.git(dir, "add", "-A")
+        SeedRepo.git(dir, "commit", "-q", "-m", "add secrets")
+        SeedRepo.git(dir, "rm", "-q", ".env", "deploy/creds.txt")
+        SeedRepo.git(dir, "commit", "-q", "-m", "drop secrets")
+      end
+      FileUtils.mkdir_p(File.join(root, ".lain"))
+      File.write(File.join(root, ".lain", "config.rb"), "sensitivity denied: %w[creds.txt]\n")
+    end
+
+    def pass
+      RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "recall the deploy values" }]),
+                           text_response("orchestrated")],
+        child_responses: [text_response("values #{history} and #{table}")]
+      ).run.write(session_path("echo"))
+      described_class.from_options({ max_tokens: 64 }, selector: session_path("echo"), profile: ollama, paths:,
+                                                       project:, project_dir:)
+    end
+
+    it "masks both values on the dry surface" do
+      seed_history
+      trust_project(root)
+
+      expect(pass.dry_report).not_to include(history, table)
+    end
+
+    it "sends the clerk request with both values masked" do
+      seed_history
+      trust_project(root)
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+             .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                        body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                               "message" => { "role" => "assistant", "content" => "clerked" })}\n")
+
+      pass.report
+
+      expect(chat).to have_been_requested.at_least_once
+      leaked = a_request(:post, "http://localhost:11434/api/chat")
+               .with { |req| [history, table].any? { req.body.include?(_1) } }
+      expect(leaked).not_to have_been_made
+    end
+  end
+
   describe ".from_options" do
     # The session under review, re-headed as a chat run on this profile.
     def recorded_on(profile)
@@ -564,18 +624,19 @@ RSpec.describe Lain::CLI::Consolidate do
         .with(anything, profile: have_attributes(provider: "ollama", model: "qwen3:4b"), root: @project)
     end
 
-    it "refuses a clerk request that carries a secret from the command's environment" do
+    it "sends the clerk request with a secret from the command's environment masked" do
       recorded_on("provider" => "ollama", "model" => "qwen3:4b")
+      token = "the token TTL was zero"
       chat = stub_request(:post, "http://localhost:11434/api/chat")
+             .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                        body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                               "message" => { "role" => "assistant", "content" => "clerked" })}\n")
 
-      outcome = with_env("SPEC_SERVICE_TOKEN" => "the token TTL was zero") do
-        from_options({}, profile: untyped).report
-      rescue Lain::Provider::HTTP::EgressGuard::Refused => e
-        e.message
-      end
+      with_env("SPEC_SERVICE_TOKEN" => token) { from_options({}, profile: untyped).report }
 
-      expect(outcome).to include("known secret")
-      expect(chat).not_to have_been_requested
+      expect(chat).to have_been_requested.at_least_once
+      expect(a_request(:post, "http://localhost:11434/api/chat").with { _1.body.include?(token) })
+        .not_to have_been_made
     end
 
     it "lets a typed provider win, and says so ahead of the report" do

@@ -17,6 +17,44 @@ module Lain
       # @return [String] the text with every detected or given secret masked
       def self.text(text, secrets:) = new(secrets: secrets.to_a).call(text).text
 
+      # Masks a record handed whole to a reader nobody releases anything to.
+      # A region one text reveals in context is masked in every text, even
+      # where it stands bare, so the bytes masked are the same whatever order
+      # the texts arrive in. The ordinals run across all of them.
+      #
+      # @param texts [Array<String>]
+      # @param secrets [#to_a] values masked wherever they appear
+      # @return [Array<String>] one per text, in order, numbered past every
+      #   placeholder any of them already holds
+      def self.transcript(texts, secrets:)
+        found = texts.map { Regions.detect(_1) }
+        union = Union.new((found.flatten.map(&:bytes) + secrets.to_a).uniq)
+        ordinals = ((texts.map { Regions.highest(_1) }.max.to_i + 1)..).each
+        texts.zip(found).map { |text, regions| new(secrets: union.in(text)).masked(text, regions, ordinals).text }
+      end
+
+      # The values a transcript masks, each with the spellings
+      # {Regions.recurrences} seeks, so a text is handed only the values it
+      # holds: a long transcript otherwise costs texts times values.
+      class Union
+        # @param values [Array<String>]
+        def initialize(values)
+          @spelled = values.to_h { [_1, Regions.spellings(_1)] }
+          freeze
+        end
+
+        # A UTF-16 text is handed every value, since its spellings depend on the text.
+        #
+        # @param text [String]
+        # @return [Array<String>] the values some spelling of which the text holds
+        def in(text)
+          bytes = text.b
+          return @spelled.keys if Regions::View.of(bytes).utf16?
+
+          @spelled.select { |_, spellings| spellings.any? { bytes.include?(_1) } }.keys
+        end
+      end
+
       # @param secrets [Array<String>] values masked wherever they appear
       # @param released [Set<String>] digests of detected regions to show
       def initialize(secrets:, released: Set.new)
@@ -38,8 +76,15 @@ module Lain
       # @param text [String]
       # @param ordinals [Enumerator] the placeholder numbering, shared across a stream's pieces
       # @return [Masked]
-      def mask(text, ordinals)
-        found = Regions.detect(text).reject { @released.include?(_1.digest) }
+      def mask(text, ordinals) = masked(text, Regions.detect(text), ordinals)
+
+      # @api private
+      # @param text [String]
+      # @param found [Array<Regions::Region>] what the detector found in `text`
+      # @param ordinals [Enumerator]
+      # @return [Masked]
+      def masked(text, found, ordinals)
+        found = found.reject { @released.include?(_1.digest) }
         spans = Spans.of(found + Regions.recurrences(text, found.map(&:bytes) + @secrets))
         Masked.new(text: Masking.render(text, spans, ordinals:), fresh: spans.count, prior: Regions.placeholders(text))
       end

@@ -72,13 +72,16 @@ module Lain
     # @param journal [#<<] where the clerk's turn usage, memory roots, and any
     #   {Telemetry::WriteRefused} land; the Null channel by default -- a real
     #   Null object, not a nil, so it stays a default rather than a mis-wire
+    # @param secrets [#to_a] the run's known secret values, masked wherever
+    #   they appear in a transcript
     def initialize(provider:, recorder:, context:, slots:,
-                   journal: Channel::Null.instance)
+                   journal: Channel::Null.instance, secrets: Sensitivity::Secrets::Source::DEFAULT)
       @provider = provider
       @recorder = recorder
       @context = context
       @slots = slots
       @journal = journal
+      @secrets = secrets
     end
 
     # Never spawns, and needs nothing a spawn does, so a dry run builds no
@@ -92,9 +95,10 @@ module Lain
     # "what was sent" cannot disagree, masking included.
     #
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
+    # @param secrets [#to_a] as {#initialize} takes them
     # @return [String]
-    def self.dry_run(lineages)
-      scaffolds = lineages.map { |lineage| Scaffold.new(lineage) }
+    def self.dry_run(lineages, secrets: Sensitivity::Secrets::Source::DEFAULT)
+      scaffolds = lineages.map { |lineage| Scaffold.new(lineage:, secrets:) }
       return "consolidate: no completed subagent lineages found." if scaffolds.empty?
 
       ["consolidate: #{scaffolds.size} lineage(s) would each get one court_clerk pass",
@@ -109,7 +113,7 @@ module Lain
     # @param lineages [Enumerable<Bench::Session::Lineages::Lineage>]
     # @return [Array<Outcome>] one per lineage, in the order they were recorded
     def call(lineages)
-      lineages.map { |lineage| journal_lineage(Scaffold.new(lineage)) }
+      lineages.map { |lineage| journal_lineage(Scaffold.new(lineage:, secrets: @secrets)) }
     end
 
     private
@@ -211,7 +215,14 @@ module Lain
 
     # The record one clerk reads: one lineage's child turns, rendered. Its ROLE
     # supplies the persona.
-    Scaffold = Data.define(:lineage) do
+    #
+    # @!attribute [r] lineage
+    #   @return [Bench::Session::Lineages::Lineage]
+    # @!attribute [r] secrets
+    #   @return [#to_a] values masked wherever they appear in the transcript
+    Scaffold = Data.define(:lineage, :secrets) do
+      def initialize(lineage:, secrets: Sensitivity::Secrets::Source::DEFAULT) = super
+
       def spawn = lineage.spawn.digest
 
       def turn_count = lineage.child_turns.size
@@ -233,21 +244,6 @@ module Lain
         PROMPT
       end
 
-      # Deterministic, one line per turn. The ordinals run across the whole
-      # transcript rather than per turn, so two withheld regions two turns
-      # apart are two numbers and a reader can count them.
-      def transcript
-        ordinals = (1..).each
-        lineage.child_turns.map { |turn| render_turn(turn, ordinals) }.join("\n")
-      end
-
-      private
-
-      def render_turn(turn, ordinals)
-        summaries = Array(turn.content).grep(Hash).filter_map { |block| summarize(block) }
-        "[#{turn.role}] #{withheld(summaries.join(" "), ordinals)}".rstrip
-      end
-
       # A release put real bytes on the record for the model of the session
       # that asked for it. This pass is a SECOND reader, out of chat, and
       # nobody is at a surface to release anything to it -- so every region the
@@ -258,9 +254,15 @@ module Lain
       # lain's, and a turn digest is a high-entropy token the detector would
       # withhold: a scaffold that asked the clerk to cite evidence it had just
       # masked would be useless.
-      def withheld(text, ordinals)
-        Sensitivity::Masking.redact(text, ordinals:)
+      def transcript
+        turns = lineage.child_turns
+        masked = Sensitivity::TextMask.transcript(turns.map { text_of(_1.content) }, secrets:)
+        turns.zip(masked).map { |turn, text| "[#{turn.role}] #{text}".rstrip }.join("\n")
       end
+
+      private
+
+      def text_of(content) = Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
 
       # A closed `case`: an unknown block kind summarizes to nil and `filter_map`
       # drops it, rather than a silent catch-all.

@@ -78,17 +78,18 @@ module Lain
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
         notices = mismatches.call(profile: resolved, model: resolved.model)
-        new(path:, profile: resolved, project_dir:, notices:,
+        secrets = Improve.secrets_of(project, paths)
+        new(path:, profile: resolved, project_dir:, notices:, secrets:,
             consolidation: lambda { |journal|
               backend = Backend.headless(options, profile: resolved, root: project_dir.root)
-              clerk_over(backend, journal, project_dir, notices)
+              clerk_over(backend, journal, project_dir, notices, secrets)
             })
       end
 
       # Skipped-row notices join the report's notices because only the frontend may print.
-      def self.clerk_over(backend, journal, project_dir, notices)
+      def self.clerk_over(backend, journal, project_dir, notices, secrets)
         store = Memory::ProjectStore.new(project_dir:, notice: notices.method(:<<))
-        Lain::Consolidation.new(provider: backend.provider, journal:,
+        Lain::Consolidation.new(provider: backend.provider, journal:, secrets:,
                                 recorder: store.view,
                                 context: backend.context, slots: backend.slots)
       end
@@ -104,12 +105,16 @@ module Lain
       # @param consolidation [#call] handed the pass's journal, answers the
       #   pre-wired {Lain::Consolidation}; called by {#report} only
       # @param notices [Array<String>] said ahead of either report
-      def initialize(path:, profile:, project_dir:, consolidation:, notices: [])
+      # @param secrets [#to_a] the run's known secret values, which the dry
+      #   surface masks as the live pass does
+      def initialize(path:, profile:, project_dir:, consolidation:, notices: [],
+                     secrets: Sensitivity::Secrets::Source::DEFAULT)
         @path = path
         @profile = profile
         @project_dir = project_dir
         @consolidation = consolidation
         @notices = notices
+        @secrets = secrets
       end
 
       # Run one court_clerk pass per completed subagent lineage.
@@ -133,7 +138,7 @@ module Lain
       # @raise [Bench::Session::Corrupt] naming the file and its damage
       def dry_report
         said("consolidate: would run on #{@profile.provider}, model #{@profile.model || "the provider's default"}",
-             Lain::Consolidation.dry_run(lineages))
+             Lain::Consolidation.dry_run(lineages, secrets: @secrets))
       end
 
       private

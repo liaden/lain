@@ -252,10 +252,17 @@ module Lain
           haystack = text.b
           view = View.of(haystack)
           standing = placeholder_spans(text)
-          secrets.select { _1.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH }.flat_map { spellings(_1, view) }.uniq
+          secrets.select { _1.bytesize >= CredentialPatterns::SUBSTANCE_LENGTH }.flat_map { spelled_in(_1, view) }.uniq
                  .flat_map { occurrences(haystack, _1) }
                  .reject { |span| standing.any? { span.start < _1.finish && _1.start < span.finish } }
         end
+
+        # The UTF-8 spellings {.recurrences} seeks a value by: its bytes, and
+        # its bytes as an escaped string literal holds them.
+        #
+        # @param value [String]
+        # @return [Array<String>] BINARY
+        def spellings(value) = [value.b, String.new(value, encoding: Encoding::UTF_8).inspect[1..-2].b]
 
         private
 
@@ -301,8 +308,8 @@ module Lain
           end
         end
 
-        def spellings(bytes, view)
-          utf8 = [bytes.b, String.new(bytes, encoding: Encoding::UTF_8).inspect[1..-2].b]
+        def spelled_in(bytes, view)
+          utf8 = spellings(bytes)
           return utf8 unless view.utf16?
 
           utf8 + utf8.map { String.new(_1, encoding: Encoding::UTF_8) }.select(&:valid_encoding?).map { view.encode(_1) }

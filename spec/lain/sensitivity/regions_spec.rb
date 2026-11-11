@@ -1220,6 +1220,12 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
   end
 
+  describe ".spellings" do
+    it "spells a value raw and as an escaped string literal holds it" do
+      expect(described_class.spellings(%(pa"ss\\word))).to eq([%(pa"ss\\word).b, %(pa\\"ss\\\\word).b])
+    end
+  end
+
   describe ".placeholders" do
     it "counts every placeholder present, a repeat included" do
       expect(described_class.placeholders("<redacted:1> x <redacted:1> <redacted:12>")).to eq(3)

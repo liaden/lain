@@ -86,8 +86,8 @@ RSpec.describe Lain::CLI::Improve do
     pass_journals.flat_map { |path| Lain::Journal.records(File.foreach(path), type:).to_a }
   end
 
-  def improve(provider, session: "s1")
-    described_class.new(path: session_path(session), paths:, project_dir:,
+  def improve(provider, session: "s1", secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
+    described_class.new(path: session_path(session), paths:, project_dir:, secrets:,
                         profile: Lain::CLI::RunProfile.from_options({ provider: "anthropic" }),
                         backend: -> { instance_double(Lain::CLI::Backend, provider:, context:, slots:) })
   end
@@ -384,6 +384,107 @@ RSpec.describe Lain::CLI::Improve do
 
       expect(report).to include(digest)
       expect(report).not_to include(secret)
+    end
+
+    it "masks a value the run's environment lent, wherever it appears, though no detector shapes it" do
+      literal = "correcthorsebatterystaple"
+      secrets = Lain::Sensitivity::Secrets::Source.new(
+        child_env: Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => literal }),
+        history: Lain::Sensitivity::HistoryLiterals::Null
+      )
+      write_session_echoing(session_path("lent"), "the word is #{literal}, and #{literal} again")
+      provider = Lain::Provider::Mock.new(responses: [text_response("nothing to note")])
+
+      improve(provider, session: "lent", secrets:).report
+
+      expect(prompts_seen(provider).join("\n")).not_to include(literal)
+    end
+
+    it "masks a bare repeat of a secret an earlier turn revealed in context" do
+      value = "Zq8vK2mXp9Lw4Rt7Yb3N"
+      said = ->(text) { [{ "type" => "text", "text" => text }] }
+      timeline = CoreGraph.timeline.commit(role: :user, content: said["DB_PASSWORD=#{value}"])
+                          .commit(role: :assistant, content: said["noted"])
+                          .commit(role: :user, content: said[value])
+      File.write(session_path("repeat"),
+                 session_lines(timeline, context, Lain::Bench::Session::RecordedToolset.new(schema: [])))
+
+      expect(dry("repeat").dry_report).not_to include(value)
+    end
+  end
+
+  # A value a project's sensitive path held in git history reaches no reader
+  # through a file read, and no detector shapes it, so the pass masks it as a
+  # chat's board does: under the built-in table and under the project's own.
+  describe "the values a project's sensitive paths hold in history" do
+    let(:history) { "plainhistoryvalue" }
+    let(:table) { "customtablevalue" }
+    let(:root) { File.join(@root, "repo") }
+    let(:project) { Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag) }
+    let(:ollama) { Lain::CLI::RunProfile.from_options({ provider: "ollama", model: "qwen3:4b" }) }
+
+    # HEAD~1 committed both files and HEAD deleted them, so only history holds
+    # the values. Only the project's own table marks creds.txt secret.
+    def seed_history
+      SeedRepo.derived("improve history secrets", into: root) do |dir|
+        FileUtils.mkdir_p(File.join(dir, "deploy"))
+        File.write(File.join(dir, ".env"), "SERVICE_PASSWORD=#{history}\n")
+        File.write(File.join(dir, "deploy", "creds.txt"), "DEPLOY_TOKEN=#{table}\n")
+        SeedRepo.git(dir, "add", "-A")
+        SeedRepo.git(dir, "commit", "-q", "-m", "add secrets")
+        SeedRepo.git(dir, "rm", "-q", ".env", "deploy/creds.txt")
+        SeedRepo.git(dir, "commit", "-q", "-m", "drop secrets")
+      end
+      FileUtils.mkdir_p(File.join(root, ".lain"))
+      File.write(File.join(root, ".lain", "config.rb"), "sensitivity denied: %w[creds.txt]\n")
+    end
+
+    def pass(profile: ollama)
+      write_session_echoing(session_path("echo"), "values #{history} and #{table}")
+      described_class.from_options({ max_tokens: 64 }, selector: session_path("echo"), profile:, paths:, project:,
+                                                       project_dir:)
+    end
+
+    def write_session_echoing(path, text)
+      timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
+      File.write(path, session_lines(timeline, context, Lain::Bench::Session::RecordedToolset.new(schema: [])))
+    end
+
+    it "knows a value only the project's own table marks secret" do
+      seed_history
+      trust_project(root)
+
+      expect(described_class.secrets_of(project, paths).to_a).to include(history, table)
+    end
+
+    it "masks both values on the dry surface" do
+      seed_history
+      trust_project(root)
+
+      expect(pass.dry_report).not_to include(history, table)
+    end
+
+    it "sends the improver request with both values masked" do
+      seed_history
+      trust_project(root)
+      chat = stub_request(:post, "http://localhost:11434/api/chat")
+             .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
+                        body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+                                               "message" => { "role" => "assistant", "content" => "noted" })}\n")
+
+      pass.report
+
+      expect(chat).to have_been_requested.at_least_once
+      leaked = a_request(:post, "http://localhost:11434/api/chat")
+               .with { |req| [history, table].any? { req.body.include?(_1) } }
+      expect(leaked).not_to have_been_made
+    end
+
+    # The same refusal a chat launched in this project meets.
+    it "refuses a project whose config nobody has trusted" do
+      seed_history
+
+      expect { pass }.to raise_error(Lain::Project::Trust::Untrusted)
     end
   end
 

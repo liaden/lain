@@ -326,4 +326,90 @@ RSpec.describe Lain::Sensitivity::TextMask do
       expect(stream.count).to eq(2)
     end
   end
+
+  # A record a second reader is handed whole, with nobody there to release
+  # anything: a region one text reveals is masked in every text, even where it
+  # stands bare and no detector would see it.
+  describe ".transcript" do
+    let(:bare) { "Zq8vK2mXp9Lw4Rt7Yb3N" }
+
+    def unnumbered(texts) = texts.map { _1.gsub(/<redacted:\d+>/, "<redacted>") }
+
+    it "masks a bare repeat of a region another text revealed" do
+      masked = described_class.transcript(["DB_PASSWORD=#{bare}", "nothing here", "it was #{bare}"], secrets: [])
+
+      expect(masked).to eq(["DB_PASSWORD=#{placeholder(1)}", "nothing here", "it was #{placeholder(2)}"])
+    end
+
+    it "masks a known literal wherever it appears, though no detector shapes it" do
+      texts = ["the word is correcthorsebattery", "correcthorsebattery again"]
+      masked = described_class.transcript(texts, secrets: ["correcthorsebattery"])
+
+      expect(masked.join).not_to include("correcthorsebattery")
+    end
+
+    it "masks the same bytes whatever order the texts arrive in" do
+      texts = ["DB_PASSWORD=#{bare}", "AKIAIOSFODNN7EXAMPLE then #{bare}", "plain words"]
+
+      forward = unnumbered(described_class.transcript(texts, secrets: []))
+      backward = unnumbered(described_class.transcript(texts.reverse, secrets: []))
+
+      expect(backward.reverse).to eq(forward)
+    end
+
+    it "numbers past a placeholder any text already holds, so no slot stands for 2 values" do
+      masked = described_class.transcript(["earlier #{placeholder(1)} then", "DB_PASSWORD=#{bare}"], secrets: [])
+
+      expect(masked).to eq(["earlier #{placeholder(1)} then", "DB_PASSWORD=#{placeholder(2)}"])
+    end
+
+    it "masks a JSON-escaped spelling of a value another text revealed" do
+      value = %(pa"ss\\wordXYZ123)
+      masked = described_class.transcript(["the word is #{value}", "json #{JSON.generate(value)}"], secrets: [value])
+
+      expect(masked.join).not_to include("wordXYZ123")
+    end
+
+    it "masks a known value in a UTF-16 text" do
+      value = "correcthorsebattery"
+      text = ("\xFF\xFE".b + "the word is #{value}".encode(Encoding::UTF_16LE).b).force_encoding(Encoding::UTF_8)
+
+      masked = described_class.transcript([text, "plain"], secrets: [value]).first
+
+      expect(masked.b).not_to include(value.encode(Encoding::UTF_16LE).b)
+      expect(masked.b).to include(placeholder(1).encode(Encoding::UTF_16LE).b)
+    end
+
+    # Each text is scanned once: the regions pass 1 found are the ones pass 2 masks.
+    it "detects each text once" do
+      allow(Lain::Sensitivity::Regions).to receive(:detect).and_call_original
+
+      described_class.transcript(["DB_PASSWORD=#{bare}", "plain", "it was #{bare}"], secrets: [])
+
+      expect(Lain::Sensitivity::Regions).to have_received(:detect).exactly(3).times
+    end
+  end
+
+  # The narrowing must never withhold a value the recurrence search would find,
+  # so it reads the spellings that search seeks rather than its own copy.
+  describe Lain::Sensitivity::TextMask::Union do
+    # Raw, string-escaped and JSON spellings of each differ.
+    let(:values) { [%(pa"ss\\wordXYZ123), "tab\tbell\aVALUE99", "plainvalue123456", "q\"\#{x\eYZ0987"] }
+
+    it "hands a text every value the recurrence search finds in it" do
+      texts = values.flat_map { [_1, _1.inspect[1..-2], JSON.generate(_1)[1..-2]] }.map { "said #{_1} here" }
+      union = described_class.new(values)
+
+      texts.each do |text|
+        found = values.select { Lain::Sensitivity::Regions.recurrences(text, [_1]).any? }
+        expect(found - union.in(text)).to eq([])
+      end
+    end
+
+    it "hands a UTF-16 text a value it holds" do
+      text = ("\xFF\xFE".b + "said plainvalue123456".encode(Encoding::UTF_16LE).b).force_encoding(Encoding::UTF_8)
+
+      expect(described_class.new(values).in(text)).to include("plainvalue123456")
+    end
+  end
 end

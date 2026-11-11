@@ -192,6 +192,46 @@ RSpec.describe Lain::Consolidation do
     end
   end
 
+  # A region one turn reveals in context can come back bare in a later turn,
+  # where no detector sees it, so the whole lineage is masked as one transcript.
+  describe "the transcript masks a secret wherever it recurs" do
+    let(:value) { "Zq8vK2mXp9Lw4Rt7Yb3N" }
+    let(:session) do
+      RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "DB_PASSWORD=#{value}" }]),
+                           text_response("orchestrated")],
+        child_responses: [tool_response(["tu_e", "echo", { "text" => "ok" }]), text_response(value)]
+      ).run
+    end
+
+    it "masks a bare repeat in a later turn as well as the turn that revealed it" do
+      transcript = described_class::Scaffold.new(lineage: lineages.first).transcript
+
+      expect(transcript).not_to include(value)
+      expect(transcript.lines.grep(/redacted/).size).to eq(2)
+    end
+
+    it "masks a value the run's environment holds, given to the pass as a known literal" do
+      literal = "correcthorsebatterystaple"
+      secrets = Lain::Sensitivity::Secrets::Source.new(
+        child_env: Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => literal }),
+        history: Lain::Sensitivity::HistoryLiterals::Null
+      )
+      provider = Lain::Provider::Mock.new(responses: [text_response("nothing")])
+      session = RecordedSpawnSession.new(
+        parent_responses: [tool_response(["tu_a", "subagent", { "prompt" => "the word is #{literal}" }]),
+                           text_response("orchestrated")],
+        child_responses: [text_response("noted")]
+      ).run
+      lineage = Lain::Bench::Session::Lineages.of(Lain::Bench::Session.load(session.lines)).to_a
+
+      described_class.new(provider:, recorder:, context:, slots:, journal:, secrets:).call(lineage)
+
+      expect(prompts_seen(provider).join).not_to include(literal)
+      expect(described_class.dry_run(lineage, secrets:)).not_to include(literal)
+    end
+  end
+
   describe "the secret guard still gates the clerk" do
     let(:pem) { "-----BEGIN PRIVATE KEY-----\nMIIB...\n-----END PRIVATE KEY-----" }
 

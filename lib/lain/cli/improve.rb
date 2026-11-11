@@ -65,7 +65,16 @@ module Lain
       # A subagent's turns are summarized under the parent turn that spawned
       # them. They are no `turn` records, so without `lineages` a session whose
       # real work happened in children read as a parent that only delegated.
-      Scaffold = Data.define(:records, :lineages) do
+      #
+      # @!attribute [r] records
+      #   @return [Array<Hash>] the session's journal records
+      # @!attribute [r] lineages
+      #   @return [Array<Bench::Session::Lineages::Lineage>]
+      # @!attribute [r] secrets
+      #   @return [#to_a] values masked wherever they appear in a turn's text
+      Scaffold = Data.define(:records, :lineages, :secrets) do
+        def initialize(records:, lineages:, secrets: Sensitivity::Secrets::Source::DEFAULT) = super
+
         def render
           <<~PROMPT
             You are reviewing one completed lain session to find what would make lain ITSELF better.
@@ -94,24 +103,6 @@ module Lain
 
         def turn_count = turns.size + lineages.sum { |lineage| lineage.child_turns.size }
 
-        # The ordinals run across the whole summary rather than per turn, so
-        # two withheld regions two turns apart are two numbers and a reader can
-        # count them.
-        def summary
-          ordinals = (1..).each
-          (turns.map { |turn| line(turn["role"], turn["digest"], turn["content"], ordinals) } +
-            lineages.flat_map { |lineage| lineage_lines(lineage, ordinals) }).join("\n")
-        end
-
-        def lineage_lines(lineage, ordinals)
-          ["subagent #{lineage.spawn.digest}, spawned from #{lineage.spawned_from}:",
-           *lineage.child_turns.map { |turn| "  #{line(turn.role, turn.digest, turn.content, ordinals)}" }]
-        end
-
-        def line(role, digest, content, ordinals)
-          "[#{role}] #{digest} #{trace(content, ordinals)}".rstrip
-        end
-
         # A release put real bytes on the record for the model of the session
         # that asked for it. This pass is a SECOND reader, out of chat, and
         # nobody is at a surface to release anything to it -- so every region
@@ -122,10 +113,20 @@ module Lain
         # high-entropy token the detector would withhold, and the improver is
         # asked to cite those digests; the friction render beside them is
         # mechanical signals and digests too, and carries no turn text at all.
-        def trace(content, ordinals)
-          text = Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
-          Sensitivity::Masking.redact(text, ordinals:)
+        def summary
+          rows = turns.map { ["[#{_1["role"]}] #{_1["digest"]}", _1["content"]] } +
+                 lineages.flat_map { lineage_rows(_1) }
+          texts = Sensitivity::TextMask.transcript(rows.map { |_, content| text_of(content) }, secrets:)
+          rows.zip(texts).map { |(head, _), text| "#{head} #{text}".rstrip }.join("\n")
         end
+
+        # The heading row carries no content, so it masks to nothing.
+        def lineage_rows(lineage)
+          [["subagent #{lineage.spawn.digest}, spawned from #{lineage.spawned_from}:", nil],
+           *lineage.child_turns.map { ["  [#{_1.role}] #{_1.digest}", _1.content] }]
+        end
+
+        def text_of(content) = Array(content).grep(Hash).filter_map { |block| summarize(block) }.join(" ")
 
         # An unknown block kind summarizes to nil and `filter_map` drops it,
         # rather than a silent catch-all.
@@ -171,9 +172,23 @@ module Lain
         mismatches = Resume::MismatchNotices.new(path:)
         resolved = profile.over(mismatches.recorded_profile)
         Backend.validated(resolved.provider)
-        new(path:, profile: resolved, paths:, project_dir:,
+        new(path:, profile: resolved, paths:, project_dir:, secrets: secrets_of(project, paths),
             backend: -> { Backend.headless(options, profile: resolved, root: project_dir.root) },
             notices: mismatches.call(profile: resolved, model: resolved.model))
+      end
+
+      # The run's child environment and the values the project's sensitive
+      # paths hold in history, as a chat's board knows them. {Consolidate}
+      # reads the same, so the two passes mask for one set.
+      #
+      # @param project [Project]
+      # @param paths [Paths]
+      # @return [Sensitivity::Secrets::Source]
+      # @raise [Project::Trust::Untrusted] when the project's config is not trusted, as a chat launched there is
+      def self.secrets_of(project, paths)
+        board = Wiring::BoardBuild
+        policy = board.policy(project:, paths:, table: board.rules(project:, paths:))
+        board.secrets(project:, sensitivity: policy, child_env: Exec::ChildEnv::DEFAULT)
       end
 
       # The spawn collaborators are REQUIRED: a forgotten one is a loud
@@ -191,13 +206,17 @@ module Lain
       # @param paths [Paths] resolves the improvements sink's destination and
       #   project hash; injectable for specs
       # @param notices [Array<String>] said ahead of either report
-      def initialize(path:, profile:, backend:, project_dir:, paths: Paths.new, notices: [])
+      # @param secrets [#to_a] the run's known secret values, masked wherever
+      #   they appear in the scaffold's turn text
+      def initialize(path:, profile:, backend:, project_dir:, paths: Paths.new, notices: [],
+                     secrets: Sensitivity::Secrets::Source::DEFAULT)
         @path = path
         @profile = profile
         @backend = backend
         @project_dir = project_dir
         @paths = paths
         @notices = notices
+        @secrets = secrets
       end
 
       # Spawn the improver once over the session's record.
@@ -256,7 +275,7 @@ module Lain
       # Rendered here, where the path is still known. {Bench::Session::Lineages.read}
       # names the file in its own refusals; this names it in the graders'.
       def prompt_for(path, lineages)
-        Scaffold.new(records: Journal.records(File.foreach(path)).to_a, lineages:).render
+        Scaffold.new(records: Journal.records(File.foreach(path)).to_a, lineages:, secrets: @secrets).render
       rescue Lain::Error => e
         raise Lain::Error, "#{path}: #{e.message}"
       end
