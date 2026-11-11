@@ -1912,17 +1912,38 @@ RSpec.describe Lain::CLI::EpicSubmit do
   # into "interrupted", exit 130 -- pinning that neither half of that
   # contract silently drops the other.
   describe "Ctrl-C through the real CLI", :seam do
-    # Polled with a DEADLINE, never a bare `loop`: a prompt that never
-    # arrives (a regression that makes the child exit, or hang, before it
-    # ever asks) must fail this example, not wedge the suite. `screen` grows
-    # from a background reader so the deadline poll never itself blocks on
-    # the child's own output.
-    def await_prompt(screen, mutex, deadline_at)
-      sleep 0.02 until mutex.synchronize { screen.include?(described_class::Prompt::CUE) } ||
-                       Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline_at
+    # Bounded by the child living, not by a clock of its own: a slow boot under
+    # load is not a regression, and a child that exits or hangs before asking is
+    # caught by EOF on the reader and by the suite watchdog respectively. `screen`
+    # grows from a background reader so this poll never blocks on the child.
+    def await_prompt(screen, mutex, reader)
+      sleep 0.02 until mutex.synchronize { screen.include?(described_class::Prompt::CUE) } || !reader.alive?
+      mutex.synchronize { screen.include?(described_class::Prompt::CUE) }
     end
 
-    it "exits 130, with the fail-closed decision already journaled" do
+    describe "waiting for the prompt" do
+      let(:mutex) { Mutex.new }
+
+      it "finds the prompt after other output arrives late" do
+        screen = +"gem-ctags_plugin.rb: cannot load such file\n"
+        reader = Thread.new do
+          sleep 0.1
+          mutex.synchronize { screen << described_class::Prompt::CUE }
+        end
+
+        expect(await_prompt(screen, mutex, reader)).to be(true)
+      end
+
+      it "gives up when the child's output ends without the prompt" do
+        screen = +"gem-ctags_plugin.rb: cannot load such file\n"
+        reader = Thread.new { nil }
+
+        expect(await_prompt(screen, mutex, reader)).to be(false)
+      end
+    end
+
+    it "exits 130, with the fail-closed decision already journaled",
+       starvable: "boots a bundled ruby child that a loaded box can starve before it prompts" do
       write_research
       write_epic
       write_config(root, <<~RUBY, paths:)
@@ -1954,9 +1975,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
           nil
         end
 
-        await_prompt(screen, mutex, Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10)
-        raise "timed out waiting for the gate's prompt; got: #{mutex.synchronize { screen }.inspect}" \
-          unless mutex.synchronize { screen.include?(described_class::Prompt::CUE) }
+        raise "child never reached the gate's prompt; got: #{mutex.synchronize { screen }.inspect}" \
+          unless await_prompt(screen, mutex, reader)
 
         inp.write("\x03")
         _, status = Process.wait2(pid)
