@@ -1756,6 +1756,35 @@ Move the `toolchain-traps.md` entry to the retired list, naming this fix.
 **Stop and report if:**
 - The ceiling message or the elided count is only reachable through the loop, so the cut cannot be driven directly.
 
+### F2: A git that lain spawns never fetches lazily          [risk: high]
+
+**Depends on:** none
+**Files:** `lib/lain/sensitivity/history_literals.rb`, `lib/lain/approval/composed_term/repository.rb`, every other `lib/` site that spawns `git` itself (grep for the spawn helpers first and list them in the hand-back), and their specs
+**Reuse:** the existing git spawn helpers; `run_files.rb:58` already lists `--no-lazy-fetch` as a known flag
+**Shared-file wiring:** none
+**Reachable from:** chat launch builds the history literal scan, which runs `git rev-list --objects --all --reflog` before any prompt
+
+Found by the T5 review. In a partial clone (`extensions.partialClone`, `remote.<name>.promisor=true`), a git read that needs a missing object fetches it, and the fetch runs the program `remote.<name>.uploadpack` names. lain's own launch-time `git rev-list --all` does this with no approval, under every `--confine` mode, including the default. A cloned repository can therefore run code the moment a chat opens in it.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: launch runs no repository-named program
+  Given a partial clone whose remote.origin.uploadpack writes a marker file
+  When a chat launches in it
+  Then the marker is never written, and the history scan still runs
+
+Scenario: every git lain spawns refuses a lazy fetch
+  Given the list of lib/ sites that spawn git themselves
+  When each runs
+  Then its environment carries GIT_NO_LAZY_FETCH=1
+```
+Spec file: `spec/lain/sensitivity/history_literals_spec.rb`, plus a ratchet spec over the git spawn sites if they are more than 1 helper
+
+**Stop and report if:**
+- A lain feature needs a lazy fetch to work: name it.
+- git spawns are spread across more than about 5 sites with no shared helper: report the list before adding a helper.
+
 ## Integration checks
 
 1. **After T16 lands, before the user's next epic command:**
