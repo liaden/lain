@@ -623,8 +623,24 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     def board_over(secrets, approvals)
-      Struct.new(:guard_inputs, :approvals, :ledger, :sensitivity)
-            .new(Struct.new(:secrets).new(secrets), approvals, ledger, Lain::Sensitivity::Policy::Null.instance)
+      Struct.new(:guard_inputs, :approvals, :ledger, :sensitivity, :model_switch)
+            .new(Struct.new(:secrets).new(secrets), approvals, ledger, Lain::Sensitivity::Policy::Null.instance,
+                 Lain::Context::ModelSwitch.new("m", journal: instance_double(Lain::Journal, record: nil)))
+    end
+
+    it "binds the live model slot of the board, which a tier follows" do
+      backend = backend_for(provider: "ollama", model: "qwen3:4b")
+      switch = Lain::Context::ModelSwitch.new("qwen3:4b", journal: instance_double(Lain::Journal, record: nil))
+      board = board_over(secrets, queue).tap { _1.model_switch = switch }
+
+      backend.attach(board, channel)
+      switch.switch("qwen3-coder:30b", surface: :spec)
+
+      expect(backend.live_model).to eq("qwen3-coder:30b")
+    end
+
+    it "answers its launch model as the live one before it is attached" do
+      expect(backend_for(provider: "ollama", model: "qwen3:4b").live_model).to eq("qwen3:4b")
     end
 
     it "binds the egress literals, the egress hold and the price-tier hold to one board" do

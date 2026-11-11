@@ -217,19 +217,21 @@ module Lain
       private_constant :VERDICT, :IGNORED
 
       # @param provider [Provider] the round trip; wrapped here so each request is journaled as the role's
-      # @param model [String]
+      # @param model [String, #call] read at each call when callable, so the judge follows `/model`
       # @param slots [Prompt::Slots] what the role's sealed prompt renders from
       # @param journal [#<<] where the request and its payment are recorded
+      # @param extra [Hash, #call] the sampler options the request carries; read at each call when callable
       # @param max_tokens [Integer]
       # @param timeout [Numeric] seconds the judge may take
       # @param pause_budget [Numeric] seconds its request may spend queued for a
       #   provider slot without them counting against `timeout`, summed over the call
       # @param bound [#call] `(seconds) { |timer| }`, what times the judge; {Bound} by default
-      def initialize(provider:, model:, slots:, journal: Channel::Null.instance, max_tokens: MAX_TOKENS,
+      def initialize(provider:, model:, slots:, journal: Channel::Null.instance, extra: {}, max_tokens: MAX_TOKENS,
                      timeout: TIMEOUT, pause_budget: Provider::Admission::DEFAULT_DEADLINE, bound: Bound)
         @provider = Provider::Journaled.new(provider:, journal:, requester: ROLE)
         @journal = journal
         @model = model
+        @extra = extra
         @system = system_of(slots)
         @max_tokens = max_tokens
         @timeout = timeout
@@ -278,10 +280,12 @@ module Lain
       end
 
       def ask(question)
-        request = ::Lain::Request.new(model: @model, system: @system, max_tokens: @max_tokens, stream: false,
-                                      messages: [{ "role" => "user", "content" => question }])
+        request = ::Lain::Request.new(model: current(@model), system: @system, max_tokens: @max_tokens, stream: false,
+                                      extra: current(@extra), messages: [{ "role" => "user", "content" => question }])
         @provider.complete(request).tap { |response| paid(request, response) }
       end
+
+      def current(value) = value.respond_to?(:call) ? value.call : value
 
       # Keyed by the request, since the judge commits no turn.
       def paid(request, response)

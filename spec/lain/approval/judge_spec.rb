@@ -96,6 +96,28 @@ RSpec.describe Lain::Approval::Judge do
     end
   end
 
+  describe "a model and runner options that are read at each call" do
+    it "sends the options it was given on the request" do
+      provider = answering("defer")
+
+      judge(provider, extra: { "num_batch" => 1024 }).call(tool: "bash", input: {}, place:)
+
+      expect(provider.requests.sole.extra).to eq("num_batch" => 1024)
+    end
+
+    it "reads a model given as a callable at each call" do
+      provider = answering("defer")
+      current = "first"
+      built = described_class.new(provider:, model: -> { current }, slots:, journal:)
+
+      built.call(tool: "bash", input: {}, place:)
+      current = "second"
+      built.call(tool: "bash", input: {}, place:)
+
+      expect(provider.requests.map(&:model)).to eq(%w[first second])
+    end
+  end
+
   describe "the judge's spend" do
     def judged_records(provider)
       verdict(provider)

@@ -436,8 +436,22 @@ module Lain
         egress_literals.bind(board.guard_inputs.secrets, ledger: board.ledger, sensitivity: board.sensitivity)
         egress_hold.bind(board.approvals)
         price_tier_hold.bind(board.approvals, channel)
+        @model_switch = board.model_switch
         @attachment = [board, channel]
       end
+
+      # The model the chat is on now: what `/model` last wrote once {#attach}
+      # has bound the board's slot, and the launch model before it (headless,
+      # consolidate), where nothing can switch.
+      #
+      # @return [String]
+      def live_model = @model_switch ? @model_switch.to_s : model
+
+      # {#tier_options} for a tier on the chat's own provider and endpoint.
+      #
+      # @param model [String] the model the tier asks
+      # @return [Hash{String=>Object}] frozen; empty unless the runner is shared
+      def chat_tier_options(model) = tier_options(provider: provider_name, model:, api_base: ollama_base(provider_name))
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`

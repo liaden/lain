@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::Wiring::JudgeSource do
     source(timeout: 90).call(**question)
 
     expect(Lain::Approval::Judge).to have_received(:new)
-      .with(provider:, model: "judge-model", slots:, journal:, timeout: 90)
+      .with(provider:, model: "judge-model", extra: {}, slots:, journal:, timeout: 90)
   end
 
   it "builds the judge once across two judged calls, and answers its verdict" do
@@ -68,12 +68,46 @@ RSpec.describe Lain::CLI::Wiring::JudgeSource do
       .to eq([%w[request_sent auto_approver], %w[turn_usage auto_approver]])
   end
 
+  describe "a judge built through .for on an ollama chat" do
+    let(:backend) do
+      Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", num_batch: 1024, num_ctx: 8192 }, root: Dir.pwd)
+                        .tap { |built| allow(built).to receive(:provider).and_return(provider) }
+    end
+    let(:model_switch) { Lain::Context::ModelSwitch.new("qwen3:4b", journal: instance_double(Lain::Journal, record: nil)) }
+    let(:built) do
+      described_class.for(backend, journal:, config: instance_double(Lain::Config, judge_timeout: 30))
+    end
+
+    it "sends the chat's num_batch and num_ctx" do
+      built.call(**question)
+
+      expect(provider.requests.sole.extra).to include("num_batch" => 1024, "num_ctx" => 8192)
+    end
+
+    it "records exactly one request_sent per judged call" do
+      backend.journal_slot.bind(journal)
+      built.call(**question)
+
+      expect(journal.map { _1.to_journal.fetch("type") }.tally.fetch("request_sent")).to eq(1)
+    end
+
+    it "asks the model /model switched to, after the judge was first built" do
+      backend.instance_variable_set(:@model_switch, model_switch)
+      built.call(**question)
+      model_switch.switch("qwen3-coder:30b", surface: :spec)
+      built.call(**question)
+
+      expect(provider.requests.map(&:model)).to eq(%w[qwen3:4b qwen3-coder:30b])
+      expect(provider.requests.last.extra).to include("num_batch" => 1024)
+    end
+  end
+
   describe ".for" do
     def parse(*argv) = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(argv)
 
     def judge_model(backend)
       model = nil
-      allow(Lain::Approval::Judge).to receive(:new) { |**built| (model = built[:model]) && judge }
+      allow(Lain::Approval::Judge).to receive(:new) { |**built| (model = built[:model].call) && judge }
       described_class.for(backend, journal:, config: instance_double(Lain::Config, judge_timeout: 30))
                      .call(**question)
       model
