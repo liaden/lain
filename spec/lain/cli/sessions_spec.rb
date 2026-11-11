@@ -214,6 +214,49 @@ RSpec.describe Lain::CLI::Sessions do
       end
     end
 
+    context "with a parked session" do
+      let(:one) { chain("one", "two") }
+      let(:name) { "20260101T000000-1.ndjson" }
+      let(:plain) { "#{name}  2026-01-01T00:00:00  2 turns  open  #{one.head_digest[0, 19]}" }
+
+      def write_with(*extra, before: [])
+        write_session(name, [header(started_at: "2026-01-01T00:00:00.000000Z")] + before +
+                            one.to_a.map { |turn| Lain::SessionRecord.turn(turn) } + extra)
+      end
+
+      def note(text) = Lain::Telemetry::ReentryNote.new(note: text).to_journal
+
+      it "ends the row with the latest note" do
+        write_with(note("waiting on CI"), note("waiting on review"))
+
+        expect(sessions.listing).to eq("#{plain}  parked: waiting on review")
+      end
+
+      it "keeps a note written before later turns" do
+        write_with(before: [note("waiting on CI")])
+
+        expect(sessions.listing).to eq("#{plain}  parked: waiting on CI")
+      end
+
+      it "cuts a long note to its first 60 characters and an ellipsis" do
+        write_with(note("x" * 300))
+
+        expect(sessions.listing).to eq("#{plain}  parked: #{"x" * 60}\u2026")
+      end
+
+      it "leaves a retracted note off the row" do
+        write_with(note("waiting"), note(""))
+
+        expect(sessions.listing).to eq(plain)
+      end
+
+      it "leaves an unparked session's row as it was" do
+        write_with
+
+        expect(sessions.listing).to eq(plain)
+      end
+    end
+
     it "answers an honest empty-state line naming the directory" do
       expect(sessions.listing).to include("no sessions", paths.sessions_dir)
     end

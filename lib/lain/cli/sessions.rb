@@ -74,6 +74,7 @@ module Lain
       class Row
         # A header timestamp is cut to its first 19 characters (to the second).
         SHORT = 19
+        NOTE_LIMIT = 60
 
         def self.for(name:, path:)
           entries = LineCount.new(File.foreach(path))
@@ -108,10 +109,19 @@ module Lain
 
           return "#{@name}  #{started}  #{chain.size} turns  #{format_refusal}  -#{damage}" if format_reason
 
-          "#{@name}  #{started}  #{chain.size} turns  #{status}  #{head_short}#{damage}"
+          "#{@name}  #{started}  #{chain.size} turns  #{status}  #{head_short}#{damage}#{parked}"
         end
 
         private
+
+        def parked
+          note = @fold.note
+          return "" if note.empty?
+
+          "  parked: #{cut(note)}"
+        end
+
+        def cut(note) = note.length > NOTE_LIMIT ? "#{note[0, NOTE_LIMIT]}\u2026" : note
 
         # {Journal.records}' skip-foreign-bytes contract is sound -- a file may be
         # touched by another writer -- but applied to lain's OWN torn record it left a damaged session looking intact:

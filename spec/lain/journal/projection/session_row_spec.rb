@@ -78,6 +78,23 @@ RSpec.describe Lain::Journal::Projection::SessionRow do
     end
   end
 
+  describe "the reentry note" do
+    note = ->(text) { { "type" => "reentry_note", "note" => text } }
+
+    it "is the latest note, and empty when none was recorded or the last one retracts" do
+      expect([fold([header, note.call("a"), note.call("b")]).note, fold([header]).note,
+              fold([header, note.call("a"), note.call("")]).note]).to eq(["b", "", ""])
+    end
+  end
+
+  describe "a note followed by more turns" do
+    it "keeps the note" do
+      records = [header, { "type" => "reentry_note", "note" => "a" }, turn.call("x"), turn.call("y")]
+
+      expect(fold(records).note).to eq("a")
+    end
+  end
+
   describe "the laws of a projection" do
     it "leaves the receiver as it was when stepped, both shareable" do
       before = fold([header, turn.call("a")])

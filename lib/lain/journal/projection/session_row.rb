@@ -17,10 +17,11 @@ module Lain
         # The header carries the whole tool schema; a listing reads 3 fields of it, and freezing the
         # rest on every step is the cost.
         HEADER_KEYS = %w[ts format resumed_from].freeze
+        NOTE_TYPE = "reentry_note"
         KEPT = %w[type digest to then].freeze
 
         # @return [SessionRow]
-        def self.unit = new({ header: nil, closed: nil, first_type: nil, size: 0, moves: NO_MOVES })
+        def self.unit = new({ header: nil, closed: nil, first_type: nil, size: 0, moves: NO_MOVES, note: "" })
 
         # @param record [Hash{String=>Object}] one parsed line
         # @return [SessionRow]
@@ -32,7 +33,8 @@ module Lain
                                                           record.slice(*HEADER_KEYS)
                                                         end),
                                      closed: closed || (record.slice("head") if type == "session_closed"),
-                                     moves: MOVES.include?(type) ? [record.slice(*KEPT), moves].freeze : moves))
+                                     moves: MOVES.include?(type) ? [record.slice(*KEPT), moves].freeze : moves,
+                                     note: noted(record)))
         end
 
         # @return [Hash{String=>Object}, nil] the file's first header record, cut to the fields a listing reads
@@ -40,6 +42,9 @@ module Lain
 
         # @return [Hash{String=>Object}, nil] the file's first close record, cut to its head
         def closed = state.fetch(:closed)
+
+        # @return [String] the latest note the human left for their return; empty when none, or retracted
+        def note = state.fetch(:note)
 
         # @return [String, nil] the type of the first record that parsed
         def first_type = state.fetch(:first_type)
@@ -65,6 +70,8 @@ module Lain
         end
 
         private
+
+        def noted(record) = record["type"] == NOTE_TYPE ? record.fetch("note", "") : note
 
         # Newest first as nested pairs, so a step shares the whole earlier list instead of copying it.
         def moves = state.fetch(:moves)
