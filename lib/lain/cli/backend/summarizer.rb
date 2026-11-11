@@ -11,8 +11,7 @@ module Lain
       # resolves through the SAME PROVIDERS set `--provider` does, so the two
       # flags cannot come to mean different things.
       class Summarizer
-        # @param backend [#summarizer_provider, #summarizer_model,
-        #   #summarizer_max_tokens, #summarizer_options, #journal_slot] the run's
+        # @param backend [#summarizer_tier, #summarizer_max_tokens, #journal_slot] the run's
         #   flag resolution
         def initialize(backend:)
           @backend = backend
@@ -37,21 +36,17 @@ module Lain
         # than queued: a queued fire is reaped at teardown having burnt its
         # digest for the whole session, while a skip is a miss
         # {Compaction::SummarySnapshot} already models.
-        # {Backend::SpanSummarizer#tier} calls the same `#summarizer_provider`
+        # {Backend::SpanSummarizer#tier} asks the same `#summarizer_tier`
         # and deliberately does NOT pass this -- it answers on the render path,
         # where the summary is worth waiting for.
         #
-        # The {Provider::Journaled} wrap is what puts this tier's QUESTION on
+        # The {Provider::Journaled} the tier supplies is what puts this tier's QUESTION on
         # the record; the {Oracle::Recorded::Journaling} above records only the
         # answer, since {Oracle::Model} calls `#complete` directly with no
         # middleware stack between them. It goes INSIDE, nearest the wire, so
         # the record is cut from the Request the provider was actually handed.
         def tier(definition)
-          provider = Provider::Journaled.new(provider: @backend.summarizer_provider(queue: false),
-                                             journal: RunJournal.new(@backend.journal_slot),
-                                             requester: :summarizer)
-          Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
-                            max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
+          @backend.summarizer_tier(queue: false).oracle(definition:, max_tokens: @backend.summarizer_max_tokens)
         end
 
         # Where the run's journal gets bound, held apart from the {Backend} so a

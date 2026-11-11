@@ -25,7 +25,9 @@ module Lain
 
       # Exposed so a journaling wrapper ({Oracle::Recorded::Journaling}) records
       # WHICH model answered without being told twice.
-      attr_reader :model
+      #
+      # @return [String]
+      def model = settled(@model)
 
       # The question this tier answers under, exposed for {Heuristic#definition}'s
       # reason: a journaling wrapper is handed the definition off the tier it
@@ -39,19 +41,20 @@ module Lain
       #   at most; synchronous, so the Promise it returns is already resolved.
       #   Also asked whether it supports `:structured_output` -- see
       #   #structured_answer_format
-      # @param model [String] which model answers, and the identity a journaling
-      #   wrapper records off {#model}
+      # @param model [String, #call] which model answers, and the identity a journaling
+      #   wrapper records off {#model}; a callable is read at each ask, for a tier
+      #   whose model can change after it is built
       # @param max_tokens [Integer] the reply ceiling on every Request built
       #   here, the retry included -- it asks again under the same one
       # @param decoder [#call] `Response -> answer attributes Hash`; the default
       #   parses the reply as JSON, and a structured-output decoder swaps in
       #   behind the same message
-      # @param extra [Hash{String=>Object}] sampler options for every Request
+      # @param extra [Hash{String=>Object}, #call] sampler options for every Request
       #   built here, already scoped by the caller to what this tier's provider
       #   and model may carry -- this object cannot tell a runner knob that keeps
       #   a shared runner loaded from one that reloads it. The answer's format
       #   and, on the native arm, `think` are merged OVER it and cannot be set
-      #   from here
+      #   from here. A callable is read at each ask
       # @param stream [Boolean] whether the Request asks to stream; a relay that
       #   answers only whole JSON bodies needs false
       def initialize(definition:, provider:, model:, max_tokens: DEFAULT_MAX_TOKENS, decoder: JsonDecoder.new,
@@ -93,6 +96,8 @@ module Lain
         answer || raise(UndecodableAnswer, "oracle reply was empty: nothing came back in #{ANSWER_ATTEMPTS} asks")
       end
 
+      def settled(value) = value.respond_to?(:call) ? value.call : value
+
       # Where a thinking model goes quiet: all reasoning and no answer is a
       # finished turn on the wire, not an empty one. Truncation needs no arm of
       # its own -- cut off having said nothing it is retried like any silence,
@@ -100,8 +105,8 @@ module Lain
       def said_nothing?(reply) = Blankness.blank?(reply.text)
 
       def request_for(inputs)
-        Request.new(model: @model, max_tokens: @max_tokens, stream: @stream,
-                    extra: @extra.merge(structured_answer_format, thinking_off),
+        Request.new(model:, max_tokens: @max_tokens, stream: @stream,
+                    extra: settled(@extra).merge(structured_answer_format, thinking_off),
                     messages: [{ "role" => "user", "content" => @definition.render(inputs) }])
       end
 

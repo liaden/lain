@@ -115,11 +115,9 @@ module Lain
         # Built over the definition it is handed, with every round trip on the run's journal, as the
         # chat's span summarizer is.
         def tier(sink)
+          @backend.journal_slot.bind(sink)
           lambda do |definition|
-            provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: sink,
-                                               requester: :summarizer)
-            Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
-                              max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
+            @backend.summarizer_tier.oracle(definition:, max_tokens: @backend.summarizer_max_tokens)
           end
         end
 

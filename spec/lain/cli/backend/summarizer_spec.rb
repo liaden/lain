@@ -10,33 +10,6 @@
 # eager oracle would start waiting on the turn that produced the tool result it
 # is summarizing. So both are pinned, each in its own file.
 
-# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
-module SummarizerSpecSupport
-  # Exactly the five messages {Lain::CLI::Backend::Summarizer} declares it
-  # depends on, and nothing else -- so an example fails if the subject reaches
-  # for a sixth. `journal` is writable because the run's real journal is
-  # late-bound: {Lain::CLI::Backend} does not know its destination until
-  # `#pipeline_source` runs, which nothing orders against `#tool_observer`.
-  class BackendDouble
-    attr_reader :queue_answers, :summarizer_model, :summarizer_max_tokens, :summarizer_options, :journal_slot
-
-    def initialize(provider:, journal:, summarizer_model: "qwen3:4b", summarizer_max_tokens: 256,
-                   summarizer_options: {})
-      @provider = provider
-      @journal_slot = Lain::CLI::Backend::Summarizer::Slot.new.tap { |slot| slot.bind(journal) }
-      @summarizer_model = summarizer_model
-      @summarizer_max_tokens = summarizer_max_tokens
-      @summarizer_options = summarizer_options
-      @queue_answers = []
-    end
-
-    def summarizer_provider(queue: true)
-      @queue_answers << queue
-      @provider
-    end
-  end
-end
-
 RSpec.describe Lain::CLI::Backend::Summarizer do
   let(:journal) { RecordingChannel.new }
 
@@ -47,7 +20,18 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
   end
 
   let(:provider) { Lain::Provider::Mock.new(responses: [reply]) }
-  let(:backend) { SummarizerSpecSupport::BackendDouble.new(provider:, journal:) }
+  let(:options) { {} }
+  let(:queue_answers) { [] }
+  let(:backend) do
+    Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, **options },
+                           root: Dir.pwd).tap do |built|
+      built.journal_slot.bind(journal)
+      allow(built).to receive(:provider) do |queue:, **|
+        queue_answers << queue
+        provider
+      end
+    end
+  end
 
   def oracle = described_class.new(backend:).oracle
 
@@ -101,9 +85,7 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
   # The options are the Backend's to resolve and this tier's to carry: a
   # summary sent without the chat's runner knobs reloads the runner it shares.
   describe "the options the backend resolved for this tier" do
-    let(:backend) do
-      SummarizerSpecSupport::BackendDouble.new(provider:, journal:, summarizer_options: { "num_batch" => 2048 })
-    end
+    let(:options) { { num_batch: 2048 } }
 
     it "sends them on the request the tier makes" do
       summarize
@@ -183,7 +165,7 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
     it "still declines to queue after the provider is wrapped" do
       oracle
 
-      expect(backend.queue_answers).to eq([false])
+      expect(queue_answers).to eq([false])
     end
   end
 end

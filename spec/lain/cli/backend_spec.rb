@@ -2474,7 +2474,7 @@ RSpec.describe Lain::CLI::Backend do
 
         it "judges a strategy by its spelling alone: no key needed, no summarizer provider built" do
           backend = compacting_backend(compact_strategy: "summarizing")
-          allow(backend).to receive(:summarizer_provider).and_raise("a provider was built")
+          allow(backend).to receive(:provider).and_raise("a provider was built")
 
           with_env("ANTHROPIC_API_KEY" => nil) do
             expect { backend.refuse_compaction_flags! }.not_to raise_error
@@ -2589,11 +2589,11 @@ RSpec.describe Lain::CLI::Backend do
       # `queue: false` and is built eagerly as it always was.
       it "builds no handoff tier until one is asked for" do
         backend = compacting_backend(provider: "ollama", model: "qwen3:4b")
-        allow(backend).to receive(:summarizer_provider).and_call_original
+        allow(backend).to receive(:provider).and_call_original
 
         fallback_of(backend)
 
-        expect(backend).not_to have_received(:summarizer_provider).with(no_args)
+        expect(backend).not_to have_received(:provider).with(hash_including(requester: :handoff))
       end
 
       it "builds the handoff tier over a RECORDED oracle, so a failure leaves oracle_failed" do
@@ -2816,8 +2816,8 @@ RSpec.describe Lain::CLI::Backend do
     describe "willingness to queue for provider capacity" do
       def queue_flags_asked_of(backend)
         asked = []
-        allow(backend).to receive(:summarizer_provider).and_wrap_original do |original, **kwargs|
-          asked << kwargs.fetch(:queue, :not_passed)
+        allow(backend).to receive(:provider).and_wrap_original do |original, **kwargs|
+          asked << kwargs.fetch(:queue)
           original.call(**kwargs)
         end
         yield backend
@@ -2838,7 +2838,7 @@ RSpec.describe Lain::CLI::Backend do
           span.send(:tier, Lain::Oracle::Summarize.definition)
         end
 
-        expect(flags).to eq([:not_passed])
+        expect(flags).to eq([true])
       end
 
       # The keyword has to reach the constructed provider, not merely be
@@ -2872,6 +2872,72 @@ RSpec.describe Lain::CLI::Backend do
     # means the chat's model is already loaded, which makes it the right default.
     it "inherits the chat's --model when both tiers name the same provider" do
       expect(tier_of(summarizer_for(model: "qwen3-coder:30b")).model).to eq("qwen3-coder:30b")
+    end
+
+    describe "after the human types /model" do
+      def switched(backend, to)
+        switch = Lain::Context::ModelSwitch.new(backend.model, journal: instance_double(Lain::Journal, record: nil))
+        backend.instance_variable_set(:@model_switch, switch)
+        switch.switch(to, surface: :spec)
+      end
+
+      def summary_request(backend)
+        provider = answering_provider
+        allow(backend).to receive(:provider).and_return(provider)
+        backend.journal_slot.bind(journal)
+        Sync { Lain::CLI::Backend::Summarizer.new(backend:).oracle.ask(source: "a long tool result").await }
+        provider.last_request
+      end
+
+      it "sends a summary to the new model with the chat's runner options" do
+        backend = summarizer_for(model: "qwen3:4b", num_batch: 2048, num_ctx: 8192)
+        switched(backend, "qwen3-coder:30b")
+
+        expect(summary_request(backend)).to have_attributes(model: "qwen3-coder:30b",
+                                                            extra: include("num_batch" => 2048, "num_ctx" => 8192))
+      end
+
+      it "follows /model for an oracle built before the switch, as the run's memoized ones are" do
+        backend = summarizer_for(model: "qwen3:4b", num_batch: 2048, num_ctx: 8192)
+        provider = answering_provider
+        allow(backend).to receive(:provider).and_return(provider)
+        backend.journal_slot.bind(journal)
+        oracle = Lain::CLI::Backend::Summarizer.new(backend:).oracle
+        switched(backend, "qwen3-coder:30b")
+
+        Sync { oracle.ask(source: "a long tool result").await }
+
+        expect(provider.last_request).to have_attributes(model: "qwen3-coder:30b", extra: include("num_batch" => 2048))
+      end
+
+      it "keeps a pinned --summarizer-model" do
+        backend = summarizer_for(model: "qwen3:4b", summarizer_model: "gemma3:12b", num_batch: 2048)
+        switched(backend, "qwen3-coder:30b")
+
+        expect(summary_request(backend).model).to eq("gemma3:12b")
+      end
+
+      it "sizes the handoff to the new model's window" do
+        backend = summarizer_for(model: "qwen3:4b")
+        switched(backend, "qwen3-coder:30b")
+        allow(backend.context_window).to receive(:resolve).and_call_original
+
+        backend.send(:handoff_window)
+
+        expect(backend.context_window).to have_received(:resolve).with("qwen3-coder:30b")
+      end
+
+      it "builds a --summarizer-provider arm on that arm, with none of the chat's runner options" do
+        backend = summarizer_for(model: "qwen3:4b", num_batch: 2048, summarizer_provider: "ollama-cloud",
+                                 summarizer_model: "qwen3:4b")
+        allow(backend).to receive(:provider).and_return(answering_provider)
+        tier = backend.summarizer_tier(queue: false)
+
+        tier.bare_provider
+
+        expect(backend).to have_received(:provider).with(name: "ollama-cloud", requester: :summarizer, queue: false)
+        expect(tier.extra).to eq({})
+      end
     end
 
     it "honors an explicit --summarizer-model over the tier provider's default" do
@@ -2954,7 +3020,7 @@ RSpec.describe Lain::CLI::Backend do
     # call that does not reach the Journal is spend the bench cannot see.
     it "journals a Telemetry::OracleAnswer carrying the model and a non-empty usage" do
       backend = summarizer_for
-      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      allow(backend).to receive(:provider).and_return(answering_provider)
       backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
 
       Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
@@ -2974,7 +3040,7 @@ RSpec.describe Lain::CLI::Backend do
     # nothing, with nothing raising -- so the destination is resolved per EVENT.
     it "records a summary fired through an Eager built BEFORE the journal was bound" do
       backend = summarizer_for
-      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      allow(backend).to receive(:provider).and_return(answering_provider)
       oracle = backend.eager.oracle
       backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
 
@@ -2987,7 +3053,7 @@ RSpec.describe Lain::CLI::Backend do
     # #pipeline_source -- the wrap still answers, into the Null channel.
     it "answers with no journal bound at all, sending the record nowhere" do
       backend = summarizer_for
-      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      allow(backend).to receive(:provider).and_return(answering_provider)
 
       answer = Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
 
@@ -3310,7 +3376,7 @@ RSpec.describe Lain::CLI::Backend do
     # The eager summarizer the run actually builds, asked once over a provider
     # the example can read the request back off.
     def summarize_through(backend, provider)
-      allow(backend).to receive(:summarizer_provider).and_return(provider)
+      allow(backend).to receive(:provider).and_return(provider)
       backend.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
       Sync { backend.send(:summary_oracle).ask(source: "a tool result").await }
     end

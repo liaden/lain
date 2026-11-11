@@ -62,8 +62,7 @@ module Lain
               sink:).collapse
         end
 
-        # @param backend [#summarizer_provider, #summarizer_model,
-        #   #summarizer_max_tokens, #summarizer_options, #journal] the run's
+        # @param backend [#summarizer_tier, #summarizer_max_tokens, #journal] the run's
         #   flag resolution
         # @param name [String, nil] `--compact-strategy`; nil means the flag
         #   was never given, which is not the same as naming its default
@@ -126,25 +125,14 @@ module Lain
         # The live tier, over the definition {CompactionStrategy} hands in and
         # never one of this object's own.
         #
-        # `#summarizer_provider` is called with NO `queue:` at all, which is the
+        # `#summarizer_tier` is called with NO `queue:` at all, which is the
         # distinction from {Backend::Summarizer#tier} and not an omission: this
         # tier answers on the render path, where a summary is worth waiting for.
         # Passing `queue: false` here is how two round trips end up overlapping
         # on a one-slot local server. The {Provider::Journaled} wrap is what
         # puts the tier's QUESTION on the record; the sibling records why.
-        #
-        # `@backend.journal` is read here rather than captured at construction
-        # because of an ORDERING nothing asserts: this factory runs while
-        # {CompactionStrategy.resolve} BUILDS, and what makes the read safe is
-        # that {Backend#pipeline_source} assigns `@journal` on the statement
-        # before it calls `#compaction_source`. Reading per call costs one hop
-        # and keeps a reordering from silently binding Channel::Null for the
-        # run.
         def tier(definition)
-          provider = Provider::Journaled.new(provider: @backend.summarizer_provider, journal: @backend.journal,
-                                             requester: :summarizer)
-          Oracle::Model.new(definition:, provider:, model: @backend.summarizer_model,
-                            max_tokens: @backend.summarizer_max_tokens, extra: @backend.summarizer_options)
+          @backend.summarizer_tier.oracle(definition:, max_tokens: @backend.summarizer_max_tokens)
         end
       end
     end

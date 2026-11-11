@@ -91,7 +91,7 @@ RSpec.describe "Free summarizer tier seam", :seam do
     Lain::CLI::Backend.new({ provider: "ollama", max_tokens: 1024,
                              compact_bytes: 100, compact_cap: 100, compact_keep: 2 },
                            root: Dir.pwd).tap do |built|
-      allow(built).to receive(:summarizer_provider).and_return(model_provider)
+      allow(built).to receive(:provider).and_return(model_provider)
       built.pipeline_source(cache_profile: Lain::CacheProfile::NO_CACHING, journal:)
     end
   end

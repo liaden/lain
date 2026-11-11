@@ -82,7 +82,7 @@ module Lain
         # model they ride to cannot come to disagree.
         def local_tier(backend, journal, http_middleware)
           model = @model || Provider::Ollama::DEFAULT_MODEL
-          options = backend.tier_options(provider: Backend::OllamaTier::LOCAL, model:)
+          options = backend.arm_tier_options(model, arm: Backend::OllamaTier::LOCAL)
           Oracle::SecretRead.tier(model:, journal:, options:, http_middleware:)
         end
       end

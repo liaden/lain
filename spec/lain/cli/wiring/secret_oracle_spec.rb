@@ -118,6 +118,15 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
       .to eq([Lain::Provider::Ollama::DEFAULT_MODEL, "qwen3:8b"])
   end
 
+  it "carries no runner options of an ollama-cloud chat to the local judge, even on the same model name" do
+    cloud_chat = Lain::CLI::Backend.new({ provider: "ollama-cloud", model: Lain::Provider::Ollama::DEFAULT_MODEL,
+                                          max_tokens: 64, num_batch: 2048 }, root:)
+
+    oracle = described_class.new({ secret_oracle: "local" }).tier(cloud_chat, journal)
+
+    expect(oracle.instance_variable_get(:@inner).instance_variable_get(:@extra)).to eq({})
+  end
+
   it "refuses a cloud model name on the local tier" do
     expect do
       described_class.new({ secret_oracle: "local", secret_oracle_model: "glm-5.3:cloud" }).tier(backend, journal)

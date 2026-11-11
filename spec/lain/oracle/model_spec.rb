@@ -278,14 +278,9 @@ RSpec.describe Lain::Oracle::Model do
     # plausible model id looks like, and an ollama id sent to Provider::Anthropic
     # reads as a mistake even where it is inert.
     def summarizer_oracle(provider, model:)
-      # {CLI::Backend#summarizer_provider} takes the caller's willingness to
-      # QUEUE for provider capacity (open decision 4), and a bare Struct member
-      # reader takes no arguments -- so the double has to speak the real message
-      # or it has stopped standing in for the thing it doubles.
-      backend = Struct.new(:summarizer_provider, :summarizer_model, :summarizer_max_tokens, :summarizer_options,
-                           :journal_slot) do
-        def summarizer_provider(queue: true) = self[:summarizer_provider] # rubocop:disable Lint/UnusedMethodArgument
-      end.new(provider, model, max_tokens, {}, Lain::CLI::Backend::Summarizer::Slot.new)
+      backend = Lain::CLI::Backend.new({ provider: "ollama", summarizer_model: model, summarizer_max_tokens: max_tokens,
+                                         max_tokens: 64 }, root: Dir.pwd)
+      allow(backend).to receive(:provider).and_return(provider)
       Lain::CLI::Backend::Summarizer.new(backend:).oracle
     end
 
@@ -356,6 +351,24 @@ RSpec.describe Lain::Oracle::Model do
     def plain_request(model)
       question = Lain::Oracle::Summarize.definition.render(source:)
       Lain::Request.new(model:, max_tokens:, messages: [{ "role" => "user", "content" => question }])
+    end
+  end
+
+  describe "a model and options given as callables" do
+    it "reads them at each ask, so the tier follows a change made after it was built" do
+      provider = Lain::Provider::Mock.new(responses: Array.new(2) { text_response(%({"summary":"s"})) })
+      model = "first"
+      extra = { "num_batch" => 1 }
+      oracle = described_class.new(definition: Lain::Oracle::Summarize.definition, provider:,
+                                   model: -> { model }, extra: -> { extra })
+
+      Sync { oracle.ask(source: "x").await }
+      model = "second"
+      extra = { "num_batch" => 2 }
+      Sync { oracle.ask(source: "x").await }
+
+      expect(provider.requests.map { [_1.model, _1.extra["num_batch"]] }).to eq([["first", 1], ["second", 2]])
+      expect(oracle.model).to eq("second")
     end
   end
 end

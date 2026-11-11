@@ -2218,8 +2218,10 @@ RSpec.describe Lain::Bench::CLI do
       end
       let(:provider) { Lain::Provider::Mock.new(responses: replies) }
       let(:backend) do
-        instance_double(Lain::CLI::Backend, summarizer_provider: provider, summarizer_model: "local-m",
-                                            summarizer_max_tokens: 256, summarizer_options: {})
+        Lain::CLI::Backend.new({ provider: "ollama", summarizer_model: "local-m", summarizer_max_tokens: 256,
+                                 max_tokens: 64 }, root: Dir.pwd).tap do |built|
+          allow(built).to receive(:provider).and_return(provider)
+        end
       end
       let(:journal) { File.join(tmp, "answers.ndjson") }
 
@@ -2255,7 +2257,7 @@ RSpec.describe Lain::Bench::CLI do
 
       it "fails loudly with the provider's error, naming where the partial journal is" do
         failing = Lain::Provider::Mock.new(responses: [])
-        allow(backend).to receive(:summarizer_provider).and_return(failing)
+        allow(backend).to receive(:provider).and_return(failing)
 
         expect { swept }.to raise_error(Lain::Error) do |error|
           expect(error.message).to include("ran out of responses", "journal: #{journal}")

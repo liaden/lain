@@ -85,7 +85,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
   def summarizing_backend
     Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64,
                              compact_strategy: "summarizing" }, root: Dir.pwd).tap do |backend|
-      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      allow(backend).to receive(:provider).and_return(answering_provider)
     end
   end
 
@@ -254,7 +254,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
 
       in_project_declaring(:nothing) { collapsed(wired_strategy(backend)) }
 
-      expect(backend).to have_received(:summarizer_provider).with(no_args)
+      expect(backend).to have_received(:provider).with(name: "ollama", requester: :summarizer, queue: true)
     end
   end
 
@@ -264,7 +264,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     def backend_with(provenance)
       Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, compact_strategy: "summarizing",
                                compact_provenance: provenance }, root: Dir.pwd).tap do |backend|
-        allow(backend).to receive(:summarizer_provider).and_return(answering_provider(claim))
+        allow(backend).to receive(:provider).and_return(answering_provider(claim))
       end
     end
 
@@ -309,7 +309,7 @@ RSpec.describe Lain::CLI::Backend::SpanSummarizer do
     it "journals a request carrying the chat's batch size, and not its temperature" do
       backend = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 64, num_batch: 2048,
                                          temperature: 0.2, compact_strategy: "summarizing" }, root: Dir.pwd)
-      allow(backend).to receive(:summarizer_provider).and_return(answering_provider)
+      allow(backend).to receive(:provider).and_return(answering_provider)
 
       in_project_declaring(:nothing) { collapsed(wired_strategy(backend)) }
 

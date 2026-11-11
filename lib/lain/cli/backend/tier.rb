@@ -11,17 +11,19 @@ module Lain
         # @param backend [Backend]
         # @param model [:follow, String] `:follow` asks whatever model the chat is on; a string stays pinned
         # @param queue [Boolean] whether the provider waits for a slot rather than skipping
-        def initialize(role:, backend:, model:, queue:)
+        # @param arm [String, nil] the provider the tier dials, as `--provider` spells it; the chat's when nil
+        def initialize(role:, backend:, model:, queue:, arm: nil)
           @role = role
           @backend = backend
           @model = model
           @queue = queue
+          @arm = arm
         end
 
         # For a caller that journals its own requests, so none is recorded twice.
         #
         # @return [Provider]
-        def bare_provider = @bare_provider ||= @backend.provider(requester: @role, queue: @queue)
+        def bare_provider = @bare_provider ||= @backend.provider(**arm_name, requester: @role, queue: @queue)
 
         # @return [Provider::Journaled]
         def provider
@@ -37,7 +39,14 @@ module Lain
         # are asked for on the launch model: `/model` swaps only the name.
         #
         # @return [Hash{String=>Object}]
-        def extra = @backend.chat_tier_options(following? ? @backend.model : @model)
+        def extra = @backend.arm_tier_options(following? ? @backend.model : @model, arm: @arm)
+
+        # @param definition [Oracle::Definition] the question the oracle answers
+        # @param max_tokens [Integer] the reply ceiling
+        # @return [Oracle::Model] over this tier's journaled provider, asking its live model and options
+        def oracle(definition:, max_tokens:)
+          Oracle::Model.new(definition:, provider:, max_tokens:, model: -> { model }, extra: -> { extra })
+        end
 
         # @param request [Lain::Request]
         # @return [Response] the answer, its payment recorded beside its request
@@ -52,6 +61,8 @@ module Lain
         private
 
         def following? = @model == :follow
+
+        def arm_name = @arm ? { name: @arm } : {}
       end
     end
   end

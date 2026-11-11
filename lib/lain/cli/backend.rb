@@ -307,7 +307,7 @@ module Lain
       # `queue:` is passed THROUGH rather than decided here, because
       # {Backend::Summarizer} and {Backend::SpanSummarizer} need opposite
       # answers; each says why at its own `#tier`.
-      def summarizer_provider(queue: true, requester: :summarizer) = provider(name: summarizer_name, queue:, requester:)
+      def summarizer_provider(queue: true) = provider(name: summarizer_name, queue:, requester: :summarizer)
 
       # `--summarizer-model`, defaulting to the CHAT's model while the tiers share
       # a provider (the default, so a local chat still inherits its own model)
@@ -324,7 +324,18 @@ module Lain
       # Across providers neither argument survives -- no shared residency, no
       # shared namespace, and a model id that does not parse on the other side
       # -- so `--provider anthropic` must not name the local tier's model.
-      def summarizer_model = @options[:summarizer_model] || tier_default_model
+      def summarizer_model = summarizer_tier.model
+
+      # The tier a summary, a span collapse or a handoff asks through. It follows
+      # the chat's live model unless `--summarizer-model` pins one or the arm is
+      # not the chat's.
+      #
+      # @param role [Symbol] who its requests are journaled as sent by
+      # @param queue [Boolean] whether its provider waits for a slot rather than skipping
+      # @return [Tier]
+      def summarizer_tier(role: :summarizer, queue: true)
+        Tier.new(role:, backend: self, queue:, arm: summarizer_name, model: summarizer_pin)
+      end
 
       # The provider the summarizer tier resolves to: `--summarizer-provider`,
       # else the chat's own.
@@ -343,13 +354,6 @@ module Lain
       def summarizer_max_tokens
         Ceiling.new(flag: "--summarizer-max-tokens",
                     value: knob(:summarizer_max_tokens, Oracle::Model::DEFAULT_MAX_TOKENS)).tokens
-      end
-
-      # {#tier_options} for the summarizer tier, at the endpoint its own arm
-      # dials. Both {Summarizer} and {SpanSummarizer} read it.
-      def summarizer_options
-        tier_options(provider: summarizer_name, model: summarizer_model,
-                     api_base: ollama_base(summarizer_name))
       end
 
       # The sampler options a SECONDARY model request may carry -- a summary, a
@@ -447,11 +451,15 @@ module Lain
       # @return [String]
       def live_model = @model_switch ? @model_switch.to_s : model
 
-      # {#tier_options} for a tier on the chat's own provider and endpoint.
+      # {#tier_options} for a tier on an arm, at the endpoint that arm dials.
       #
       # @param model [String] the model the tier asks
+      # @param arm [String, nil] the tier's provider; the chat's when nil
       # @return [Hash{String=>Object}] frozen; empty unless the runner is shared
-      def chat_tier_options(model) = tier_options(provider: provider_name, model:, api_base: ollama_base(provider_name))
+      def arm_tier_options(model, arm: nil)
+        name = arm || provider_name
+        tier_options(provider: name, model:, api_base: ollama_base(name))
+      end
 
       # `--model` defaults to the SELECTED provider's own default (resolved here,
       # not in the Thor flag, whose default is fixed at load before `--provider`
@@ -858,7 +866,9 @@ module Lain
 
       def validated(name, flag) = self.class.validated(name, flag)
 
-      def tier_default_model = chat_name?(summarizer_name) ? model : default_model(summarizer_name)
+      def summarizer_pin
+        @options[:summarizer_model] || (chat_name?(summarizer_name) ? :follow : default_model(summarizer_name))
+      end
 
       # The one unvalidated provider read in this class, and it does NOT weaken
       # {#provider_name}'s seam: equality with an already-validated name IS the
@@ -977,10 +987,7 @@ module Lain
       def handoff_oracle = @handoff_oracle ||= journaling(Oracle::Handoff.definition)
 
       def journaling(definition)
-        provider = Provider::Journaled.new(provider: summarizer_provider(requester: :handoff), journal: run_journal,
-                                           requester: :handoff)
-        tier = Oracle::Model.new(definition:, provider:, model: summarizer_model,
-                                 max_tokens: summarizer_max_tokens, extra: summarizer_options)
+        tier = summarizer_tier(role: :handoff).oracle(definition:, max_tokens: summarizer_max_tokens)
         Oracle::Recorded::Journaling.new(inner: tier, definition:, journal: run_journal)
       end
 
