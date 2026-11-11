@@ -70,6 +70,19 @@ RSpec.describe Lain::Approval::ComposedTerm::Repository, :seam do
       end
     end
 
+    # A partial clone fetches a missing object on read, through the remote's own programs and transports.
+    it "refuses a config through which a read could fetch" do
+      configs = ["[extensions]\n\tpartialClone = origin\n", "[remote \"origin\"]\n\tpromisor = true\n",
+                 "[remote \"origin\"]\n\tuploadpack = id\n", "[remote \"origin\"]\n\treceivepack = id\n",
+                 "[remote \"origin\"]\n\tvcs = id\n", "[protocol]\n\tallow = always\n",
+                 "[protocol \"ext\"]\n\tallow = always\n", "[url \"ext::sh\"]\n\tinsteadOf = https://\n"]
+      configs.each do |config|
+        in_tree do |dir|
+          expect(described_class.quiet?(git_repo(File.join(dir, "repo"), config:))).to be(false), config
+        end
+      end
+    end
+
     # git reads a value ending in a backslash on into the next line, so a line
     # read alone may not be what git reads; refusing costs a prompt.
     it "refuses a value continued onto the next line, which a line-by-line reading cannot place" do

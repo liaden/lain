@@ -59,6 +59,9 @@ module Lain
           --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs
         ].freeze
 
+        SAMPLE = ".sample"
+        private_constant :SAMPLE
+
         # @param cwd [String]
         # @param stat [Stat]
         def initialize(cwd:, stat:)
@@ -261,8 +264,10 @@ module Lain
           end.join("\n")
         end
 
+        # git runs a hook only by its exact name, so a `.sample` that `git init` wrote never runs.
         def hook_files(directory)
-          children(directory).map { |name| File.join(directory, name) }.reject { |path| @stat.directory?(path) }
+          children(directory).reject { |name| name.end_with?(SAMPLE) }.map { |name| File.join(directory, name) }
+                             .reject { |path| @stat.directory?(path) }
         end
 
         def existing(names) = existing_at(@cwd, names)

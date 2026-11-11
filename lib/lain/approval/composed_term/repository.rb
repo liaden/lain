@@ -21,10 +21,12 @@ module Lain
         POINTER = /\Agitdir: (.+)$/
         # Sections and keys whose value is a program to run, a file to include,
         # or a working tree elsewhere; matched case-insensitively, as git does.
-        SECTIONS = %w[include includeif pager filter difftool mergetool gpg credential].freeze
+        # A partial clone fetches a missing object on read, so what a fetch runs
+        # or reaches through counts as well.
+        SECTIONS = %w[include includeif pager filter difftool mergetool gpg credential protocol url].freeze
         KEYS = %w[pager fsmonitor external textconv command process clean smudge driver program editor hookspath
                   sshcommand askpass gitproxy alternaterefscommand packobjectshook difffilter cmd helper worktree
-                  showsignature].freeze
+                  showsignature partialclone promisor uploadpack receivepack vcs].freeze
         # git writes every submodule's own `core.worktree`, pointing back into the superproject.
         MODULE_KEYS = (KEYS - %w[worktree]).freeze
         MODULES = "modules"

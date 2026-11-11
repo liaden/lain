@@ -1681,6 +1681,93 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
+    # The repository predicate read the config and the git name predicate asked git
+    # about the one hook a read can run, so a read-only stage's run files are its own.
+    describe "a read-only git stage", :seam do
+      def with_hooks(root)
+        git_repo(root)
+        %w[pre-commit.sample pre-push.sample].each { on_disk(root, ".git/hooks/#{_1}", "#!/bin/sh\nid\n", mode: 0o755) }
+        on_disk(root, ".git/hooks/pre-commit", "#!/bin/sh\nid\n", mode: 0o755)
+      end
+
+      it "allows log and status beside a real hook and the samples" do
+        in_tree do |root, home|
+          with_hooks(root)
+          rule = classed_rule(root, home, path: "/usr/bin")
+
+          expect(["git log --oneline -5", "git status"].map { rule.decide(call_of(_1, cwd: root)) }).to all(be_allow)
+        end
+      end
+
+      it "still refuses a status beside a hook that refreshing the index runs" do
+        in_tree do |root, home|
+          with_hooks(root)
+          on_disk(root, ".git/hooks/post-index-change", "#!/bin/sh\nid\n", mode: 0o755)
+
+          expect(classed_rule(root, home, path: "/usr/bin").decide(call_of("git status", cwd: root))).to be_nil
+        end
+      end
+
+      it "still refuses where the repository's config names a program" do
+        in_tree do |root, home|
+          git_repo(root, config: "[core]\n\tfsmonitor = id\n")
+
+          expect(classed_rule(root, home, path: "/usr/bin").decide(call_of("git log --oneline", cwd: root))).to be_nil
+        end
+      end
+
+      # The clone fetches each missing blob on read, through the remote's upload-pack program.
+      def lazy_fetching(root, marker)
+        source = File.join(File.dirname(root), "source")
+        committed(source, "a.txt" => "hello\n")
+        SeedRepo.git(source, "config", "uploadpack.allowFilter", "true")
+        SeedRepo.git(File.dirname(root), "clone", "-q", "--no-local", "--no-checkout", "--filter=blob:none", source,
+                     root)
+        body = "#!/bin/sh\necho ran >> #{marker}\nexec git-upload-pack \"$@\"\n"
+        writer = on_disk(File.dirname(root), "upload-pack", body, mode: 0o755)
+        SeedRepo.git(root, "config", "remote.origin.uploadpack", writer)
+      end
+
+      it "refuses every read in a partial clone whose fetch runs a program" do
+        in_tree do |root, home|
+          marker = File.join(File.dirname(root), "MARKER")
+          lazy_fetching(root, marker)
+          rule = classed_rule(root, home, path: "/usr/bin")
+          commands = ["git show HEAD:a.txt", "git log --oneline -5", "git diff --stat HEAD", "git status"]
+
+          expect(commands.map { rule.decide(call_of(_1, cwd: root)) }).to eq([nil] * commands.size)
+          expect(File).not_to exist(marker)
+          SeedRepo.git(root, "show", "HEAD:a.txt")
+          expect(File).to exist(marker)
+        end
+      end
+
+      # The config predicate reads a closed list of keys, so a key it does not know
+      # must leave a config written this lineage to the class predicate.
+      it "does not own a run file written this lineage, even where the config predicate passed it" do
+        in_tree do |root, home|
+          git_repo(root, config: "[core]\n\tfsmonitor = id\n")
+          allow(described_class::Repository).to receive(:quiet?).and_return(true)
+          rule = classed_rule(root, home, path: "/usr/bin", since: Time.now - 60)
+
+          expect(rule.decide(call_of("git log --oneline", cwd: root))).to be_nil
+        end
+      end
+
+      it "leaves a commit to the judge, with the hook it runs named among its run files" do
+        in_tree do |root, home|
+          hook = with_hooks(root)
+          factory = classifiers(root, home, path: "/usr/bin")
+          call = call_of("git commit -m x", cwd: root)
+
+          expect(described_class.new(sensitivity: factory, classes: true).decide(call)).to be_nil
+          term = Lain::Shell::Term.of(%w[git commit -m x])
+          expect(factory.executables(term, root).sole.run_files.map(&:path)).to include(hook)
+            .and(satisfy { |paths| paths.none? { _1.end_with?(".sample") } })
+        end
+      end
+    end
+
     it "changes nothing when the arm is off" do
       in_tree do |root, home|
         with_readme(root)

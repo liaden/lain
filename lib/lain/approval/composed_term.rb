@@ -40,7 +40,9 @@ module Lain
     #     stage's program, every wrapper around it and every file it runs
     #     resolves to a system file, or a user file unchanged this lineage and
     #     shadowing nothing on PATH, with no PATH or env anomaly. An admitted
-    #     cargo run's build files inside the root are the project's own.
+    #     cargo run's build files inside the root are the project's own, and an
+    #     admitted git stage's config and hooks are its own while unchanged this
+    #     lineage, held by 15 and 16.
     # 13. THE OPERAND PREDICATE: an `rg` searches only files it is named, each
     #     a regular file, since with none or a directory it walks a tree. It
     #     reads the slots by position, which holds only because `rg`'s table
@@ -1365,7 +1367,9 @@ module Lain
       FINDER = "find"
       GIT = "git"
       CARGO = "cargo"
-      OWNS_NOTHING = ->(_path) { false }
+      OWNS_NOTHING = ->(_file) { false }
+      # Only while unchanged this lineage: the config predicate reads a closed list of keys.
+      GIT_OWNS = ->(file) { !file.fresh }
       # The most entries a `find` may reach before this rule stops walking and
       # leaves it to the judge: each is classified, on every judged call.
       WALK_BOUND = 1000
@@ -1811,14 +1815,25 @@ module Lain
       end
 
       def untrusted_runs(stage, own)
-        stage.run_files.reject { |file| trusted_class?(file.klass, file.fresh) || own.call(file.path) }
+        stage.run_files.reject { |file| trusted_class?(file.klass, file.fresh) || own.call(file) }
       end
 
-      # An admitted cargo run exists to execute the project's build files, so
-      # those inside the root are its own; every other stage owns none.
+      # Read only once the flags predicate has admitted every stage. A cargo run
+      # exists to execute the project's build files, so those inside the root
+      # are its own. A git stage's run files are its config and hooks, and a
+      # read runs only what predicates 15 and 16 held, so it owns each one
+      # while that file is unchanged this lineage.
       def owners(term, cwd)
         confinement = @sensitivity.confinement(cwd)
-        term.stages.map { |stage| admitted_cargo?(stage) ? ->(path) { confinement.contains?(path) } : OWNS_NOTHING }
+        term.stages.map { |stage| owner(stage.program, confinement) }
+      end
+
+      def owner(program, confinement)
+        case program
+        when CARGO then ->(file) { confinement.contains?(file.path) }
+        when GIT then GIT_OWNS
+        else OWNS_NOTHING
+        end
       end
 
       # Asked through `#run`, because a candidate table with no cargo entry hands back the version probe, which
@@ -1828,8 +1843,6 @@ module Lain
           stage.program == CARGO && Pinned::BUILDING_RUNS.include?(flags_for(CARGO).run(stage.argv.drop(1)))
         end
       end
-
-      def admitted_cargo?(stage) = stage.program == CARGO && flags_for(CARGO).admits?(stage.argv.drop(1))
 
       # A user file is one this process could have swapped, so it is trusted
       # only while nothing in this lineage has changed it.

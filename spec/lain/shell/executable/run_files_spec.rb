@@ -183,9 +183,15 @@ RSpec.describe Lain::Shell::Executable::RunFiles do
     it "runs the config and every hook that exists" do
       config = touch(".git/config")
       hook = touch(".git/hooks/pre-commit", mode: 0o755)
-      sample = touch(".git/hooks/pre-push.sample")
 
-      expect(run_paths("git", "commit")).to contain_exactly(config, hook, sample)
+      expect(run_paths("git", "commit")).to contain_exactly(config, hook)
+    end
+
+    it "lists no .sample file as a run file" do
+      config = touch(".git/config")
+      %w[pre-commit.sample pre-push.sample fsmonitor-watchman.sample].each { touch(".git/hooks/#{_1}", mode: 0o755) }
+
+      expect(run_paths("git", "status")).to eq([config])
     end
 
     it "finds the git directory above the cwd" do
