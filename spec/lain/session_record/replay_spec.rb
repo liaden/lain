@@ -888,6 +888,24 @@ RSpec.describe Lain::SessionRecord::Replay do
     end
   end
 
+  describe "the re-entry note a record restores" do
+    def noted(note) = Lain::Telemetry::ReentryNote.new(note:).to_journal
+
+    def restored(*records) = described_class.new([{ "type" => "session" }, *records]).session(on: timeline(1))
+
+    it "lets the latest note win" do
+      expect(restored(noted("first"), noted("second")).reentry_note).to eq("second")
+    end
+
+    it "restores no note after an empty one clears it" do
+      expect(restored(noted("first"), noted("")).reentry_note).to eq("")
+    end
+
+    it "restores no note from a record that has none" do
+      expect(restored.reentry_note).to eq("")
+    end
+  end
+
   describe "a session record read as typed values" do
     fixtures = File.expand_path("../../fixtures/sessions", __dir__)
     digest = "blake3:#{"a" * 64}"
@@ -905,11 +923,12 @@ RSpec.describe Lain::SessionRecord::Replay do
       [[header, read, turn, Lain::Telemetry::SessionPin.new(digest:, pinned: true)],
        [Lain::Telemetry::SessionPin.new(digest:, pinned: true), Lain::Telemetry::SessionPin.new(digest:, pinned: false),
         Lain::Telemetry::TurnLabeled.new(digest:, label: "x"), Lain::Telemetry::TurnLabeled.new(digest:, label: "")],
+       [Lain::Telemetry::ReentryNote.new(note: "a"), Lain::Telemetry::ReentryNote.new(note: "b")],
        [Lain::Telemetry::SourceMasked.new(tool_use_id: "t", kind: :file, key: "/tmp/.env", regions: 1), todos],
        [Lain::Telemetry::SessionReadWithheld.new(rounds: [[nil, "tu_1"]]), cut]]
     end
 
-    %i[Reads Pins Labels Todos Cuts WithheldSources].each do |name|
+    %i[Reads Pins Labels ReentryNote Todos Cuts WithheldSources].each do |name|
       describe "its #{name} projection" do
         include_examples "an incremental fold", projection: described_class.const_get(name), population:
       end

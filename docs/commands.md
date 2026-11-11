@@ -1099,6 +1099,12 @@ names that turn; a prefix 2 turns share is refused, as `/pin` refuses it. A labe
 clears the turn's label, so a lone word that a turn's digest starts with, such as `/label beef`,
 clears that turn rather than labeling the last one.
 
+### /park
+
+`/park <text>` leaves a re-entry note for when you come back: what you are waiting on and what to do
+next. It is journaled in the session record, the latest note wins, and `lain chat --resume` prints it
+first, as `parked: <text>`. A fork carries the note too. `/park` with no text clears it.
+
 ### /fork
 
 Fork this session at its head into a new tmux window: a durable sibling chat over the shared

@@ -32,7 +32,7 @@ module Lain
     # that index is what {Session}'s `memory:` wants.
     #
     # Every line is read once, through {Telemetry.read}, and the typed records
-    # are folded once through the six projections below; the raw records go to
+    # are folded once through the seven projections below; the raw records go to
     # the memory replay, which reads them as written. A record of ours that will
     # not rebuild refuses the resume as {Bench::Session::Corrupt}: a torn record
     # of our own is damage, where a foreign one comes back whole and is ignored.
@@ -129,6 +129,19 @@ module Lain
         end
       end
 
+      # The latest re-entry note; an empty one clears it.
+      class ReentryNote < Journal::Projection
+        # @return [ReentryNote]
+        def self.unit = new("")
+
+        # @param record [Telemetry::Journalable, Telemetry::Untyped]
+        # @return [ReentryNote]
+        def step(record) = record.is_a?(Telemetry::ReentryNote) ? self.class.new(record.note) : self
+
+        # @return [String]
+        def value = state
+      end
+
       # A masked source replays from {Telemetry::SourceMasked}, NOT from a
       # `session_read` line, and that is the only shape available:
       # `record_read` by construction cannot reach the masked set, so a
@@ -150,7 +163,7 @@ module Lain
         def value = state.keys
       end
 
-      PROJECTIONS = { reads: Reads, pins: Pins, labels: Labels, todos: Todos, cuts: Cuts,
+      PROJECTIONS = { reads: Reads, pins: Pins, labels: Labels, reentry_note: ReentryNote, todos: Todos, cuts: Cuts,
                       withheld: WithheldSources }.freeze
       private_constant :PROJECTIONS
 
@@ -179,6 +192,7 @@ module Lain
           restore_reads(fresh)
           restore_pins(fresh)
           restore_labels(fresh)
+          restore_reentry_note(fresh)
           restore_todos(fresh, on)
           restore_cuts(fresh)
           restore_requests(fresh)
@@ -262,6 +276,11 @@ module Lain
       end
 
       def restore_pins(fresh) = projected(:pins).each { |digest| fresh.record_pin(digest) }
+
+      def restore_reentry_note(fresh)
+        note = projected(:reentry_note)
+        fresh.record_reentry_note(note) unless note.empty?
+      end
 
       def restore_labels(fresh) = projected(:labels).each { |digest, label| fresh.record_label(digest, label) }
 

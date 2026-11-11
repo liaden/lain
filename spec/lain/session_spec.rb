@@ -1556,6 +1556,18 @@ RSpec.describe Lain::Session do
       expect(of_type("turn_labeled").map(&:label)).to eq(["x", ""])
     end
 
+    it "journals a reentry_note and holds the latest, an empty one clearing it" do
+      journaled.record_reentry_note("waiting on CI")
+      journaled.record_reentry_note("")
+
+      expect(of_type("reentry_note").map(&:note)).to eq(["waiting on CI", ""])
+      expect(journaled.reentry_note).to eq("")
+    end
+
+    it "holds a note on a session built with no journal" do
+      expect(described_class.new.record_reentry_note("x").reentry_note).to eq("x")
+    end
+
     it "records a label on a session built with no journal" do
       expect(described_class.new.record_label("blake3:aaaa1111", "x").labels).to eq("blake3:aaaa1111" => "x")
     end

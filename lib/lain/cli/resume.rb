@@ -319,10 +319,11 @@ module Lain
       # repair and this disclosure are identical at both doors, and only what a
       # human is told when the repair CANNOT be made names which door they used.
       def result(door, timeline, replay, open:, notices:, stops: [], allowance: nil)
+        session = replay.session(on: timeline)
         built = Result.new(file: door.file, timeline: settled(door, timeline),
-                           recorded: timeline, session: replay.session(on: timeline), recorder: replay.memory,
-                           open:, notices:, stops:, allowance:)
-        built.repaired? ? built.with(notices: [*notices, repair_notice(built)]) : built
+                           recorded: timeline, session:, recorder: replay.memory,
+                           open:, notices: [parked_notice(session), *notices].compact, stops:, allowance:)
+        built.repaired? ? built.with(notices: [*built.notices, repair_notice(built)]) : built
       end
 
       # Held to {Tool::Cancellation::NO_RESULT}'s standard, and for its reason:
@@ -414,6 +415,11 @@ module Lain
       # runs (see {#rebuild}'s reload), so `open_notice` stops firing once it lands.
       def notices(path, recording, outcome, mismatches)
         [open_notice(path, recording), outcome.notice, *mismatches].compact
+      end
+
+      def parked_notice(session)
+        note = session.reentry_note
+        "parked: #{note}" unless note.empty?
       end
 
       def writer(path) = Liveness::Writer.from_header(self.class.header(path))

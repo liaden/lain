@@ -1322,6 +1322,33 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
+  describe "the parked re-entry note" do
+    def note(text) = Lain::Telemetry::ReentryNote.new(note: text).to_journal
+
+    it "is the first notice, from the last note the session recorded" do
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: [note("old"), note("waiting on CI")])
+
+      notices = resume.call(model: "other-model", profile: untyped).notices
+
+      expect(notices.first).to eq("parked: waiting on CI")
+      expect(notices.size).to be > 1
+    end
+
+    it "is absent once an empty park cleared it" do
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: [note("waiting on CI"), note("")])
+
+      expect(resume.call(profile: untyped).notices).to be_empty
+    end
+
+    it "reads back what a live Session wrote" do
+      io = StringIO.new
+      Lain::Session.new(journal: Lain::Journal.new(io:)).record_reentry_note("review from X")
+      write_closed("20260101T000000-1.ndjson", chain("hi", "yo"), extra: io.string.lines.map { JSON.parse(_1) })
+
+      expect(resume.call(profile: untyped).notices).to eq(["parked: review from X"])
+    end
+  end
+
   describe "the model-mismatch notice (LOUD, then continue with the flags)" do
     before { write_closed("20260101T000000-1.ndjson", chain("hi", "yo")) }
 

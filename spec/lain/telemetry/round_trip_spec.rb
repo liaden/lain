@@ -90,6 +90,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     RequestSent: { digest: d, payload: { "messages" => [{ "role" => "user", "content" => "hi" }] }, stream: true,
                    extra: { "temperature" => 0.5 }, prefix_digests: [d], prefix_chain_version: 2,
                    requester: "summarizer" },
+    ReentryNote: { note: "waiting on CI" },
     ResendDispatched: { digest: d },
     RoundBounded: { head: d, basis: "tokens", budget: 100, delivered: ["tu_1"], deduplicated: [], withheld: ["tu_2"] },
     RunAllowance: { iterations: 103 },

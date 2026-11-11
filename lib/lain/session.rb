@@ -445,6 +445,20 @@ module Lain
       self
     end
 
+    # The latest note wins and an empty one clears it, so the journal keeps every
+    # transition and the session holds only the standing one.
+    #
+    # @return [self]
+    def record_reentry_note(note)
+      record = Telemetry::ReentryNote.new(note:)
+      @reentry_note = record.note
+      @journal << record
+      self
+    end
+
+    # @return [String] the standing re-entry note; empty when there is none
+    attr_reader :reentry_note
+
     # @return [Hash{String => String}] the label of each labeled turn, by digest
     def labels
       @labels.dup.freeze
@@ -902,6 +916,7 @@ module Lain
     def start_marks
       @pins = Set.new
       @labels = {}
+      @reentry_note = ""
     end
 
     # A blank digest is refused rather than coerced: `-nil.to_s` would put "" in
@@ -1174,6 +1189,12 @@ module Lain
 
       # @return [self]
       def record_label(_digest, _label) = self
+
+      # @return [self]
+      def record_reentry_note(_note) = self
+
+      # @return [String] never any
+      def reentry_note = ""
 
       # @return [Hash] never any
       def labels = {}.freeze
