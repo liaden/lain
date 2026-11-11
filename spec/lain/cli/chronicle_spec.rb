@@ -888,7 +888,8 @@ RSpec.describe Lain::CLI::Chronicle do
         Dir.mktmpdir do |dir|
           feed = Lain::StatusFeed.new(path: File.join(dir, "state.json"),
                                       context_window: Lain::ContextWindow.new(windows: { "qwen3" => 8192 }), store:)
-          Lain::CLI::LiveViews.new(options: { nvim: "/nonexistent.sock" }, chronicle: null, status_feed: feed)
+          Lain::CLI::LiveViews.new(options: { nvim: "/nonexistent.sock" }, chronicle: null, status_feed: feed,
+                                   agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
           null.instrumentation.journal << Lain::Telemetry::TurnUsage.new(
             digest: line.head_digest, model: "qwen3:4b", stop_reason: :end_turn,
             usage: { "input_tokens" => 4096, "output_tokens" => 5 }

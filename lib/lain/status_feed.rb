@@ -113,6 +113,8 @@ module Lain
   #   {Approval::Parked::Queue#record_evidence} before EITHER record is written.
   #   What breaks it is the queue's `degrade` path, which writes a
   #   `journal_error` instead, and the fold counts that record too.
+  # * `agents` -- each agent's state and the most urgent of them, read off the injected
+  #   {AgentStates::Tracker}, the one fold of {Journal::Projection::AgentStates} the chat keeps.
   # * `scope` / `approval` / `layers` / `mode_lighter` -- derived from a
   #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning. All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
@@ -193,12 +195,15 @@ module Lain
     #   so a directly constructed feed still publishes an honest elapsed.
     # @param context_window [#occupancy, #resolve] the book resolving a model name into
     #   the denominator, the same duck {Agent#occupancy} takes.
+    # @param agent_states [AgentStates::Tracker] the run's one fold of agent states, fed from the tee
+    #   ahead of this sink so a publish carries the state its record made.
     # @param store [Ext::Store] where a committed turn's causal chain is resolved --
     #   {Inbox}'s collaborator. Defaulted to an EMPTY one rather than required,
     #   because the live chat has none yet at this object's construction point;
     #   see {#bind_store}.
     def initialize(path: default_path, clock: -> { Time.now }, cache_profile: DEFAULT_CACHE_PROFILE,
-                   run_clock: RunClock.new, context_window: ContextWindow.default, store: Dag::Factory.store)
+                   run_clock: RunClock.new, context_window: ContextWindow.default, store: Dag::Factory.store,
+                   agent_states: AgentStates::Tracker.new(clock: run_clock))
       @publication = Publication.new(path)
       @clock = clock
       @cache_profile = cache_profile
@@ -206,6 +211,7 @@ module Lain
       @context_window = context_window
       @store = store
       @inbox = Inbox.new(store:)
+      @agent_states = agent_states
       start_empty
     end
 
@@ -619,7 +625,7 @@ module Lain
         "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
-        "run_tokens" => @run_tokens, "in_flight" => in_flight_slot }
+        "run_tokens" => @run_tokens, "in_flight" => in_flight_slot, "agents" => published_agents }
         .merge(@mode.published)
     end
 
@@ -650,6 +656,12 @@ module Lain
     # what lets `plugin/tmux/scripts/lain-status` print a field instead of
     # carrying a second copy of the derivation in a jq program.
     def rendered(struct) = struct.merge("hud" => Reading.new(struct).hud(now: @clock.call, timed: false))
+
+    def published_agents
+      fold = @agent_states.projection
+      { "rollup" => fold.rollup.to_s,
+        "rows" => fold.agents.map { { "id" => _1.id, "state" => _1.state.to_s, "what" => _1.what } } }
+    end
 
     def default_path = ProjectDir.new.state_path
   end

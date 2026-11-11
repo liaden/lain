@@ -70,8 +70,8 @@ module Lain
                      run_clock_factory: -> { Lain::RunClock.new },
                      project_factory: Lain::Project::Resolver.public_method(:default_project),
                      gc_schedule_factory: GcSchedule.public_method(:new),
-                     status_feed_factory: lambda { |run_clock:, context_window:|
-                       Lain::StatusFeed.new(run_clock:, context_window:)
+                     status_feed_factory: lambda { |run_clock:, context_window:, agent_states:|
+                       Lain::StatusFeed.new(run_clock:, context_window:, agent_states:)
                      },
                      middleware_reader: Config.public_method(:middleware),
                      env: ENV)
@@ -188,7 +188,7 @@ module Lain
         # opens neither and stays byte-identical.
         return unless @options[:nvim] || @options[:journal]
 
-        @live_views = @live_views_factory.call(options: @options, chronicle:, status_feed:)
+        @live_views = @live_views_factory.call(options: @options, chronicle:, status_feed:, agent_states:)
       end
 
       # The ONE StatusFeed for the run, built here so it can sit in the tee's
@@ -201,7 +201,11 @@ module Lain
       # does not exist until `Wiring#run` has built the Agent -- a layer below
       # this line. So Wiring hands it over ({Lain::StatusFeed#bind_store});
       # until then an empty Store resolves nothing and the count only climbs.
-      def status_feed = @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window)
+      def status_feed
+        @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window, agent_states:)
+      end
+
+      def agent_states = @agent_states ||= Lain::AgentStates::Tracker.new(clock: run_clock)
 
       # The ONE {Backend} for the run, shared exactly as {#run_clock} and
       # {#project} are. Two halves of the launch need it -- the feed divides

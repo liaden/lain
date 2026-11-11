@@ -33,7 +33,8 @@ RSpec.describe "compaction cuts on the HUD", :seam do
   let(:dir) { Dir.mktmpdir("hud-cut") }
   let(:feed) { Lain::StatusFeed.new(path: File.join(dir, "status.json"), run_clock:) }
   let(:session) do
-    Lain::CLI::LiveViews.new(options: {}, chronicle:, status_feed: feed)
+    Lain::CLI::LiveViews.new(options: {}, chronicle:, status_feed: feed,
+                             agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
     chronicle.wrap_session(Lain::Session.new)
   end
 
@@ -67,7 +68,10 @@ RSpec.describe "compaction cuts on the HUD", :seam do
   end
 
   describe "an idle prepare" do
-    let!(:views) { Lain::CLI::LiveViews.new(options: {}, chronicle:, status_feed: feed) }
+    let!(:views) do
+      Lain::CLI::LiveViews.new(options: {}, chronicle:, status_feed: feed,
+                               agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
+    end
     let(:live_session) { views && chronicle.wrap_session(Lain::Session.new) }
     let(:clock) { HudCutSeamSupport::HandClock.new(Time.at(1_700_000_000).utc) }
     let(:source) do

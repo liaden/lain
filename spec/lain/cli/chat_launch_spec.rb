@@ -505,6 +505,58 @@ RSpec.describe Lain::CLI::ChatLaunch do
       end
     end
 
+    # No double between the tee and the feed: a record journaled through the
+    # chronicle reaches the tracker, and the feed publishes what the tracker holds.
+    it "publishes a blocked rollup once a child's wait opens" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          Dir.chdir(dir) do
+            instance = launch({ journal: true })
+            instance.open_chronicle
+            chronicle = instance.chronicle
+            chronicle.start(context:, toolset: Lain::Toolset.new, sections: SessionSections.complete)
+            spawn = "blake3:#{"c" * 64}"
+            chronicle.instrumentation.journal << Lain::Telemetry::Message.new(
+              digest: spawn, kind: :spawn, from: "main", to: "reviewer", payload: { "role" => "reviewer" },
+              causal_parents: [], correlation: nil
+            )
+            chronicle.instrumentation.journal << Lain::Telemetry::AwaitingHuman.new(
+              kind: "approval", ref: "call_c1", summary: "rm -rf build", requester: "reviewer", tool: "bash",
+              tool_use_id: "call_c1", spawn:
+            )
+            chronicle.close
+
+            state = JSON.parse(File.read(Dir.glob(File.join(dir, "lain", "status", "*", "state.json")).first))
+            expect(state["agents"]).to include("rollup" => "blocked")
+            expect(state["agents"]["rows"]).to include("id" => spawn, "state" => "blocked", "what" => "rm -rf build")
+          end
+        end
+      end
+    end
+
+    it "hands the SAME tracker to the state feed and to the live views" do
+      Dir.mktmpdir do |dir|
+        with_env("XDG_STATE_HOME" => dir) do
+          given = []
+          instance = launch({ journal: false, nvim: "/tmp/lain-cli-spec.sock" },
+                            status_feed_factory: lambda { |run_clock:, context_window:, agent_states:|
+                              given << agent_states
+                              Lain::StatusFeed.new(run_clock:, context_window:, agent_states:)
+                            },
+                            live_views_factory: lambda { |agent_states:, **kwargs|
+                              given << agent_states
+                              Lain::CLI::LiveViews.new(agent_states:, **kwargs)
+                            })
+
+          instance.open_chronicle
+
+          expect(given).to match([be_a(Lain::AgentStates::Tracker), be_a(Lain::AgentStates::Tracker)])
+          expect(given.first).to be(given.last)
+          instance.live_views.journal.close
+        end
+      end
+    end
+
     # Pure --no-journal --no-nvim opens no tee at all, so a headless-ish run
     # stays byte-identical: no state feed, no state file written. `dir` is BOTH
     # the working directory and `$XDG_STATE_HOME` here, so the absence covers
@@ -559,7 +611,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
       given_to_feed = nil
       given_to_wiring = nil
       instance = launch({ journal: false },
-                        status_feed_factory: lambda { |run_clock:, context_window:|
+                        status_feed_factory: lambda { |run_clock:, context_window:, **|
                           given_to_feed = run_clock
                           Lain::StatusFeed.new(run_clock:, context_window:)
                         },
@@ -595,7 +647,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
 
     def recording_launch(options, seen)
-      launch(options, status_feed_factory: lambda { |run_clock:, context_window:|
+      launch(options, status_feed_factory: lambda { |run_clock:, context_window:, **|
         seen << context_window
         Lain::StatusFeed.new(run_clock:, context_window:)
       })

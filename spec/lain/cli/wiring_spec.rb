@@ -2523,7 +2523,8 @@ RSpec.describe Lain::CLI::Wiring do
     # the tee rather than through it.
     it "lands the arm record in the file and not on the status feed a plain chat tees" do
       feed = RecordingChannel.new
-      Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed)
+      Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed,
+                               agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
 
       converse("run it")
 
@@ -2586,7 +2587,8 @@ RSpec.describe Lain::CLI::Wiring do
 
         it "shows a live run: equal to the run: rebuilt from the session file, the child's spend included" do
           feed = Lain::StatusFeed.new(path: File.join(@state, "status.json"))
-          Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed)
+          Lain::CLI::LiveViews.new(options: { journal: true }, chronicle:, status_feed: feed,
+                                   agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
 
           converse("look around")
           rebuilt = of_type("turn_usage").sum do |usage|

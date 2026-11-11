@@ -116,9 +116,11 @@ module Lain
       # @param options [Hash] the chat command's parsed flags
       # @param chronicle [Chronicle] the run's chronicle, teed alongside the journal
       # @param status_feed [StatusFeed] the ONE feed ChatLaunch also threads into Wiring
+      # @param agent_states [AgentStates::Tracker] first in the tee, so the feed publishes the state
+      #   a record made
       # @option options [String, nil] :nvim the editor socket to attach a live
       #   Channel to; absent means no nvim sink and no Channel is built at all
-      def initialize(options:, chronicle:, status_feed:)
+      def initialize(options:, chronicle:, status_feed:, agent_states:)
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]
         # Built BEFORE the tee (it goes IN it), then pointed AT the tee's own
@@ -126,7 +128,7 @@ module Lain
         # stream. Null under no --windows, so no window machinery constructs
         # unless the flag is set (and $TMUX present).
         @fleet = FleetWindows.for(options)
-        @journal = chronicle.wrap_tee(sink([@channel, status_feed, @fleet].compact))
+        @journal = chronicle.wrap_tee(sink([agent_states, @channel, status_feed, @fleet].compact))
         @fleet.notice = @journal
         chronicle.listen(status_feed.transition_listener)
         chronicle.observe(Lain::StatusFeed::ChildPayments.new(status_feed))

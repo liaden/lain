@@ -2010,6 +2010,45 @@ RSpec.describe Lain::StatusFeed do
     end
   end
 
+  describe "agents" do
+    let(:tracker) { Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new) }
+    let(:feed) { described_class.new(path:, agent_states: tracker) }
+    let(:child) { "blake3:#{"c" * 64}" }
+
+    def tee(record)
+      tracker << record
+      feed << record
+    end
+
+    it "publishes every agent's state, a blocked child with what it is asked" do
+      tee(Lain::Telemetry::Message.new(digest: child, kind: :spawn, from: "main", to: "reviewer",
+                                       payload: { "role" => "reviewer" }, causal_parents: [], correlation: nil))
+      tee(Lain::Telemetry::AwaitingHuman.new(kind: "approval", ref: "call_c1", summary: "rm -rf build",
+                                             requester: "reviewer", tool: "bash", tool_use_id: "call_c1",
+                                             spawn: child))
+
+      expect(published["agents"]).to eq(
+        "rollup" => "blocked",
+        "rows" => [{ "id" => "main", "state" => "idle", "what" => nil },
+                   { "id" => child, "state" => "blocked", "what" => "rm -rf build" }]
+      )
+    end
+
+    it "publishes again when only an agent's state moved" do
+      tee(Lain::Telemetry::RequestSent.new(digest: "blake3:#{"e" * 64}", payload: {}, stream: true, extra: {},
+                                           prefix_digests: nil, prefix_chain_version: nil, requester: nil))
+
+      expect(published["agents"]["rollup"]).to eq("working")
+    end
+
+    it "shows an unseen finished agent in the published HUD" do
+      tee(Lain::Telemetry::AskSettled.new(head: "blake3:#{"f" * 64}", stop_reason: "end_turn", turns: 1,
+                                          seconds: 1.0))
+
+      expect(published["hud"]).to end_with(" done:1 ")
+    end
+  end
+
   describe "publishing" do
     it "writes valid, complete JSON with every published field on every event" do
       feed = described_class.new(path:)
@@ -2021,7 +2060,7 @@ RSpec.describe Lain::StatusFeed do
                                                 "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
                                                 "run_tokens", "in_flight", "scope", "approval", "layers",
-                                                "mode_lighter",
+                                                "mode_lighter", "agents",
                                                 "elapsed", "idle", "since_compaction", "hud")
     end
 

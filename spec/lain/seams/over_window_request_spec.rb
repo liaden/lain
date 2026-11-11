@@ -31,7 +31,10 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
   end
   let(:chronicle) do
     Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "over-window-seam.ndjson")
-                        .tap { |opened| Lain::CLI::LiveViews.new(options: {}, chronicle: opened, status_feed: feed) }
+                        .tap do |opened|
+      Lain::CLI::LiveViews.new(options: {}, chronicle: opened, status_feed: feed,
+                               agent_states: Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new))
+    end
   end
   let(:chat_bodies) { [] }
 

@@ -36,8 +36,9 @@ RSpec.describe Lain::CLI::LiveViews do
   # a real SizedQueue, because nothing here drains it.
   let(:tty) { RecordingChannel.new }
   let(:socket) { "/tmp/lain-live-views-spec.sock" }
-  let(:attached) { described_class.new(options: { nvim: socket }, chronicle:, status_feed:) }
-  let(:headless) { described_class.new(options: { journal: true }, chronicle:, status_feed:) }
+  let(:agent_states) { Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new) }
+  let(:attached) { described_class.new(options: { nvim: socket }, chronicle:, status_feed:, agent_states:) }
+  let(:headless) { described_class.new(options: { journal: true }, chronicle:, status_feed:, agent_states:) }
   let(:hello) { Lain::Telemetry::ToolOutput.new(tool_use_id: "tu_1", stream: :stdout, bytes: "hello\n") }
 
   describe "#views" do
@@ -171,7 +172,7 @@ RSpec.describe Lain::CLI::LiveViews do
 
     before do
       # Production order: the scribe takes its tee at start, so LiveViews must wrap it first.
-      described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed)
+      described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed, agent_states:)
       real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
                            toolset: Lain::Toolset.new([]), sections: SessionSections.complete)
     end
@@ -201,6 +202,29 @@ RSpec.describe Lain::CLI::LiveViews do
     end
   end
 
+  describe "the agent states tracker, through the real chronicle and feed" do
+    let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
+    let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
+    let(:tracker) { Lain::AgentStates::Tracker.new(clock: Lain::RunClock.new) }
+    let(:feed) { Lain::StatusFeed.new(path: state_path, agent_states: tracker) }
+    let(:settled) do
+      Lain::Telemetry::AskSettled.new(head: "blake3:#{"f" * 64}", stop_reason: "end_turn", turns: 1, seconds: 1.0)
+    end
+
+    before do
+      described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed,
+                          agent_states: tracker)
+      real_chronicle.start(context: Lain::Context.new(model: "m", max_tokens: 10, system: "s"),
+                           toolset: Lain::Toolset.new([]), sections: SessionSections.complete)
+    end
+
+    it "hears a record before the feed does, so the feed publishes the state that record made" do
+      real_chronicle.instrumentation.journal << settled
+
+      expect(JSON.parse(File.read(state_path)).dig("agents", "rollup")).to eq("done")
+    end
+  end
+
   describe "an agent's transitions, through the real chronicle and feed" do
     let(:real_chronicle) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: StringIO.new)) }
     let(:state_path) { File.join(Dir.mktmpdir, "state.json") }
@@ -209,7 +233,9 @@ RSpec.describe Lain::CLI::LiveViews do
 
     def hud = JSON.parse(File.read(state_path)).fetch("hud")
 
-    before { described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed) }
+    before do
+      described_class.new(options: { journal: true }, chronicle: real_chronicle, status_feed: feed, agent_states:)
+    end
 
     it "shows a model segment while the agent awaits the model" do
       listener.on_transition(from: :awaiting_user, to: :awaiting_model, event: :dispatch)
@@ -263,7 +289,7 @@ RSpec.describe Lain::CLI::LiveViews do
 
     def attach_live_views
       @attach_live_views ||= described_class.new(options: { journal: true }, chronicle: real_chronicle,
-                                                 status_feed: feed)
+                                                 status_feed: feed, agent_states:)
     end
 
     def agent_for(provider, *tools)

@@ -164,7 +164,7 @@ module Lain
       def marker(now:) = warmth(now:) == :warm ? HUD_WARM : HUD_COLD
 
       def optional_segments(now:, timed:)
-        [approvals, occupancy, run_tokens, mode_lighter, in_flight(now:, timed:)].compact
+        [approvals, occupancy, run_tokens, mode_lighter, in_flight(now:, timed:), done_agents].compact
       end
 
       def approvals
@@ -177,6 +177,14 @@ module Lain
       def occupancy
         ratio = @state["occupancy"]
         ratio && " ctx:#{guess_mark}#{self.class.percent(ratio)}%"
+      end
+
+      # A state published before agents existed carries no rows and renders as it always did.
+      def done_agents
+        agents = @state["agents"]
+        rows = agents.is_a?(Hash) ? Array(agents["rows"]).grep(Hash) : []
+        finished = rows.select { _1["state"] == "done" }.size
+        " done:#{finished}" if finished.positive?
       end
 
       # `run:` and both halves are load-bearing. "usage:" would read as the

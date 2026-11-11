@@ -141,6 +141,38 @@ RSpec.describe Lain::StatusFeed::Reading do
       expect(hud(**warm(occupancy: 3.7))).to eq("🔥 fleet:2 inbox:3 ctx:100% ")
     end
 
+    describe "agents finished and unseen" do
+      def agents(*states)
+        rows = states.each_with_index.map { |state, at| { "id" => "a#{at}", "state" => state, "what" => nil } }
+        { "rollup" => "done", "rows" => rows }
+      end
+
+      it "ends with the count of done agents" do
+        expect(hud(**warm(agents: agents("done", "working")))).to end_with(" done:1 ")
+      end
+
+      it "names the count after every other segment" do
+        expect(hud(**warm(approvals_pending: 1, occupancy: 0.34, agents: agents("done", "done"))))
+          .to eq("🔥 fleet:2 inbox:3 approve:1 ctx:34% done:2 ")
+      end
+
+      it "carries none of the characters a bar cannot render" do
+        expect(hud(**warm(agents: agents("done")))).not_to match(Lain::StatusFeed::Reading::UNRENDERABLE)
+      end
+
+      it "is unchanged when no agent is done" do
+        expect(hud(**warm(agents: agents("working", "idle")))).to eq(hud(**warm))
+      end
+
+      it "is unchanged when the rows are not hashes" do
+        expect(hud(**warm(agents: { "rows" => [1, nil] }))).to eq(hud(**warm))
+      end
+
+      it "is unchanged for a state published before agents existed" do
+        expect(hud(**warm(agents: nil))).to eq("🔥 fleet:2 inbox:3 ")
+      end
+    end
+
     describe ".percent" do
       it "floors and clamps to 0..100" do
         expect([0.995, 3.7, 0.384, -0.2].map { |r| described_class.percent(r) }).to eq([99, 100, 38, 0])
