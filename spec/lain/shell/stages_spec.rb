@@ -27,6 +27,19 @@ RSpec.describe Lain::Shell::Stages do
     expect(read.stages.map(&:argv)).to eq([%w[bash x.sh]])
   end
 
+  it "reads a parse a caller already holds as it reads the command" do
+    FileUtils.mkdir_p(File.join(@root, "sub"))
+    parsed = Lain::Shell::Parse.new.call("cd sub && ls")
+
+    read = described_class.from(parsed, worker_env:, resolver:)
+
+    expect(read.stages.map { [_1.argv, _1.directory] }).to eq([[%w[ls], File.join(@root, "sub")]])
+  end
+
+  it "cannot tell the stages of a parse of a command holding a NUL" do
+    expect(described_class.from(Lain::Shell::Parse.new.call("ls > a\0b"), worker_env:, resolver:)).not_to be_known
+  end
+
   it "resolves each stage where it runs, and leaves the shell's builtins out" do
     FileUtils.mkdir_p(File.join(@root, "sub"))
 

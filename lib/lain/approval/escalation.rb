@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "delegate"
 require "active_support/core_ext/object/blank"
 
 module Lain
@@ -479,6 +480,18 @@ module Lain
 
         UNREPORTED = ->(_fault) {}
 
+        # The live tool, deciding a rule's term from the gate's parse rather than parsing the input again.
+        class Parsed < SimpleDelegator
+          def initialize(tool, parsed)
+            super(tool)
+            @parsed = parsed
+          end
+
+          # @param input [Tool::Input]
+          # @return [Shell::Verdict::Decision]
+          def decision_for(input) = __getobj__.decision_for(input, parsed: @parsed)
+        end
+
         # The rules as one ladder, unpoisoned: what a rule owning an inner
         # ladder hands up, and what this rung poisons at its edge.
         #
@@ -504,8 +517,8 @@ module Lain
 
         def name = NAME
 
-        def call(effect, _context)
-          call = subject(effect)
+        def call(effect, context)
+          call = subject(effect, context)
           report = recorder(effect)
           outcome = Ladder::Poisoning.new(Rules.ladder(@rules, report:)).call(call)
           outcome.faults.each { report.call(_1) }
@@ -525,7 +538,12 @@ module Lain
 
         private
 
-        def subject(effect) = Rule::Call.for(tool: @tools.fetch(effect.name), input: effect.input)
+        def subject(effect, context)
+          tool = @tools.fetch(effect.name)
+          command = Shell::Named.field_of(effect.input, Shell::Named::COMMAND)
+          parsed = Middleware::ParsedCommand.carried(command, context) if tool.respond_to?(:decision_for)
+          Rule::Call.for(tool: parsed ? Parsed.new(tool, parsed) : tool, input: effect.input)
+        end
 
         # Stateless and per call, so two gated fibers never share one: it
         # carries this call's identity onto whatever the ladder reports. A
@@ -708,10 +726,15 @@ module Lain
           command = effect.input[@field]
           return Ruling.abstain(rung: NAME, because: NOT_A_COMMAND) unless command.is_a?(String)
 
-          judge(@verdict.call(command), effect, context)
+          judge(decided(command, context), effect, context)
         end
 
         private
+
+        def decided(command, context)
+          parsed = Middleware::ParsedCommand.carried(command, context)
+          parsed ? @verdict.of(parsed) : @verdict.call(command)
+        end
 
         def judge(decision, effect, context)
           return denied(because(decision), told: decision.reason) if decision.deny?

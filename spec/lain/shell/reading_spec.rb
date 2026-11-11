@@ -94,6 +94,15 @@ RSpec.describe Lain::Shell::Reading do
     end
   end
 
+  describe ".from" do
+    it "reads a parse a caller already holds as .of reads the command" do
+      command = "cd a && cat x | head -2"
+
+      expect(described_class.from(Lain::Shell::Parse.new.call(command), "sub"))
+        .to eq(described_class.of(command, "sub"))
+    end
+  end
+
   # Stub programs log their argv, so a real shell's own run says what the
   # reading claims runs. Pipeline stages run concurrently, hence the sort, and
   # each stub writes its line in 1 append, which no other stage's can split.

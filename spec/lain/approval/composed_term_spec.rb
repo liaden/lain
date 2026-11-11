@@ -1003,7 +1003,9 @@ RSpec.describe Lain::Approval::ComposedTerm do
     term = Lain::Shell::Term.new(pipelines: pipelines.map do |stages|
       Lain::Shell::Term::Pipeline.new(stages: stages.map { |argv| Lain::Shell::Term::Stage.new(argv:, discards: []) })
     end)
-    ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "sequence", term:) }
+    lambda do |command|
+      Lain::Shell::Verdict::Decision.new(name: :allow, reason: "sequence", term:, parse: Lain::Shell::Parse.new.call(command))
+    end
   end
 
   describe "lain's own read-only subcommands" do

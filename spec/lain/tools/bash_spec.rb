@@ -273,7 +273,10 @@ RSpec.describe Lain::Tools::Bash do
     # A verdict stand-in that abstains on everything, which is how a command the
     # real verdict would ALLOW can be run through the string arm for comparison.
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
+      lambda do |command|
+        Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE,
+                                           parse: Lain::Shell::Parse.new.call(command))
+      end
     end
 
     it "runs an allowed command as a term, with no shell process at all" do
@@ -564,7 +567,10 @@ RSpec.describe Lain::Tools::Bash do
       File.join(@tmpdir, "big.txt").tap { |path| File.write(path, "x" * (ceiling + 1024)) }
     end
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
+      lambda do |command|
+        Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE,
+                                           parse: Lain::Shell::Parse.new.call(command))
+      end
     end
 
     around do |example|
@@ -804,7 +810,10 @@ RSpec.describe Lain::Tools::Bash do
       let(:flood) { "head -c 200000000 /dev/zero | tr '\\0' a" }
       let(:as_term) do
         term = Lain::Shell::Term.of(["head", "-c", "200000000", "/dev/zero"], ["tr", "\\0", "a"])
-        ->(_command) { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:) }
+        lambda do |command|
+          Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:,
+                                             parse: Lain::Shell::Parse.new.call(command))
+        end
       end
 
       it "bounds a flood approved as a term, naming its size and exit status 0" do
@@ -823,8 +832,9 @@ RSpec.describe Lain::Tools::Bash do
         command = flooding(ceiling * 64)
         term = term_of(["head", "-c", (ceiling * 64).to_s, "/dev/zero"], ["tr", "\\0", "x"])
 
-        by_term = described_class.new(exec: term_exec, verdict: lambda { |_command|
-          Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:)
+        by_term = described_class.new(exec: term_exec, verdict: lambda { |written|
+          Lain::Shell::Verdict::Decision.new(name: :allow, reason: "approved", term:,
+                                             parse: Lain::Shell::Parse.new.call(written))
         }).call({ command: }, quiet)
         by_string = described_class.new(exec: string_exec, verdict: abstaining).call({ command: }, quiet)
 
@@ -865,7 +875,8 @@ RSpec.describe Lain::Tools::Bash do
     end
 
     it "answers from the INJECTED verdict, never one of its own" do
-      pinned = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec pins", term: term_of(%w[true]))
+      pinned = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec pins", term: term_of(%w[true]),
+                                                  parse: Lain::Shell::Parse.new.call("true"))
       tool = described_class.new(verdict: ->(_command) { pinned })
 
       expect(tool.decision_for(described_class::Input.build({ "command" => "ls -la" }))).to be(pinned)
@@ -1182,6 +1193,59 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
+    # The verdict, the stages a shell would exec and the write journal all read the gate's one parse.
+    describe "a call whose context carries the gate's parse" do
+      def parses_of(command)
+        count = 0
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, language, *rest|
+          count += 1 if language == Lain::Shell::Parse::LANGUAGE && source == command
+          original.call(source, language, *rest)
+        end
+        yield
+        count
+      end
+
+      def carrying(command, session)
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_p", name: "bash", input: { "command" => command })
+        carried = nil
+        Lain::Middleware::ParsedCommand.new.call(Lain::Middleware::Env.wrap({ effect:, context: session })) do |env|
+          (carried = env.fetch(:context)) && env
+        end
+        carried
+      end
+
+      def written = journal.events.grep(Lain::Telemetry::FileWritten)
+
+      it "parses nothing of its own, and still journals what the command wrote" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          Dir.mkdir(File.join(root, "sub"))
+          command = "cd sub && echo x > out"
+          context = carrying(command, Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h)))
+
+          parses = parses_of(command) do
+            described_class.new(journal:).call({ command: },
+                                               Lain::Tool::Invocation.new(tool_use_id: "tu_p", context:, channel:))
+          end
+
+          expect(parses).to eq(0)
+          expect(written.map(&:path)).to eq([File.join(root, "sub", "out")])
+        end
+      end
+
+      it "parses its command again when the carried parse is of another command" do
+        Dir.mktmpdir do |dir|
+          root = File.realpath(dir)
+          context = carrying("true", Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h)))
+
+          described_class.new(journal:).call({ command: "echo x > a" },
+                                             Lain::Tool::Invocation.new(tool_use_id: "tu_p", context:, channel:))
+
+          expect(written.map(&:path)).to eq([File.join(root, "a")])
+        end
+      end
+    end
+
     # The Null default: {Tools::Subagent} runs an ungated handler and this file
     # constructs the tool alone, so a build with no journal has to write nowhere
     # rather than raise or fall back to the invocation's output channel.
@@ -1198,7 +1262,10 @@ RSpec.describe Lain::Tools::Bash do
   # become text the commit can take, or a refusal that names this tool.
   describe "output bytes and the text boundary" do
     let(:abstaining) do
-      ->(_command) { Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE) }
+      lambda do |command|
+        Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "pinned", term: Lain::Shell::Term::NONE,
+                                           parse: Lain::Shell::Parse.new.call(command))
+      end
     end
 
     def committed(result) = Lain::Canonical.normalize(Lain::Tool::ResultBlock.of(result, tool_use_id: "tu_1").to_h)

@@ -34,9 +34,20 @@ module Lain
       # @param home [String, nil] what a leading `~` names
       # @return [Read, UNKNOWN]
       def of(command, worker_env:, resolver:, home: nil)
-        return UNKNOWN unless command.is_a?(String) && !command.include?(NUL)
+        return UNKNOWN unless command.is_a?(String)
 
-        placed = Named.stages(Parse.new.call(command), cwd: worker_env.cwd, home:)
+        from(Parse.new.call(command), worker_env:, resolver:, home:)
+      end
+
+      # @param result [Parse::Result] a parse a caller already holds
+      # @param worker_env [WorkerEnv] as for {.of}
+      # @param resolver [#for] as for {.of}
+      # @param home [String, nil] as for {.of}
+      # @return [Read, UNKNOWN]
+      def from(result, worker_env:, resolver:, home: nil)
+        return UNKNOWN if result.source.include?(NUL)
+
+        placed = Named.stages(result, cwd: worker_env.cwd, home:)
         placed ? Read.new(stages: exec_stages(placed, worker_env, resolver)) : UNKNOWN
       rescue SystemCallError, IOError
         UNKNOWN
@@ -46,12 +57,16 @@ module Lain
       # @param worker_env [WorkerEnv] the session's env, its cwd what the call's own `cwd` resolves against
       # @param resolver [#for]
       # @param home [String, nil]
+      # @param parsed [Parse::Result, nil] the command's parse when the caller already holds it
       # @return [Read, UNKNOWN]
-      def for_input(input, worker_env:, resolver:, home: nil)
+      def for_input(input, worker_env:, resolver:, home: nil, parsed: nil)
         directory = Named.directory_of(input, cwd: worker_env.cwd, home:) if input.is_a?(Hash)
         return UNKNOWN unless directory
 
-        of(Named.field_of(input, COMMAND), worker_env: worker_env.with(cwd: directory), resolver:, home:)
+        placed = worker_env.with(cwd: directory)
+        return from(parsed, worker_env: placed, resolver:, home:) if parsed
+
+        of(Named.field_of(input, COMMAND), worker_env: placed, resolver:, home:)
       end
 
       def exec_stages(placed, worker_env, resolver)

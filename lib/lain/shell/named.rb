@@ -65,33 +65,36 @@ module Lain
       # @param effect [Lain::Effect::ToolCall] its `cwd` field resolves against the session's
       # @param context [Object] answers `worker_env` as a session does
       # @param home [String, nil] as for {.of}
+      # @param parsed [Parse::Result, nil] the command's parse when the caller already holds it
       # @return [Named] {UNREADABLE} when the call names no command or the session's directory is not absolute;
       #   opaque when only the call's own `cwd` cannot be resolved
-      def self.for_call(effect, context, home:)
+      def self.for_call(effect, context, home:, parsed: nil)
         cwd = ::Lain::Session.cwd_of(context)
         return UNREADABLE unless cwd.is_a?(String) && cwd.start_with?("/")
 
-        for_input(effect.input, cwd:, home:)
+        for_input(effect.input, cwd:, home:, parsed:)
       end
 
       # @param input [Object] as the model sent it; only the command and `cwd` fields are read
       # @param cwd [String] absolute; the session's directory for the call
       # @param home [String, nil] as for {.of}
       # @param directory [String, nil] where the call runs, for a caller that already resolved it
+      # @param parsed [Parse::Result, nil] the command's parse when the caller already holds it
       # @return [Named] {UNREADABLE} when the input holds no command String; opaque when the
       #   directory cannot be resolved
-      def self.for_input(input, cwd:, home:, directory: directory_of(input, cwd:, home:))
+      def self.for_input(input, cwd:, home:, directory: directory_of(input, cwd:, home:), parsed: nil)
         command = field_of(input, COMMAND)
         return UNREADABLE unless command.is_a?(String)
 
-        directory ? of(command, cwd: directory, home:) : unplaced(command, home:)
+        result = parsed || Parse.new.call(command)
+        directory ? from(result, cwd: directory, home:) : unplaced(result, home:)
       end
 
       # A command whose directory cannot be resolved still names the words it
       # wrote as absolute, but a relative one lands nowhere known, so the whole
       # is opaque.
-      def self.unplaced(command, home:)
-        read = of(command, cwd: UNPLACED, home:)
+      def self.unplaced(result, home:)
+        read = from(result, cwd: UNPLACED, home:)
         new(paths: read.paths.select(&:absolute?).freeze, opaque: true)
       end
       private_class_method :unplaced

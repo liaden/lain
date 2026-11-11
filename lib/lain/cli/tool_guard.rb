@@ -502,7 +502,8 @@ module Lain
           return format(LEASED_OPAQUE, lease: @lease) if opaque?(effect, context)
 
           read = ::Lain::Shell::Stages.for_input(effect.input, worker_env: ::Lain::Session.worker_env_of(context),
-                                                               resolver: @resolver, home: @home)
+                                                               resolver: @resolver, home: @home,
+                                                               parsed: carried(effect, context))
           return format(LEASED_OPAQUE, lease: @lease) if !read.known? || @written.untellable?(read.stages)
 
           written = @written.in(read.stages)
@@ -510,6 +511,11 @@ module Lain
         end
 
         def opaque?(effect, context) = Middleware::ParsedCommand.named_in(effect, context, home: @home).opaque?
+
+        def carried(effect, context)
+          command = ::Lain::Shell::Named.field_of(effect.input, ::Lain::Shell::Named::COMMAND)
+          Middleware::ParsedCommand.carried(command, context)
+        end
 
         def outside?(effect, context)
           @sensitivity.gates?(effect, cwd: ::Lain::Session.cwd_of(context),

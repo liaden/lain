@@ -582,7 +582,7 @@ RSpec.describe Lain::Approval::Judged do
                                           chain: ["/usr/bin/make"], shadowed: [], anomalies: [], klass: :system,
                                           fresh: false, run_files: [], wrappers: [])
       told = Lain::Approval::Judge::Facts.new([stage])
-      ->(command, cwd, tool_use_id:) { asked.push([command, cwd, tool_use_id]) && told }
+      ->(command, cwd, tool_use_id:, **) { asked.push([command, cwd, tool_use_id]) && told }
     end
 
     def prompt_under(effect, **rest)
@@ -692,6 +692,35 @@ RSpec.describe Lain::Approval::Judged do
       _, pending = parked(stage(:unresolved), within: noted)
 
       expect(pending.notes).to eq(["a rung above noted this", described_class::RESOLVED_BAR, "make: not resolved"])
+    end
+
+    it "builds a bash call's facts from the parse the stack carried, so the call is parsed once" do
+      Dir.mktmpdir("lain-judged-parse") do |dir|
+        project = File.realpath(dir)
+        stages = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home: File.join(project, "home"), cwd: project, root: project,
+          resolver: Lain::Shell::Executable::Resolver.new(root: project, fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                                          host_env: {}),
+          worker_env: Lain::WorkerEnv.new(cwd: project, env: { "PATH" => "/usr/bin" })
+        )
+        facts = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:)
+        command = "cat README.md | head -5"
+        effect = bash(command, "cwd" => project)
+        scripted = answering("approve")
+        parses = 0
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
+          parses += 1 if source == command
+          original.call(source, *rest)
+        end
+
+        ruling = Lain::Middleware::ParsedCommand.new.call(Lain::Middleware::Env.wrap({ effect:, context: })) do |env|
+          env.merge(result: ruled(rung(scripted, facts:), effect, within: env.fetch(:context)))
+        end.fetch(:result)
+
+        expect([ruling.verdict, ruling.rung]).to eq([:allow, "auto"])
+        expect(scripted.prompts.sole.lines.map(&:chomp)).to include("cat -> /usr/bin/cat [system]")
+        expect(parses).to eq(1)
+      end
     end
 
     it "hands a planted cat down unasked, through the session's real resolver" do

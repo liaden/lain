@@ -862,6 +862,51 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  # The gate's one parse rides on the context, so neither rung below it parses the command again.
+  describe "a context carrying the gate's parse" do
+    let(:command) { "cat README.md | head -20" }
+    let(:call) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command }) }
+    let(:carried) do
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: "/srv/project", env: {}))
+      held = nil
+      Lain::Middleware::ParsedCommand.new.call(Lain::Middleware::Env.wrap({ effect: call, context: session })) do |env|
+        (held = env.fetch(:context)) && env
+      end
+      held
+    end
+
+    def parses_during
+      carried
+      count = 0
+      allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
+        count += 1 if source == command
+        original.call(source, *rest)
+      end
+      yield
+      count
+    end
+
+    it "hands the rules the term of the carried parse" do
+      rule = EscalationSpecSupport::Capturing.new
+      term = nil
+      parses = parses_during do
+        ladder(rules_rung(rule)).call(call, carried)
+        term = rule.seen.term
+      end
+
+      expect(term).to eq(Lain::Shell::Term.of(%w[cat README.md], %w[head -20]))
+      expect(parses).to eq(0)
+    end
+
+    it "triages the carried parse" do
+      parses = parses_during { ladder(described_class::Triage.new).call(call, carried) }
+
+      expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain")
+      expect(rulings.first["reason"]).to include("shell verdict allow")
+      expect(parses).to eq(0)
+    end
+  end
+
   # The MEASURED table: Rule::Call.for is not total, and a rescue list is
   # not a substitute for a total classifier.
   describe "the rules rung, over a rule that breaks" do
@@ -1174,8 +1219,9 @@ RSpec.describe Lain::Approval::Escalation do
     # not refused here; the verdict's abstention still sends it to a human.
     it "treats a tilde word as written-as-a-path even with no separator in it" do
       denied = Lain::Sensitivity::Rules.from({ "denied" => [File.basename(home)] })
-      allowing = lambda do |_command|
-        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows", term: Lain::Shell::Term.of(%w[cat ~]))
+      allowing = lambda do |command|
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec allows", term: Lain::Shell::Term.of(%w[cat ~]),
+                                           parse: Lain::Shell::Parse.new.call(command))
       end
       policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: base), home:)
 
@@ -1224,8 +1270,9 @@ RSpec.describe Lain::Approval::Escalation do
     # that skipped its absolute words would turn a deny into an approval.
     describe "a doubted command whose cwd cannot be resolved, under bypass" do
       let(:doubting) do
-        lambda do |_command|
-          Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "spec doubts", term: Lain::Shell::Verdict::NO_TERM)
+        lambda do |command|
+          Lain::Shell::Verdict::Decision.new(name: :abstain, reason: "spec doubts", term: Lain::Shell::Verdict::NO_TERM,
+                                             parse: Lain::Shell::Parse.new.call(command))
         end
       end
 

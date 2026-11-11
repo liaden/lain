@@ -44,6 +44,21 @@ RSpec.describe Lain::Approval::Judge::Facts do
                   "cat -> #{root}/tools/cat [project; unchanged since before session; shadows /usr/bin/cat]")
   end
 
+  it "reads the parse the gate carried rather than parsing the command again" do
+    command = "cat README.md | head -5"
+    parsed = Lain::Shell::Parse.new.call(command)
+    parses = 0
+    allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
+      parses += 1 if source == command
+      original.call(source, *rest)
+    end
+    facts = described_class::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:)
+                                      .call(command, root, parsed:)
+
+    expect(lines_of(facts)).to include("cat -> /usr/bin/cat [system]", "head -> /usr/bin/head [system]")
+    expect(parses).to eq(0)
+  end
+
   it "names a system stage by the file that runs" do
     expect(lines_of(facts_of("cat README.md | head -5"))).to include("cat -> /usr/bin/cat [system]",
                                                                      "head -> /usr/bin/head [system]")

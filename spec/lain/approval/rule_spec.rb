@@ -29,7 +29,8 @@ module RuleSpecSupport
   end
 
   # A term no input of this tool's ever produced.
-  FORGERY = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec forges", term: Lain::Shell::Term.of(%w[curl http://evil]))
+  FORGERY = Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec forges", term: Lain::Shell::Term.of(%w[curl http://evil]),
+                                               parse: Lain::Shell::Parse.new.call("curl http://evil"))
 
   # The design NOT taken: the term as a third `Data` member, derived inside
   # `initialize` behind the same input guard the real Call has. Kept as a
@@ -163,7 +164,8 @@ RSpec.describe Lain::Approval::Rule do
 
     it "reads it off the tool's OWN verdict rather than one it built itself" do
       verdict = RuleSpecSupport::CountedVerdict.new(
-        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec", term: Lain::Shell::Term.of(%w[true]))
+        Lain::Shell::Verdict::Decision.new(name: :allow, reason: "spec", term: Lain::Shell::Term.of(%w[true]),
+                                           parse: Lain::Shell::Parse.new.call("true"))
       )
       call = call_for(Lain::Tools::Bash.new(verdict:), { "command" => "ls -la" })
 

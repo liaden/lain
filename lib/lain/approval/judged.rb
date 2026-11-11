@@ -202,7 +202,7 @@ module Lain
       #   settle it: {Escalation::Surfaces}, or {Unattended}
       # @param journal [#<<]
       # @param display [#<<] told a {Telemetry::JudgeRuled} for each call the judge approves or denies
-      # @param facts [#call] `(command, cwd, tool_use_id:) -> Judge::Facts` for a bash call; none by default
+      # @param facts [#call] `(command, cwd, tool_use_id:, parsed:) -> Judge::Facts` for a bash call; none by default
       # @param request [#call] `context -> Judge::Request or nil`, what the call was made for; none by default
       # @param denials [DenialBreaker, DenialBreaker::Unbroken] what a judge's deny does; applied by default
       # @param masks [Judgement::Masking, Judgement::Unmasked] the sandbox a call the judge approves runs under
@@ -399,7 +399,8 @@ module Lain
         cwd = command_cwd(effect, context)
         return Judge::Facts::NONE unless effect.name == BASH && command.is_a?(String) && cwd
 
-        @facts.call(command, cwd, tool_use_id: effect.tool_use_id)
+        @facts.call(command, cwd, tool_use_id: effect.tool_use_id,
+                                  parsed: ::Lain::Middleware::ParsedCommand.carried(command, context))
       end
 
       # @return [Array<Array(String, Boolean)>] each path, and whether the call writes it

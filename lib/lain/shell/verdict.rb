@@ -143,8 +143,10 @@ module Lain
       NO_TERM = Term::NONE
 
       # A verdict, and the term it authorises. `term` is empty on anything but an
-      # allow -- a Null Object, so no caller writes `if decision.term`.
-      Decision = Data.define(:name, :reason, :term) do
+      # allow -- a Null Object, so no caller writes `if decision.term`. `parse`
+      # is the reading it was judged from, so a reader of an abstention reads
+      # the same one rather than parsing again.
+      Decision = Data.define(:name, :reason, :term, :parse) do
         def allow? = name == :allow
         def deny? = name == :deny
         def abstain? = name == :abstain
@@ -174,7 +176,11 @@ module Lain
 
       # @param command [String]
       # @return [Decision]
-      def call(command) = judge(@parse.call(command))
+      def call(command) = of(@parse.call(command))
+
+      # @param result [Parse::Result] a parse a caller already holds
+      # @return [Decision] carrying `result` as its parse
+      def of(result) = judge(result)
 
       # @param redirect [Parse::Redirect]
       # @return [Array<Symbol>] the streams its descriptor and operator would
@@ -197,10 +203,10 @@ module Lain
       def judge(result)
         doubts = Doubts.new(result, @tilde)
         excluded = excluded_programs(result, doubts)
-        return deny(excluded) unless excluded.empty?
+        return deny(excluded, result) unless excluded.empty?
 
         causes = doubts.causes
-        causes.empty? ? allow(result) : abstain(causes)
+        causes.empty? ? allow(result) : abstain(causes, result)
       end
 
       # Gated on `covered?`, because a denial names a program, and a parse that
@@ -216,7 +222,7 @@ module Lain
       end
 
       def allow(result)
-        Decision.new(name: :allow, reason: ALLOWED, term: Term.new(pipelines: pipelines(result)))
+        Decision.new(name: :allow, reason: ALLOWED, term: Term.new(pipelines: pipelines(result)), parse: result)
       end
 
       # By byte position, because the stage and separator lists are ordered
@@ -234,12 +240,13 @@ module Lain
                         discards: stage.redirects.flat_map { |redirect| Verdict.discarded(redirect) })
       end
 
-      def deny(excluded)
-        Decision.new(name: :deny, reason: Doubts.sentence(EXCLUDED, excluded), term: NO_TERM)
+      def deny(excluded, result)
+        Decision.new(name: :deny, reason: Doubts.sentence(EXCLUDED, excluded), term: NO_TERM, parse: result)
       end
 
-      def abstain(causes)
-        Decision.new(name: :abstain, reason: "#{NOT_UNDERSTOOD}#{causes.join("; ")}".freeze, term: NO_TERM)
+      def abstain(causes, result)
+        Decision.new(name: :abstain, reason: "#{NOT_UNDERSTOOD}#{causes.join("; ")}".freeze, term: NO_TERM,
+                     parse: result)
       end
 
       # One {Parse::Result}, read for everything about it this layer cannot say

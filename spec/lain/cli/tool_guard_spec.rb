@@ -1748,6 +1748,26 @@ RSpec.describe Lain::CLI::ToolGuard do
         end
       end
 
+      it "refuses a command whose words it cannot tell from the parse the stack carries, parsing nothing again" do
+        file("lib/a.rb", "1\n")
+        command = "ls lib/**/*.rb"
+        effect = bash_call(command)
+        carried = nil
+        env = Lain::Middleware::Env.wrap({ effect:, context: leased_context })
+        Lain::Middleware::ParsedCommand.new.call(env) { |inner| (carried = inner.fetch(:context)) && inner }
+        parses = 0
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, source, *rest|
+          parses += 1 if source == command
+          original.call(source, *rest)
+        end
+
+        ruling = policy_over([]).rule(effect, carried)
+
+        expect(ruling).to have_attributes(deny?: true, final?: true, rung: "lease")
+        expect(ruling.told).to include("paths cannot be read")
+        expect(parses).to eq(0)
+      end
+
       it "leaves a written file free to a program that does not run it, whatever its words name" do
         policy = policy_over([file("add_loop.sh"), file("notes.txt", "ruby\n")])
 

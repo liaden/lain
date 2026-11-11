@@ -12,6 +12,19 @@ RSpec.describe Lain::Shell::Verdict do
 
   def reason_for(command) = decide(command).reason
 
+  describe "a Decision" do
+    it "carries the parse it was judged from" do
+      command = "ls -la"
+
+      expect(decide(command).parse).to eq(parse.call(command))
+    end
+
+    it "cannot be built without the parse it was judged from" do
+      expect { Lain::Shell::Verdict::Decision.new(name: :allow, reason: "r", term: Lain::Shell::Term::NONE) }
+        .to raise_error(ArgumentError, /parse/)
+    end
+  end
+
   describe "a fully literal command" do
     let(:decision) { decide("ls -la") }
 

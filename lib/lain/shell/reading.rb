@@ -36,9 +36,13 @@ module Lain
       # @return [Array(Term, String), nil] the term and the cwd its stages run
       #   in, the call's own when no `cd` moved it, or nil for a command this
       #   cannot read for certain
-      def self.of(command, cwd)
-        result = Parse.new.call(command) if command.is_a?(String)
-        argvs = result.stages.map { |stage| words(stage.argv) } if result && literal?(result)
+      def self.of(command, cwd) = command.is_a?(String) ? from(Parse.new.call(command), cwd) : nil
+
+      # @param result [Parse::Result] a parse a caller already holds
+      # @param cwd [String, nil] the call's own
+      # @return [Array(Term, String), nil] as for {.of}
+      def self.from(result, cwd)
+        argvs = result.stages.map { |stage| words(stage.argv) } if literal?(result)
         new(argvs, joins(result), cwd).read if argvs&.all?
       end
 

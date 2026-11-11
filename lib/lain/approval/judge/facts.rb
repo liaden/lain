@@ -107,9 +107,10 @@ module Lain
           # @param command [String]
           # @param cwd [String] absolute; where the command runs
           # @param tool_use_id [String, nil] the call's, so a fault joins its ruling
+          # @param parsed [Shell::Parse::Result, nil] the gate's parse of the command, judged rather than parsing again
           # @return [Facts]
-          def call(command, cwd, tool_use_id: nil)
-            decision = @verdict.call(command)
+          def call(command, cwd, tool_use_id: nil, parsed: nil)
+            decision = parsed ? @verdict.of(parsed) : @verdict.call(command)
             # An interpreter stage reaches the judge, but the Verdict names no program for it, so it stays unresolved.
             # A runner never reaches the judge, as Named reads it as opaque; wrapper facts come with changing that.
             return unresolved(command) unless decision.allow?

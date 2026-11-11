@@ -284,11 +284,13 @@ module Lain
       # would dispatch -- so the term a rule judges and the term {#perform}
       # hands the backend come from ONE {Shell::Verdict} asked twice, which is
       # frozen and pure, rather than from two whose agreement nothing enforces.
-      # Nothing is threaded in, and no second verdict is built.
+      # The gate's parse may be threaded in, so the term a rule judges comes
+      # from the same parse the tool runs on.
       #
       # @param input [Input] a validated input for this tool
+      # @param parsed [Shell::Parse::Result, nil] the gate's parse of the command, judged in place of parsing it again
       # @return [Shell::Verdict::Decision] the arm, its reason, and the term
-      def decision_for(input) = @verdict.call(input.command)
+      def decision_for(input, parsed: nil) = decided(input.command, parsed)
 
       protected
 
@@ -313,15 +315,19 @@ module Lain
       private
 
       def ran(input, invocation, pending)
-        decision = @verdict.call(input.command)
+        command = input.command
+        decision = decided(command, Middleware::ParsedCommand.carried(command, invocation.context))
+        parse = decision.parse
         arm = arm_for(decision)
         journal_arm(decision, arm, invocation)
         options = runtime(input, invocation, pending)
-        confinement = journalled_confinement(input.command, decision, invocation, options[:cwd], arm)
-        run_journalling_writes(input.command, options, invocation) do
-          executed(on_arm(arm, input.command, decision), confinement, options)
+        confinement = journalled_confinement(parse, decision, invocation, options[:cwd], arm)
+        run_journalling_writes(parse, options, invocation) do
+          executed(on_arm(arm, command, decision), confinement, options)
         end
       end
+
+      def decided(command, parsed) = parsed ? @verdict.of(parsed) : @verdict.call(command)
 
       # A layer that decides whether a spill may be kept is handed it, and the
       # result names the pending file until that layer settles it; with no
@@ -379,9 +385,9 @@ module Lain
                                                arm:, reason: decision.reason, term: decision.term))
       end
 
-      def journalled_confinement(command, decision, invocation, cwd, arm)
-        parsed = parsed_stages(command, decision, invocation, cwd)
-        stages = journal_resolution(command, decision, invocation, cwd, arm, parsed:)
+      def journalled_confinement(parse, decision, invocation, cwd, arm)
+        parsed = parsed_stages(parse, decision, invocation, cwd)
+        stages = journal_resolution(parse.source, decision, invocation, cwd, arm, parsed:)
         shadows = SessionShadows.new(session_of(invocation).worker_env.with(cwd:))
         confinement_for(shadows.over(stages), invocation, cwd, argv_on(arm, decision),
                         grants: shadows.over(parsed&.map(&:executable) || []))
@@ -401,11 +407,11 @@ module Lain
         stages
       end
 
-      # Only a command the verdict did not allow reaches a shell that reads it, so only its stages are parsed.
-      def parsed_stages(command, decision, invocation, cwd)
+      # Only a command the verdict did not allow reaches a shell that reads it, so only its stages are read.
+      def parsed_stages(parse, decision, invocation, cwd)
         return if decision.allow?
 
-        Parsed.new(resolver: @resolver, worker_env: session_of(invocation).worker_env.with(cwd:)).of(command)
+        Parsed.new(resolver: @resolver, worker_env: session_of(invocation).worker_env.with(cwd:)).of(parse)
       end
 
       def recorded(parsed, stages, arm)
@@ -438,16 +444,16 @@ module Lain
       # Stats after the call, timeout included: a killed command may already
       # have truncated its target.
       #
-      # @param command [String] the command as the model wrote it
+      # @param parse [Shell::Parse::Result] the command as the model wrote it, parsed
       # @param options [Hash] the spawn options the command runs under
       # @param invocation [Lain::Tool::Invocation] the call being journalled
       # @option options [String] :cwd the directory the command runs in
       # @option options [Hash] :env the child's environment, whose HOME places a `~` word
-      def run_journalling_writes(command, options, invocation)
+      def run_journalling_writes(parse, options, invocation)
         paths = []
         before = {}
         home = options[:env].to_h["HOME"]
-        paths = Shell::Named.of(command, cwd: options[:cwd], home:).written.map(&:resolved).uniq
+        paths = Shell::Named.from(parse, cwd: options[:cwd], home:).written.map(&:resolved).uniq
         before = paths.to_h { |path| [path, identity(path)&.last] }
         yield
       ensure
@@ -561,11 +567,11 @@ module Lain
         # whose stages cannot be told leaves the record it would have had
         # without the parse, and grants nothing.
         #
-        # @param command [String]
+        # @param parse [Shell::Parse::Result]
         # @return [Array<Shell::Stages::Stage>, nil] one per stage a shell would
         #   exec, builtins left out; nil when its stages cannot be told
-        def of(command)
-          read = Shell::Stages.of(command, worker_env: @worker_env, resolver: @resolver)
+        def of(parse)
+          read = Shell::Stages.from(parse, worker_env: @worker_env, resolver: @resolver)
           read.stages if read.known?
         end
 

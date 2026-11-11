@@ -1453,7 +1453,7 @@ module Lain
         decision = call.tool.decision_for(call.input)
         return [decision.term, call.input.cwd] if decision.allow?
 
-        Shell::Reading.of(call.input.command, call.input.cwd) if decision.abstain?
+        Shell::Reading.from(decision.parse, call.input.cwd) if decision.abstain?
       end
 
       # THE CONJUNCTION. Each predicate is total over a term by itself, so the
