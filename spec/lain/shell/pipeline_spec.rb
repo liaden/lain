@@ -762,7 +762,22 @@ RSpec.describe Lain::Shell::Pipeline do
   describe "a stop from outside" do
     # The kernel's own list, so the spec names the stage's group without
     # reaching into how the runner spawned it.
-    def children = Dir["/proc/self/task/*/children"].flat_map { |path| File.read(path).split.map(&:to_i) }
+    def children(paths = Dir["/proc/self/task/*/children"])
+      paths.flat_map do |path|
+        File.read(path).split.map(&:to_i)
+      rescue Errno::ENOENT
+        [] # the task exited between the glob and the read
+      end
+    end
+
+    it "lists the children of the tasks still alive when another task exited before its file was read" do
+      Dir.mktmpdir do |dir|
+        alive = File.join(dir, "alive")
+        File.write(alive, "12 34\n")
+
+        expect(children([File.join(dir, "exited"), alive])).to eq([12, 34])
+      end
+    end
 
     def group_gone?(group)
       Process.kill(0, -group)
