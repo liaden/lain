@@ -224,6 +224,17 @@ RSpec.describe Lain::CLI::Up do
       expect(eval_status_job(status_right)).to eq("lain: no state yet")
     end
 
+    it "creates its own session rather than attaching to one it is a prefix of" do
+      system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "#{session}-old", "-x", "80", "-y",
+             "24")
+
+      report = up.call
+
+      expect(report.created).to be true
+      names = tmux("list-sessions", "-F", "\#{session_name}").lines.map(&:strip)
+      expect(names).to contain_exactly("#{session}-old", session)
+    end
+
     it "turns mouse mode on for the session only" do
       system("tmux", "-L", socket, "-f", File::NULL, "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")
       before = tmux("show-options", "-g", "mouse")
@@ -353,7 +364,7 @@ RSpec.describe Lain::CLI::Up do
                                  shell_out_factory: mute_probe, chat_preflight: no_preflight)
                             .launch_plan(nested: false)
 
-      expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
+      expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", "=#{session}:"])
     end
 
     # Opening the window before putting the command in it costs the property
@@ -578,7 +589,7 @@ RSpec.describe Lain::CLI::Up do
         expect(session_count).to eq(1)
         expect(plan.messages.reject { |message| message.include?("extended-keys") })
           .to eq(["HUD state: #{state_path}", "created tmux session '#{session}'"])
-        expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
+        expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", "=#{session}:"])
       end
     end
 
@@ -646,7 +657,8 @@ RSpec.describe Lain::CLI::Up do
       # the only thing that reproduces the redistribution. The pty is ours, so
       # its TERM is too: a client refuses to start without one, and CI sets none.
       def attached(rows)
-        reader, writer, pid = PTY.spawn({ "TERM" => "xterm-256color" }, "tmux", "-L", socket, "attach", "-t", session)
+        reader, writer, pid = PTY.spawn({ "TERM" => "xterm-256color" }, "tmux", "-L", socket, "attach", "-t",
+                                        "=#{session}:")
         writer.winsize = [rows, 100]
         laid_out(rows)
         yield(writer)
@@ -919,7 +931,7 @@ RSpec.describe Lain::CLI::Up do
                                    chat_preflight: no_preflight).launch_plan(nested: false)
 
         expect(plan.messages.first).to include("no keyboard").and include("the input pane refused")
-        expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", session])
+        expect(plan.argv).to eq(["tmux", "-L", socket, "attach", "-t", "=#{session}:"])
       end
 
       # A reattach cannot build the cockpit, so it has to SAY the editor is
@@ -1015,20 +1027,20 @@ RSpec.describe Lain::CLI::Up do
     it "attaches when the caller is not already inside a tmux client" do
       up = described_class.new(session: "lain", socket: nil, state_path: "/irrelevant")
 
-      expect(up.attach_command(nested: false)).to eq(%w[tmux attach -t lain])
+      expect(up.attach_command(nested: false)).to eq(%w[tmux attach -t =lain:])
     end
 
     it "switch-clients instead of attaching when the caller is already inside tmux" do
       up = described_class.new(session: "lain", socket: nil, state_path: "/irrelevant")
 
-      expect(up.attach_command(nested: true)).to eq(%w[tmux switch-client -t lain])
+      expect(up.attach_command(nested: true)).to eq(%w[tmux switch-client -t =lain:])
     end
 
     it "threads the socket flag through either verb" do
       up = described_class.new(session: "lain", socket: "lain-socket", state_path: "/irrelevant")
 
-      expect(up.attach_command(nested: false)).to eq(%w[tmux -L lain-socket attach -t lain])
-      expect(up.attach_command(nested: true)).to eq(%w[tmux -L lain-socket switch-client -t lain])
+      expect(up.attach_command(nested: false)).to eq(%w[tmux -L lain-socket attach -t =lain:])
+      expect(up.attach_command(nested: true)).to eq(%w[tmux -L lain-socket switch-client -t =lain:])
     end
   end
 
@@ -1099,8 +1111,8 @@ RSpec.describe Lain::CLI::Up do
       switch_plan = described_class.new(session: "lain", state_path:,
                                         shell_out_factory: always_ok).launch_plan(nested: true)
 
-      expect(attach_plan.argv).to eq(%w[tmux attach -t lain])
-      expect(switch_plan.argv).to eq(%w[tmux switch-client -t lain])
+      expect(attach_plan.argv).to eq(%w[tmux attach -t =lain:])
+      expect(switch_plan.argv).to eq(%w[tmux switch-client -t =lain:])
     end
   end
 
@@ -1962,7 +1974,7 @@ RSpec.describe Lain::CLI::Up do
 
       plan = launch(calls, probe_exit: 1)
 
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
     end
 
     # The window is no longer a name for the chat pane: tmux resolves a window
@@ -1983,7 +1995,7 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       plan = launch(calls, dead: "0 ")
 
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
       expect(probe_call(calls)).not_to be_nil
     end
 
@@ -1996,7 +2008,7 @@ RSpec.describe Lain::CLI::Up do
       plan = launch(calls, session_exists: true)
 
       expect(probe_call(calls)).to be_nil
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
     end
 
     # `Tmux#run` turns only Errno::ENOENT into a named Lain error, so every
@@ -2010,7 +2022,7 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       plan = launch(calls, raises: "display-message")
 
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
       expect(capture_call(calls)).to be_nil
     end
 
@@ -2027,7 +2039,7 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       plan = launch(calls, probe_exit: 1, dead: "")
 
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
       expect(capture_call(calls)).to be_nil
     end
 
@@ -2142,7 +2154,7 @@ RSpec.describe Lain::CLI::Up do
       plan = launch(calls, dead: "0 ", input_dead: "1 1")
 
       expect(plan.messages.first).to include("no keyboard")
-      expect(plan.argv).to eq(%w[tmux attach -t lain])
+      expect(plan.argv).to eq(%w[tmux attach -t =lain:])
     end
 
     # The clean end of the spectrum: neither pane died, so neither corpse has
@@ -2576,9 +2588,9 @@ RSpec.describe Lain::CLI::Up do
 
       cockpit_up(calls, nvim: "/x/explicit.sock").call
 
-      expect(calls).to include(["tmux", "set-option", "-t", "lain", "@lain_chat_pane", "%1"])
-        .and include(["tmux", "set-option", "-t", "lain", "@lain_input_pane", "%2"])
-        .and include(["tmux", "set-option", "-t", "lain", "@lain_editor_pane", "%0"])
+      expect(calls).to include(["tmux", "set-option", "-t", "=lain:", "@lain_chat_pane", "%1"])
+        .and include(["tmux", "set-option", "-t", "=lain:", "@lain_input_pane", "%2"])
+        .and include(["tmux", "set-option", "-t", "=lain:", "@lain_editor_pane", "%0"])
     end
 
     # A window lain built with no editor says so, rather than saying nothing:
@@ -2589,7 +2601,7 @@ RSpec.describe Lain::CLI::Up do
 
       cockpit_up(calls, nvim: "", binaries: { "nvim" => false }).call
 
-      expect(calls).to include(["tmux", "set-option", "-t", "lain", "@lain_editor_pane",
+      expect(calls).to include(["tmux", "set-option", "-t", "=lain:", "@lain_editor_pane",
                                 described_class::Panes::NO_EDITOR])
     end
 
@@ -2606,7 +2618,7 @@ RSpec.describe Lain::CLI::Up do
       seated = format(described_class::Panes::SEAT_INPUT, input: "%2", rows: described_class::INPUT_PANE_HEIGHT,
                                                           too_short: described_class::SEATED_WINDOW_HEIGHT - 1)
 
-      expect(calls).to include(["tmux", "set-hook", "-t", "lain", "window-layout-changed", seated])
+      expect(calls).to include(["tmux", "set-hook", "-t", "=lain:", "window-layout-changed", seated])
     end
 
     # The guard is the degrade: a window too short to seat both panes is left
@@ -2639,7 +2651,7 @@ RSpec.describe Lain::CLI::Up do
       cockpit_up(calls, nvim: "/x/explicit.sock").call
 
       expect(calls).to include(["tmux", "set-option", "-p", "-t", "%1", "remain-on-exit", "on"])
-        .and include(["tmux", "set-hook", "-t", "lain", "client-attached",
+        .and include(["tmux", "set-hook", "-t", "=lain:", "client-attached",
                       format(described_class::Panes::RELEASE_CHAT, chat: "%1")])
     end
 
@@ -2773,7 +2785,7 @@ RSpec.describe Lain::CLI::Up do
 
       reattaching_up(calls, pane_ids: %w[%0 %1 %2], recorded: %w[%1 %2 %0]).call
 
-      expect(calls).to include(["tmux", "set-hook", "-t", "lain", "client-attached",
+      expect(calls).to include(["tmux", "set-hook", "-t", "=lain:", "client-attached",
                                 format(described_class::Panes::RELEASE_CHAT, chat: "%1")])
       expect(calls.find { |args| args.include?("window-layout-changed") }.last).to include("-t %2")
     end
@@ -3769,7 +3781,7 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
 
   def new_windows = calls.select { |args| args.include?("new-window") }
 
-  def relay_command = calls.find { |args| args.include?("respawn-pane") && args.include?("lain:relay") }.last
+  def relay_command = calls.find { |args| args.include?("respawn-pane") && args.include?("=lain:relay") }.last
 
   def relay_argv = Shellwords.split(relay_command.split(" || ").first)
 
@@ -3783,13 +3795,13 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
 
       window = new_windows.sole
       expect(window).to include("-d", "-n", "relay")
-      expect(window.each_cons(2).to_a).to include(["-t", "lain:"])
+      expect(window.each_cons(2).to_a).to include(["-t", "=lain:"])
     end
 
     it "keeps a dead relay's screen, as the chat pane does" do
       up_with(relay).call
 
-      expect(calls).to include(["tmux", "set-option", "-w", "-t", "lain:relay", "remain-on-exit", "failed"])
+      expect(calls).to include(["tmux", "set-option", "-w", "-t", "=lain:relay", "remain-on-exit", "failed"])
     end
 
     it "gives the relay the lain-side socket, the devices file and the listen address" do

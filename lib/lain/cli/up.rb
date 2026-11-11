@@ -367,12 +367,15 @@ module Lain
           @window = window
         end
 
+        # `=` matches the session name exactly, not as a prefix; the colon stops set-option reading it as a pane.
+        def target = "=#{@session}:"
+
         # @param chat [String] the chat pane's id
         # @param input [String] the input pane's id
         # @param editor [String] the editor pane's id, or {NO_EDITOR}
         def record(chat:, input:, editor:)
           { CHAT => chat, INPUT => input, EDITOR => editor }
-            .each { |name, id| @tmux.act("set-option", "-t", @session, name, id) }
+            .each { |name, id| @tmux.act("set-option", "-t", target, name, id) }
           enforce(chat:, input:)
         end
 
@@ -408,7 +411,7 @@ module Lain
           return "no cockpit recorded in tmux session #{@session}; input pane not adopted" if option(INPUT).empty?
           return if live.include?(option(INPUT))
 
-          @tmux.act("set-option", "-t", @session, INPUT, pane_id)
+          @tmux.act("set-option", "-t", target, INPUT, pane_id)
           rearm
           nil
         end
@@ -450,13 +453,13 @@ module Lain
         # a format comparison or a pane-scoped option must lose the nicety
         # rather than the cockpit.
         def arm(recipe, event, **fields)
-          @tmux.run("set-hook", "-t", @session, event, format(recipe, **fields))
+          @tmux.run("set-hook", "-t", target, event, format(recipe, **fields))
         end
 
         # tmux exits nonzero on a user option nobody ever set, which is the
         # ordinary answer here rather than a failure -- hence {Tmux#run}.
         def option(name)
-          answer = @tmux.run("show-options", "-v", "-t", @session, name)
+          answer = @tmux.run("show-options", "-v", "-t", target, name)
           Shell::Out.ok?(answer) ? answer.stdout.strip : ""
         end
 
@@ -1453,13 +1456,13 @@ module Lain
       # @param nested [Boolean] true when the calling shell is itself an
       #   attached tmux client
       # @return [Array<String>] argv for Kernel.exec
-      def attach_command(nested:) = @tmux.argv(nested ? "switch-client" : "attach", "-t", @session)
+      def attach_command(nested:) = @tmux.argv(nested ? "switch-client" : "attach", "-t", target)
 
       private
 
       # The one query that TOLERATES a nonzero exit: "no such session" is the
       # expected, non-error answer that drives #call into #create_session.
-      def session_exists? = Shell::Out.ok?(@tmux.run("has-session", "-t", @session))
+      def session_exists? = Shell::Out.ok?(@tmux.run("has-session", "-t", target))
 
       # `@chat_args` is the exe's `-- ARGS` capture: chat's own flags to
       # validate, never Up's. The recipe only escapes each one for the shell
@@ -1590,7 +1593,7 @@ module Lain
         open_relay_window
         watch_panes(chat:, input:)
       rescue StandardError
-        @tmux.run("kill-session", "-t", @session)
+        @tmux.run("kill-session", "-t", target)
         raise
       end
 
@@ -1603,10 +1606,10 @@ module Lain
         @warnings.concat(launch.warnings)
         return unless launch.command
 
-        target = "#{@session}:#{Relay::WINDOW}"
-        @tmux.act("new-window", "-d", "-t", "#{@session}:", "-n", Relay::WINDOW, "-c", @cwd)
-        @tmux.run("set-option", "-w", "-t", target, "remain-on-exit", "failed")
-        @tmux.act("respawn-pane", "-k", "-t", target, "-c", @cwd, launch.command)
+        relay_pane = "=#{@session}:#{Relay::WINDOW}"
+        @tmux.act("new-window", "-d", "-t", target, "-n", Relay::WINDOW, "-c", @cwd)
+        @tmux.run("set-option", "-w", "-t", relay_pane, "remain-on-exit", "failed")
+        @tmux.act("respawn-pane", "-k", "-t", relay_pane, "-c", @cwd, launch.command)
         @warnings << launch.note
       end
 
@@ -1619,7 +1622,7 @@ module Lain
       def run_chat(chat, cockpit)
         @tmux.run("set-option", "-p", "-t", chat, "remain-on-exit", "on")
         flags = cockpit ? @cockpit.chat_flags : []
-        @tmux.act("set-option", "-t", @session, ChatRestart::FRESH,
+        @tmux.act("set-option", "-t", target, ChatRestart::FRESH,
                   chat_pane_command(flags, FreshChatArgs.call(@chat_args)))
         @tmux.act("respawn-pane", "-k", "-t", chat, "-c", @cwd, chat_pane_command(flags))
       end
@@ -1748,11 +1751,11 @@ module Lain
       def record_herdr_pane(env, nested)
         return if nested
 
-        target = Herdr::Target.from_env(env)
-        if target
-          @tmux.act("set-option", "-t", @session, Herdr::Target::OPTION, target.to_option)
+        herdr = Herdr::Target.from_env(env)
+        if herdr
+          @tmux.act("set-option", "-t", target, Herdr::Target::OPTION, herdr.to_option)
         else
-          @tmux.run("set-option", "-u", "-t", @session, Herdr::Target::OPTION)
+          @tmux.run("set-option", "-u", "-t", target, Herdr::Target::OPTION)
         end
       end
 
@@ -1803,9 +1806,12 @@ module Lain
       # #act.
       def keep_failed_pane = @tmux.run("set-window-option", "-t", chat_target, "remain-on-exit", "failed")
 
-      def chat_target = "#{@session}:#{CHAT_WINDOW}"
+      def chat_target = "=#{@session}:#{CHAT_WINDOW}"
 
-      def set_option(name, value) = @tmux.act("set-option", "-t", @session, name, value)
+      # `=` matches the session name exactly, not as a prefix; the colon stops set-option reading it as a pane.
+      def target = "=#{@session}:"
+
+      def set_option(name, value) = @tmux.act("set-option", "-t", target, name, value)
     end
   end
 end
