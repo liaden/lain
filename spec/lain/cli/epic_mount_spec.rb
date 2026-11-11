@@ -568,6 +568,33 @@ RSpec.describe Lain::CLI::EpicMount do
         expect(result.content).to include("a1", "reopened by this edit", "wave 1")
       end
 
+      it "parks the issue again when epic.md is rewritten with its criteria changed" do
+        create_epic("alpha")
+        approve_in_another_session("alpha")
+        criteria = "```gherkin\nScenario: nobody approved this\n  Given a change\n```\n"
+        graph = bare_home("alpha").read_epic
+        edited = Lain::Epic::Graph.new(issues: graph.issues.map { _1.id == "a1" ? _1.with(criteria:) : _1 })
+
+        result = epic_write(mount_for).call({ "slug" => "alpha", "artifact" => "epic",
+                                              "content" => Lain::Epic::Document.to_markdown(edited) }, invocation)
+
+        expect(reopen_records).to contain_exactly(a_hash_including("policy" => "deferred", "issue_id" => "a1"))
+        expect(result.content).to include("issue a1", "reopened by this edit", "wave 1")
+      end
+
+      it "reopens nothing when epic.md is rewritten with only statuses changed" do
+        create_epic("alpha")
+        approve_in_another_session("alpha")
+        graph = bare_home("alpha").read_epic
+        flipped = Lain::Epic::Graph.new(issues: graph.issues.map { _1.with_status("done") })
+
+        result = epic_write(mount_for).call({ "slug" => "alpha", "artifact" => "epic",
+                                              "content" => Lain::Epic::Document.to_markdown(flipped) }, invocation)
+
+        expect(reopen_records).to be_empty
+        expect(result.content).not_to include("reopened")
+      end
+
       it "does the same from an unmounted chat" do
         create_epic("alpha")
         create_epic("another")

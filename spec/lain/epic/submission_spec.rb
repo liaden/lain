@@ -164,8 +164,18 @@ RSpec.describe Lain::Epic::Submission do
       described_class.issue_plan(view: of, slug: "demo", issue_id: of.issue.id)
     end
 
-    it "composes its content address from the issue's digest and the view's" do
-      expect(plan.content_digest).to eq(Lain::Canonical.digest("issue" => view.issue.digest, "view" => view.digest))
+    it "composes its content address from the issue's plan digest and the view's" do
+      expect(plan.content_digest).to eq(Lain::Canonical.digest("issue" => view.issue.plan_digest,
+                                                               "view" => view.digest))
+    end
+
+    it "keeps its address when only the issue's status changes" do
+      at_status = lambda do |status|
+        graph = Lain::Epic::Graph.new(issues: [issue("a", criteria: epic_scenario, status:)])
+        plan(Lain::Epic::IssueView.new(issue: graph.fetch("a"), graph:, authored: "Prose.\n")).digest
+      end
+
+      expect(at_status.call("done")).to eq(at_status.call("pending"))
     end
 
     # Scenario: editing the authored issue file reopens its gate

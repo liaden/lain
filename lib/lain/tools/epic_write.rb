@@ -85,7 +85,7 @@ module Lain
       # The wave is named because the agent's next step is resubmitting it, and the gate asks a wave at a time.
       def reopened(home, artifact, input)
         failure = artifact.reopen_failure
-        return failure_note(home, input.issue, failure) if failure
+        return failure_note(home, input, failure) if failure
 
         artifact.reopened.map do |id|
           "\nissue #{id} was approved at its wave gate and is reopened by this edit: #{resubmit(home, id)}"
@@ -93,9 +93,17 @@ module Lain
       end
 
       # An unjournaled reopen leaves the gate approved for bytes it never saw, so the agent is told to resubmit.
-      def failure_note(home, id, failure)
-        "\nthe write was recorded, but its reopen could not be journaled: #{failure}; issue #{id} may be approved " \
-          "at its wave gate for bytes it never saw: #{resubmit(home, id)}"
+      def failure_note(home, input, failure)
+        id = input.issue if input.artifact == "issue"
+        "\nthe write was recorded, but its reopen could not be journaled: #{failure}; #{unsettled(home, id)}"
+      end
+
+      # An epic.md write names no single issue, so every wave it may have changed is to be resubmitted.
+      def unsettled(home, id)
+        return "issue #{id} may be approved at its wave gate for bytes it never saw: #{resubmit(home, id)}" if id
+
+        "any issue approved at its wave gate may now be for bytes it never saw: " \
+          "#{Epic::Remedy.resubmit("issue_plan", home.slug)}, for each wave"
       end
 
       def resubmit(home, id)

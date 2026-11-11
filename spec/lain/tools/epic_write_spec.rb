@@ -48,7 +48,7 @@ RSpec.describe Lain::Tools::EpicWrite do
     before { home.epic.write(epic_md) }
 
     it "tells the agent the issue is reopened and which wave to resubmit" do
-      allow(reopen).to receive(:reopened).with(epic_slug: "frugirl-mvp", issue_id: "b2").and_return(["b2"])
+      allow(reopen).to receive(:reopened_among).with(epic_slug: "frugirl-mvp", issue_ids: ["b2"]).and_yield("b2")
 
       result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
 
@@ -58,7 +58,7 @@ RSpec.describe Lain::Tools::EpicWrite do
     end
 
     it "reports a write whose reopen was not journaled, saying the issue needs resubmitting" do
-      allow(reopen).to receive(:reopened).and_raise(Errno::ENOSPC)
+      allow(reopen).to receive(:reopened_among).and_raise(Errno::ENOSPC)
 
       result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
 
@@ -67,8 +67,26 @@ RSpec.describe Lain::Tools::EpicWrite do
       expect(result.content).to include("reopen could not be journaled", "No space left", "wave 2")
     end
 
+    it "reports an epic.md write whose reopen was not journaled without naming a wave it cannot know" do
+      allow(reopen).to receive(:reopened_among).and_raise(Errno::ENOSPC)
+
+      result = write(slug: "frugirl-mvp", artifact: "epic", content: epic_md.sub("second", "2nd"))
+
+      expect(result).not_to be_error
+      expect(result.content).to include("reopen could not be journaled", "No space left", "epic_submit")
+    end
+
+    it "reports a failed epic.md reopen the same way when the input also names an issue" do
+      allow(reopen).to receive(:reopened_among).and_raise(Errno::ENOSPC)
+
+      result = write(slug: "frugirl-mvp", artifact: "epic", issue: "zz", content: epic_md.sub("second", "2nd"))
+
+      expect(result).not_to be_error
+      expect(result.content).to include("reopen could not be journaled", "epic_submit", "for each wave")
+    end
+
     it "adds nothing for a write that reopened no issue" do
-      allow(reopen).to receive(:reopened).and_return([])
+      allow(reopen).to receive(:reopened_among)
 
       result = write(slug: "frugirl-mvp", artifact: "issue", issue: "b2", content: "new prose\n")
 

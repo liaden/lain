@@ -32,8 +32,9 @@ module Lain
       # @param current [String, nil] the plan's digest as it stands now
       # @return [Boolean]
       def self.stale?(queue, epic_slug, issue_id, current)
-        standing = queue.standing(epic_slug, STAGE, issue_id:)
-        !current.nil? && !standing.nil? && standing.verdict.approved? && standing.digest != current
+        partition = SignoffQueue::Partition.new(epic_slug:, stage: STAGE, issue_id:)
+        GateView.new(partition:, standing: queue.standing(epic_slug, STAGE, issue_id:), drafts: [], held: [],
+                     current:).stale?
       end
 
       # @param journals [#call] a fresh fold of every session's decisions per call, so an approval from
@@ -48,9 +49,23 @@ module Lain
 
       # An edit back to the approved bytes withdraws what the earlier edit parked.
       #
-      # @return [Array<String>] the issue reopened, empty when the edit reopened nothing
-      def reopened(epic_slug:, issue_id:)
+      # One fold of the journals serves every issue, and a plan is read only for an issue an approval
+      # stands for, so a write that touches a whole epic costs what its approved issues cost.
+      #
+      # @param epic_slug [String] the epic
+      # @param issue_ids [Array<String>] the issues the write touched
+      # @yieldparam issue_id [String] each issue reopened, as it is journaled, so a later failure cannot hide it
+      # @return [void]
+      def reopened_among(epic_slug:, issue_ids:, &)
         queue = SignoffQueue.from_journal(@journals.call.to_a)
+        issue_ids.each { |id| reopen_in(queue, epic_slug, id).each(&) }
+      end
+
+      private
+
+      def reopen_in(queue, epic_slug, issue_id)
+        return [] unless queue.approved?(epic_slug, STAGE, issue_id:)
+
         current = @digests.digest(epic_slug, STAGE, issue_id)
         return restored(queue, epic_slug, issue_id, current) if standing_at?(queue, epic_slug, issue_id, current)
         return [] unless self.class.stale?(queue, epic_slug, issue_id, current)
@@ -59,8 +74,6 @@ module Lain
         journal(epic_slug, issue_id, current)
         [issue_id]
       end
-
-      private
 
       def standing_at?(queue, epic_slug, issue_id, current)
         !current.nil? && queue.standing?(current, epic_slug, STAGE, issue_id:)

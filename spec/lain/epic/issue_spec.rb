@@ -386,6 +386,20 @@ RSpec.describe Lain::Epic::Issue do
     end
   end
 
+  describe "#plan_digest" do
+    it "ignores status, which the plan gate does not sign off" do
+      expect(issue(status: "pending").plan_digest).to eq(issue(status: "done").plan_digest)
+    end
+
+    it "moves with every other field" do
+      expect(issue(title: "one").plan_digest).not_to eq(issue(title: "two").plan_digest)
+    end
+
+    it "leaves #digest reading status" do
+      expect(issue(status: "pending").digest).not_to eq(issue(status: "done").digest)
+    end
+  end
+
   describe "#canonical" do
     it "is a String-keyed wire form with a stable shape" do
       expect(issue.canonical.keys)

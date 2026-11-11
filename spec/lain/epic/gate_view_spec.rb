@@ -41,6 +41,28 @@ RSpec.describe Lain::Epic::GateView do
     end
   end
 
+  describe "#stale?" do
+    view = lambda do |held_standing, drafts: [], current: "now"|
+      described_class.new(partition:, standing: held_standing, drafts:, held: [], current:)
+    end
+
+    it "is true for an approval over other bytes than the artifact holds, whatever drafts wait" do
+      approved = standing.call(verdicts::Approve.new, "before")
+
+      expect([view.call(approved), view.call(approved, drafts: ["next"])].map(&:stale?)).to eq([true, true])
+    end
+
+    it "is false at the approved bytes, for a denial, with no standing, and where the artifact is gone" do
+      approved = standing.call(verdicts::Approve.new, "now")
+      denied = standing.call(verdicts::Deny.new, "before")
+      stale_but_gone = standing.call(verdicts::Approve.new, "before")
+
+      expect([view.call(approved), view.call(denied), view.call(nil), view.call(stale_but_gone, current: nil)]
+        .map(&:stale?))
+        .to eq([false, false, false, false])
+    end
+  end
+
   describe "#landable_digest" do
     it "answers the standing digest only while the phase is approved" do
       approved = standing.call(verdicts::Approve.new, "now")

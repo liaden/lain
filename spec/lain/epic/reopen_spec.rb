@@ -14,12 +14,12 @@ RSpec.describe Lain::Epic::Reopen do
   let(:records) { [] }
   let(:reopen) { described_class.new(journals: -> { records }, digests:, journal:) }
 
-  def decided(digest, verdict: Lain::Approval::Verdict::Approve.new, policy: "signoff")
+  def decided(digest, verdict: Lain::Approval::Verdict::Approve.new, policy: "signoff", issue_id: "a")
     Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "issue_plan", verdict:,
-                                 answered_by: "human", policy:, latency: 0.1, issue_id: "a").to_journal
+                                 answered_by: "human", policy:, latency: 0.1, issue_id:).to_journal
   end
 
-  def reopened = reopen.reopened(epic_slug: "alpha", issue_id: "a")
+  def reopened = [].tap { |ids| reopen.reopened_among(epic_slug: "alpha", issue_ids: ["a"]) { ids << _1 } }
 
   context "when the issue's plan stands approved at other bytes" do
     let(:records) { [decided("blake3:old")] }
@@ -60,6 +60,19 @@ RSpec.describe Lain::Epic::Reopen do
       records.push(*journal_records(io, "gate_decision"))
 
       expect { reopened }.not_to change(io, :string)
+    end
+  end
+
+  context "when a draft an earlier edit parked waits at other bytes than the issue holds now" do
+    let(:records) do
+      [decided("blake3:old"),
+       decided("blake3:newer", verdict: Lain::Epic::GateDecision::Deferred.new, policy: "deferred")]
+    end
+
+    it "parks the bytes it holds now as well" do
+      parked = reopened.then { journal_records(io, "gate_decision") }
+
+      expect(parked).to contain_exactly(a_hash_including("artifact_digest" => "blake3:new"))
     end
   end
 
@@ -114,6 +127,32 @@ RSpec.describe Lain::Epic::Reopen do
 
     it "writes nothing" do
       expect([reopened, io.string]).to eq([[], ""])
+    end
+  end
+
+  describe "#reopened_among" do
+    let(:folds) { [] }
+    let(:reopen) { described_class.new(journals: -> { (folds << 1) && records }, digests:, journal:) }
+    let(:records) { [decided("blake3:old", issue_id: "b")] }
+    let(:current) { { "a" => "blake3:a", "b" => "blake3:new", "c" => "blake3:c" } }
+
+    it "folds the journals once for every issue it is asked about" do
+      reopen.reopened_among(epic_slug: "alpha", issue_ids: %w[a b c]) { nil }
+
+      expect(folds.size).to eq(1)
+    end
+
+    it "reads the plan of only the issues an approval stands for" do
+      reopen.reopened_among(epic_slug: "alpha", issue_ids: %w[a b c]) { nil }
+
+      expect(digests).to have_received(:digest).once
+    end
+
+    it "yields each issue it reopened" do
+      yielded = []
+      reopen.reopened_among(epic_slug: "alpha", issue_ids: %w[a b c]) { yielded << _1 }
+
+      expect(yielded).to eq(["b"])
     end
   end
 

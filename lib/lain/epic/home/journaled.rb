@@ -18,8 +18,8 @@ module Lain
       # nothing, since the journal write is the second of two steps and a
       # `journal << ` that raises leaves the file on disk with no record.
       #
-      # `signoffs:` is a duck answering `#reopened(epic_slug:, issue_id:)`, asked after an issue's write is
-      # acknowledged: it says which issues the new bytes took back from an approved plan.
+      # `signoffs:` is a duck answering `#reopened_among(epic_slug:, issue_ids:)`, asked after an issue's or
+      # an epic.md's write is acknowledged: it says which issues the new bytes took back from an approved plan.
       #
       # `reviews:` is a duck answering `#open?(path)`, asked before every write.
       # While a human is mid-review they hold the baton, and lain regenerating
@@ -51,19 +51,19 @@ module Lain
           end
         end
 
-        # Who reopens a plan an edit changed. One message, `#reopened(epic_slug:, issue_id:)`;
-        # {Epic::Reopen} is the shipped answer to it.
+        # Who reopens the plans an edit changed. One message, `#reopened_among(epic_slug:, issue_ids:)`, which
+        # yields each issue it reopened; {Epic::Reopen} is the shipped answer to it.
         module Signoffs
           # The seam's Null Object: nothing is reopened, so nothing writes `if @signoffs`.
           module Null
-            def self.reopened(**) = []
+            def self.reopened_among(**) = nil
           end
         end
 
         # @param home [Home] the real home every call forwards to
         # @param journal [#<<] where {DocWritten} records land
         # @param reviews [#open?] who holds the baton for a path
-        # @param signoffs [#reopened] who takes an issue's approval back when its file changes
+        # @param signoffs [#reopened_among] who takes an issue's approval back when its file or epic.md changes
         def initialize(home, journal:, reviews: Reviews::Null, signoffs: Signoffs::Null)
           @home = home
           @journal = journal
@@ -76,8 +76,8 @@ module Lain
         delegate :slug, :path, :read_epic, :sources, to: :@home
 
         def research = written(@home.research, "research")
-        def epic = written(@home.epic, "epic")
-        def issue(id) = written(@home.issue(id), "issue", issue_id: id)
+        def epic = written(@home.epic, "epic", issue_ids: -> { @home.read_epic.ids })
+        def issue(id) = written(@home.issue(id), "issue", issue_ids: -> { [id] })
         def source(name) = written(@home.source(name), "source")
 
         # The graph's own content address rides along with the bytes', because
@@ -97,7 +97,8 @@ module Lain
         #
         # @return [self] so a chained write stays journaled
         def write_epic(graph, preamble: "")
-          written(@home.epic, "epic", graph_digest: graph.digest).write(Document.to_markdown(graph, preamble:))
+          written(@home.epic, "epic", graph_digest: graph.digest,
+                                      issue_ids: graph.method(:ids)).write(Document.to_markdown(graph, preamble:))
           self
         end
 
@@ -108,9 +109,9 @@ module Lain
         # `research`/`issue`, putting a graph address on a prose record,
         # and would widen the write duck past the {Home::Artifact#write} this
         # wraps.
-        def written(artifact, kind, graph_digest: nil, issue_id: nil)
+        def written(artifact, kind, graph_digest: nil, issue_ids: -> { [] })
           Written.new(artifact:, kind:, graph_digest:, epic_slug: @home.slug, relative: relative(artifact),
-                      journal: @journal, reviews: @reviews, signoffs: @signoffs, issue_id:)
+                      journal: @journal, reviews: @reviews, signoffs: @signoffs, issue_ids:)
         end
 
         # {Home} composed this path from that same prefix a moment ago, so the
@@ -132,8 +133,8 @@ module Lain
           REOPEN_FAILURES = [JournalUnreadable, SignoffQueue::UnreadableRecord, SystemCallError].freeze
           private_constant :REOPEN_FAILURES
 
-          def initialize(artifact:, kind:, epic_slug:, relative:, journal:, reviews:, signoffs:, graph_digest: nil,
-                         issue_id: nil)
+          def initialize(artifact:, kind:, epic_slug:, relative:, journal:, reviews:, signoffs:, issue_ids:,
+                         graph_digest: nil)
             @artifact = artifact
             @kind = kind
             @epic_slug = epic_slug
@@ -142,7 +143,7 @@ module Lain
             @reviews = reviews
             @graph_digest = graph_digest
             @signoffs = signoffs
-            @issue_id = issue_id
+            @issue_ids = issue_ids
             @reopened = []
           end
 
@@ -171,7 +172,9 @@ module Lain
           def address(content) = Workspace::Snapshot::Blob.new(bytes: content).digest
 
           def reopen
-            @reopened = @signoffs.reopened(epic_slug: @epic_slug, issue_id: @issue_id) if @issue_id
+            @reopened = []
+            ids = @issue_ids.call
+            @signoffs.reopened_among(epic_slug: @epic_slug, issue_ids: ids) { @reopened << _1 } if ids.any?
           rescue *REOPEN_FAILURES => e
             @reopen_failure = e.message
           end

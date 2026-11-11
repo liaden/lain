@@ -247,11 +247,11 @@ module Lain
     #
     # Which address each stage digests is a decision per stage. Prose digests its
     # BYTES: two renderings of the same words are two approvals, because a human
-    # signed off on THOSE words. An `issue_plan` composes the issue's own digest
-    # with its rendered {IssueView}: the epic's criteria, the authored file and
-    # the Links all reach the view, so an edit to any is a different,
-    # un-approved plan -- which is what keeps an implementation from passing
-    # against criteria nobody signed off.
+    # signed off on THOSE words. An `issue_plan` digests the issue without its status, so work landing
+    # does not take back the approval, together with the issue as {IssueView} renders it: the epic's
+    # criteria, the authored file and the Links all reach the view, so an edit to any is a different,
+    # un-approved plan -- which is what keeps an implementation from passing against criteria nobody
+    # signed off.
     # `epic_plan` reuses {Epic::Graph#structural_digest} -- over the
     # normalized issue set rather than the markdown, and without statuses --
     # so re-rendering an unchanged graph or moving an issue along costs no
@@ -308,7 +308,7 @@ module Lain
         Contracts::ViewArtifact.check!(view:)
         issue_id = viewed_issue!(clean_issue_id(issue_id), view)
         new(stage: "issue_plan", slug:, issue_id:, criteria_digest: view.criteria.digest,
-            content_digest: Canonical.digest("issue" => view.issue.digest, "view" => view.digest),
+            content_digest: Canonical.digest("issue" => view.issue.plan_digest, "view" => view.digest),
             fact: viewed(view, slug))
       end
 

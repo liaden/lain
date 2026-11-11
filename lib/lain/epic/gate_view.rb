@@ -36,6 +36,12 @@ module Lain
         standing.nil? ? :open : :denied
       end
 
+      # Asked of the standing against the digest now, whatever drafts wait, so an edit made while an older
+      # edit is parked still parks its own bytes.
+      #
+      # @return [Boolean] whether an approval stands over other bytes than the artifact holds
+      def stale? = approved_standing? && !current.nil? && standing.digest != current
+
       # @return [String, nil] the standing digest while the phase is approved
       def landable_digest = phase == :approved ? standing.digest : nil
 
@@ -55,7 +61,7 @@ module Lain
       def approval_phase
         return :gone if current.nil?
 
-        standing.digest == current ? :approved : :edited
+        stale? ? :edited : :approved
       end
     end
   end

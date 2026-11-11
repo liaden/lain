@@ -105,6 +105,10 @@ module Lain
 
       def digest = Canonical.digest(canonical)
 
+      # What the plan gate signs off: everything but status, which moves as work lands and so must not
+      # take back an approval of the plan.
+      def plan_digest = Canonical.digest(canonical.except("status"))
+
       # Plain-hash wire form for {Canonical}; String keys, sorted downstream.
       # Every key is always present (nil when unset) so the shape is stable
       # across issues. `criteria` contributes its source text, so an edited

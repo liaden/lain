@@ -297,20 +297,24 @@ RSpec.describe Lain::Epic::Home::Journaled do
   end
 
   describe "reopening a signed-off issue plan" do
-    let(:signoffs) { instance_double(Lain::Epic::Reopen, reopened: ["a1"]) }
+    let(:signoffs) { instance_double(Lain::Epic::Reopen) }
+
+    before do
+      allow(signoffs).to receive(:reopened_among) { |issue_ids:, **, &reopened| issue_ids.each(&reopened) }
+    end
 
     it "asks the signoffs once the issue's bytes are on disk and journaled" do
       Dir.mktmpdir do |tmp|
         home = home_in(tmp)
         asked = []
-        allow(signoffs).to receive(:reopened) do |**address|
+        allow(signoffs).to receive(:reopened_among) do |**address, &reopened|
           asked << [address, File.read(home.issue("a1").path), records.size]
-          ["a1"]
+          reopened.call("a1")
         end
 
         described_class.new(home, journal:, signoffs:).issue("a1").write("body")
 
-        expect(asked).to eq([[{ epic_slug: "alpha", issue_id: "a1" }, "body", 1]])
+        expect(asked).to eq([[{ epic_slug: "alpha", issue_ids: ["a1"] }, "body", 1]])
       end
     end
 
@@ -322,11 +326,44 @@ RSpec.describe Lain::Epic::Home::Journaled do
       end
     end
 
+    it "asks about every issue epic.md holds after the epic is written" do
+      Dir.mktmpdir do |tmp|
+        home = home_in(tmp)
+        artifact = described_class.new(home, journal:, signoffs:).epic
+
+        artifact.write(Lain::Epic::Document.to_markdown(two_issue_graph))
+
+        expect(artifact.reopened).to eq(%w[a b])
+      end
+    end
+
+    it "keeps the issues it reopened when a later issue's reopen fails" do
+      Dir.mktmpdir do |tmp|
+        allow(signoffs).to receive(:reopened_among) do |&reopened|
+          reopened.call("a")
+          raise Errno::ENOSPC
+        end
+        artifact = described_class.new(home_in(tmp), journal:, signoffs:).epic
+
+        artifact.write(Lain::Epic::Document.to_markdown(two_issue_graph))
+
+        expect([artifact.reopened, artifact.reopen_failure]).to match([["a"], /No space left/])
+      end
+    end
+
+    it "asks about every issue of a graph written through write_epic" do
+      Dir.mktmpdir do |tmp|
+        described_class.new(home_in(tmp), journal:, signoffs:).write_epic(two_issue_graph)
+
+        expect(signoffs).to have_received(:reopened_among).once.with(epic_slug: "alpha", issue_ids: %w[a b])
+      end
+    end
+
     it "is not asked about research, which reopens no issue" do
       Dir.mktmpdir do |tmp|
         described_class.new(home_in(tmp), journal:, signoffs:).research.write("what we learned")
 
-        expect(signoffs).not_to have_received(:reopened)
+        expect(signoffs).not_to have_received(:reopened_among)
       end
     end
 
@@ -336,13 +373,13 @@ RSpec.describe Lain::Epic::Home::Journaled do
         decorator = described_class.new(home, journal:, reviews: FakeReviews.new(home.issue("a1").path), signoffs:)
 
         expect { decorator.issue("a1").write("body") }.to raise_error(described_class::ReviewPending)
-        expect(signoffs).not_to have_received(:reopened)
+        expect(signoffs).not_to have_received(:reopened_among)
       end
     end
 
     it "acknowledges a write whose reopen could not be journaled, and names why" do
       Dir.mktmpdir do |tmp|
-        allow(signoffs).to receive(:reopened).and_raise(Errno::ENOSPC)
+        allow(signoffs).to receive(:reopened_among).and_raise(Errno::ENOSPC)
         artifact = described_class.new(home_in(tmp), journal:, signoffs:).issue("a1")
 
         expect(artifact.write("body")).to equal(artifact)
@@ -353,7 +390,8 @@ RSpec.describe Lain::Epic::Home::Journaled do
 
     it "names an unreadable gate record as the reason, rather than raising" do
       Dir.mktmpdir do |tmp|
-        allow(signoffs).to receive(:reopened).and_raise(Lain::Epic::SignoffQueue::UnreadableRecord, "line 3 is torn")
+        allow(signoffs).to receive(:reopened_among).and_raise(Lain::Epic::SignoffQueue::UnreadableRecord,
+                                                              "line 3 is torn")
         artifact = described_class.new(home_in(tmp), journal:, signoffs:).issue("a1")
 
         artifact.write("body")
@@ -364,7 +402,7 @@ RSpec.describe Lain::Epic::Home::Journaled do
 
     it "does not swallow an error nobody named" do
       Dir.mktmpdir do |tmp|
-        allow(signoffs).to receive(:reopened).and_raise(NoMethodError)
+        allow(signoffs).to receive(:reopened_among).and_raise(NoMethodError)
 
         expect { described_class.new(home_in(tmp), journal:, signoffs:).issue("a1").write("body") }
           .to raise_error(NoMethodError)
