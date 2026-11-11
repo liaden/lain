@@ -1727,6 +1727,35 @@ Spec file: `spec/lain/tools/subagent/stops_spec.rb`, `spec/lain/cli/resume/stopp
 **Stop and report if:**
 - A scratch lease is not a git checkout, so `snapshot` cannot run there: report, and keep the scratch directory instead.
 
+### F1: The huge-lists ceiling example runs without thousands of real searches          [risk: low]
+
+**Depends on:** none
+**Files:** `spec/lain/tools/subagent_spec.rb`
+**Reuse:** `Lain::Tools::Subagent::Answer#partial`, as its sibling example "stays within the bound however the lists land against it" already drives it
+**Shared-file wiring:** none
+**Reachable from:** spec only
+
+A repeat flake: `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had read files and written notes keeps the ceiling message and the last text block when the lists are huge` (`subagent_spec.rb:758`) went STUCK against the 30s watchdog in 2 landing hooks of this run (30.8s at load 25.7, 30.3s at load 28.7 on 16 cores). It was recorded in `docs/toolchain-traps.md` on 2026-11-10. Alone it costs about 10s of CPU on main and on the card, because it drives 5000 real `grep` calls through the loop.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the huge-lists example keeps what it asserts
+  Given a child history with 5000 searches and a final text block
+  When the answer is cut at the ceiling
+  Then it starts with the ceiling message, keeps the final text and an elided count, and stays within ANSWER_BOUND
+
+Scenario: the example is cheap
+  When the example runs alone
+  Then it takes well under 1 second of CPU, measured, not asserted in the spec
+```
+Spec file: `spec/lain/tools/subagent_spec.rb`
+
+Move the `toolchain-traps.md` entry to the retired list, naming this fix.
+
+**Stop and report if:**
+- The ceiling message or the elided count is only reachable through the loop, so the cut cannot be driven directly.
+
 ## Integration checks
 
 1. **After T16 lands, before the user's next epic command:**
@@ -1758,3 +1787,63 @@ Spec file: `spec/lain/tools/subagent/stops_spec.rb`, `spec/lain/cli/resume/stopp
 - Test-runner pattern for `wait-quiet.sh`: `rspec|parallel_rspec|rake (pspec|check|compile)|cargo (test|build|clippy)`.
 - Concurrency: 15 GB RAM, 16 cores: at most 6 agents, 5 while a landing runs.
 - Paths needing user approval: none named; Integration check 1 touches the user's live session files only with their go-ahead.
+
+### Run log
+
+- 12:25 T2, T16, T26, T31, T14, T29 started (cut at 242aef7a)
+- 12:28 T29 implemented; review started
+- 12:28 T2 implemented; review started
+- 12:30 T26 implemented; review started
+- 12:34 T2 approved after mechanical fix
+- 12:35 T31, T14 implemented; reviews held until the landings finish
+- 12:39 T29 landed 2dc9bc1b
+- baseline: tmp/parallel_runtime_rspec.log names 1336 spec files after each landing (completeness check, since a passing hook prints no count)
+- 12:42 T2 landed db77f49e
+- 12:43 T29, T2 worktrees removed; T1, T30 started (cut at db77f49e); T31 review and T26 second review started; T14 sent back: its wiring line breaks Wiring's ClassLength ceiling
+- 12:43 T16 scope widened by the main session: + epic/gate.rb, epic/gate/policy.rb and 7 specs, so the deferred policy writes Deferred at the source and GateDecision.new keeps no policy check
+- 12:44 T30 scope widened: + compaction/boundary.rb, derivation.rb, source/derived.rb, source/held_cut.rb and specs, a lead: argument so the one keep rule counts the next prompt
+- 12:44 T1 scope widened: + shell/stages.rb, shell/reading.rb, confine_to_scope.rb, remembered denials, sensitivity/policy.rb and specs; parked/queue.rb parses stay for T9
+- 12:44 T26 approved on second review; T14 revised wiring applied in its worktree
+- 12:48 T26 landed 52c2e728
+- 12:48 T26 landed 52c2e728 (1337 files); T27 started; T14 review started
+- 12:49 T27 scope widened: + cli/backend/tier.rb and tier_spec (an arm on Tier for --summarizer-provider); Tier#ask stays for T28
+- 12:49 T31 review APPROVE-WITH-FIXES (substantive: is_a? pump check); fix round, scope + repl_spec.rb, command/registry.rb
+- 12:51 T16 + epic_queue_spec.rb, epic_land_spec.rb; standing rule: deny-to-deferred fixture-only spec edits join without stopping
+- 12:53 T16 green on its wide set; wiring applied; review started
+- 12:57 T30 + compaction/head.rb, spec/lain/bench/session_spec.rb (idle commits advance)
+- 12:58 T27 implemented (+ seams/free_summarizer_spec.rb); review started
+- 12:59 T1 implemented (7 parses to 1); + approval/judged.rb so the judge's facts read the carried parse; park-time parses (queue.rb, path_gate.rb) left for T9
+- 12:59 T14 review REQUEST-CHANGES: plan-scope quit crashes on PlanSpike arity in the real binary; fix round, scope + board_build.rb, isolation/scratch.rb, conductor_spec.rb
+- 13:02 T1 judged path in; review started
+- 13:02 T27 review APPROVE-WITH-FIXES (substantive: unguarded /model re-read, ivar writes into Oracle::Model); fix round, scope + oracle/model.rb
+- 13:03 T16 review APPROVE-WITH-FIXES; fix round incl. item 10 (interrupted gate under deferred policy must park, not settle a deny)
+- 13:04 T30 review APPROVE-WITH-FIXES (4 unguarded lead threads, lost collapse coverage); fix round
+- 13:06 T27 second review APPROVE-WITH-FIXES (mechanical); T13 started
+- 13:09 T14 fix round done (real binary quits clean); ruling: non-git plan scratch is discarded at quit like an uncommitted spike
+- 13:09 T27 approved after mechanical fixes
+- 13:47 T1 review 1: APPROVE-WITH-FIXES (8 items, 2 substantive); fix round sent. Reviewer probe ran rm -rf / under bypass (stopped by --preserve-root); surfaced to user.
+- 13:50 T27 landed 2acff812
+- 13:51 T27 landed 2acff812 (runtime log 1337 lines, status unchanged)
+- 13:52 T30, T31 second reviews started; T16 fix round done, doc diffs applied, second review started
+- 14:01 T30 landed a67970bf
+- 14:01 T30 landed a67970bf
+- 14:01 T28 started (impl a2ba1f6a2221c4cdf, opus); T13 review started (ab5afaae3a7717df4, opus, high)
+- 14:02 T14 fix round done (non-git scratch discarded at quit); second review started
+- 14:02 T1 fix round done (7117 ex, 0 fail); second review started with harmless-probe rule
+- 14:03 T28 stopped (scope); ruled: widen to backend.rb, judge_source.rb, judge_spec.rb; Tier journals to backend.journal; StatusFeed counts tier TurnUsage as dollars only. Resumed.
+- 14:12 T14 review 2: APPROVE-WITH-FIXES (mechanical: honest rm_r, 2 scratch_spec examples, origin.path, @return)
+- 14:13 T1 review 2: APPROVE-WITH-FIXES (2 nits: spec rename, Decision parse: required); sent to implementer
+- 14:14 T16 review 2: APPROVE-WITH-FIXES (adjudicator interrupted examples + 2 nits)
+- 14:15 T13 review 1: APPROVE-WITH-FIXES, 1 substantive (nix/hf name segments unjudged = new false negatives); fix round; follow-ups: key-width hex in slashed token (predates), dotted hf names, docker paths
+- 14:16 T31 review 2 APPROVE, landing. T14 final fixes done (1189 ex 0 fail), T1 nits done (7119 ex 0 fail); both queued to land after T31
+- 14:19 T31 landed 77bb9436
+- 14:21 T14 landed 4e3aef62
+- 14:21 T31 landed 77bb9436 (runtime log 1338; first & launch did land; second launch failed harmlessly on no-diff new file)
+- 14:29 T1 landing 1 red: subagent_spec 'keeps the ceiling message and the last text block when the lists are huge' STUCK 30.8s at load 25.7; alone green 10.7s; base 3/3 green seed 1136; REPEAT of 2026-11-10 entry -> F-card at plan end; relanding
+- 14:29 T28 built; ruled: extract Backend attachment collaborator (no ceiling raise); nvim views skip non-agent? turn_usage via existing predicate
+- 14:34 T1 landing 2 red: same subagent_spec:758 STUCK 30.3s at load 28.7 (droste --root ~4 cores beside the hook). Timing alone: main 9.5-9.9s, T1 10.2-10.5s (not caused by T1). F1 card: drive :758 through Answer's cut, not 5000 real greps. Reland 3 at load 6.6 with T16 chained. T16 round 2 done.
+- 14:39 T1 landed d8cf9d35
+- 14:40 T1 landed d8cf9d35 (reland 3, load low). T16 land failed in land.sh on D path; main restored; land.sh fixed
+- 14:45 T16 landed 8e62213a
+- 14:45 T16 landed 8e62213a (runtime log 1338; deleted 1 spec, added 1)
+- Follow-ups from the T13 review, not cards yet: a key-width hex segment in a slashed token flags only when the whole token clears 4.2 bits (predates); dotted huggingface repo names (`Qwen2.5-7B`, `Llama-3.1-8B`) still flag; docker `containers/`, `layerdb/sha256/`, `overlay2/l/` and huggingface `blobs/` paths still flag. From T16: an interrupted park under the deferred policy journals no deferred `awaiting_human`, so the queue question reads "not recoverable".
