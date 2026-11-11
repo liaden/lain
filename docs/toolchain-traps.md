@@ -1007,6 +1007,14 @@ Unproven; counting only the example's own thread would settle it.
   first stops` (STARVED, 6% of a core) and `Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits 130,
   with the fail-closed decision already journaled` (timed out waiting for the gate's prompt; the screen
   held only a RubyGems plugin load warning, gem-ctags_plugin.rb).
+  Fixed 2026-11-11, by user ruling: both repeats now wait on a property with the watchdog as the only
+  clock, and carry `starvable:`, so a starved box ends them pending with the STARVED line. The EpicSubmit
+  child prints its prompt in 0.9 s quiet and at most 2.5 s under 32 burners, so its own 10 s deadline
+  was what expired, not the RubyGems warning (the match is a substring). `two cockpits` waits for each
+  boot as long as its 60 s group budget allows; red 2 of 2 on the base under a heavy burner, green 7 of 7
+  with the fix. Also fixed the same day: `Lain::Shell::Pipeline a stop from outside ...` read
+  `/proc/self/task/<tid>/children` after the thread exited (the 2026-11-02 entry, red again in this
+  run); the spec's helper now skips a vanished task.
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`

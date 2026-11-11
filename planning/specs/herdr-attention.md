@@ -1,6 +1,6 @@
 # Agent states, herdr, park and resume
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -213,6 +213,7 @@ flowchart LR
   T5 --> T22
   T22 --> F1
   T22 --> F2
+  T22 --> F3
 ```
 
 ## Tasks
@@ -1374,7 +1375,7 @@ end
 - `fork.rb`'s `inside_tmux?` (`:114, 140`) guards something besides opening the window (for example
   reading `TMUX_PANE`). Then the herdr branch needs its own value for it.
 
-### T21: Report each watched child's state from its herdr tab          [risk: medium]
+### [x] T21: Report each watched child's state from its herdr tab          [risk: medium]
 
 **Depends on:** T3, T20
 **Files:** `lib/lain/cli/watch.rb`, `spec/lain/cli/watch_spec.rb`
@@ -1412,7 +1413,7 @@ Stays green outside Files: `journal_spec`, `subagent_spec` and `watch/lineage_fi
 - 2 watch tabs for the same role can't be told apart in herdr's agent list. The spawn prefix in the
   name is what separates them.
 
-### T22: Write the QA scenarios for agent states, herdr, park and resume          [risk: low]
+### [x] T22: Write the QA scenarios for agent states, herdr, park and resume          [risk: low]
 
 **Depends on:** T5, T14, T21
 **Files:** `planning/qa/scenarios/notifications.md`, `planning/qa/scenarios/session-and-window.md`,
@@ -1440,7 +1441,7 @@ Spec file: none; review checks the list above.
 - An existing scenario describes "every ring feeds at once" for a chat that now has a tracker.
   Rewrite it.
 
-### F1: Make `two cockpits on one machine` hold under load          [risk: medium]
+### [x] F1: Make `two cockpits on one machine` hold under load          [risk: medium]
 
 **Depends on:** T22 (runs at the end of the plan, user ruling 2026-11-10)
 **Files:** `spec/e2e/two_cockpits_spec.rb`, plus whatever lib file the cause sits in
@@ -1458,7 +1459,7 @@ Scenario: the journey holds on a loaded box
 
 **Stop and report if:** the only fix found is a longer timeout or a looser bound. That goes to the user.
 
-### F2: Make `EpicSubmit Ctrl-C through the real CLI exits 130` hold under load          [risk: medium]
+### [x] F2: Make `EpicSubmit Ctrl-C through the real CLI exits 130` hold under load          [risk: medium]
 
 **Depends on:** T22
 **Files:** `spec/lain/cli/epic_submit_spec.rb`, plus whatever lib file the cause sits in
@@ -1480,6 +1481,25 @@ Scenario: the example holds on a loaded box
 ```
 
 **Stop and report if:** the only fix found is a longer timeout. That goes to the user.
+
+### [x] F3: Make the Shell::Pipeline stop-from-outside examples survive an exiting thread          [risk: low]
+
+**Depends on:** T22 (end of plan, user ruling 2026-11-10)
+**Files:** `spec/lain/shell/pipeline_spec.rb`
+**Evidence:** `docs/toolchain-traps.md` 2026-11-02 and the herdr run's F2 landing (seed 36979): the spec's
+`children` helper globs `/proc/self/task/*/children` and reads each, and a thread that exits between the
+glob and the read raises Errno::ENOENT. Green alone.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a thread that exits between the glob and the read is skipped
+  Given a task directory that vanishes before its children file is read
+  When the helper lists the process's children
+  Then it returns the children of the tasks still alive and raises nothing
+```
+
+**Stop and report if:** the fix needs a lib change; the race is in the spec's helper.
 
 ## Integration checks
 
@@ -1652,3 +1672,23 @@ Scenario: the example holds on a loaded box
 - 05:28 T20 last fixes done (mutex 2-thread red by mutant; lock around the choice only; 1226/0). Main verified. Landing attempt 2.
 - 05:31 T20 landed a5831612 (attempt 2)
 - 05:31 T20 landed a5831612 (attempt 2). Cleanup done.
+- 05:32 T21 started, cut at 0d0ee4fd.
+- 05:37 T21 handed back (59/6 red on unknown keyword env; 59/0, 1076/0). Medium review started.
+- 05:40 T21 medium review APPROVE-WITH-FIXES: stub and real-session drives right (lain-auto_approver-41fe on a real file); child-only filter, TMUX guard, blake3 strip and role fallback unpinned; resume double guard; unlocked say from the worker thread; 2 WHAT comments. Sent; main verifies.
+- 05:42 T21 fixes done (each mutant red; 60/0, 1077/0). Main verified. Landing attempt 1.
+- 05:45 T21 landed 5100c953 (attempt 1)
+- 05:45 T21 landed 5100c953 (attempt 1). Cleanup done. T22, F1 and F2 started, cut at 5100c953.
+- 05:51 F2 handed back: cause the example's own 10 s deadline under a slow boot, not the warning; wait now for the prompt or the reader ending (2/2 red; 193/0 at seed 43526; loaded 5 of 5 under 32 burners). Medium review started.
+- 05:53 T22 handed back (herdr.md new; 4 scenario files extended; notifications §1-2 rewritten per the card's stop condition). Main applied the README rows. Open: main done in lain://status never clears (already an open question). Low review started.
+- 05:54 T22 low review APPROVE-WITH-FIXES: 1 mechanical (the /fork reply names its kind and target, not window), applied by main. Landing attempt 1 (Markdown only: the hook runs no suite).
+- 05:56 T22 landed 9910192b (attempt 1)
+- 05:56 T22 landed 9910192b (attempt 1, docs only, no suite). Cleanup done.
+- 05:57 F2 review APPROVE-WITH-FIXES: no starvable tag (a starved run still fails STUCK); the bound moved from 10 s to the watchdog's 30 s, a longer timeout in effect (card: goes to the user); cause unshown; red was a signature change. Sent: measure boot time quiet and loaded, add starvable, record the mutant reds. User decision to follow with the numbers.
+- 06:39 F2 boot timing: quiet 0.88/0.90/1.04 s, 32 burners 1.63/1.80/2.50 s; starvable added; mutant reds recorded. F1 handed back (budget 60, starvable, patience 300, inner Timeout removed; red 2 of 2 on base under load, green 7 of 7 at load 47-90). User ruled: land both as is. F1 not panel-reviewed (user ruling on the approach; main read the 16-line diff). Landing F2 then F1.
+- 06:43 F2 attempt 1 red: 34507 examples, 1 failure, pipeline_spec 'a stop from outside still kills the group when a second stop lands during the grace wait' (seed 36979): Errno::ENOENT reading /proc/self/task/<tid>/children in the spec's children helper while a thread exits. Green alone (75/0). Repeat of the 2026-11-02 entry (same helper), so it becomes F3 per the standing ruling; landing goes. Landing F2 attempt 2 then F1.
+- 06:46 F2 landed d2de2183 (attempt 2)
+- 06:49 F1 landed 23020f94 (attempt 1)
+- 06:50 F2 and F1 landed (see log lines above). Cleanup done. F3 (pipeline_spec children race) drafted in scratch f3-card.md and started, cut at 23020f94.
+- 06:52 F3 done (1 example red; 76/0); main read the 14-line spec diff. Landing attempt 1. Integration: comment-census both checks exit 0 (1 AMBIGUOUS C1, pre-existing); zeitwerk-census --check 0; spec-census --check exit 1 at base too (base 202>184 and 62>49, HEAD 206 and 64: this run added 4 sole_raise_error and 2 spec-only methods, listed in the summary).
+- 06:55 F3 landed 49879071 (attempt 1)
+- 06:55 F3 landed 49879071 (attempt 1); its hook ran the full suite green. Cleanup done (incl. the base census worktree).
