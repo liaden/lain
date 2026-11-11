@@ -501,10 +501,12 @@ module Lain
         # @param tmux [Tmux] the server the cockpit lives on
         # @param pane [String, nil] the pane the asking chat runs in
         # @param waiting_on [Integer] the chat process the respawn follows the exit of
-        def initialize(tmux:, pane:, waiting_on:)
+        # @param extra [Array<String>] words appended, shell-escaped, to the command the pane restarts on
+        def initialize(tmux:, pane:, waiting_on:, extra: [])
           @tmux = tmux
           @pane = pane.to_s
           @waiting_on = waiting_on
+          @extra = extra
         end
 
         # @return [Boolean] false, having touched nothing, when the pane is not a lain cockpit's chat pane
@@ -543,8 +545,10 @@ module Lain
         def fresh_command
           answer = @tmux.run("show-options", "-v", "-t", @pane, FRESH)
           command = Shell::Out.ok?(answer) ? answer.stdout.strip : ""
-          command.empty? ? [] : [command]
+          command.empty? ? [] : [with_extra(command)]
         end
+
+        def with_extra(command) = [command, *@extra.map { |word| Shellwords.escape(word) }].join(" ")
 
         # Released after the respawn, which {Up#run_chat} would otherwise have left holding
         # a dead screen: the human is attached, so the window's own `failed` governs again.
@@ -1320,11 +1324,12 @@ module Lain
       # @param pane [String, nil] the asking chat's `$TMUX_PANE`
       # @param socket [String, nil] tmux's `-L`; nil follows the `$TMUX` the chat inherited
       # @param waiting_on [Integer] the process whose exit the respawn follows
+      # @param extra [Array<String>] flags the restarted chat is given, such as `--resume NAME`
       # @param shell_out_factory [#call] `Shell::Out.new`, or a double
       # @return [Boolean] whether a restart is scheduled; false when the pane is no lain cockpit's chat
-      def self.respawn_chat(pane:, socket: nil, waiting_on: Process.pid,
+      def self.respawn_chat(pane:, socket: nil, waiting_on: Process.pid, extra: [],
                             shell_out_factory: Shell::Out.public_method(:new))
-        ChatRestart.new(tmux: Tmux.new(socket:, shell_out_factory:), pane:, waiting_on:).call
+        ChatRestart.new(tmux: Tmux.new(socket:, shell_out_factory:), pane:, waiting_on:, extra:).call
       end
 
       # The cockpit switch is `nvim:`: nil is off, "" derives the plugin's

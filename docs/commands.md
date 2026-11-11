@@ -1172,6 +1172,14 @@ so the new chat starts on a new session file with the same epic mounted and the 
 refused at a reply prompt before anything is armed, arms at most 1 restart, and stays in the chat, saying why, if tmux cannot set
 the restart up. Outside `lain up` it refuses and points to `/rewind 0`, which empties the context in place.
 
+### /resume
+
+`/resume [<session>]` restarts the `lain up` cockpit chat on a session, in place, the way [`/clear`](#clear) restarts it fresh:
+the chat quits through its normal exit and the pane respawns with `--resume <session>`. With no name it takes the newest session
+other than this one, if that session was never closed and its writer is gone; older sessions are not searched. A session still
+open in a running process is refused before anything quits, naming the process. Outside `lain up` it refuses and points to
+`lain chat --resume <session>`.
+
 ### /release
 
 `/release <path>` forgets this run's decline or lapse for a file, so the model's next read of it

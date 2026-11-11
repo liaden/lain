@@ -3564,6 +3564,12 @@ RSpec.describe Lain::CLI::Up, ".respawn_chat" do
     wait_until(reason: "the first chat start") { File.exist?(starts) }
   end
 
+  def reap(pid)
+    Process.kill("KILL", pid) if pid && Process.waitpid(pid, Process::WNOHANG).nil?
+  rescue Errno::ESRCH, Errno::ECHILD
+    nil
+  end
+
   def start_count = File.exist?(starts) ? File.readlines(starts).size : 0
 
   after do
@@ -3624,6 +3630,41 @@ RSpec.describe Lain::CLI::Up, ".respawn_chat" do
       expect(second).to include("--epic plans")
       expect(second).not_to include("--resume", "old-session", "--fork")
     end
+  end
+
+  it "respawns on the fresh command plus the extra words, shell-escaped, and a later clear drops them",
+     :seam do
+    argv_log = File.join(dir, "argv")
+    script = File.join(dir, "fake-lain")
+    File.write(script, "#!/bin/sh\nfor a in \"$@\"; do printf '[%s]' \"$a\"; done >> #{Shellwords.escape(argv_log)}\n" \
+                       "echo >> #{Shellwords.escape(argv_log)}\nsleep 30\n")
+    File.chmod(0o755, script)
+    original = $PROGRAM_NAME
+    $PROGRAM_NAME = script
+    chat_starts = -> { (File.exist?(argv_log) ? File.readlines(argv_log) : []).grep(/\A\[chat\]/) }
+    hostile = "it's a \"q\" $HOME.ndjson"
+    described_class.new(session: "lain", socket:, state_path: File.join(dir, "state.json"), cwd: dir,
+                        chat_preflight: ->(_args) { [] }).call
+    wait_until(reason: "the first chat start") { chat_starts.call.size == 1 }
+
+    described_class.respawn_chat(pane: chat_pane, socket:, waiting_on: chat_process, extra: ["--resume", hostile])
+    Process.kill("TERM", chat_process)
+    Process.wait(chat_process)
+    wait_until(reason: "the resumed chat start") { chat_starts.call.size == 2 }
+    expect(chat_starts.call.last).to end_with("[--resume][#{hostile}]\n")
+
+    second = Process.spawn("sleep", "30")
+    wait_until(reason: "the restart disarmed") do
+      tmux("show-options", "-p", "-v", "-t", chat_pane, described_class::ChatRestart::ARMED).empty?
+    end
+    described_class.respawn_chat(pane: chat_pane, socket:, waiting_on: second)
+    Process.kill("TERM", second)
+    Process.wait(second)
+    wait_until(reason: "the fresh chat start") { chat_starts.call.size == 3 }
+    expect(chat_starts.call.last).not_to include("[--resume]")
+  ensure
+    $PROGRAM_NAME = original
+    reap(second)
   end
 
   it "declines a pane that is not the chat pane of a lain cockpit" do
