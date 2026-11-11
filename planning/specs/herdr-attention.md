@@ -208,6 +208,8 @@ flowchart LR
   T21 --> T22
   T14 --> T22
   T5 --> T22
+  T22 --> F1
+  T22 --> F2
 ```
 
 ## Tasks
@@ -519,7 +521,7 @@ Spec file: `spec/lain/frontend/neovim/status_view_spec.rb`
 **Stop and report if:**
 - `status_view_spec.rb` pins whole buffers whose rows would shift. Then the main row goes last.
 
-### T6: Ask tmux whether the human is at the chat's window          [risk: low]
+### [x] T6: Ask tmux whether the human is at the chat's window          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/frontend/focus.rb` (new), `spec/lain/frontend/focus_spec.rb` (new)
@@ -566,7 +568,7 @@ end
 - A detached real-tmux server can't fake an attached client in a spec. Then the seam example
   covers the "nobody attached" half only, and says so.
 
-### T7: Read `attention delay:` from the user's config          [risk: low]
+### [x] T7: Read `attention delay:` from the user's config          [risk: low]
 
 **Depends on:** none
 **Files:** `lib/lain/config/attention.rb` (new), `lib/lain/config/builder.rb`, `lib/lain/config.rb`,
@@ -1434,6 +1436,47 @@ Spec file: none; review checks the list above.
 - An existing scenario describes "every ring feeds at once" for a chat that now has a tracker.
   Rewrite it.
 
+### F1: Make `two cockpits on one machine` hold under load          [risk: medium]
+
+**Depends on:** T22 (runs at the end of the plan, user ruling 2026-11-10)
+**Files:** `spec/e2e/two_cockpits_spec.rb`, plus whatever lib file the cause sits in
+**Evidence:** `docs/toolchain-traps.md` entries 2026-11-04 and 2026-11-10 (herdr run): STARVED at load 29-33,
+green alone and 3 of 3 on base. Red in at least 3 landing windows.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the journey holds on a loaded box
+  Given a load of about 2x the cores beside the spec (a bounded CPU and memory burner)
+  When the file runs 5 times with its failing seed 48706
+  Then it is green 5 of 5, or it ends pending with the STARVED line rather than a STUCK raise
+```
+
+**Stop and report if:** the only fix found is a longer timeout or a looser bound. That goes to the user.
+
+### F2: Make `EpicSubmit Ctrl-C through the real CLI exits 130` hold under load          [risk: medium]
+
+**Depends on:** T22
+**Files:** `spec/lain/cli/epic_submit_spec.rb`, plus whatever lib file the cause sits in
+**Evidence:** `docs/toolchain-traps.md` entries 2026-10-21 and 2026-11-10: timed out waiting for the gate's
+prompt; the screen held only a RubyGems plugin LoadError (gem-ctags_plugin.rb in the 4.0.6 install).
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the spawned CLI's prompt is found whatever else the terminal prints first
+  Given a RubyGems plugin warning printed before the gate's prompt
+  When the example waits for the prompt
+  Then it finds the prompt and passes
+
+Scenario: the example holds on a loaded box
+  Given a load of about 2x the cores beside the spec
+  When the file runs 5 times with seed 43526
+  Then it is green 5 of 5, or it ends pending with the STARVED line
+```
+
+**Stop and report if:** the only fix found is a longer timeout. That goes to the user.
+
 ## Integration checks
 
 1. `bundle exec rake pspec` green under the suite lock. The example count is at least the baseline
@@ -1469,3 +1512,22 @@ Spec file: none; review checks the list above.
 - Worktree prefix: tmp/worktrees/herdr-T<id>, branch card/herdr-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/herdr-T<id>.
 - Memory 15 GB: at most 4 agents at once, landing counted as 1.
 - No path needs user approval. The user's ~/.config/herdr is read-only to every card.
+- 18:00 T1 T9 T6 T7 started, cut at 03375460 (T9 on opus)
+- 18:00 T1 stopped: a child's park reaches Queue#park only through PolicySwitch::Requested, built by ToolGuard::Asking. Ruling: Files widened to cli/tool_guard.rb and approval/parked/policy_switch.rb with their specs (no other card touches them). Continued.
+- 18:02 T6 handed back (NameError red, 10/0 green, 460/0 ratchet). Low review started. T18 started, cut at 03375460
+- 18:02 T7 handed back (load-error red, 216/0 card, 581/0 ratchet). Main applied docs/commands.md wiring in the worktree (14 verbs, ### attention). Low review started. T18 implementer started.
+- 18:03 T7 low review APPROVE-WITH-FIXES, mechanical: Complex delay raises NoMethodError not Refusal; Infinity accepted (ruled: refuse); stale 'four readers' docstring. Sent; main verifies.
+- 18:03 T6 low review APPROVE (both mutants red; 1 nit, argv example env lacks an unrelated key, not taken). Landing attempt 1.
+- 18:04 T7 fixes done (8/2 red, 878/0); main verified the diff. Landing attempt 1 queued behind T6.
+- 18:17 T6 attempt 1 red: 34151 examples, 3 failures, all watchdog STUCK/STARVED at load1 29-33/16 and memory PSI 29%: subagent_spec 'keeps the ceiling message and the last text block when the lists are huge' (seed 48531), epic_submit_spec 'Ctrl-C through the real CLI exits 130, with the fail-closed decision already journaled' (seed 43526), e2e two_cockpits 'leaves the second cockpit's editor answering after the first stops' (seed 48706). None in T6's files. Hook log kept as hook-T6-1.keep.log. Alone-runs after T7's hook.
+- 18:32 T7 landing stopped by pid: wait-quiet counted the agents' Claude tool-runner (comm 2.1.322, argv holding rspec) as a test run while their flock -s waited on the suite lock, a deadlock until its 1800 s timeout. Main checkout clean. Local wait-quiet copy skips comm claude and version-string comms. T9 handed back: 19 examples incl. 3 :seam, red NameError, 19/0 and 469/0 before final lint renames; rerun pending.
+- 18:44 T1 handed back (810/8 red, 7538/0 + 662/0 green; builder duck now takes spawn:). Medium review started. Flaky check for T6: 3 failures green alone on base at load 1.2; seed runs x3 running.
+- 18:44 T9 rerun on final code 19/0 and 469/0 (twice). High review (opus) started.
+- 18:45 T18 handed back (load-error red, 11/0 and 461/0 green; id lain untested by the spike). Main applied exe/lain and docs wiring; rubocop clean, exe/lain herdr help loads. Medium review started.
+- 18:56 T6 flaky procedure: 3 failures green alone (load 1.2) and 3 of 3 with worker seeds on base. Recorded by name in docs/toolchain-traps.md (397d86a5). Repeats, each a follow-up card: two cockpits 'leaves the second cockpit's editor answering', EpicSubmit 'Ctrl-C through the real CLI exits 130'. Landing T6 attempt 2, then T7 attempt 2.
+- 19:13 User ruling: fix the repeat flakes at the end of the plan. F1 (two cockpits) and F2 (EpicSubmit Ctrl-C) drafted in scratch flake-cards.md, folded into the plan between landings. Later repeats join as F-cards.
+- 19:31 T6 landed 4a6bf3d3 (attempt 2)
+- 19:31 T1 medium review APPROVE-WITH-FIXES: production fine (Requester untouched, to_journal unchanged, no lib caller of the builder duck breaks; 12 of 15 mutants red). 3 test gaps survive: Spawned#call and child_stack, Detached#leased, subagent enrolled spawn on the ask_human path. Sent as test-only fixes, red shown by mutant; no second review, main verifies.
+- 19:48 T18 medium review APPROVE-WITH-FIXES, mechanical: no example for herdr exiting non-zero (ok? mutant survives); help prints 'herdr_link tree'; WHAT comment in plugin spec. Sent; main verifies.
+- 19:49 T7 landed 04c6ad9b (attempt 2)
+- 19:49 T6 T7 cleanup done (runtime log 1319 files).
