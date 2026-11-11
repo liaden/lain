@@ -40,20 +40,20 @@ module GateDecisionFoldDiscipline
 
   FOLD = "lain/epic/signoff.rb"
 
-  # The other reader that may read a verdict off a record: it folds the parks
-  # and the holds, which a standing does not carry, and asks Signoff for the rest.
+  # The other reader that may read a verdict off a record: it lists the parked
+  # and held items with their questions and notes, and asks Signoff for the standing.
   PARKS_AND_HOLDS = "lain/epic/signoff_queue.rb"
 
   READERS = {
-    FOLD => "the one fold of the standing",
+    FOLD => "the one fold of the standing, the parked drafts and the holds; GateView reads it",
     PARKS_AND_HOLDS => "folds the parked and held items; its standing is Signoff's",
     "lain/epic/gate.rb" => "steps its records through Signoff and indexes which partitions decided each digest",
     "lain/epic/gate/adjudicator.rb" => "scans for a terminal adjudication by policy, which no standing records; " \
                                        "the verdict it names is Signoff's",
     "lain/frontend/neovim/planning_view.rb" => "takes the newest gate record per issue for its stage and " \
                                                "digest; the state shown is the sign-off queue's",
-    "lain/forge/local_landing.rb" => "collects the epics that decided an implementation; the standing is the " \
-                                     "sign-off queue's",
+    "lain/forge/local_landing.rb" => "collects the epics that decided an implementation; what lands is " \
+                                     "Signoff#view's landable digest",
     "lain/cli/epic.rb" => "collects records for the sign-off queue",
     "lain/cli/epic_land.rb" => "collects records for landing's approvals",
     "lain/cli/epic_driver/factory.rb" => "collects records for landing's approvals",

@@ -2136,9 +2136,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(screen.string).not_to match(/\d+ bytes/)
     end
 
+    # Criteria are part of the epic plan's structure, so their edit is signed again there first.
     it "opens the implementation again once the edited plan is approved", :seam do
       command.submit("issue_plan", issue: "a")
       home.write_epic(graph_with("it works, and says so"))
+      command.submit("epic_plan")
       command.submit("issue_plan", issue: "a")
 
       expect(command.submit("implementation", issue: "a", digest: changeset).text).to start_with("approved")

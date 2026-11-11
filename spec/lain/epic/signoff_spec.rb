@@ -50,6 +50,20 @@ RSpec.describe Lain::Epic::Signoff do
         expect(a.combine(b).combine(c)).to eq(described_class.over(session))
       end
     end
+
+    it "reads the same parked drafts and holds from any 3 cuts combined as from the whole session",
+       aggregate_failures: false do
+      forall(session: sessions, cuts: g.tuple(g.nonnegative_integer, g.nonnegative_integer)) do |session:, cuts:|
+        i, j = cuts.map { _1 % (session.size + 1) }.sort
+        a, b, c = [session[0...i], session[i...j], session[j..]].map { described_class.over(_1) }
+        whole = described_class.over(session)
+
+        views = [a.combine(b).combine(c), a.combine(b.combine(c)), whole].map do |signoff|
+          partitions.map { signoff.view(_1, current: digests.first) }.map { [_1.drafts, _1.held] }
+        end
+        expect(views.uniq.size).to eq(1)
+      end
+    end
   end
 
   it "answers what the sign-off queue answers for every partition and draft", aggregate_failures: false do
@@ -62,6 +76,20 @@ RSpec.describe Lain::Epic::Signoff do
          queue.standing?(digest, partition.epic_slug, partition.stage, issue_id: partition.issue_id)]
       end
       expect(answers.map(&:first)).to eq(answers.map(&:last))
+    end
+  end
+
+  it "parks and holds what the sign-off queue parks and holds for every partition", aggregate_failures: false do
+    forall(session: sessions) do |session:|
+      signoff = described_class.over(session)
+      queue = Lain::Epic::SignoffQueue.from_journal(session.map(&:fields))
+
+      listed = partitions.map do |partition|
+        asked = [partition.epic_slug, partition.stage]
+        [queue.parked(*asked, issue_id: partition.issue_id).map(&:artifact_digest),
+         queue.held(*asked, issue_id: partition.issue_id).map(&:artifact_digest)]
+      end
+      expect(partitions.map { signoff.view(_1, current: nil).then { |view| [view.drafts, view.held] } }).to eq(listed)
     end
   end
 

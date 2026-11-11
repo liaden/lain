@@ -143,8 +143,8 @@ module Lain
         raise UnknownDigest, unknown_message(digest, approved: verdict.approved?) if rows.empty?
 
         decisions = in_stage_order(rows).map { |row| row.terminal(verdict) }
-        ensure_open!(decisions) if verdict.approved?
         advances = Advances.new(decisions) { epics }
+        ensure_open!(decisions) if verdict.approved?
         confirmation(digest, decisions, append(decisions, advances))
       end
 

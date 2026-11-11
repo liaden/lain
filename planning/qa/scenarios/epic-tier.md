@@ -1120,8 +1120,16 @@ queue item must not stall the epic). **Wrong looks like:** one reader still show
 epic_plan`. Expect a refusal reading `epic "<slug>" cannot open its epic_plan stage -- research changed since its approval;
 resubmit research`, and the same sentence from `lain epic approve` of an epic_plan digest and from the `epic_submit` tool.
 Delete `research.md` instead and expect `research's file is missing; restore it, then resubmit research`. Resubmit and
-approve research and the stage reopens. An `epic.md` edit (a status change, an `epic add`) must NOT close the issue gates: the
-later stages keep their standing approval. **Wrong looks like:** the three entry points giving 3 different answers.
+approve research and the stage reopens. The epic plan is read at its structural digest (issues, edges, titles, criteria): an
+issue's status change in `epic.md` must NOT close the issue gates, while a structural edit (`lain epic split`, an `epic add`, a
+retitle or a criteria edit) must refuse the next issue gate with `epic_plan changed since its approval; resubmit epic_plan`.
+**Wrong looks like:** the three entry points giving 3 different answers, or a status flip that closes the issue gates.
+
+**14d-2: land waits on a newer attempt.** Approve issue `a`'s implementation at attempt 1, then re-run it so attempt 2 parks.
+Run `lain epic land a <slug>`. Expect it to exit 1 naming attempt 2's sha, saying the commit waits for sign-off, and pointing
+at `lain epic queue <slug>`; `epic/<slug>` must not move. Then approve attempt 2 from the queue and expect land to merge attempt 2.
+Repeat with attempt 1 parked rather than approved: approving attempt 2 while attempt 1 still sits in the queue lands attempt 2.
+**Wrong looks like:** attempt 1 landing, or an approved attempt 2 refused because an older draft is still in the queue.
 
 **14e: a deferred gate journals a park.** With `gate :research, :deferred`, submit research. Expect the `gate_decision` to
 read `verdict: deferred`, `policy: deferred`, and `lain epic queue` to list it. **Wrong looks like:** `verdict: deny` on a park.

@@ -529,12 +529,38 @@ RSpec.describe Lain::Epic::Gate::Policy do
         .to raise_error(Lain::Epic::StageBlocked, /alpha.*research changed since its approval; resubmit research/m)
     end
 
-    # epic.md carries the graph and its statuses, so routine work rewrites it.
-    it "opens an issue gate over an epic plan edited since its approval" do
-      edited = PolicySpecSupport::Current.new("epic_plan" => "blake3:epic_plan-edited")
+    context "when the epic plan was approved at its structural digest" do
+      let(:graph) do
+        Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "Ingest", blocks: ["b"]),
+                                       Lain::Epic::Issue.new(id: "b", title: "Report")])
+      end
+      let(:queue) do
+        approved(Lain::Epic::SignoffQueue.new, "alpha", stages: %w[research]).apply(
+          Lain::Epic::GateDecision.new(artifact_digest: address(graph), epic_slug: "alpha", stage: "epic_plan",
+                                       verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
+                                       policy: "signoff", latency: 1.0).to_journal
+        )
+      end
 
-      expect(described_class.new(queue, edited).ensure_open!("issue_plan", epic_slug: "alpha", issue_id: "a"))
-        .to eq(Lain::Epic::Stage.new("issue_plan"))
+      def address(graph) = Lain::Epic::Submission.epic_plan(graph:, slug: "alpha").digest
+
+      def boundary(now) = described_class.new(queue, PolicySpecSupport::Current.new("epic_plan" => address(now)))
+
+      it "refuses an issue gate once the plan's issues were split since its approval" do
+        split = graph.split("b", into: [Lain::Epic::Issue.new(id: "b1", title: "Report one"),
+                                        Lain::Epic::Issue.new(id: "b2", title: "Report two")])
+
+        expect { boundary(split).ensure_open!("issue_plan", epic_slug: "alpha", issue_id: "a") }
+          .to raise_error(Lain::Epic::StageBlocked, /alpha.*epic_plan changed since its approval; resubmit epic_plan/m)
+      end
+
+      # Routine work moves issues along, and that is no new plan to sign.
+      it "opens an issue gate when only an issue's status changed since its approval" do
+        moved = Lain::Epic::Graph.new(issues: graph.issues.map { _1.id == "a" ? _1.with_status("in_flight") : _1 })
+
+        expect(boundary(moved).ensure_open!("issue_plan", epic_slug: "alpha", issue_id: "a"))
+          .to eq(Lain::Epic::Stage.new("issue_plan"))
+      end
     end
 
     it "refuses a stage whose earlier artifact is gone, saying to restore it" do

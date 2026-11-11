@@ -224,6 +224,15 @@ module Lain
 
       def canonical = { "issues" => issues.map(&:canonical) }
 
+      # What an approval of the epic plan signed: the issues, their edges, titles and criteria. Routine
+      # work rewrites statuses, so they stay out; description, subject and level are signed again at
+      # each issue's own plan, whose digest covers them.
+      def structural_digest
+        Canonical.digest("issues" => issues.map do |issue|
+          issue.canonical.slice("id", "title", "criteria", *EDGE_FIELDS.map(&:to_s))
+        end)
+      end
+
       private
 
       def by_id = issues.to_h { |issue| [issue.id, issue] }

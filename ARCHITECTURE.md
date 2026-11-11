@@ -2328,10 +2328,13 @@ counts as approved, and a hold settles nothing. `spec/gate_decision_fold_discipl
 other `lib/` reader of gate decisions. A park is read off its verdict, never off its policy, and a
 record with no verdict is refused as unreadable. The stage boundary reads research at the digest
 `research.md` holds now, from one digest source shared by `epic_submit`, `lain epic approve` and the
-adjudicator, so an edited research document closes the plan stage again; later stages keep their
-standing approval, since `epic.md` carries statuses routine work rewrites. `epic_review` journals an
-`epic_reviewed` record (`Epic::ReviewResult`): the digests its critics read and the findings of a
-closing block parsed strictly, anything else being unparsed with its raw lines shown.
+adjudicator, so an edited research document closes the plan stage again. The epic plan is approved
+only at its structural digest (issues, edges, titles, criteria), so a status flip, which routine
+work rewrites in `epic.md`, keeps the approval while a split, merge, retitle or criteria edit stales
+it. An edit to an issue's description, subject or level is signed again at that issue's plan, whose
+digest covers them. `epic_review` journals an `epic_reviewed` record (`Epic::ReviewResult`): the
+digests its critics read and the findings of a closing block parsed strictly, anything else being
+unparsed with its raw lines shown.
 `epic_submit` takes that record's id, and the gate question marks it current or stale against the
 digest being signed.
 

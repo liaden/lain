@@ -4,7 +4,8 @@ module Lain
   module Epic
     # Where each sign-off partition stands, folded from its `gate_decision` records so 2 readers of
     # 1 journal agree by construction. A deny or an approve settles a draft, and a deferral parks it.
-    # A hold settles nothing.
+    # A hold settles nothing: it waits until a later decision answers its draft, unless that draft
+    # already stands approved or is still parked when it comes.
     #
     # A deny of a draft that was parked before the approved one does not withdraw the approval:
     # clearing an old queue item must not stall the epic. Whether a deny is that stale one depends on
@@ -25,19 +26,30 @@ module Lain
         def onto(ledger) = ledger.settled(digest, verdict)
       end
 
+      Hold = Data.define(:digest) do
+        def onto(ledger) = ledger.held_at(digest)
+      end
+
       # One partition: its moves in order, the drafts still parked in park order, the drafts the
-      # standing approval superseded, and the standing.
-      Ledger = Data.define(:moves, :parked, :superseded, :standing) do
-        def self.empty = new(moves: [], parked: [], superseded: [], standing: nil)
+      # standing approval superseded, the drafts held in hold order, and the standing.
+      Ledger = Data.define(:moves, :parked, :superseded, :held, :standing) do
+        def self.empty = new(moves: [], parked: [], superseded: [], held: [], standing: nil)
 
         def after(move) = move.onto(with(moves: [*moves, move]))
 
         def parked_again(digest)
-          with(parked: parked.include?(digest) ? parked : [*parked, digest], superseded: superseded - [digest])
+          with(parked: parked.include?(digest) ? parked : [*parked, digest], superseded: superseded - [digest],
+               held: held - [digest])
+        end
+
+        # Judged when the hold comes, so a later approval of another draft cannot bring it back.
+        def held_at(digest)
+          answered = parked.include?(digest) || (standing&.verdict&.approved? && standing.digest == digest)
+          answered ? self : with(held: held | [digest])
         end
 
         def settled(digest, verdict)
-          drafts = with(parked: parked - [digest], superseded: superseded - [digest])
+          drafts = with(parked: parked - [digest], superseded: superseded - [digest], held: held - [digest])
           return drafts.approving(digest, verdict, older_than(digest)) if verdict.approved?
           return drafts if superseded.include?(digest)
 
@@ -50,7 +62,7 @@ module Lain
 
         def older_than(digest) = parked.take_while { _1 != digest }
       end
-      private_constant :Park, :Settle, :Ledger
+      private_constant :Park, :Settle, :Hold, :Ledger
 
       # @return [Signoff]
       def self.unit = new({})
@@ -86,6 +98,15 @@ module Lain
       def standing(partition) = state[partition]&.standing
 
       # @param partition [SignoffQueue::Partition]
+      # @param current [#to_s, nil] the artifact's digest as it stands now; nil where it is gone
+      # @return [GateView]
+      def view(partition, current:)
+        ledger = state.fetch(partition, Ledger.empty)
+        GateView.new(partition:, standing: ledger.standing, drafts: ledger.parked, superseded: ledger.superseded,
+                     held: ledger.held, current:)
+      end
+
+      # @param partition [SignoffQueue::Partition]
       # @param digest [#to_s] the artifact as it stands now
       # @return [Boolean] whether the partition's standing approval is of exactly these bytes
       def approved?(partition, digest)
@@ -106,8 +127,6 @@ module Lain
 
       def moved(fields)
         move = move_in(fields)
-        return self if move.nil?
-
         partition = partition(fields)
         self.class.new(state.merge(partition => state.fetch(partition, Ledger.empty).after(move)))
       rescue ArgumentError => e
@@ -118,10 +137,10 @@ module Lain
         SignoffQueue::Contracts::Decision.check!(type: fields["type"], stage: fields["stage"],
                                                  policy: fields["policy"])
         verdict = GateDecision.verdict_in(fields)
-        return if verdict.held?
-
         digest = fields["artifact_digest"].to_s
         SignoffQueue::Contracts::Item.check!(artifact_digest: digest)
+        return Hold.new(digest:) if verdict.held?
+
         GateDecision.deferred?(verdict) ? Park.new(digest:) : Settle.new(digest:, verdict:)
       end
 

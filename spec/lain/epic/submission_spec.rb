@@ -74,8 +74,8 @@ RSpec.describe Lain::Epic::Submission do
       expect(gate.ensure_approved!(submission)).to eq(submission.digest)
     end
 
-    it "keeps content_digest as the graph's own content address, distinct from the gate digest" do
-      expect(submission.content_digest).to eq(graph.digest)
+    it "keeps content_digest as the graph's structural address, distinct from the gate digest" do
+      expect(submission.content_digest).to eq(graph.structural_digest)
       expect(submission).not_to have_same_digest_as(graph)
     end
 

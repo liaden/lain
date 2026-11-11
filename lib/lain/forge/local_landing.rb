@@ -230,6 +230,9 @@ module Lain
         parked = current.select { |sha| parked?(issue_id, sha) }
         return waiting(issue_id, parked) unless parked.empty?
 
+        held = current.select { |sha| held?(issue_id, sha) }
+        return holding(issue_id, held) unless held.empty?
+
         shas = current.reject { |sha| denied?(issue_id, sha) }
         return unanchored(issue_id) if shas.empty?
 
@@ -256,9 +259,16 @@ module Lain
 
       def parked?(issue_id, sha) = @approvals.parked?(address(issue_id, sha), issue_id)
 
+      def held?(issue_id, sha) = @approvals.held?(address(issue_id, sha), issue_id)
+
       def waiting(issue_id, shas)
         "issue #{issue_id}'s implementation gate parked #{shas.join(", ")}: the commit waits for sign-off, so " \
           "nothing landed -- answer it from `lain epic queue #{@epic_slug}`"
+      end
+
+      def holding(issue_id, shas)
+        "issue #{issue_id}'s implementation gate held #{shas.join(", ")}: the human asked it to wait, so nothing " \
+          "landed -- once the human is ready, #{shas.map { |sha| approve(issue_id, sha) }.join("; or ")}"
       end
 
       def failing_tests(issue_id) = "holds only issue #{issue_id}'s failing tests; re-run the issue -- nothing landed"
@@ -345,11 +355,10 @@ module Lain
       # commit as issue b's too. The decision record names its issue, and a
       # decision naming none approves no issue's landing.
       #
-      # Every answer is {Epic::SignoffQueue}'s, read rather than restated, so
-      # landing and the sign-off queue never disagree. Approved and denied are
-      # the issue's standing, so only the newest settled commit is either: an
-      # older approved commit is withdrawn once a newer one is approved. A hold
-      # neither refuses a commit nor withdraws an approval it already carries.
+      # Every answer is read off the issue's {Epic::GateView}, so landing and
+      # the sign-off queue never disagree. Only the view's landable digest
+      # lands: a newer draft parked or held stops an older approval, and an
+      # older approved commit is withdrawn once a newer one is approved.
       class Approvals
         STAGE = "implementation"
         private_constant :STAGE
@@ -360,52 +369,38 @@ module Lain
         def self.from(entries)
           records = Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE).to_a
           slugs = records.filter_map { |record| record["epic_slug"].to_s if record["stage"] == STAGE }.uniq
-          new(Epic::SignoffQueue.from_journal(records), slugs:)
+          new(Epic::Signoff.from_journal(records), slugs:)
         end
 
-        # @param queue [Epic::SignoffQueue] the sign-off queue folded from the decisions
+        # @param signoff [Epic::Signoff] the decisions, folded
         # @param slugs [Array<String>] the epics that decided an implementation
-        def initialize(queue, slugs:)
-          @queue = queue
+        def initialize(signoff, slugs:)
+          @signoff = signoff
           @slugs = slugs.freeze
           freeze
         end
 
-        # A digest parked again after its verdict waits for sign-off, so it is neither approved nor denied.
-        def approved?(digest, issue_id) = settled?(:approved?, digest, issue_id)
+        def approved?(digest, issue_id) = views(issue_id).any? { |view| view.landable_digest == digest.to_s }
 
-        def denied?(digest, issue_id) = settled?(:denied?, digest, issue_id) && !held?(digest, issue_id)
+        def denied?(digest, issue_id) = views(issue_id).any? { |view| view.denied?(digest) }
 
-        # Not approved, and not refused either: {Epic::SignoffQueue} holds it for a human.
-        def parked?(digest, issue_id) = listed?(:parked, digest, issue_id)
+        # Not approved, and not refused either: it waits for a human's sign-off.
+        def parked?(digest, issue_id) = views(issue_id).any? { |view| view.drafts.include?(digest.to_s) }
 
         # The human asked the work to wait: neither approved nor refused.
-        def held?(digest, issue_id) = listed?(:held, digest, issue_id)
+        def held?(digest, issue_id) = views(issue_id).any? { |view| view.held.include?(digest.to_s) }
 
         private
 
-        # The issue's standing when it is over this digest, nil otherwise.
-        def standing(digest, issue_id)
-          return if blank?(issue_id)
+        def views(issue_id)
+          issue_id = issue_id.to_s
+          return [] if issue_id.empty?
 
-          @slugs.filter_map { |slug| @queue.standing(slug, STAGE, issue_id: issue_id.to_s) }
-                .find { |standing| standing.digest == digest.to_s }
+          @slugs.map { |slug| view(Epic::SignoffQueue::Partition.new(epic_slug: slug, stage: STAGE, issue_id:)) }
         end
 
-        def settled?(verdict, digest, issue_id)
-          (standing(digest, issue_id)&.verdict&.public_send(verdict) && !parked?(digest, issue_id)) || false
-        end
-
-        def listed?(list, digest, issue_id)
-          return false if blank?(issue_id)
-
-          @slugs.any? do |slug|
-            @queue.public_send(list, slug, STAGE, issue_id: issue_id.to_s)
-                  .any? { |item| item.issue_id == issue_id.to_s && item.artifact_digest == digest.to_s }
-          end
-        end
-
-        def blank?(issue_id) = issue_id.to_s.empty?
+        # A commit never changes under its address, so the approved one is the artifact as it stands now.
+        def view(partition) = @signoff.view(partition, current: @signoff.standing(partition)&.digest)
       end
 
       # A re-sync's commit, handed to the queue only when it would itself be

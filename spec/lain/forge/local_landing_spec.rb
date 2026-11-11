@@ -112,6 +112,14 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
 
   def park(issue_id, sha) = approve(issue_id, sha, verdict: Lain::Epic::GateDecision::Deferred.new, policy: "deferred")
 
+  def second_attempt(id)
+    git("switch", "-q", "--detach", tip)
+    sha = commit("README" => "attempt 2\n")
+    git("switch", "-q", "epic/demo")
+    anchor(id, 2, sha)
+    sha
+  end
+
   def implementation_digest(issue_id, sha)
     Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
   end
@@ -524,6 +532,52 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
         landing.call("a", sha:, ref:)
 
         expect(contains?(sha)).to be(true)
+      end
+
+      it "refuses an approved attempt while a newer attempt is parked, naming the parked one" do
+        first, = worker("farewell", "README" => "attempt 1\n")
+        approve("farewell", first)
+        git("switch", "-q", "--detach", tip)
+        second = commit("README" => "attempt 2\n")
+        git("switch", "-q", "epic/demo")
+        anchor("farewell", 2, second)
+        park("farewell", second)
+        before = tip
+
+        expect { landing.land(landing.anchored("farewell")) }
+          .to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+            expect(error.message).to include("waits for sign-off", second)
+            expect(error.message).not_to include(first)
+          }
+        expect(tip).to eq(before)
+      end
+
+      it "lands the newer attempt approved after it was parked, though an older attempt is still parked" do
+        first, = worker("farewell", "README" => "attempt 1\n")
+        park("farewell", first)
+        second = second_attempt("farewell")
+        park("farewell", second)
+        approve("farewell", second, policy: "signoff")
+
+        landing.land(landing.anchored("farewell"))
+
+        expect([contains?(second), contains?(first)]).to eq([true, false])
+      end
+
+      it "refuses an approved attempt while a newer attempt is held, naming the hold and how to answer it" do
+        first, = worker("farewell", "README" => "attempt 1\n")
+        approve("farewell", first)
+        second = second_attempt("farewell")
+        hold("farewell", second)
+        before = tip
+
+        expect { landing.land(landing.anchored("farewell")) }
+          .to raise_error(Lain::Epic::Gate::NotApproved) { |error|
+            expect(error.message).to include("held #{second}", "asked it to wait",
+                                             "lain epic submit implementation demo --issue farewell --digest #{second}")
+            expect(error.message).not_to include(first)
+          }
+        expect(tip).to eq(before)
       end
 
       it "still reports a human denial as a denial" do

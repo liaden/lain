@@ -239,7 +239,7 @@ module Lain
     # mutation-tested value and invalidating every graph digest ever computed.
     #
     # `#content_digest` stays public -- for `epic_plan` it equals
-    # {Epic::Graph#digest} exactly -- and is named `content_digest` rather than
+    # {Epic::Graph#structural_digest} exactly -- and is named `content_digest` rather than
     # `artifact_digest` because the Approval subsystem already uses that word for
     # the COMPOSED gate identity. Reusing it here would read as the same value
     # four call sites away, when it is the one value that is explicitly NOT the
@@ -252,13 +252,14 @@ module Lain
     # the Links all reach the view, so an edit to any is a different,
     # un-approved plan -- which is what keeps an implementation from passing
     # against criteria nobody signed off.
-    # `epic_plan` reuses {Epic::Graph#digest} -- over
-    # the normalized issue set rather than the markdown -- so re-rendering an
-    # unchanged graph costs no fresh sign-off. `implementation` composes the
-    # changeset address it is GIVEN -- never re-deriving it, which would be a
-    # second, possibly-diverging opinion -- with the issue it is offered for:
-    # one commit can be offered as two issues' work, and an address keyed on
-    # the commit alone would let an approval for one open the other's gate.
+    # `epic_plan` reuses {Epic::Graph#structural_digest} -- over the
+    # normalized issue set rather than the markdown, and without statuses --
+    # so re-rendering an unchanged graph or moving an issue along costs no
+    # fresh sign-off. `implementation` composes the changeset address it is
+    # GIVEN -- never re-deriving it, which would be a second, possibly-
+    # diverging opinion -- with the issue it is offered for: one commit can be
+    # offered as two issues' work, and an address keyed on the commit alone
+    # would let an approval for one open the other's gate.
     #
     # Disk-free on purpose: a Submission holds only what it is handed, never a
     # path, so it stays a pure value the gate can journal and replay without ever
@@ -292,7 +293,7 @@ module Lain
 
       def self.epic_plan(graph:, slug:)
         Contracts::GraphArtifact.check!(graph:)
-        new(stage: "epic_plan", slug:, content_digest: graph.digest, fact: issue_count(graph.issues.size))
+        new(stage: "epic_plan", slug:, content_digest: graph.structural_digest, fact: issue_count(graph.issues.size))
       end
 
       # @param size [Integer]

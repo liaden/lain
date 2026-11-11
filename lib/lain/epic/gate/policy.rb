@@ -53,14 +53,15 @@ module Lain
         # path. Naming the rule makes "checked exactly once, by whoever holds a
         # queue" a property of the object rather than of a convention.
         #
-        # Research counts as approved only at the bytes research.md holds NOW, so
-        # an edit after its approval shuts the stages after it again. The later
-        # stages keep their standing approval: epic.md carries the graph and its
-        # statuses, which routine work rewrites, and an issue's own plan is
-        # checked at its current digest where its implementation is submitted.
+        # Research counts as approved only at the bytes research.md holds NOW, and
+        # the epic plan only at its structural digest: its issues, edges, titles
+        # and criteria. So an edit to either shuts the stages after it again,
+        # while the status flips routine work writes into epic.md do not. An
+        # issue's own plan is checked at its current digest where its
+        # implementation is submitted.
         class Boundary
-          # The stage whose approval is read at its current digest.
-          FRESH = "research"
+          # The stages whose approval is read at their current digest.
+          FRESH = %w[research epic_plan].freeze
 
           # The queue as {Epic::Stage} asks it, with research's approval read at its current digest.
           class Current
@@ -81,10 +82,10 @@ module Lain
             # @return [Boolean] whether the stage's artifact is gone, so it has no current digest
             def missing?(epic_slug, stage, issue_id: nil) = @digests.digest(epic_slug, stage, issue_id).nil?
 
-            # @return [Boolean] whether the partition stands approved; for research, at its
-            #   current digest, so a research.md that is gone reads as not approved
+            # @return [Boolean] whether the partition stands approved; for research and the epic plan,
+            #   at the current digest, so an artifact that is gone reads as not approved
             def approved?(epic_slug, stage, issue_id: nil)
-              return @queue.approved?(epic_slug, stage, issue_id:) unless stage.to_s == FRESH
+              return @queue.approved?(epic_slug, stage, issue_id:) unless FRESH.include?(stage.to_s)
 
               @queue.standing?(@digests.digest(epic_slug, stage, issue_id), epic_slug, stage, issue_id:)
             end
