@@ -134,6 +134,62 @@ RSpec.describe Lain::CLI::Up do
       expect(eval_status_job(status_right)).to eq("🔥 fleet:2 inbox:3")
     end
 
+    describe "recording the herdr pane" do
+      def herdr_env(pane)
+        { "HERDR_ENV" => "1", "HERDR_BIN_PATH" => "/opt/herdr", "HERDR_PANE_ID" => pane,
+          "HERDR_SOCKET_PATH" => "/run/herdr.sock" }
+      end
+
+      def recorded = tmux("show-options", "-v", "-t", session, Lain::Herdr::Target::OPTION)
+
+      it "records the pane, binary and socket when it creates the cockpit from a herdr pane" do
+        up.call(env: herdr_env("w1:p3"))
+
+        expect(Lain::Herdr::Target.from_option(recorded))
+          .to eq(Lain::Herdr::Target.from_env(herdr_env("w1:p3")).with(via: :cockpit))
+      end
+
+      it "records the new pane when it reattaches from another herdr pane" do
+        up.call(env: herdr_env("w1:p3"))
+        up.call(env: herdr_env("w2:p1"))
+
+        expect(Lain::Herdr::Target.from_option(recorded).pane).to eq("w2:p1")
+      end
+
+      it "clears the record when it reattaches from a plain terminal" do
+        up.call(env: herdr_env("w1:p3"))
+        up.call(env: {})
+
+        expect(recorded).to be_empty
+      end
+
+      it "never records when the launch is nested, whatever HERDR_* it inherited" do
+        up.call(env: herdr_env("w1:p3"), nested: true)
+
+        expect(recorded).to be_empty
+      end
+
+      it "decides nested by the caller's word, not by TMUX in the environment" do
+        up.call(env: herdr_env("w1:p3").merge("TMUX" => ""), nested: true)
+
+        expect(recorded).to be_empty
+      end
+
+      it "leaves a recorded pane alone when a nested launch reattaches" do
+        up.call(env: herdr_env("w1:p3"))
+        up.call(env: herdr_env("w2:p1"), nested: true)
+        up.call(env: {}, nested: true)
+
+        expect(Lain::Herdr::Target.from_option(recorded).pane).to eq("w1:p3")
+      end
+
+      it "starts its tmux server with no HERDR_ name in the environment" do
+        up.call(env: herdr_env("w1:p3"))
+
+        expect(tmux("show-environment", "-g").lines.grep(/\AHERDR_/)).to be_empty
+      end
+    end
+
     it "gives the session a status-right-length that holds the whole HUD, leaving the global one alone" do
       system("tmux", "-L", socket, "-f", File::NULL,
              "new-session", "-d", "-s", "control", "-x", "80", "-y", "24")

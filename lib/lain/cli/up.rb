@@ -1376,16 +1376,19 @@ module Lain
         @relay = relay
       end
 
+      # @param env [Hash{String=>String}] the launching process's environment
+      # @param nested [Boolean] the caller's own answer, as for {#launch_plan}
       # @return [Report]
       # @raise [TmuxUnavailable] no tmux on PATH, or a real tmux failure --
       #   never a bare Errno/Shell::Out exception past this boundary.
-      def call
+      def call(env: ENV, nested: false)
         # Per call, so a second launch through one Up reports only its own.
         @warnings = []
         @gc_schedule.call
         created = !session_exists?
         created ? create_session : reattach_session
         configure_session
+        record_herdr_pane(env, nested)
         Report.new(session: @session, created:, warnings: @warnings.dup, state_path: @hud.state_path)
       end
 
@@ -1413,10 +1416,11 @@ module Lain
       # own grace, so asking it here costs the failing path nothing new.
       #
       # @param nested [Boolean] forwarded to {#attach_command} unchanged
+      # @param env [Hash{String=>String}] the launching process's environment, forwarded to {#call}
       # @return [LaunchPlan]
       # @raise [ChatDied] the chat pane died before anyone could attach to it
-      def launch_plan(nested:)
-        report = call
+      def launch_plan(nested:, env: ENV)
+        report = call(env:, nested:)
         died = @corpse&.call
         input_died = @input_corpse&.call
         raise ChatDied, [died, input_died].compact.join("\n\n") if died
@@ -1717,6 +1721,21 @@ module Lain
         @tmux.act("set-window-option", "-t", chat_target, "pane-border-status", "top")
         @panes.title
         enable_extended_keys
+      end
+
+      # Rewritten on every launch, so a reattach from another pane or a plain terminal never leaves
+      # the chat reporting to a pane the human no longer sits in. A nested launch inherits the OUTER
+      # client's HERDR_*, so it neither records nor clears; a stale record is safe because the
+      # resolver asks herdr who holds the pane.
+      def record_herdr_pane(env, nested)
+        return if nested
+
+        target = Herdr::Target.from_env(env)
+        if target
+          @tmux.act("set-option", "-t", @session, Herdr::Target::OPTION, target.to_option)
+        else
+          @tmux.run("set-option", "-u", "-t", @session, Herdr::Target::OPTION)
+        end
       end
 
       # tmux scopes extended-keys to the server, so this change is server-wide.
