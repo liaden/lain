@@ -297,9 +297,10 @@ RSpec.describe Lain::CLI::PaneCommand do
       # Neovim command string LAIN_START, the pre-flight flag PaneCommand scrubs, and
       # LAIN_SUITE_LOCK_HELD, which only a verifier sets, on its own child suite.
       # LAIN_OLLAMA_CLOUD_CONCURRENCY is retired: lain only warns about it, never forwards it to a pane.
+      # LAIN_RUN_* and LAIN_KEEP_FAILED are the herdr plugin script's own inputs, passed to one pane by `--env`.
       let(:excluded) do
         %w[LAIN_INTEGRATION LAIN_LIVE LAIN_NVIM LAIN_START LAIN_PREFLIGHT LAIN_OLLAMA_CLOUD_CONCURRENCY
-           LAIN_SUITE_LOCK_HELD]
+           LAIN_SUITE_LOCK_HELD LAIN_RUN_COMMAND LAIN_RUN_STATUS LAIN_KEEP_FAILED]
       end
 
       it "exports the stream stall remedy" do
