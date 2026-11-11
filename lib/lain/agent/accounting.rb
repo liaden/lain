@@ -75,9 +75,10 @@ module Lain
         @journal << Telemetry::RunAllowance.new(iterations: @allowed)
       end
 
-      # The run's own usage and its settled children's together: what its
-      # ceilings are held to. {#usage} stays the run's own, which is what the
-      # payments its own journal carries add up to.
+      # The run's own usage and its settled children's together, with the
+      # dollars its secondary calls paid: what its ceilings are held to.
+      # {#usage} stays the run's own, which is what the payments its own
+      # journal carries add up to.
       #
       # @return [Budget::Spent]
       def spent = Budget::Spent.zero.with(usage: @usage, dollars: @dollars) + @spend.spent
@@ -89,8 +90,9 @@ module Lain
       # @param digest [String] the committed assistant turn's content address
       # @return [Lain::Usage] the cumulative usage, ready for a budget check
       def observe(response, digest:)
-        @usage += response.usage
-        @dollars += priced(response)
+        paid = Budget::Spent.of(response, prices: @prices, clock: @clock)
+        @usage += paid.usage
+        @dollars += paid.dollars
         take_reading(response.usage, head: digest)
         @journal << Telemetry::TurnUsage.new(
           digest:,
@@ -136,14 +138,6 @@ module Lain
       def last_turn_usage(on:) = @reading.on(on)
 
       private
-
-      # A pricing gap must never fail a turn already paid for; it marks the
-      # total incomplete instead.
-      def priced(response)
-        Friction::CacheWaste::Dollars.of(@prices.cost(response.model, response.usage, at: @clock.call))
-      rescue PriceBook::UnknownModel
-        Friction::CacheWaste::Dollars.unknown
-      end
 
       # The gate is over exactly the value being written -- one local, so the two
       # cannot drift apart. Zero is how missing billing information arrives,

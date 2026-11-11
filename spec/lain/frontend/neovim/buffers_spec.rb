@@ -260,6 +260,16 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       expect(view.update(usage(chain.head_digest))).to eq(["user: first", "assistant: one two three"])
     end
 
+    it "leaves the chain where it was for a judge's or a summary's payment, which names no turn" do
+      chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one")
+      view = Lain::Frontend::Neovim::Buffers::TimelineView.new(store:, session: Lain::Session.new)
+      view.update(usage(chain.head_digest))
+      paid = Lain::Telemetry::TurnUsage.new(digest: "blake3:request", model: "m", stop_reason: :end_turn, usage: {},
+                                            requester: :auto_approver)
+
+      expect(view.update(paid)).to be_nil
+    end
+
     it "renders one line per turn, so the pin index still names the turn under the cursor" do
       chain = ask(Lain::Dag::Factory.timeline(store:), "first", "one\ntwo\nthree")
       frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket, store:)

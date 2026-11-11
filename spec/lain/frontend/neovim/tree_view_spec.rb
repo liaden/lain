@@ -80,6 +80,14 @@ RSpec.describe Lain::Frontend::Neovim::TreeView do
     expect(view.update(usage(two)).last).to eq("assistant: a b  [head]")
   end
 
+  it "leaves the head where it was for a judge's or a summary's payment, which names no turn" do
+    view.update(usage(second))
+    paid = Lain::Telemetry::TurnUsage.new(digest: "blake3:request", model: "m", stop_reason: :end_turn, usage: {},
+                                          requester: :summarizer)
+
+    expect(view.update(paid)).to be_nil
+  end
+
   it "names a head the store does not hold" do
     event = Lain::Telemetry::TurnUsage.new(digest: "blake3:nope", model: "m", stop_reason: :end_turn, usage: {})
 

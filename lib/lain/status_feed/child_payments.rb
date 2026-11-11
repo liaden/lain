@@ -3,7 +3,7 @@
 module Lain
   class StatusFeed
     # A session journal observer handing the feed every payment that is not the
-    # chat's own turn: a spawned child's, and the judge's. The tee writes through
+    # chat's own turn: a spawned child's, and a tier's. The tee writes through
     # that journal too, so every record the feed already folds passes here as
     # well, and only those are taken.
     class ChildPayments

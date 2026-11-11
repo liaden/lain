@@ -7,25 +7,22 @@ module Lain
       # chat that never judges never builds the judge's provider.
       class JudgeSource
         # @param backend [Backend]
-        # @param journal [#<<] the session file and never the tee, since a live
-        #   view would read the judge's payment as the chat's turn
         # @param config [Config] whose judge timeout bounds the judge
-        # @return [JudgeSource]
-        def self.for(backend, journal:, config:)
+        # @return [JudgeSource] whose judge asks through a Tier, which journals and pays for it
+        def self.for(backend, config:)
           tier = Backend::Tier.new(role: Approval::Judge::ROLE, backend:, model: :follow, queue: true)
-          new(provider: -> { tier.bare_provider }, model: -> { tier.model }, extra: -> { tier.extra },
-              slots: backend.slots, journal:, timeout: config.judge_timeout)
+          new(provider: -> { tier.provider }, model: -> { tier.model }, extra: -> { tier.extra },
+              slots: backend.slots, timeout: config.judge_timeout)
         end
 
         # @param provider [#call] builds the provider the judge asks through
         # @param model [String, #call] the model the judge asks, read at each judged call
         # @param extra [Hash, #call] the runner options its request carries, read at each judged call
         # @param slots [Prompt::Slots] what the judge's sealed prompt renders from
-        # @param journal [#<<] the session file, where the judge's request and payment are recorded
         # @param timeout [Numeric] seconds the judge may take
-        def initialize(provider:, model:, slots:, journal:, extra: {}, timeout: Config::DEFAULT_JUDGE_TIMEOUT)
+        def initialize(provider:, model:, slots:, extra: {}, timeout: Config::DEFAULT_JUDGE_TIMEOUT)
           @provider = provider
-          @built = { model:, extra:, slots:, journal:, timeout: }
+          @built = { model:, extra:, slots:, timeout: }
         end
 
         # A judge that cannot be built is a fault like any other the judge has,

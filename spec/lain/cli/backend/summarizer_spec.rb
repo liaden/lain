@@ -59,11 +59,14 @@ RSpec.describe Lain::CLI::Backend::Summarizer do
     # The oracle_answer record is {Oracle::Recorded::Journaling}'s, and it must
     # still land alongside: the request is the ATTEMPT, the answer is what it
     # bought, and a request_sent with no following oracle_answer is how a failed
-    # oracle reads.
-    it "leaves the attempt and the answer, in that order" do
+    # oracle reads. The turn_usage between them is the Tier's payment, written
+    # the moment the reply arrives and before the oracle decodes it, so a
+    # reply paid for but undecodable is still on the record as spent.
+    it "leaves the attempt, its payment and the answer, in that order" do
       summarize
 
-      expect(journal.events.map(&:class)).to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::OracleAnswer])
+      expect(journal.events.map(&:class))
+        .to eq([Lain::Telemetry::RequestSent, Lain::Telemetry::TurnUsage, Lain::Telemetry::OracleAnswer])
     end
 
     # Late binding is why {Summarizer::RunJournal} exists at all: nothing orders

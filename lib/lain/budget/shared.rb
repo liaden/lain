@@ -4,10 +4,11 @@ require "monitor"
 
 module Lain
   module Budget
-    # What the children below one agent have spent, and the tokens its live
-    # children still hold. A child's token ceiling is reserved when it is
-    # granted and traded for its real spend when it settles, so siblings granted
-    # from one room cannot together outspend it by more than the bound below.
+    # What the children below one agent and its secondary calls have spent,
+    # and the tokens its live children still hold. A child's token ceiling is
+    # reserved when it is granted and traded for its real spend when it
+    # settles, so siblings granted from one room cannot together outspend it
+    # by more than the bound below.
     #
     # The bound is the room plus one call per child: a call's cost is known only
     # once it is paid, so a child under its ceiling may make one call that
@@ -23,7 +24,7 @@ module Lain
         @reserved = 0
       end
 
-      # @return [Spent] what every settled child has spent
+      # @return [Spent] what every settled child and every secondary call has spent
       def spent = @monitor.synchronize { @spent }
 
       # @return [Integer] the tokens live children still hold
@@ -41,6 +42,16 @@ module Lain
           @reserved += tokens
           Reservation.new(shared: self, ceilings:, tokens:)
         end
+      end
+
+      # A secondary call's payment, a judge's or a summary's: its dollars
+      # count toward the holder's dollar ceiling, but its tokens were never
+      # in the chat's context, so they stay out of the token ceiling.
+      #
+      # @param spent [Spent]
+      # @return [void]
+      def pay(spent)
+        @monitor.synchronize { @spent += Spent.zero.with(dollars: spent.dollars) }
       end
 
       # @api private
@@ -100,6 +111,7 @@ module Lain
         def self.reserved = 0
         def self.reserve = Reservation.new(shared: self, ceilings: yield, tokens: 0)
         def self.settle(_tokens, _spent) = nil
+        def self.pay(_spent) = nil
       end
 
       # A builder's reservation before any grant: nothing to give back.

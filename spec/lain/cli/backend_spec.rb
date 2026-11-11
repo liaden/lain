@@ -636,11 +636,30 @@ RSpec.describe Lain::CLI::Backend do
       backend.attach(board, channel)
       switch.switch("qwen3-coder:30b", surface: :spec)
 
-      expect(backend.live_model).to eq("qwen3-coder:30b")
+      expect(backend.attachment.model).to eq("qwen3-coder:30b")
+    end
+
+    it "holds the spend its tiers pay into once attached, and the Null before" do
+      backend = backend_for(provider: "ollama")
+      shared = Lain::Budget::Shared.new
+      before = backend.attachment.spend
+
+      backend.attach(board_over(secrets, queue), channel, spend: shared)
+
+      expect([before, backend.attachment.spend]).to eq([Lain::Budget::Shared::Null, shared])
+    end
+
+    it "refuses a second attach with another spend" do
+      backend = backend_for(provider: "ollama")
+      board = board_over(secrets, queue)
+      backend.attach(board, channel, spend: Lain::Budget::Shared.new)
+
+      expect { backend.attach(board, channel, spend: Lain::Budget::Shared.new) }
+        .to raise_error(Lain::CLI::Backend::Rebound, /attached to another spend\z/)
     end
 
     it "answers its launch model as the live one before it is attached" do
-      expect(backend_for(provider: "ollama", model: "qwen3:4b").live_model).to eq("qwen3:4b")
+      expect(backend_for(provider: "ollama", model: "qwen3:4b").attachment.model).to eq("qwen3:4b")
     end
 
     it "binds the egress literals, the egress hold and the price-tier hold to one board" do
@@ -2728,7 +2747,7 @@ RSpec.describe Lain::CLI::Backend do
     # wrapped in {Lain::Provider::Journaled} so the round trip an oracle spends
     # reaches the Journal at all; WHICH arm answers is what these examples pin,
     # and that is the wrapped one.
-    def provider_of(tier) = tier.instance_variable_get(:@provider).inner
+    def provider_of(tier) = tier.instance_variable_get(:@provider).inner.__getobj__
 
     # A local reply the summarizer schema accepts, priced with a REAL usage so
     # the journaled cost is a genuine count rather than the zero identity.
@@ -2877,7 +2896,11 @@ RSpec.describe Lain::CLI::Backend do
     describe "after the human types /model" do
       def switched(backend, to)
         switch = Lain::Context::ModelSwitch.new(backend.model, journal: instance_double(Lain::Journal, record: nil))
-        backend.instance_variable_set(:@model_switch, switch)
+        egress = Lain::Sensitivity::Secrets::Egress.new(refused: [], flagged: [])
+        backend.attach(Struct.new(:guard_inputs, :approvals, :ledger, :sensitivity, :model_switch)
+                             .new(Struct.new(:secrets).new(Class.new { define_method(:egress) { |**| egress } }.new),
+                                  nil, Lain::Sensitivity::Ledger.new, Lain::Sensitivity::Policy::Null.instance, switch),
+                       [])
         switch.switch(to, surface: :spec)
       end
 
@@ -2933,7 +2956,7 @@ RSpec.describe Lain::CLI::Backend do
         allow(backend).to receive(:provider).and_return(answering_provider)
         tier = backend.summarizer_tier(queue: false)
 
-        tier.bare_provider
+        tier.provider
 
         expect(backend).to have_received(:provider).with(name: "ollama-cloud", requester: :summarizer, queue: false)
         expect(tier.extra).to eq({})

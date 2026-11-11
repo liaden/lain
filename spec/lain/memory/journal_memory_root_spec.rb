@@ -72,6 +72,27 @@ RSpec.describe Lain::Memory::JournalMemoryRoot do
     end
   end
 
+  # A judge's or a summary's payment names the REQUEST it paid for, not a turn,
+  # so a root paired with it would name a turn no resume can find.
+  describe "a tier's payment" do
+    def paid
+      Lain::Telemetry::TurnUsage.new(digest: "blake3:request", model: "claude-opus-5-5", stop_reason: :end_turn,
+                                     usage: {}, requester: :auto_approver)
+    end
+
+    it "is forwarded with no memory_root and no memory_loaded" do
+      decorator << paid
+
+      expect(parsed_records.map { |record| record.fetch("type") }).to eq(["turn_usage"])
+    end
+
+    it "leaves the session file it lands in resumable" do
+      decorator << paid
+
+      expect { Lain::SessionRecord::Replay.new(io.string.lines).memory }.not_to raise_error
+    end
+  end
+
   # The session's ONE memory_loaded, ahead of the first root it explains: a
   # root means nothing without the view it was taken over, and a reader
   # scanning forward has to meet the load first.

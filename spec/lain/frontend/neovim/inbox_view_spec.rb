@@ -179,6 +179,15 @@ RSpec.describe Lain::Frontend::Neovim::InboxView do
       expect(lines).to eq(["(no questions pending)"])
     end
 
+    it "retires nothing on a judge's or a summary's payment, which commits no turn" do
+      question = stored_question
+      view.update(Lain::Telemetry::Message.from_event(question))
+      paid = Lain::Telemetry::TurnUsage.new(digest: citing_timeline(question.digest).head_digest, model: "m",
+                                            stop_reason: :end_turn, usage: {}, requester: :auto_approver)
+
+      expect(view.update(paid)).to be_nil
+    end
+
     it "never lists a question a turn already consumed (out-of-order delivery)" do
       question = stored_question
       view.update(turn_usage(citing_timeline(question.digest).head_digest))

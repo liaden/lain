@@ -10,7 +10,8 @@ module Lain
       #
       # * a {Telemetry::Message} addressed to the human lists (sender, age,
       #   question),
-      # * a {Telemetry::TurnUsage} retires whatever the named head's chain has
+      # * the chat's own {Telemetry::TurnUsage} (a judge's or a summary's names
+      #   a request, not a turn) retires whatever the named head's chain has
       #   cited among its turns' causal_parents -- the delivery commit's edge
       #   ({Agent::Transition}), which is the ONLY consumption the pending
       #   projection counts. A REPLY :message alone never retires an item;
@@ -335,7 +336,7 @@ module Lain
         # loss here lists a question forever against a count reading zero --
         # permanent, silent, known and deferred.
         def consume(event)
-          return retire(cited_by_chain(event.digest)) if event.is_a?(Lain::Telemetry::TurnUsage)
+          return retire(cited_by_chain(event.digest)) if event.is_a?(Lain::Telemetry::TurnUsage) && event.agent?
           return retire(event.digests) if event.is_a?(Lain::Telemetry::QuestionsConsumed)
 
           false

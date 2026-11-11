@@ -140,7 +140,7 @@ module Lain
 
         def absorb(event)
           case event
-          when Telemetry::TurnUsage then arrive(event.digest)
+          when Telemetry::TurnUsage then event.agent? && arrive(event.digest)
           when Hash then event["type"] == "rewound" && retreat(event["to"])
           else false
           end

@@ -8,9 +8,9 @@ module Lain
     # {Judged} asks it on the live gate path, so it waits with the call
     # unparked and must answer within {TIMEOUT}.
     #
-    # It is one request with no tools, framed by the role's sealed prompt and
-    # journaled as the role's, so its spend is on the record. A judge that
-    # could read for itself spent its bound on reads the gate then refused.
+    # It is one request with no tools, framed by the role's sealed prompt, asked
+    # through a provider that journals and pays for it as the role's. A judge
+    # that could read for itself spent its bound on reads the gate then refused.
     #
     # Only a lone verdict token is a verdict. Prose, a hedge or an empty answer
     # is `:defer`, never a second request; a raise or the bound running out is
@@ -216,20 +216,18 @@ module Lain
       IGNORED = ->(_cause) {}
       private_constant :VERDICT, :IGNORED
 
-      # @param provider [Provider] the round trip; wrapped here so each request is journaled as the role's
+      # @param provider [Provider] the round trip, which records and pays for itself, as a {CLI::Backend::Tier}'s does
       # @param model [String, #call] read at each call when callable, so the judge follows `/model`
       # @param slots [Prompt::Slots] what the role's sealed prompt renders from
-      # @param journal [#<<] where the request and its payment are recorded
       # @param extra [Hash, #call] the sampler options the request carries; read at each call when callable
       # @param max_tokens [Integer]
       # @param timeout [Numeric] seconds the judge may take
       # @param pause_budget [Numeric] seconds its request may spend queued for a
       #   provider slot without them counting against `timeout`, summed over the call
       # @param bound [#call] `(seconds) { |timer| }`, what times the judge; {Bound} by default
-      def initialize(provider:, model:, slots:, journal: Channel::Null.instance, extra: {}, max_tokens: MAX_TOKENS,
+      def initialize(provider:, model:, slots:, extra: {}, max_tokens: MAX_TOKENS,
                      timeout: TIMEOUT, pause_budget: Provider::Admission::DEFAULT_DEADLINE, bound: Bound)
-        @provider = Provider::Journaled.new(provider:, journal:, requester: ROLE)
-        @journal = journal
+        @provider = provider
         @model = model
         @extra = extra
         @system = system_of(slots)
@@ -282,17 +280,10 @@ module Lain
       def ask(question)
         request = ::Lain::Request.new(model: current(@model), system: @system, max_tokens: @max_tokens, stream: false,
                                       extra: current(@extra), messages: [{ "role" => "user", "content" => question }])
-        @provider.complete(request).tap { |response| paid(request, response) }
+        @provider.complete(request)
       end
 
       def current(value) = value.respond_to?(:call) ? value.call : value
-
-      # Keyed by the request, since the judge commits no turn.
-      def paid(request, response)
-        @journal << Telemetry::TurnUsage.new(digest: request.digest, model: response.model,
-                                             stop_reason: response.stop_reason, usage: response.usage.to_h,
-                                             requester: ROLE)
-      end
 
       def parse(response)
         match = response.text.strip.match(VERDICT)

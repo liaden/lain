@@ -430,26 +430,24 @@ module Lain
       # price-tier hold, which stays rebindable because the live compaction
       # sweep binds it once per lane.
       #
-      # @param board [#guard_inputs, #approvals] a chat's {Switchboard}
+      # @param board [#guard_inputs, #approvals, #model_switch] a chat's {Switchboard}
       # @param channel [#push] where the price-tier hold shows a crossing an earlier approval carried
-      # @return [void]
-      # @raise [Rebound] when already attached to another board or channel
-      def attach(board, channel)
-        raise Rebound, reattached(board, channel) unless attachable?(board, channel)
-
+      # @param spend [Budget::Shared] the chat agent's, where every tier pays
+      # @return [Attachment]
+      # @raise [Rebound] when already attached to another board, channel or spend
+      def attach(board, channel, spend: Budget::Shared::Null)
+        attachment.admit!(board, channel, spend)
         egress_literals.bind(board.guard_inputs.secrets, ledger: board.ledger, sensitivity: board.sensitivity)
         egress_hold.bind(board.approvals)
         price_tier_hold.bind(board.approvals, channel)
-        @model_switch = board.model_switch
-        @attachment = [board, channel]
+        @attachment = Attachment.new(board:, channel:, spend:)
       end
 
-      # The model the chat is on now: what `/model` last wrote once {#attach}
-      # has bound the board's slot, and the launch model before it (headless,
-      # consolidate), where nothing can switch.
+      # What {#attach} bound: the live model a tier follows and the spend it
+      # pays into. Before it (headless, consolidate), the launch model and nowhere.
       #
-      # @return [String]
-      def live_model = @model_switch ? @model_switch.to_s : model
+      # @return [Attachment, Attachment::Detached]
+      def attachment = @attachment || Attachment::Detached.new(model)
 
       # {#tier_options} for a tier on an arm, at the endpoint that arm dials.
       #
@@ -993,13 +991,6 @@ module Lain
 
       # An unset numeric flag arrives as nil; the constant is the authority.
       def knob(flag, default) = @options[flag] || default
-
-      def attachable?(*pair) = @attachment.nil? || @attachment.zip(pair).all? { |was, now| was.equal?(now) }
-
-      def reattached(*pair)
-        moved = %w[board channel].zip(@attachment, pair).reject { |_, was, now| was.equal?(now) }.map(&:first)
-        "the backend is already attached to another #{moved.join(" and ")}"
-      end
 
       # The binding half of a memoized factory (see {Rebound}). Same arguments
       # are a cache hit and pass silently; different ones name WHICH argument

@@ -25,8 +25,12 @@ module Lain
     # The match is deliberately a CLASS check, not a journal_type/shape check: a
     # raw Hash with "type" => "turn_usage" -- which {Journal#record} accepts --
     # forwards untouched with NO paired memory_root. {Agent::Accounting} is the
-    # only turn_usage writer today and always sends the event object; broaden the
-    # match when a real second writer exists, not speculatively.
+    # only writer of a turn's turn_usage and always sends the event object;
+    # broaden the match when a real second writer exists, not speculatively.
+    #
+    # A judge's or a summary's turn_usage is not the agent's: its digest names
+    # the request it paid for, and a root paired with it would name a turn no
+    # resume can find. It is forwarded alone, and announces no load.
     #
     # It also writes the session's ONE {Telemetry::MemoryLoaded}, immediately
     # ahead of the first root it explains. Here rather than at each wiring site
@@ -49,7 +53,7 @@ module Lain
       # @return [self]
       def record(entry)
         @journal << entry
-        paired(entry) if entry.is_a?(Telemetry::TurnUsage)
+        paired(entry) if entry.is_a?(Telemetry::TurnUsage) && entry.agent?
         self
       end
       alias << record

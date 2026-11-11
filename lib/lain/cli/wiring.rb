@@ -563,7 +563,7 @@ module Lain
       # reading `resumed&.timeline` at the caller cost #wire_agent the one
       # branch that put it over AbcSize.
       def build_agent(toolset:, channel:, session:, backend:, resumed: nil, views: nil)
-        board = switchboard(backend, toolset).tap { backend.attach(_1, channel) }
+        board = switchboard(backend, toolset).tap { backend.attach(_1, channel, spend: Lain::Budget::Shared.new) }
         agent_over(board:, channel:, session:, backend:, timeline: resumed&.timeline, views:).tap { resumed&.seed(_1) }
       end
 
@@ -662,7 +662,7 @@ module Lain
         # turn's three readers see three windows.
         window = backend.context_window
         telemetry = mount.instrumentation
-        { provider:, context_window: window, spend: Lain::Budget::Shared.new,
+        { provider:, context_window: window, spend: backend.attachment.spend,
           instrumentation: telemetry.with(tool_middleware: ToolGuard.stack(chronicle, board),
                                           turn_middleware: turn_phase(timeline, window, backend.middleware),
                                           model_middleware: model_phase(telemetry, backend.middleware)) }
@@ -921,7 +921,7 @@ module Lain
       # {Lain::Sensitivity::Policy::Null} default, so `gates?` answered false for
       # every path in every real chat and the whole axis was dark.
       def switchboard(backend, toolset)
-        @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, journal: durable_journal, config:),
+        @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, config:),
                                         model: backend.model, middleware: backend.middleware, display: @channel,
                                         options:, resolver: exec_resolver, worker_env: chat_env, stops: observers.stops,
                                         toolset:, project:, verdict:, config:, paths: @paths, arms:, **chat_reads)

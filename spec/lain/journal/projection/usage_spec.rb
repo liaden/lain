@@ -37,6 +37,16 @@ RSpec.describe Lain::Journal::Projection::Usage do
     expect(described_class.over([turn]).value).to eq({})
   end
 
+  it "counts a summarizer's answer once, by its payment and not by the oracle answer beside it" do
+    answer = Lain::Telemetry::OracleAnswer.new(oracle_digest: "blake3:oracle", question: "summarise",
+                                               answer: { "summary" => "..." }, model: "m",
+                                               usage: { input_tokens: 9, output_tokens: 1 }, wall_clock: 1.0)
+
+    folded = described_class.over([paid.call(9, 1, requester: :summarizer), answer])
+
+    expect(folded.value).to eq([nil, "summarizer"] => Lain::Usage.new(input_tokens: 9, output_tokens: 1))
+  end
+
   it "combines 2 halves into the whole" do
     left = described_class.over([paid.call(10, 1, command: "plan")])
     right = described_class.over([paid.call(5, 2, command: "plan"), paid.call(1, 1)])

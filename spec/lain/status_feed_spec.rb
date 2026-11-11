@@ -893,7 +893,44 @@ RSpec.describe Lain::StatusFeed do
       feed << judged
       described_class::ChildPayments.new(feed) << judged
 
-      expect(published.values_at("run_tokens", "occupancy", "cache_deadline")).to eq([500_009, nil, nil])
+      expect(published.values_at("run_tokens", "occupancy", "cache_deadline")).to eq([nil, nil, nil])
+    end
+  end
+
+  # A judge's or summarizer's answer is paid in dollars toward --max-cost and
+  # never in the chat's tokens, so the HUD counts it the same way.
+  describe "a tier's payment" do
+    let(:shared) { Lain::Budget::Shared.new }
+
+    def answered(input) = text_response("ok", model: "claude-opus-5-5", usage: Lain::Usage.new(input_tokens: input))
+
+    def tier_paid(response, requester:)
+      shared.pay(Lain::Budget::Spent.of(response, prices: Lain::PriceBook.default, clock: -> { Time.now.utc }))
+      Lain::Telemetry::TurnUsage.new(digest: "blake3:request-#{requester}", model: response.model,
+                                     stop_reason: :end_turn, usage: response.usage.to_h, requester:)
+    end
+
+    it "adds its dollars once, beside its oracle answer, and none of its tokens" do
+      feed = described_class.new(path:)
+      paid = tier_paid(answered(10_000), requester: :summarizer)
+
+      feed << paid << oracle_answer
+      described_class::ChildPayments.new(feed) << paid
+
+      expect(published.values_at("run_dollars", "run_tokens", "occupancy")).to eq(["0.04", nil, nil])
+    end
+
+    it "shows the same dollars the ceiling holds the chat to" do
+      feed = described_class.new(path:)
+      accounting = Lain::Agent::Accounting.new(journal: feed, spend: shared)
+      payments = described_class::ChildPayments.new(feed)
+
+      accounting.observe(answered(20_000), digest: "blake3:turn")
+      payments << tier_paid(answered(10_000), requester: :auto_approver)
+      payments << tier_paid(answered(5_000), requester: :summarizer)
+
+      expect(published["run_dollars"]).to eq(accounting.spent.dollars.amount.to_s("F"))
+      expect(published["run_dollars"]).to eq("0.14")
     end
   end
 
@@ -2059,7 +2096,7 @@ RSpec.describe Lain::StatusFeed do
                                                 "approvals_pending", "waiting",
                                                 "occupancy", "window_guessed", "unmeasured_turns", "compactions",
                                                 "derivation_refusal_streak",
-                                                "run_tokens", "in_flight", "scope", "approval", "layers",
+                                                "run_tokens", "run_dollars", "in_flight", "scope", "approval", "layers",
                                                 "mode_lighter", "agents",
                                                 "elapsed", "idle", "since_compaction", "hud")
     end

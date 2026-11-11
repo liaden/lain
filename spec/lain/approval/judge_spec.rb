@@ -44,11 +44,10 @@ end
 
 RSpec.describe Lain::Approval::Judge do
   let(:slots) { Lain::Prompt::Slots.new(fills: {}) }
-  let(:journal) { [] }
 
   def answering(text) = JudgeSpecSupport::ScriptedProvider.new { text_response(text) }
 
-  def judge(provider, **) = described_class.new(provider:, model: "judge-model", slots:, journal:, **)
+  def judge(provider, **) = described_class.new(provider:, model: "judge-model", slots:, **)
 
   def place(**rest)
     described_class::Place.new(root: "/p", cwd: "/p", requester: "main", outside: [], **rest)
@@ -108,7 +107,7 @@ RSpec.describe Lain::Approval::Judge do
     it "reads a model given as a callable at each call" do
       provider = answering("defer")
       current = "first"
-      built = described_class.new(provider:, model: -> { current }, slots:, journal:)
+      built = described_class.new(provider:, model: -> { current }, slots:)
 
       built.call(tool: "bash", input: {}, place:)
       current = "second"
@@ -119,27 +118,45 @@ RSpec.describe Lain::Approval::Judge do
   end
 
   describe "the judge's spend" do
-    def judged_records(provider)
-      verdict(provider)
-      journal.map(&:to_journal)
-    end
-
-    it "is on the record as the request it sent and the turn_usage it paid, both as auto_approver's" do
-      provider = JudgeSpecSupport::ScriptedProvider.new do
-        text_response("APPROVE", model: "judge-model", usage: Lain::Usage.new(input_tokens: 700, output_tokens: 2))
+    let(:journal) { [] }
+    let(:shared) { Lain::Budget::Shared.new }
+    let(:provider) do
+      JudgeSpecSupport::ScriptedProvider.new do
+        text_response("APPROVE", model: "claude-opus-5-5", usage: Lain::Usage.new(input_tokens: 10_000))
       end
-
-      sent, paid = judged_records(provider)
-
-      expect(sent).to include("type" => "request_sent", "requester" => "auto_approver",
-                              "digest" => provider.requests.sole.digest)
-      expect(paid).to include("type" => "turn_usage", "requester" => "auto_approver", "model" => "judge-model",
-                              "digest" => provider.requests.sole.digest,
-                              "usage" => a_hash_including("input_tokens" => 700, "output_tokens" => 2))
+    end
+    let(:backend) do
+      Lain::CLI::Backend.new({ provider: "anthropic", model: "claude-opus-5-5" }, root: Dir.pwd).tap do |built|
+        allow(built).to receive(:provider).and_return(provider)
+        built.journal_slot.bind(journal)
+        built.attach(board, [], spend: shared)
+      end
+    end
+    let(:board) do
+      egress = Lain::Sensitivity::Secrets::Egress.new(refused: [], flagged: [])
+      switch = Lain::Context::ModelSwitch.new("claude-opus-5-5", journal: instance_double(Lain::Journal, record: nil))
+      Struct.new(:guard_inputs, :approvals, :ledger, :sensitivity, :model_switch)
+            .new(Struct.new(:secrets).new(Class.new { define_method(:egress) { |**| egress } }.new), nil,
+                 Lain::Sensitivity::Ledger.new, Lain::Sensitivity::Policy::Null.instance, switch)
     end
 
-    it "is paid for a reply it reads as a defer" do
-      expect(judged_records(answering("maybe")).map { _1["type"] }).to eq(%w[request_sent turn_usage])
+    def through_tier
+      tier = Lain::CLI::Backend::Tier.new(role: described_class::ROLE, backend:, model: :follow, queue: true)
+      judge(tier.provider).call(tool: "bash", input: { "command" => "ls" }, place:)
+    end
+
+    it "is on the record once through its Tier, as the request it sent and the turn_usage it paid" do
+      through_tier
+
+      expect(journal.map { _1.to_journal.values_at("type", "requester", "digest") })
+        .to eq([["request_sent", "auto_approver", provider.requests.sole.digest],
+                ["turn_usage", "auto_approver", provider.requests.sole.digest]])
+    end
+
+    it "pays its dollars into the chat's spend once through its Tier" do
+      through_tier
+
+      expect(shared.spent.dollars.amount).to eq(BigDecimal("0.04"))
     end
   end
 

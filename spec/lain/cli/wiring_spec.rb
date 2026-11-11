@@ -1123,6 +1123,44 @@ RSpec.describe Lain::CLI::Wiring do
   # The route `/meta` takes, from the chat's own session: an :inherit child
   # spawned after the chat committed a cut renders the cut, not the turns it
   # replaced.
+  # --max-cost is run-wide: what the judge spends is paid into the very Shared
+  # the chat agent's dollar ceiling reads.
+  describe "a judged call's spend" do
+    let(:priced) { Lain::Usage.new(input_tokens: 10_000) }
+
+    def judged(responses, max_cost:)
+      mock = Lain::Provider::Mock.new(responses:)
+      options = { provider: "ollama", model: nil, max_tokens: 64, max_cost: }
+      judging = offline_backend_class.new(options, mock:, root: project_dir)
+      auto = new_wiring(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:)
+      recorder, session = auto.run_state(nil)
+      [auto.wire_agent(channel:, recorder:, session:, backend: judging), judging, mock]
+    end
+
+    it "hands the agent the same Shared the tiers pay into" do
+      agent, judging, = judged([text_response("hi")], max_cost: 1)
+
+      expect(agent.spend).to be_a(Lain::Budget::Shared).and equal(judging.attachment.spend)
+    end
+
+    it "refuses the next chat step once a judged call cost more than --max-cost" do
+      agent, judging, mock = judged([
+                                      tool_response(["t1", "bash", { "command" => "curl -s http://t28.invalid/x" }],
+                                                    model: "qwen3:4b"),
+                                      text_response("DENY", model: "claude-opus-5-5", usage: priced),
+                                      text_response("after", model: "qwen3:4b")
+                                    ], max_cost: 0.01)
+
+      begin
+        agent.ask("go")
+      rescue StandardError
+        nil
+      end
+
+      expect([judging.attachment.spend.spent.dollars.amount, mock.requests.size]).to eq([BigDecimal("0.04"), 2])
+    end
+  end
+
   describe "the chat session an :inherit child reads its parent's cuts from" do
     let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("settled"), text_response("done")]) }
 
@@ -1934,7 +1972,7 @@ RSpec.describe Lain::CLI::Wiring do
       board = wiring.instance_variable_get(:@switchboard)
       other = Struct.new(:guard_inputs, :approvals).new(board.guard_inputs, board.approvals)
       expect { hosted.attach(other, channel) }.to raise_error(Lain::CLI::Backend::Rebound)
-      expect { hosted.attach(board, channel) }.not_to raise_error
+      expect { hosted.attach(board, channel, spend: hosted.attachment.spend) }.not_to raise_error
     end
 
     it "parks no egress decision when supervision was not asked for", :seam do

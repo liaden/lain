@@ -90,18 +90,23 @@ module Lain
   #   and queue depth, no bucket over time). The HUD labels it `run:` rather
   #   than `usage:` so the label cannot be read as the quota.
   #
-  #   SPAWNED CHILDREN'S AND THE JUDGE'S SPEND IS IN IT: a run's total is its
-  #   cost. The field's contract is that it EQUALS what the session file's
-  #   `turn_usage` records add up to, and nothing more. Neither a one-shot
-  #   child's record nor the judge's rides the tee; each reaches {#paid_aside}
-  #   from the session journal through {ChildPayments}, and moves nothing but
-  #   this sum, since the window and cache it paid for are not the chat's. An
-  #   actor child's payments are not journaled, so once an actor is in the
-  #   subtree this is LESS than `Accounting#spent`, which settles the actor's
-  #   spend all the same.
+  #   SPAWNED CHILDREN'S SPEND IS IN IT, and a tier's is not: it is held to
+  #   the tokens `Accounting#spent` holds `--max-tokens` to, and a judge's or a
+  #   summary's prompt was never in the chat's context. A one-shot child's
+  #   record reaches {#paid_aside} from the session journal through
+  #   {ChildPayments}, and moves nothing but this sum and `run_dollars`, since
+  #   the window and cache it paid for are not the chat's. An actor child's
+  #   payments are not journaled, so once an actor is in the subtree this is
+  #   LESS than `Accounting#spent`, which settles the actor's spend all the same.
+  # * `run_dollars` -- what this run has spent in dollars, as `--max-cost`
+  #   reads it: the chat's turns, its one-shot children's, and every tier
+  #   answer, a judge's or a summary's, each priced from its one
+  #   `turn_usage` record. nil before the first payment; a decimal string, so
+  #   it reads exactly as the dollar refusal does.
   #
-  #   ORACLE SPEND IS NOT IN IT, deliberately: no `turn_usage` record carries
-  #   it. {#turn_usage?} holds that argument and what a `#usage` duck once cost.
+  #   {Telemetry::OracleAnswer} counts toward neither field, though it answers
+  #   `#usage`: the tier's own `turn_usage` beside it is the payment.
+  #   {#turn_usage?} holds what a `#usage` duck once cost.
   # * `approvals_pending` and `waiting` -- read off {Journal::Projection::Waits},
   #   the one fold of open waits this feed and the agent states share; its doc
   #   holds how each wait opens and closes. `waiting` is the approvals plus each
@@ -197,14 +202,16 @@ module Lain
     #   the denominator, the same duck {Agent#occupancy} takes.
     # @param agent_states [AgentStates::Tracker] the run's one fold of agent states, fed from the tee
     #   ahead of this sink so a publish carries the state its record made.
+    # @param prices [PriceBook] what `run_dollars` prices each payment under, the book the chat's own accounting reads
     # @param store [Ext::Store] where a committed turn's causal chain is resolved --
     #   {Inbox}'s collaborator. Defaulted to an EMPTY one rather than required,
     #   because the live chat has none yet at this object's construction point;
     #   see {#bind_store}.
     def initialize(path: default_path, clock: -> { Time.now }, cache_profile: DEFAULT_CACHE_PROFILE,
                    run_clock: RunClock.new, context_window: ContextWindow.default, store: Dag::Factory.store,
-                   agent_states: AgentStates::Tracker.new(clock: run_clock))
+                   agent_states: AgentStates::Tracker.new(clock: run_clock), prices: PriceBook.default)
       @publication = Publication.new(path)
+      @prices = prices
       @clock = clock
       @cache_profile = cache_profile
       @run_clock = run_clock
@@ -225,6 +232,7 @@ module Lain
       @reading_head = nil
       @unmeasured_turns = 0
       @run_tokens = nil
+      @run_dollars = nil
       @mode = ModeState::NONE
       @waits = Journal::Projection::Waits.unit
       @compactions = 0
@@ -252,13 +260,14 @@ module Lain
     # @return [self] the duck {Agent::Instrumentation} carries as `transition_listener:`
     def transition_listener = self
 
-    # A payment made beside the chat's own turns, a spawned child's or the
-    # judge's: added to `run_tokens` and nothing else.
+    # A payment made beside the chat's own turns: a spawned child's, added to
+    # `run_tokens` and `run_dollars`, or a tier's, added to `run_dollars` alone.
     #
     # @param event [Telemetry::TurnUsage] a record naming its spawn or a requester other than the agent
     # @return [self]
     def paid_aside(event)
-      @run_tokens = @run_tokens.to_i + JournaledUsage.new(event.usage.to_h).total_tokens
+      @run_tokens = @run_tokens.to_i + JournaledUsage.new(event.usage.to_h).total_tokens if event.spawn
+      pay(event)
       publish_if_changed
       self
     end
@@ -452,7 +461,16 @@ module Lain
       usage = JournaledUsage.new(event.usage)
       slide_cache_deadline(usage)
       @run_tokens = @run_tokens.to_i + usage.total_tokens
+      pay(event)
       record_occupancy(measured(usage, event.model), stands_on: event.digest)
+    end
+
+    def pay(event)
+      return if event.usage.nil?
+
+      usage = Usage.new(**event.usage.to_h.transform_keys(&:to_sym).slice(*Usage.members))
+      @run_dollars = (@run_dollars || Friction::CacheWaste::Dollars.zero) +
+                     Budget::Spent.paid(event.model, usage, prices: @prices, clock: @clock).dollars
     end
 
     # `@occupancy`'s writer for every reading a record brings ({#remeasure}
@@ -625,7 +643,8 @@ module Lain
         "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,
-        "run_tokens" => @run_tokens, "in_flight" => in_flight_slot, "agents" => published_agents }
+        "run_tokens" => @run_tokens, "run_dollars" => @run_dollars&.amount&.to_s("F"),
+        "in_flight" => in_flight_slot, "agents" => published_agents }
         .merge(@mode.published)
     end
 

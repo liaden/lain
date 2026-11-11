@@ -100,7 +100,7 @@ module Lain
           # @return [Array<String>, nil] full replacement lines, nil for an
           #   event that names no turn
           def update(event)
-            return nil unless event.is_a?(Telemetry::TurnUsage)
+            return nil unless event.is_a?(Telemetry::TurnUsage) && event.agent?
             return unavailable(event.digest) unless @store.key?(event.digest)
 
             render_chain(Dag::Factory.timeline(head_digest: event.digest, store: @store).to_a)
