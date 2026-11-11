@@ -19,6 +19,11 @@ module Lain
       # resume chains to and this session's own journal. Another session in
       # the same project that this one did not resume is not searched.
       #
+      # A {Telemetry::WritesUnread} record stands for writes no record names,
+      # so once the lineage holds one every root has changed beneath it, while
+      # each path keeps its own rule: answering those fresh too would refuse
+      # every program for one opaque command.
+      #
       # It fails closed. A record it cannot fold, or a lineage it cannot read,
       # leaves it answering every path fresh, since the journal reports an
       # observer's fault and carries on.
@@ -27,6 +32,8 @@ module Lain
         # Most lines of a session file are not write records; a substring test
         # skips them without parsing.
         WRITTEN_MARK = %("type":"#{WRITTEN}").freeze
+        UNREAD = "writes_unread"
+        UNREAD_MARK = %("type":"#{UNREAD}").freeze
 
         # Both the lineage and a live record name a path this way, so a record
         # that names none degrades the same wherever it is read.
@@ -47,7 +54,8 @@ module Lain
         # @param faults [#<<] where the reason lands when the lineage cannot be read
         # @return [Fresh]
         def self.for_lineage(paths, stat: Stat.new, clock: -> { Time.now }, faults: Channel::Null.instance)
-          new(start: paths.empty? ? clock.call : first_ts(paths.first), written: written_in(paths), stat:)
+          written, unread = folded(paths)
+          new(start: paths.empty? ? clock.call : first_ts(paths.first), written:, unread:, stat:)
         rescue StandardError => e
           unknown(e, faults:, stat:)
         end
@@ -69,26 +77,38 @@ module Lain
           Time.iso8601(File.open(path, "r:UTF-8") { |file| JSON.parse(file.gets).fetch("ts") })
         end
 
-        # A marked line that does not parse is a torn write record, and so a
-        # fault rather than a line to skip.
-        def self.written_in(paths)
+        # A marked line that does not parse is a torn record, and so a fault
+        # rather than a line to skip.
+        #
+        # @return [Array(Array<String>, Boolean)] the written paths, and whether any write went unread
+        def self.folded(paths)
           paths.lazy.flat_map { |path| File.foreach(path, encoding: Encoding::UTF_8).lazy }
-               .select { |line| line.include?(WRITTEN_MARK) }
-               .map { |line| JSON.parse(line) }.select { |record| record["type"] == WRITTEN }
-               .map { |record| PATH_OF.call(record) }.to_a
+               .select { |line| line.include?(WRITTEN_MARK) || line.include?(UNREAD_MARK) }
+               .map { |line| JSON.parse(line) }
+               .inject([[], false]) { |(written, unread), record| fold(record, written, unread) }
         end
 
-        private_class_method :first_ts, :written_in
+        def self.fold(record, written, unread)
+          case record["type"]
+          when WRITTEN then [written << PATH_OF.call(record), unread]
+          when UNREAD then [written, true]
+          else [written, unread]
+          end
+        end
+
+        private_class_method :first_ts, :folded, :fold
 
         # @param start [Time] the lineage's first record
         # @param written [Array<String>] the paths the lineage's write records name
         # @param stat [Stat]
         # @param degraded [Boolean] whether to answer every path fresh
-        def initialize(start:, written:, stat:, degraded: false)
+        # @param unread [Boolean] whether the lineage ran a command whose writes no record names
+        def initialize(start:, written:, stat:, degraded: false, unread: false)
           @start = nanoseconds(start)
           @written = Set.new(written)
           @stat = stat
           @degraded = degraded
+          @unread = unread
           @lock = Mutex.new
         end
 
@@ -96,11 +116,12 @@ module Lain
         # folds; the lock it takes is never held around a journal write. A
         # fault degrades it and is raised on, for the journal to record.
         #
-        # @param event [Telemetry::FileWritten, Hash, Object] any journal entry
+        # @param event [Telemetry::FileWritten, Telemetry::WritesUnread, Hash, Object] any journal entry
         # @return [self]
         def <<(event)
           path = written_path(event)
           @lock.synchronize { @written << path } if path
+          @unread = true if marks_unread?(event)
           self
         rescue StandardError
           @degraded = true
@@ -139,9 +160,10 @@ module Lain
         # about 1 grant.
         #
         # @param root [String] absolute; the checkout
-        # @return [Boolean] true when degraded or when the root cannot be read
+        # @return [Boolean] true when degraded, when the lineage ran a command
+        #   lain could not read, or when the root cannot be read
         def any_under?(root)
-          return true if @degraded
+          return true if @degraded || @unread
 
           real = @stat.real(root)
           roots = [root, real].uniq
@@ -174,10 +196,14 @@ module Lain
 
         def written_path(event)
           return event.path if event.is_a?(Telemetry::FileWritten)
-          return unless event.is_a?(Hash) && (event["type"] || event[:type]).to_s == WRITTEN
+          return unless journal_type(event) == WRITTEN
 
           PATH_OF.call(Journal.parse(event))
         end
+
+        def marks_unread?(event) = event.is_a?(Telemetry::WritesUnread) || journal_type(event) == UNREAD
+
+        def journal_type(event) = event.is_a?(Hash) ? (event["type"] || event[:type]).to_s : nil
 
         def written?(path) = @lock.synchronize { @written.include?(path) }
 

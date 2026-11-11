@@ -134,7 +134,8 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     WindowPressure: { kind: :over_window, source: "ollama", request_digest: d, prompt_tokens: 9000,
                       window_tokens: 8192, stands_on: d, model: "m", spawn: d },
     WorktreeReap: { action: :reaped, subject: :worktree, name: "w-1", reason: "stale", anchors: ["refs/lain/anchor"] },
-    WriteRefused: { tool_use_id: "tu_1", pattern: "aws key" }
+    WriteRefused: { tool_use_id: "tu_1", pattern: "aws key" },
+    WritesUnread: { tool_use_id: "tu_1", cwd: "/r/sub" }
   }.freeze
   population = arguments.to_h do |name, keywords|
     build = lambda do

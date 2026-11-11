@@ -1032,7 +1032,9 @@ three places, and each answers a different question. All three read one `Shell::
    interpreter or build tool it also classes the file that will run (`run_files`). `fresh` is the answer to
    "did this lineage write it": a `file_written` journal record names its path, or its ctime is newer than
    the lineage's first record. ctime, because `touch -d` sets mtime back and nothing unprivileged sets ctime.
-   A lineage that cannot be read answers every path fresh. Every bash call
+   A lineage that cannot be read answers every path fresh. A command the shell reader cannot read (`Named#opaque?`) journals a
+   `writes_unread` record, and once the lineage holds one every root counts as changed for a build grant,
+   while each path keeps its own rule. Every bash call
    journals an `exec_resolution` record before it runs, whatever the arms, and the child env drops
    `LD_PRELOAD`, `LD_AUDIT`, `BASH_FUNC_*` and `CDPATH` (`Exec::ChildEnv`) so an exported function never
    reaches the shell. `LD_LIBRARY_PATH` is dropped too, and passed only by name (`LAIN_ENV_PASS`).

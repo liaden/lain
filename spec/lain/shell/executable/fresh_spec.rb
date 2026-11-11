@@ -273,6 +273,46 @@ RSpec.describe Lain::Shell::Executable::Fresh do
     end
   end
 
+  describe "a write lain could not read" do
+    let(:project) { File.join(root, "project").tap { FileUtils.mkdir_p(_1) } }
+    let(:elsewhere) { File.join(root, "scratch").tap { FileUtils.mkdir_p(_1) } }
+
+    def unread = Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_1", cwd: elsewhere)
+
+    it "marks every root changed once seen live, and leaves each path on its own rule" do
+      file = plant("project/Cargo.toml")
+      journal = Lain::Journal.new(io: StringIO.new)
+      fresh = lineage_from(after_every_file).tap { journal.observe(_1) }
+      before = fresh.any_under?(project)
+      journal << unread
+
+      expect([before, fresh.any_under?(project), fresh.fresh?(file), fresh.degraded?])
+        .to eq([false, true, false, false])
+    end
+
+    it "is marked by the record's journal Hash, the shape a session journals" do
+      fresh = lineage_from(after_every_file)
+      fresh << unread.to_journal
+
+      expect(fresh.any_under?(project)).to be(true)
+    end
+
+    it "is still marked when a resumed lineage is folded from its files" do
+      first = session_file("s1.ndjson", unread.to_journal, start: after_every_file)
+      second = session_file("s2.ndjson", start: after_every_file, resumed_from: { "file" => "s1.ndjson" })
+      fresh = described_class.for_lineage([first, second])
+
+      expect([fresh.any_under?(project), fresh.degraded?]).to eq([true, false])
+    end
+
+    it "keeps the per-path rule for a lineage whose only write lain read" do
+      notes = File.join(elsewhere, "notes.txt").tap { File.write(_1, "x\n") }
+      path = session_file("s1.ndjson", written(notes).to_journal, start: after_every_file)
+
+      expect(described_class.for_lineage([path]).any_under?(project)).to be(false)
+    end
+  end
+
   describe "its own fault" do
     it "answers every path fresh once a record it cannot fold arrives, and the journal records why" do
       io = StringIO.new

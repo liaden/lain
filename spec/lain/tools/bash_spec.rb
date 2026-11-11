@@ -1193,6 +1193,75 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
 
+    describe "marking the lineage when lain cannot read what a command wrote" do
+      # A real journal with the lineage's freshness observing it, as a session wires them.
+      def lineage
+        events = RecordingChannel.new
+        fresh = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+        Lain::Journal.new(io: StringIO.new).tap { _1.observe(fresh) }.tap { _1.observe(events) }
+                     .then { [_1, fresh, events] }
+      end
+
+      def run_in(dir, command, journal:, exec: Lain::Exec::Local.new, timeout: nil)
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: ENV.to_h))
+        described_class.new(exec:, journal:).call({ command:, timeout: }.compact,
+                                                  Lain::Tool::Invocation.new(tool_use_id: "tu_u", context: session,
+                                                                             channel:))
+      end
+
+      def unread(events) = events.events.grep(Lain::Telemetry::WritesUnread)
+
+      def dirs(root) = %w[project scratch].map { File.join(root, _1).tap { |dir| Dir.mkdir(dir) } }
+
+      it "journals the call and withdraws the next build grant under any root" do
+        Dir.mktmpdir do |dir|
+          project, scratch = dirs(File.realpath(dir))
+          journal, fresh, events = lineage
+          before = fresh.any_under?(project)
+          run_in(scratch, %(sh -c "echo x > notes.txt"), journal:)
+
+          expect(unread(events).map { [_1.tool_use_id, _1.cwd] }).to eq([["tu_u", scratch]])
+          expect([before, fresh.any_under?(project)]).to eq([false, true])
+        end
+      end
+
+      it "journals a command the bash timeout killed" do
+        Dir.mktmpdir do |dir|
+          _, scratch = dirs(File.realpath(dir))
+          journal, _, events = lineage
+          exec = Lain::Exec::Local.new(pipeline: Lain::Shell::Pipeline.new(grace: 0.1))
+          result = run_in(scratch, %(sh -c "sleep 5"), journal:, exec:, timeout: 1)
+
+          expect(result).to be_error
+          expect(unread(events).map(&:tool_use_id)).to eq(["tu_u"])
+        end
+      end
+
+      it "journals the mark even when recording a named write raises" do
+        Dir.mktmpdir do |dir|
+          _, scratch = dirs(File.realpath(dir))
+          journal, _, events = lineage
+          allow(Lain::Telemetry::FileWritten).to receive(:from_stat).and_raise(RuntimeError, "no record")
+
+          expect { run_in(scratch, %(echo x > out.txt && sh -c "true"), journal:) }
+            .to raise_error(RuntimeError, "no record")
+          expect(Lain::Telemetry::FileWritten).to have_received(:from_stat)
+          expect(unread(events).map(&:tool_use_id)).to eq(["tu_u"])
+        end
+      end
+
+      it "leaves a readable write on the per-path rule" do
+        Dir.mktmpdir do |dir|
+          project, scratch = dirs(File.realpath(dir))
+          journal, fresh, events = lineage
+          run_in(scratch, "cat > notes.txt", journal:)
+
+          expect([unread(events), fresh.any_under?(project), fresh.any_under?(scratch)]).to eq([[], false, true])
+        end
+      end
+    end
+
     # The verdict, the stages a shell would exec and the write journal all read the gate's one parse.
     describe "a call whose context carries the gate's parse" do
       def parses_of(command)

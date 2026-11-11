@@ -442,7 +442,8 @@ module Lain
       end
 
       # Stats after the call, timeout included: a killed command may already
-      # have truncated its target.
+      # have truncated its target. A command it cannot read is marked instead,
+      # since what it wrote has no name to stat.
       #
       # @param parse [Shell::Parse::Result] the command as the model wrote it, parsed
       # @param options [Hash] the spawn options the command runs under
@@ -452,12 +453,17 @@ module Lain
       def run_journalling_writes(parse, options, invocation)
         paths = []
         before = {}
-        home = options[:env].to_h["HOME"]
-        paths = Shell::Named.from(parse, cwd: options[:cwd], home:).written.map(&:resolved).uniq
+        named = Shell::Named.from(parse, cwd: options[:cwd], home: options[:env].to_h["HOME"])
+        paths = named.written.map(&:resolved).uniq
         before = paths.to_h { |path| [path, identity(path)&.last] }
         yield
       ensure
+        journal_unread(options[:cwd], invocation) if named&.opaque?
         journal_writes(paths, before, invocation)
+      end
+
+      def journal_unread(cwd, invocation)
+        journal_record(Telemetry::WritesUnread.new(tool_use_id: invocation.tool_use_id, cwd:))
       end
 
       # Only a file that is new or whose inode or ctime moved is journalled, so
