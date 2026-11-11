@@ -2,6 +2,7 @@
 
 require "active_support/core_ext/module/delegation"
 require "async"
+require "delegate"
 
 module Lain
   module Frontend
@@ -31,7 +32,7 @@ module Lain
       # waits for nobody and a prompt it drew was never typed at.
       module Idle
         def self.start(_task) = self
-        def self.stop = nil
+        def self.stop(**) = nil
         def self.untouched?(_prompt) = true
         def self.typed?(_prompt) = false
         def self.keep(_partial) = nil
@@ -136,6 +137,12 @@ module Lain
         @ended = false
       end
 
+      # The task a started pump runs in, answering the one stop every pump
+      # answers: this pump has no pane to say goodbye to, so the flag is moot.
+      class Running < SimpleDelegator
+        def stop(**) = __getobj__.stop
+      end
+
       # Seats the input and serves prompts until stopped. Seating waits until
       # here because it re-points the process's own descriptor, which building
       # an object must never do; binding the approval key waits for the same
@@ -143,12 +150,12 @@ module Lain
       #
       # @param task [Async::Task] the task the pump's reader fiber is spawned
       #   under, so it ends when the conversation does
-      # @return [Async::Task] what stops the pump
+      # @return [Running] the pump's task, which stops it
       def start(task)
         @lines = Lines.new(seated(@input))
         StdinPump.bind_cycle(@rail, @screen, @cycle_key) if StdinPump.terminal?(@input)
         @told = @rail.attach(self)
-        task.async { run }
+        Running.new(task.async { run })
       end
 
       # What the human typed while no prompt was drawn, asked for by

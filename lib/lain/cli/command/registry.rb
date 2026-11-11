@@ -65,7 +65,7 @@ module Lain
           command.respond_to?(:serves_replies?) && command.serves_replies?
         end
 
-        # Whether the command +text+ names returns a Repl action (`:quit`) rather than an
+        # Whether the command +text+ names returns a Repl action (`:quit` or `:restart`) rather than an
         # answer. Asked BEFORE the call by a surface that cannot honour an action, because a
         # command that arms something and then returns one would leave it armed.
         #

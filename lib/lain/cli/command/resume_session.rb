@@ -35,7 +35,7 @@ module Lain
           refuse_live(path, session)
           raise Error, plain_chat_refusal(session) unless restarting?(session)
 
-          :quit
+          :restart
         end
 
         private

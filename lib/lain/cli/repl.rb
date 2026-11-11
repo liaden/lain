@@ -8,6 +8,10 @@ module Lain
     # surfaces to {HumanReplies}. Extracted from the Thor class because a
     # conversation is its own responsibility -- the Metrics trip said so.
     class Repl
+      # A restart quits like :quit, but its input pane is not told the chat is
+      # done: the next chat in the same window is the one it waits for.
+      EXITS = %i[quit restart].freeze
+
       # The keywords with no default are required for one reason: a defaulted
       # Null would let a mis-wired session silently lose its session record, its
       # command surface or its reply drain, with no error anywhere.
@@ -119,7 +123,7 @@ module Lain
           pumping = @input.start(task)
           @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
         ensure
-          pumping.stop
+          stop_input(pumping)
           @conversation.close
         end
       end
@@ -179,6 +183,10 @@ module Lain
         prompt.read.tap { |text| @tty.render_prompt_echo(text) if @echo_input && text }
       end
 
+      def restarting? = @restarting == true
+
+      def stop_input(pumping) = pumping.stop(goodbye: !restarting?)
+
       def continue?(text) = text && !@conductor.closed? && !farewell?(text)
 
       # :quit ends the conversation through the SAME exit a bare "quit" takes: a
@@ -196,7 +204,7 @@ module Lain
       # The goal's objective pin settles before a held line is taken, because
       # that line may be the `/goal off` that ends the goal the pin protects.
       def next_text(action)
-        return if action == :quit || !reads_a_line?
+        return if EXITS.include?(action) || !reads_a_line?
 
         @goal_driver.settle_pin(@agent.timeline)
         held_line || driven_prompt || read_line
@@ -252,7 +260,7 @@ module Lain
       # A command's contract ({Command::Registry}): rendered TEXT (a String,
       # delivered through the same boundary renderer a model turn uses, because
       # commands return text and never print), a {Lain::Renderable}, or a Repl
-      # ACTION (:quit today) for #converse to act on. The middleware
+      # ACTION (:quit or :restart) for #converse to act on. The middleware
       # fallthrough settles its own delivery and returns nil. Anything else is
       # that command's bug; name the breach loudly and RECOVERABLY.
       #
@@ -260,7 +268,8 @@ module Lain
       # private {#outcome} reader for the length of this method -- the same
       # collision {#respond}'s `supervised` local avoids one method down.
       def settle_command(returned, text)
-        return returned if returned.nil? || returned == :quit
+        @restarting = true if returned == :restart
+        return returned if returned.nil? || EXITS.include?(returned)
         return deliver_text(returned) if returned.is_a?(String)
         return deliver_rendered(returned) if returned.is_a?(Renderable)
 

@@ -1566,6 +1566,49 @@ RSpec.describe Lain::CLI::Repl do
       end
     end
 
+    # A restart is the one exit that must not tell the input pane the chat is
+    # done, so the pump hears how the conversation ended through the one
+    # message every pump answers.
+    describe "how the input pump is stopped" do
+      let(:recording_pump) do
+        Class.new do
+          attr_reader :stops
+
+          def initialize = @stops = []
+          def start(_task) = self
+          def stop(goodbye: true) = @stops << goodbye
+        end.new
+      end
+
+      def converse_ending_with(action, pump, dir)
+        allow(commands).to receive(:dispatch).and_return(action)
+        allow(conductor).to receive(:read_prompt).and_return("/leave")
+        Timeout.timeout(10) { repl_pumped_by(pump, dir).run(forks: no_forks, nvim: nil, store: nil, session: nil) }
+      end
+
+      def repl_pumped_by(pump, dir)
+        tty = tty_for(dir)
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        replies.bind_editor(rail)
+        replies.bind_changeset_review(review)
+        described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                            chronicle: Lain::CLI::Chronicle::Null.new, conductor:, input: pump)
+      end
+
+      it "says goodbye when a command ends the conversation with :quit" do
+        Dir.mktmpdir { |dir| converse_ending_with(:quit, recording_pump, dir) }
+
+        expect(recording_pump.stops).to eq([true])
+      end
+
+      it "says no goodbye when a command ends it with :restart" do
+        Dir.mktmpdir { |dir| converse_ending_with(:restart, recording_pump, dir) }
+
+        expect(recording_pump.stops).to eq([false])
+      end
+    end
+
     # The only example in the file that omits `supervisor:`. A default
     # nothing ever exercises is a default nobody knows is broken: this one was,
     # for as long as {Lain::Supervisor::Null} answered five of the duck's seven

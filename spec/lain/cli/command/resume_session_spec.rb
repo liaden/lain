@@ -31,10 +31,10 @@ RSpec.describe Lain::CLI::Command::ResumeSession do
     expect(command.returns_action?).to be(true)
   end
 
-  it "arms a restart resuming the named session and hands the Repl its :quit action" do
+  it "arms a restart resuming the named session and hands the Repl its :restart action" do
     open_session("20260727T090000-111.ndjson", writer: dead)
 
-    expect(command.call("20260727T090000-111.ndjson", env)).to eq(:quit)
+    expect(command.call("20260727T090000-111.ndjson", env)).to eq(:restart)
     expect(asked).to eq([{ pane: "%3", extra: ["--resume", "20260727T090000-111.ndjson"] }])
   end
 
@@ -58,7 +58,7 @@ RSpec.describe Lain::CLI::Command::ResumeSession do
     open_session("20260727T090000-111.ndjson", writer: dead)
     open_session("20260729T090000-999.ndjson", writer: dead, at: "2026-07-29T09:00:00Z")
 
-    expect(command.call("", env)).to eq(:quit)
+    expect(command.call("", env)).to eq(:restart)
     expect(asked.sole[:extra]).to eq(["--resume", "20260727T090000-111.ndjson"])
   end
 

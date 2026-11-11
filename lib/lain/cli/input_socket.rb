@@ -221,9 +221,12 @@ module Lain
       # the chat to come back. The goodbye cannot block -- this runs on the
       # chat's own exit path, and a pane that stopped reading must not be able
       # to keep the chat alive.
-      def stop
+      #
+      # @param goodbye [Boolean] false when a restarted chat is about to take the
+      #   path, so the pane keeps waiting for it instead of exiting
+      def stop(goodbye: true)
         @attending.stop
-        broadcast(Codec.dump({ "v" => "closed" }))
+        broadcast(Codec.dump({ "v" => "closed" })) if goodbye
         @rail.detach(self)
         @lock.synchronize { @threads.dup }.each(&:kill)
         connected.each { |client| drop(client) }

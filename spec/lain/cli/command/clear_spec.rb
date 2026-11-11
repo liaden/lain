@@ -10,14 +10,14 @@ RSpec.describe Lain::CLI::Command::Clear do
     expect(command.usage).to include("/clear")
   end
 
-  it "hands the Repl its :quit action once the cockpit has the respawn scheduled" do
+  it "hands the Repl its :restart action once the cockpit has the respawn scheduled" do
     asked = nil
     restart = lambda { |**kwargs|
       asked = kwargs
       true
     }
 
-    expect(described_class.new(pane: "%3", restart:).call("", env)).to eq(:quit)
+    expect(described_class.new(pane: "%3", restart:).call("", env)).to eq(:restart)
     expect(asked).to eq(pane: "%3")
   end
 

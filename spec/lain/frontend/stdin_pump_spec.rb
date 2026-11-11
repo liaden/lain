@@ -650,6 +650,24 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  # The conversation stops every pump with the one message, a goodbye flag
+  # included, so a pump that has no pane to say goodbye to still answers it.
+  describe "stopping with a goodbye flag" do
+    it "stops the running pump whatever the flag says" do
+      stopped = Sync do |task|
+        pumping = described_class.new(rail:, screen:, input: StringIO.new).start(task)
+        pumping.stop(goodbye: false)
+        pumping.stopped?
+      end
+
+      expect(stopped).to be(true)
+    end
+
+    it "is nothing to the pump that reads no line" do
+      expect(described_class::Idle.stop(goodbye: false)).to be_nil
+    end
+  end
+
   describe "#exclusively" do
     let(:pump) do
       described_class.new(rail: Lain::Frontend::Intake.new(screen: Lain::Sink::Null.new),

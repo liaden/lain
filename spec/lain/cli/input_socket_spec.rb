@@ -441,6 +441,13 @@ RSpec.describe Lain::CLI::InputSocket do
       socket.stop
       expect([next_frame(client, of: "closed"), File.exist?(path)]).to eq([{ "v" => "closed" }, false])
     end
+
+    it "closes without a goodbye when told a restart is coming, so the pane waits for the next chat" do
+      client = connect
+      next_frame(client, of: "context")
+      socket.stop(goodbye: false)
+      expect([client.gets, File.exist?(path)]).to eq([nil, false])
+    end
   end
 
   # A pane can be alive and not reading -- Ctrl-Z in `lain input` stops the

@@ -3,11 +3,12 @@
 module Lain
   module CLI
     module Command
-      # `/clear`: ends this chat through the {Quit} exit while the cockpit's tmux server
-      # respawns the chat pane, so the next chat starts on a fresh session file with the
-      # same epic mounted and the input and editor panes left standing. Nothing is
-      # cleared in place: lease release, the journal close and the parked-approval drop
-      # are the ordinary exit's, which is why the exit has to be clean.
+      # `/clear`: ends this chat through a restart exit (a {Quit} that leaves the input pane
+      # waiting) while the cockpit's tmux server respawns the chat pane, so the next chat
+      # starts on a fresh session file with the same epic mounted and the input and editor
+      # panes left standing. Nothing is cleared in place: lease release, the journal close
+      # and the parked-approval drop are the ordinary exit's, which is why the exit has to
+      # be clean.
       class Clear
         USAGE = "/clear -- restart this chat fresh in the same cockpit"
 
@@ -28,7 +29,7 @@ module Lain
         def call(_args, _env)
           raise Error, refusal unless restarting?
 
-          :quit
+          :restart
         end
 
         private
