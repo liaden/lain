@@ -176,6 +176,15 @@ RSpec.describe Lain::Isolation::Clone::Registry, :seam do
       .to eq([true, [[aside, "held"]], ["refs/lain/lease/#{root_key}/a-1"]])
   end
 
+  it "moves a clone whose pin is already gone without inventing one" do
+    registry.add(path, tip, reason: "held")
+    SeedRepo.git(@upstream, "update-ref", "-d", "refs/lain/lease/#{root_key}/a")
+    aside = File.join(@root, "retained", "a-1")
+    FileUtils.mkdir_p(File.dirname(aside))
+
+    expect([Lain::Shell::Out.ok?(registry.move(path, aside)), pins]).to eq([true, []])
+  end
+
   it "claims the lock it judged, and refuses one that changed since" do
     registry.add(path, tip, reason: "judged")
     judged = entry

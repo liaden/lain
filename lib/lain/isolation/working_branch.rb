@@ -128,7 +128,7 @@ module Lain
       #   created and still marks, or began deleting and never finished
       def self.owned_under(prefix, repo_root:, shell_out_factory: Shell::Out.public_method(:new))
         git = checkout(repo_root, shell_out_factory)
-        git.run("for-each-ref", "--format=%(refname)", "refs/heads/#{prefix}/").stdout.split("\n")
+        git.out("for-each-ref", "--format=%(refname)", "refs/heads/#{prefix}/").split("\n")
            .map { |branch| new(branch.delete_prefix("refs/heads/"), repo_root:, git:) }
            .select { |branch| branch.owned? || branch.unfinished? }
       end
@@ -150,7 +150,7 @@ module Lain
       #   unfinished delete `anchor` belongs to, or "" when there is none
       def self.unfinished_at(anchor, commit, repo:)
         standing = repo.refs("refs/heads").filter_map { |ref, at| ref.delete_prefix("refs/heads/") if at == commit }
-        standing.find { |name| repo.tip("#{OWNED}/#{name}").empty? && anchor_for(name, commit) == anchor }.to_s
+        standing.find { |name| repo.tip("#{OWNED}/#{name}").nil? && anchor_for(name, commit) == anchor }.to_s
       end
 
       def self.checkout(repo_root, shell_out_factory)
@@ -238,7 +238,7 @@ module Lain
         base = onto(from)
         held = @git.target(ref)
         marked = @git.target(owned_ref)
-        moved = behind?(held, base) && !marked.empty? && unheld?(registry) && forwarded?(base, held, marked)
+        moved = held && marked && behind?(held, base) && unheld?(registry) && forwarded?(base, held, marked)
         put_back!(base, held, marked, registry) if moved && !unheld?(registry)
         self
       end
@@ -268,7 +268,7 @@ module Lain
         held = tip
         anchor = anchor_for(held)
         standing = @git.target(anchor)
-        return held if standing.empty? || standing == held
+        return held if standing.nil? || standing == held
 
         raise Refused, "#{anchor} already holds #{standing}, not #{ref}'s tip #{held}, so the branch was not deleted"
       end
@@ -299,7 +299,7 @@ module Lain
       def discard(at:, registry:)
         anchor = anchored(at)
         marked = @git.target(owned_ref)
-        unmarked!(marked) unless marked.empty?
+        unmarked!(marked) if marked
         unleased!(registry, marked)
         deleted!(at, marked)
         anchor
@@ -327,7 +327,7 @@ module Lain
       # holds. Such a branch is still lain's -- to finish deleting, or to keep.
       def unfinished?
         held = @git.target(ref)
-        !owned? && !held.empty? && @git.target(WorkingBranch.anchor_for(name, held)) == held
+        !owned? && !held.nil? && @git.target(WorkingBranch.anchor_for(name, held)) == held
       end
 
       private
@@ -418,7 +418,7 @@ module Lain
       # An unfinished delete had no marker to put back. The marker comes back
       # only onto a branch still standing, so none is left naming nothing.
       def remarked(marked)
-        return "" if marked.empty?
+        return "" if marked.nil?
         return ", still marked" if owned? || restored?(marked)
 
         ", but its marker could not be put back at #{owned_ref}"
@@ -426,7 +426,7 @@ module Lain
 
       def restored?(marked)
         standing = @git.target(ref)
-        !standing.empty? && Shell::Out.ok?(transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}"))
+        !standing.nil? && Shell::Out.ok?(transacted("verify #{ref} #{standing}", "create #{owned_ref} #{marked}"))
       end
 
       # git applies every line or none.
@@ -448,7 +448,7 @@ module Lain
       # first leaves no marker naming nothing.
       def remark
         held = @git.target(ref)
-        return if !held.empty? && Shell::Out.ok?(transacted("verify #{ref} #{held}", "create #{owned_ref} #{held}"))
+        return if !held.nil? && Shell::Out.ok?(transacted("verify #{ref} #{held}", "create #{owned_ref} #{held}"))
         return if owned?
 
         raise Refused, "#{ref} was a delete lain left unfinished, and another run deleted it while this one " \
@@ -478,7 +478,7 @@ module Lain
       # One listing answers both directions; the patterns are safe to pass because
       # refuse_unholdable has already refused a name with a glob character.
       def nesting_clashes
-        listed = @git.run("for-each-ref", "--format=%(refname)", *above_candidates, "#{ref}/").stdout.split("\n")
+        listed = @git.out("for-each-ref", "--format=%(refname)", *above_candidates, "#{ref}/").split("\n")
         above_candidates.select { |candidate| listed.include?(candidate) } +
           listed.select { |found| found.start_with?("#{ref}/") }
       end

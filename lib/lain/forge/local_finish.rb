@@ -44,7 +44,7 @@ module Lain
         about = { "remote" => false, "base" => base, "head" => Isolation::WorkingBranch.epic_name(slug), "sha" => sha }
         checked_out!(base)
         clean!
-        at = @checkout.target(base)
+        at = @checkout.target(base) || raise(Refused, "#{base} has no commit in #{@root} -- nothing merged")
         return succeeded(about, at, observed: true) if @checkout.ancestor?(sha, at)
 
         tree, conflicts = merge_tree(at, sha)
@@ -73,7 +73,9 @@ module Lain
       end
 
       def uncommitted
-        @checkout.run("status", "--porcelain", "--untracked-files=no").stdout.lines.map { |line| line[3..].strip }
+        @checkout.out("status", "--porcelain", "--untracked-files=no", error: Refused).lines.map do |line|
+          line[3..].strip
+        end
       end
 
       # @return [Array(String, Array<String>)] the merged tree and the conflicted paths
@@ -96,7 +98,7 @@ module Lain
                        "move them aside; nothing merged"
       end
 
-      def listed(*args) = @checkout.run(*args).stdout.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
+      def listed(*args) = @checkout.out(*args, error: Error).split("\0").map { |path| path.force_encoding(FILESYSTEM) }
 
       # commit-tree runs no merge hooks and applies no signing default, so this
       # commit is unsigned whatever `commit.gpgSign` says.

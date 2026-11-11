@@ -186,13 +186,13 @@ module Lain
       def anchored(home, ref, id)
         here = Isolation::Checkout.of(@cwd, shell_out_factory: @shell_out_factory)
         sha = here.target("#{ref}^{commit}")
-        raise Error, "#{ref} names no commit in #{@cwd}" if sha.empty?
+        raise Error, "#{ref} names no commit in #{@cwd}" if sha.nil?
 
         folded!(home, sha)
         id ||= File.basename(toplevel(here))
         anchor = Isolation::Worktree::Handback::Naming.new(id).ref
         held = home.target(anchor)
-        write!(home, anchor, sha, held) unless held == sha
+        write!(home, anchor, sha, held || "") unless held == sha
         Isolation::LandingQueue::Worker.new(id:, ref: anchor, sha:)
       end
 

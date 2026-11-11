@@ -201,12 +201,14 @@ module Lain
             holder = holding
             holder ? fast_forwarded(holder, from, to) : swapped(from, to)
           end
+        rescue Checkout::Failed => e
+          Move.new(outcome: :refused, detail: "#{@base.name} was not moved, and may have moved since: #{e.message}")
         end
 
         private
 
         def holding
-          listed = @git.run("worktree", "list", "--porcelain", "-z").stdout.split("\0\0")
+          listed = @git.out("worktree", "list", "--porcelain", "-z", error: Worktree::Registry::Unlisted).split("\0\0")
           held = listed.map { |record| fields(record) }
                        .find { |each| each["branch"] == @base.ref && !each.key?("prunable") }
           held && Checkout.of(held.fetch("worktree"), shell_out_factory: @shell_out_factory)
@@ -250,10 +252,10 @@ module Lain
           Move.new(outcome: :refused, detail: "#{@base.name} could not fast-forward: #{named}")
         end
 
-        def written(from, to) = paths(@git.run("diff", "--name-only", "-z", from, to).stdout.split("\0"))
+        def written(from, to) = paths(@git.out("diff", "--name-only", "-z", from, to).split("\0"))
 
         def uncommitted(holder)
-          paths(holder.run("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all").stdout.split("\0")
+          paths(holder.out("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all").split("\0")
                       .grep(/\A.. /).map { |line| line[3..] })
         end
 

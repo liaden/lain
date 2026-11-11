@@ -420,6 +420,18 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       expect(contains?(unapproved)).to be(false)
     end
 
+    it "raises, naming the command, when git cannot list the anchors, rather than finding none" do
+      sha, = worker("a", "README" => "a's work\n")
+      approve("a", sha)
+      broken = lambda do |*argv, **options|
+        listing = argv.include?("for-each-ref")
+        Lain::Shell::Out.new(*(listing ? ["sh", "-c", "echo bad ref >&2; exit 128"] : argv), **options)
+      end
+
+      expect { described_class.new(**wiring, shell_out_factory: broken).anchored("a") }
+        .to raise_error(Lain::Isolation::Checkout::Failed, /git for-each-ref failed.*bad ref/m)
+    end
+
     it "lists one sha's subjects once when it is checked and then admitted" do
       sha, ref = worker("a", "README" => "a's work\n")
       approve("a", sha)

@@ -227,6 +227,21 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     end
   end
 
+  describe "a repository whose remotes git cannot list" do
+    it "raises rather than reading the failure as no remote" do
+      broken = lambda do |*argv, **options|
+        remotes = argv.last == "remote"
+        Lain::Shell::Out.new(*(remotes ? ["sh", "-c", "echo bad config >&2; exit 128"] : argv), **options)
+      end
+      finishing = described_class.new(root:, paths:, config:, github:, shell_out_factory: broken)
+
+      expect do
+        finishing.finish("demo")
+      end.to raise_error(Lain::Isolation::Checkout::Failed, /git remote failed.*bad config/m)
+      expect(github).not_to have_received(:pr_create)
+    end
+  end
+
   describe "a repository with no remote" do
     before { git(root, "remote", "remove", "origin") }
 

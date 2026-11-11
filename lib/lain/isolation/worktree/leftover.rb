@@ -43,6 +43,8 @@ module Lain
         #   it was being cleared, or git will not move it
         def clear(path)
           @registry.entries.select { |entry| entry.path == path }.each { |entry| move_aside(entry) }
+        rescue Registry::Unlisted => e
+          raise Refused, "#{@registry.label} could not be listed to clear #{path}: #{e.message}"
         end
 
         private

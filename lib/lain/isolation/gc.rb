@@ -117,10 +117,10 @@ module Lain
 
         # @return [Array<Array(String, String)>] each ref under `prefix` and its commit
         def refs(prefix)
-          @git.run("for-each-ref", "--format=%(refname) %(objectname)", "#{prefix}/").stdout.split("\n").map(&:split)
+          @git.out("for-each-ref", "--format=%(refname) %(objectname)", "#{prefix}/").split("\n").map(&:split)
         end
 
-        # @return [String] the commit `ref` names, or "" for none
+        # @return [String, nil] the commit `ref` names, or nil for none
         def tip(ref) = @git.target(ref)
 
         # A shared clone's commit is in its own store until fetched here.
@@ -137,10 +137,17 @@ module Lain
 
         # @return [Array<String>] every local branch whose tip reaches
         #   `commit`, without `refs/heads/`
+        # @raise [Checkout::Failed] when git cannot answer for a commit it does hold
         def reaching(commit)
-          @git.run("for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads/")
-              .stdout.split("\n").map { |ref| ref.delete_prefix("refs/heads/") }
+          return [] unless held?(commit)
+
+          @git.out("for-each-ref", "--format=%(refname)", "--contains", commit, "refs/heads/")
+              .split("\n").map { |ref| ref.delete_prefix("refs/heads/") }
         end
+
+        # A shared clone's commit is in its own store until fetched, so nothing
+        # here reaches it; `--contains` exits 129 for that and for much else.
+        def held?(commit) = Shell::Out.ok?(@git.run("cat-file", "-e", "#{commit}^{commit}"))
 
         # @param names [Array<String>] branches reaching one commit
         # @return [String] what {#landing} says of a commit those branches reach
@@ -182,7 +189,7 @@ module Lain
 
         def owned?(ref)
           name = ref.delete_prefix("refs/heads/")
-          ref.start_with?("refs/heads/") && name != trunk && !tip("#{WorkingBranch::OWNED}/#{name}").empty?
+          ref.start_with?("refs/heads/") && name != trunk && !tip("#{WorkingBranch::OWNED}/#{name}").nil?
         end
       end
 
@@ -277,7 +284,11 @@ module Lain
           @shell_out_factory = shell_out_factory
         end
 
-        def call = @registry.entries.select { |entry| inside?(entry.path) }.map { |entry| judge(entry) }
+        def call
+          @registry.entries.select { |entry| inside?(entry.path) }.map { |entry| judge(entry) }
+        rescue Worktree::Registry::Unlisted => e
+          [Records.kept(:worktree, @roots.first, "worktree listing failed: #{Records.flat(e.message)}")]
+        end
 
         private
 
@@ -289,6 +300,12 @@ module Lain
         end
 
         def judge(entry)
+          settled(entry)
+        rescue Checkout::Failed => e
+          Records.kept(:worktree, entry.path, "git failed while it was judged: #{Records.flat(e.message)}")
+        end
+
+        def settled(entry)
           reason = holding(entry)
           return Records.kept(:worktree, entry.path, reason) unless reason.empty?
           return vanished(entry) unless File.directory?(entry.path)
@@ -437,6 +454,8 @@ module Lain
           return Records.reaped(:anchor, ref, landing) if @repo.delete(ref, commit)
 
           Records.kept(:anchor, ref, "it moved while gc ran")
+        rescue Checkout::Failed => e
+          Records.kept(:anchor, ref, "git failed while it was judged: #{Records.flat(e.message)}")
         end
 
         # @return [String] why the anchor stays, or "" when it may go
@@ -469,16 +488,24 @@ module Lain
 
           fresh = @registry.entries
           judged.map { |verdict| verdict.is_a?(Reapable) ? settle(verdict, fresh) : verdict }
+        rescue Worktree::Registry::Unlisted => e
+          @repo.refs(WorkingBranch::OWNED).map { |marker, _| unlisted(marker, e) }
         end
 
         private
 
         Reapable = Data.define(:branch, :tip, :marker, :marked)
 
+        # Nothing is deleted on a guess about who has a branch checked out.
+        def unlisted(marker, error)
+          branch = "refs/heads/#{marker.delete_prefix("#{WorkingBranch::OWNED}/")}"
+          Records.kept(:branch, branch, "worktree listing failed: #{Records.flat(error.message)}")
+        end
+
         def judge(marker, marked, entries)
           branch = "refs/heads/#{marker.delete_prefix("#{WorkingBranch::OWNED}/")}"
           tip = @repo.tip(branch)
-          return orphaned(marker, marked) if tip.empty?
+          return orphaned(marker, marked) if tip.nil?
 
           reason = hold(branch, tip, marked, entries)
           reason.empty? ? Reapable.new(branch:, tip:, marker:, marked:) : Records.kept(:branch, branch, reason)

@@ -367,7 +367,7 @@ module Lain
           held = @checkout.target(ref)
           return if held == commit
 
-          written = @checkout.update_ref(ref, commit, held, reason: ANCHORED)
+          written = @checkout.update_ref(ref, commit, held || "", reason: ANCHORED)
           return if Shell::Out.ok?(written)
 
           raise Failed, "#{ref} could not be anchored at #{commit}: #{written.stderr.strip}"

@@ -83,11 +83,17 @@ module Lain
         return released(lease, Outcome.new(item:, status: :researched, session:, sha: nil, note: "researched")) if
           item.tag == Brief::RESEARCH
 
-        head = Isolation::Checkout.of(lease.origin.path).target("HEAD")
-        return released(lease, failed(item, session, UNREADABLE)) if head.empty?
+        head = head_of(lease)
+        return released(lease, failed(item, session, UNREADABLE)) if head.nil?
         return released(lease, failed(item, session, "no commit")) if head == lease.origin.base
 
         landed(item, lease, session, head)
+      end
+
+      def head_of(lease)
+        Isolation::Checkout.of(lease.origin.path).target("HEAD")
+      rescue Isolation::Checkout::Failed
+        nil
       end
 
       def landed(item, lease, session, head)

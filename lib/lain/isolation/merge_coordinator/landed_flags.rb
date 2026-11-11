@@ -34,7 +34,7 @@ module Lain
 
         private
 
-        def changed(report) = @git.run("diff", "--name-only", "-z", report.base, report.sha).stdout.split("\0")
+        def changed(report) = @git.out("diff", "--name-only", "-z", report.base, report.sha).split("\0")
 
         def kind(path, hooks)
           case path
@@ -58,7 +58,7 @@ module Lain
         def symlinks(sha, paths)
           return [] if paths.empty?
 
-          @git.run("ls-tree", "-z", sha, "--", *paths).stdout.split("\0").filter_map do |entry|
+          @git.out("ls-tree", "-z", sha, "--", *paths).split("\0").filter_map do |entry|
             meta, path = entry.split("\t", 2)
             path if meta.start_with?("#{SYMLINK_MODE} ")
           end

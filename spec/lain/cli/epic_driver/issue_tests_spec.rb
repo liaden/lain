@@ -119,9 +119,9 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # checkout was cut from -- never from the checkout, which a gitignored
   # config never reaches.
   def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1",
-           subject: "app/models/order.rb", level: nil, name: nil)
+           subject: "app/models/order.rb", level: nil, name: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
     layout = Lain::Config.test_layout(root: repo)
-    described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:,
+    described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:, shell_out_factory:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
                    .call(criteria, worker_env, subject:, since:, lane:, level:, name:)
   end
@@ -288,6 +288,32 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
       expect { step_for_greeting(describing_greeting.gsub("Greeting", "Farewell")) }
         .to raise_error(Lain::Error, /did not load.*Farewell/m)
     end
+  end
+
+  # A git that cannot answer is not a git that answered "nothing".
+  def failing_git(subcommand)
+    Lain::Shell::Out.public_method(:new)
+    lambda do |*argv, **options|
+      broken = argv.include?(subcommand)
+      Lain::Shell::Out.new(*(broken ? ["sh", "-c", "echo bad #{subcommand} >&2; exit 128"] : argv), **options)
+    end
+  end
+
+  it "reports git's error when status fails, rather than treating the tree as clean" do
+    provider = writing(target, red)
+
+    expect { step(provider, shell_out_factory: failing_git("status")) }
+      .to raise_error(Lain::Isolation::Checkout::Failed, /git status failed.*bad status/m)
+    expect(provider.call_count).to eq(0)
+  end
+
+  it "reports git's error when the log of earlier commits fails, rather than finding none" do
+    committed_earlier(red)
+    provider = mock
+
+    expect { step(provider, shell_out_factory: failing_git("log")) }
+      .to raise_error(Lain::Isolation::Checkout::Failed, /git log failed.*bad log/m)
+    expect(provider.call_count).to eq(0)
   end
 
   it "refuses a red step that also wrote the subject, naming it, and commits nothing" do

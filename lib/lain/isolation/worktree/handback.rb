@@ -307,7 +307,7 @@ module Lain
           # git's exit status is not taken as the answer: the parent is asked
           # whether it now holds the worker's commit.
           def landed(ref, key)
-            commit = @parent.target(ref)
+            commit = @parent.target(ref).to_s
             return unlanded(ref, key, commit) unless @parent.ancestor?(commit)
 
             sha = @parent.head.stdout.strip
@@ -484,7 +484,7 @@ module Lain
           held = @parent.target(ref)
           return outcome(:nothing_to_do, key, ref:, sha: commit, detail: ANCHOR_ONLY) if held == commit
 
-          write = @parent.update_ref(ref, commit, held, reason: ANCHORED)
+          write = @parent.update_ref(ref, commit, held || "", reason: ANCHORED)
           return failed(key, "update-ref #{ref}", write) unless Shell::Out.ok?(write)
 
           outcome(:declined, key, ref:, sha: commit, detail: ANCHOR_ONLY)
@@ -533,7 +533,7 @@ module Lain
         # only the ref's own commit being in the parent now makes it this
         # ref's merge.
         def concluded(ref, key)
-          commit = @parent.target(ref)
+          commit = @parent.target(ref).to_s
           return outcome(:merged, key, ref:, parent_state: :merged, sha: @parent.head.stdout.strip) if
             @parent.ancestor?(commit)
 

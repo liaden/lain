@@ -286,6 +286,23 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  describe "a diff git cannot produce" do
+    it "raises naming the command rather than reviewing an empty changeset" do
+      real = Lain::Shell::Out.public_method(:new)
+      failing = lambda { |*argv, **options|
+        if argv.include?("diff")
+          Lain::Shell::Out.new("sh", "-c",
+                               "echo bad object >&2; exit 128")
+        else
+          real.call(*argv, **options)
+        end
+      }
+      reading = described_class.new(base: "base", repo_root: @repo, shell_out_factory: failing)
+
+      expect { reading.diff }.to raise_error(Lain::Isolation::Checkout::Failed, /git diff failed.*bad object/m)
+    end
+  end
+
   # The port's fifth message, at the source that can only ever answer it one
   # way. The shared group cannot say this -- a pull request source legitimately
   # DOES fall back, so the portable law skips that leg -- and this is where the

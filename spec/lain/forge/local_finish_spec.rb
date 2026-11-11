@@ -143,6 +143,29 @@ RSpec.describe Lain::Forge::LocalFinish, :seam do
       expect(File.read(File.join(root, "NEW"))).to eq("mine\n")
     end
 
+    it "refuses, naming the command, when git status itself fails, and merges nothing" do
+      before = head
+      broken = lambda do |*argv, **options|
+        if argv.include?("status")
+          Lain::Shell::Out.new("sh", "-c", "echo bad index >&2; exit 128")
+        else
+          recording.call(*argv, **options)
+        end
+      end
+
+      expect { finish(shell_out_factory: broken) }
+        .to raise_error(described_class::Refused, /git status failed.*bad index/m)
+      expect(head).to eq(before)
+      expect(calls.flatten).not_to include("merge", "commit-tree")
+    end
+
+    it "refuses a base with no commit, merging nothing" do
+      git("switch", "-q", "--orphan", "fresh")
+
+      expect { described_class.new(root:).call(slug: "frugirl-mvp", base: "fresh", sha: head("epic/frugirl-mvp")) }
+        .to raise_error(described_class::Refused, /fresh has no commit/)
+    end
+
     it "refuses a dirty worktree, naming it" do
       File.write(File.join(root, "README"), "uncommitted\n")
       before = head

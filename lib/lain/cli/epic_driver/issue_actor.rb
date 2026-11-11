@@ -132,7 +132,7 @@ module Lain
 
           def discarded(branch, tip, registry, gone)
             Discarded.new(branch: branch.name, anchor: branch.discard(at: tip, registry:))
-          rescue Lain::Isolation::WorkingBranch::Refused => e
+          rescue Lain::Isolation::WorkingBranch::Refused, Lain::Isolation::Checkout::Failed => e
             raise if gone.empty?
 
             raise Lain::Isolation::WorkingBranch::Refused, "#{gone.join("; ")}; then #{e.message}"
@@ -448,7 +448,7 @@ module Lain
         def unanchored!(lane)
           ref = Lain::Isolation::Worktree::Handback::Naming.new(lane).ref
           held = checkout(@repo_root).target(ref)
-          return if held.empty?
+          return if held.nil?
 
           raise Error, "#{lane} already ran: #{ref} still anchors its work at #{held}, and a " \
                        "retirement under that id would be refused rather than move it -- launch the " \

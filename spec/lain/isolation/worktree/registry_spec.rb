@@ -31,6 +31,14 @@ RSpec.describe Lain::Isolation::Worktree::Registry, :seam do
     end
   end
 
+  it "raises rather than answering that git keeps no admin directory when the common dir cannot be read" do
+    blind = described_class.new(repo_root: File.join(@dir, "not-a-repo"),
+                                shell_out_factory: Lain::Shell::Out.public_method(:new))
+    FileUtils.mkdir_p(File.join(@dir, "not-a-repo"))
+
+    expect { blind.interrupted(File.join(@dir, "nowhere")) }.to raise_error(Lain::Isolation::Checkout::Failed)
+  end
+
   it "adds under the repository lock" do
     waits_while_repo_is_held { registry.add(File.join(@dir, "a"), "HEAD", reason: "r") }
 

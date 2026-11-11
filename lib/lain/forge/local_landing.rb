@@ -428,9 +428,9 @@ module Lain
 
         # @return [Array<Array(String, String)>] `[sha, ref]` per anchor
         def anchored
-          listed = @git.run("for-each-ref", "--format=%(objectname) %(refname)",
+          listed = @git.out("for-each-ref", "--format=%(objectname) %(refname)",
                             "#{Isolation::Worktree::Handback::Naming::REF_NAMESPACE}/")
-          listed.stdout.lines.map { |line| line.split(" ", 2).map(&:strip) }
+          listed.lines.map { |line| line.split(" ", 2).map(&:strip) }
         end
 
         # Anchors can be reaped once their work is on the branch, so a resume

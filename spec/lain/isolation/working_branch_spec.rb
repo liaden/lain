@@ -444,6 +444,26 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
   # A re-run of an epic may start its issues fresh, and the marker is still the
   # only licence: what is listed and what is deleted are the branches lain made.
+  describe "a branch listing git cannot produce" do
+    let(:broken) do
+      real = Lain::Shell::Out.public_method(:new)
+      lambda do |*args, **kwargs|
+        listing = args.include?("for-each-ref")
+        listing ? Lain::Shell::Out.new("sh", "-c", "echo bad ref >&2; exit 128") : real.call(*args, **kwargs)
+      end
+    end
+
+    it "raises from owned_under rather than answering that nothing is owned" do
+      expect { described_class.owned_under("lain/issue/demo", repo_root: @repo_root, shell_out_factory: broken) }
+        .to raise_error(Lain::Isolation::Checkout::Failed, /git for-each-ref failed/)
+    end
+
+    it "raises from a resolve rather than passing the nesting check on an empty list" do
+      expect { described_class.epic("demo", repo_root: @repo_root, shell_out_factory: broken) }
+        .to raise_error(Lain::Isolation::Checkout::Failed, /git for-each-ref failed/)
+    end
+  end
+
   describe ".owned_under" do
     it "lists the branches lain marked under the prefix, and none a human made there" do
       described_class.owned("lain/issue/demo/a", repo_root: @repo_root, from: sha("main"))
@@ -588,6 +608,18 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
       expect { branch_over.discardable!(holders) }.to raise_error(described_class::Refused, /#{Regexp.escape(anchor)}/)
       expect([sha(name), sha(anchor)]).to eq([tip, sha("main")])
+    end
+
+    it "refuses in words, not a crash, when an unfinished delete's branch moved after it was judged" do
+      tip = owned_with_work
+      anchor = described_class.anchor_for(name, tip)
+      run_git(@repo_root, "update-ref", anchor, tip)
+      run_git(@repo_root, "update-ref", "-d", marker)
+      branch = branch_over
+      expect(branch.unfinished?).to be(true)
+      commit_on(name, "moved after judging")
+
+      expect { branch.discard(at: tip, registry:) }.to raise_error(described_class::Refused, /could not be deleted/)
     end
 
     it "never overwrites an anchor written after the branch was judged, deleting nothing" do

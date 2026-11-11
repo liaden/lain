@@ -87,7 +87,7 @@ module Lain
       # @raise [Refused] when git will not check the branch out there
       def attached(lease)
         origin = lease.origin
-        shell = run("git", "-C", origin.path, "switch", "--quiet", origin.branch)
+        shell = checkout(origin.path).run("switch", "--quiet", origin.branch)
         return lease if Shell::Out.ok?(shell)
 
         raise Refused, "the spike at #{origin.path} could not be put on #{origin.branch}: #{said(shell)}"
@@ -124,8 +124,8 @@ module Lain
       private
 
       # Read before the release, which may remove the checkout.
-      def head_of(checkout)
-        shell = run("git", "-C", checkout, "rev-parse", "--verify", "HEAD^{commit}")
+      def head_of(dir)
+        shell = checkout(dir).run("rev-parse", "--verify", "HEAD^{commit}")
         Shell::Out.ok?(shell) ? shell.stdout.strip : ""
       end
 
@@ -138,7 +138,7 @@ module Lain
         format(MOVED, **words)
       end
 
-      def git_ok?(*) = Shell::Out.ok?(run("git", "-C", @repo_root, *))
+      def git_ok?(*) = Shell::Out.ok?(checkout(@repo_root).run(*))
 
       # A release removes a clean checkout, so one still on disk holds work.
       def retained(checkout) = File.directory?(checkout) ? format(RETAINED, path: checkout) : ""
@@ -149,23 +149,23 @@ module Lain
       def discard(origin)
         lines = "delete refs/heads/#{origin.branch} #{origin.base}\n" \
                 "delete #{WorkingBranch::OWNED}/#{origin.branch} #{origin.base}\n"
-        shell = Shell::Out.new("git", "-C", @repo_root, "update-ref", "--stdin",
-                               input: lines, environment: Worktree::GIT_CONTEXT_SCRUB)
-        shell.run_command
+        shell = checkout(@repo_root).run("update-ref", "--stdin", input: lines)
         Shell::Out.ok?(shell) ? "" : format(UNDELETED, branch: origin.branch, reason: said(shell))
       end
 
-      def run(*argv) = @shell_out_factory.call(*argv, environment: Worktree::GIT_CONTEXT_SCRUB).tap(&:run_command)
+      def checkout(dir) = Checkout.of(dir, shell_out_factory: @shell_out_factory)
 
       def said(shell) = Utf8.legible(shell.stderr).strip
 
       # The session's cwd holds nothing the snapshot carried, so it was made.
       def made(worker_env)
         relative = Pathname.new(worker_env.cwd).relative_path_from(worker_env.checkout).to_s
-        return "" if relative == "." || !run("git", "-C", worker_env.checkout, "ls-files", "--", relative).stdout.empty?
+        return "" if relative == "." || tracked?(worker_env.checkout, relative)
 
         " Your working directory #{relative} holds nothing git tracks, so it was made empty in the spike."
       end
+
+      def tracked?(dir, relative) = !checkout(dir).out("ls-files", "--", relative, error: Refused).empty?
 
       def snapshot
         raise Refused, NO_COMMIT if head_of(@repo_root).empty?
@@ -181,11 +181,9 @@ module Lain
       end
 
       def git(env, *args)
-        shell = @shell_out_factory.call("git", "-C", @repo_root, *args, environment: env)
-        shell.run_command
-        return shell.stdout.strip if Shell::Out.ok?(shell)
-
-        raise Refused, "plan scope could not commit #{@repo_root}'s tracked state (git #{args.first}): #{said(shell)}"
+        checkout(@repo_root).out(*args, env:, error: Refused) do |shell|
+          "plan scope could not commit #{@repo_root}'s tracked state (git #{args.first}): #{said(shell)}"
+        end.strip
       end
 
       # The session's cwd, at the same place inside the spike, made when the

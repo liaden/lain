@@ -77,6 +77,20 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
   # Every shape of "git is half way through something", because a reader that
   # only knew about merges answered false for four of the five and read a
   # partial or empty diff as the truth.
+  describe "#update_ref with an old value" do
+    it "refuses a nil old value, which would otherwise write unconditionally" do
+      expect { checkout.update_ref("refs/lain/x", run_git("rev-parse", "HEAD"), nil, reason: "t") }
+        .to raise_error(ArgumentError, /old value/)
+    end
+
+    it "treats an empty old value as must-not-exist" do
+      head = run_git("rev-parse", "HEAD")
+      checkout.update_ref("refs/lain/x", head, "", reason: "t")
+
+      expect(Lain::Shell::Out.ok?(checkout.update_ref("refs/lain/x", head, "", reason: "t"))).to be(false)
+    end
+  end
+
   describe "#operation_in_progress?" do
     # Two commits touching the same line from a common base, which is what a
     # merge, a rebase, a cherry-pick and a revert each need in order to stop.
@@ -249,6 +263,44 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
     it "lets a block word the message from the failed shell" do
       expect { checkout.run!("rev-parse", "nope", error: boom) { |shell| "exit #{shell.exitstatus}" } }
         .to raise_error(boom, "exit 128")
+    end
+  end
+
+  describe "#out" do
+    let(:boom) { Class.new(StandardError) }
+
+    it "answers the stdout of a command that passed" do
+      expect(checkout.out("rev-parse", "HEAD").strip).to eq(run_git("rev-parse", "HEAD"))
+    end
+
+    it "raises Failed naming the command when git exits non-zero" do
+      expect { checkout.out("rev-parse", "--verify", "nope^{commit}") }
+        .to raise_error(described_class::Failed, /\Agit rev-parse failed in #{Regexp.escape(@dir)} \(exit 128\)/)
+    end
+
+    it "raises the caller's own error when given one" do
+      expect { checkout.out("rev-parse", "nope", error: boom) }.to raise_error(boom, /git rev-parse failed/)
+    end
+
+    it "lets a block word the message from the failed shell" do
+      expect { checkout.out("rev-parse", "nope", error: boom) { |shell| "exit #{shell.exitstatus}" } }
+        .to raise_error(boom, "exit 128")
+    end
+  end
+
+  describe "#target" do
+    it "answers the commit a ref names" do
+      expect(checkout.target("HEAD")).to eq(run_git("rev-parse", "HEAD"))
+    end
+
+    it "answers nil for a ref that does not exist" do
+      expect(checkout.target("refs/heads/nowhere")).to be_nil
+    end
+
+    it "raises when the read itself fails, which is not a missing ref" do
+      broken = described_class.new(File.join(@dir, "not-a-repository"))
+
+      expect { broken.target("HEAD") }.to raise_error(described_class::Failed, /git rev-parse failed/)
     end
   end
 

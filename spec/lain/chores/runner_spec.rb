@@ -384,6 +384,18 @@ RSpec.describe Lain::Chores::Runner, :seam do
       expect(lander).not_to have_received(:queued)
     end
 
+    it "fails a lease whose HEAD git cannot read at all, with no enqueue" do
+      unreadable = lambda do |*argv, **options|
+        chat(commit: true).call(*argv, **options).tap { FileUtils.rm_rf(File.join(options.fetch(:chdir), ".git")) }
+      end
+
+      outcome = runner(spawner: unreadable).to_a.sole
+
+      expect(outcome.status).to eq(:failed)
+      expect(line).to start_with("- [!] add a spec for Foo#bar  <!-- cannot read the lease's HEAD")
+      expect(lander).not_to have_received(:queued)
+    end
+
     it "keeps a lease whose chat left uncommitted work" do
       dirty = lambda do |*argv, **options|
         File.write(File.join(options.fetch(:chdir), "half_done.rb"), "# wip\n")

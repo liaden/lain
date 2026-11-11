@@ -90,7 +90,8 @@ module Lain
         # @return [String] raw unified diff bytes. Binary-encoded on purpose: a
         #   diff carries whatever bytes the files carry, and a latin-1 hunk must
         #   not raise on its way to the parser.
-        def diff = @diff ||= @git.run("diff", *DIFF_HYGIENE, @base_ref, @head_ref, pins: PINS).stdout.b.freeze
+        # @raise [Isolation::Checkout::Failed] when git cannot produce it, which is not an empty review
+        def diff = @diff ||= @git.out("diff", *DIFF_HYGIENE, @base_ref, @head_ref, pins: PINS).b.freeze
 
         # @return [Array<Commit>] oldest-first, each carrying its own numstat.
         #   One subprocess for the whole walk: at the 810-file changeset §3.7
@@ -200,9 +201,9 @@ module Lain
         # proper UTF-8; scrubbing is then only the backstop for genuinely
         # undeclared or mislabelled bytes, which is what it should be.
         def log_output
-          @git.run("log", "--reverse", "--topo-order", "--numstat", "--no-ext-diff",
+          @git.out("log", "--reverse", "--topo-order", "--numstat", "--no-ext-diff",
                    "--encoding=UTF-8", "--diff-merges=first-parent", "--format=#{LOG_FORMAT}",
-                   "--end-of-options", "#{@base_ref}..#{@head_ref}", pins: PINS).stdout.b
+                   "--end-of-options", "#{@base_ref}..#{@head_ref}", pins: PINS).b
         end
 
         # A runner's stdout encoding is its own choice: a runner may tag it UTF-8 only

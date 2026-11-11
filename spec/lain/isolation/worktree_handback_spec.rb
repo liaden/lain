@@ -942,6 +942,25 @@ RSpec.describe Lain::Isolation::Worktree::Handback, :seam do
       lease&.release
     end
 
+    it "creates a ref that is missing, and refuses to overwrite one that appears before it is written" do
+      lease = backend.acquire("worker-1")
+      commit_in(lease.worker_env.cwd, "worker\n", "worker work")
+      planted = head_commit(@repo_root)
+      real = Lain::Shell::Out.public_method(:new)
+      racing = lambda do |*args, **kwargs|
+        try_git(@repo_root, "update-ref", worker_ref("worker-1"), planted) if args.include?("update-ref")
+        real.call(*args, **kwargs)
+      end
+      racer = described_class.new(repo_root: @repo_root, base: no_target, journal:, shell_out_factory: racing)
+
+      outcome = racer.anchor(lease, worker_id: "worker-1")
+
+      expect(outcome.kind).to eq(:failed)
+      expect(ref_target(worker_ref("worker-1")).stdout.strip).to eq(planted)
+    ensure
+      lease&.release
+    end
+
     it "fetches a shared clone's commit into the parent before writing its ref" do
       clones = Lain::Isolation::Clone.new(repo_root: @repo_root, root: lease_root,
                                           base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo_root))

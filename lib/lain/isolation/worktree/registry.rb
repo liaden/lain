@@ -4,8 +4,9 @@ module Lain
   module Isolation
     class Worktree
       # git's own list of a repository's worktrees, and the handful of ways
-      # lain changes it. Every call answers the shell rather than raising, so
-      # each caller decides which failure is loud.
+      # lain changes it. A change answers the shell rather than raising, so
+      # each caller decides which failure is loud; a listing that fails raises,
+      # because an empty list would read as "nothing is checked out".
       class Registry
         include Registered
 
@@ -14,6 +15,8 @@ module Lain
         # `seal` is the lock's reason exactly as git reported it -- what a
         # {#claim} compares, byte for byte, before anything is unlocked.
         Entry = Data.define(:path, :head, :branch, :lock, :seal)
+
+        class Unlisted < Checkout::Failed; end
 
         # What a refusal names these checkouts by.
         LABEL = "git worktree"
@@ -36,8 +39,9 @@ module Lain
         # `-z`, because a path and a lock reason are free text, and the plain
         # porcelain quotes any holding a newline. Records end in an extra NUL.
         # @return [Array<Entry>]
+        # @raise [Unlisted]
         def entries
-          @git.run("worktree", "list", "--porcelain", "-z").stdout.split("\0\0")
+          @git.out("worktree", "list", "--porcelain", "-z", error: Unlisted).split("\0\0")
               .map { |record| entry(record.split("\0")) }
         end
 
@@ -133,7 +137,7 @@ module Lain
         def spellings(path) = Project::Resolver.spellings(path, File)
 
         def common_dir
-          @common_dir ||= -@git.run("rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip
+          @common_dir ||= -@git.out("rev-parse", "--path-format=absolute", "--git-common-dir", error: Unlisted).strip
         end
       end
     end

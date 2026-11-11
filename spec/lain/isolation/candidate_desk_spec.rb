@@ -391,6 +391,31 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
     end
   end
 
+  describe "a worktree listing git cannot produce" do
+    let(:desk) do
+      blind = lambda do |*argv, **options|
+        listing = argv.each_cons(2).include?(%w[worktree list])
+        Lain::Shell::Out.new(*(listing ? ["sh", "-c", "echo no admin dir >&2; exit 128"] : argv), **options)
+      end
+      described_class.new(
+        repo_root: @repo, base:, journal:, strategy: Lain::Isolation::MergeStrategy::DEFAULT,
+        home: Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch:),
+        checkout: Lain::Isolation::VerifyCheckout.for(repo_root: @repo, branch:, paths:, keep: []),
+        shell_out_factory: blind
+      )
+    end
+
+    it "declines the batch rather than moving a branch it cannot place, and the branch stays" do
+      before = tip
+      w1 = worker("w1", f: "a\nB1\nc\n")
+
+      result = queue.call([w1])
+
+      expect([result.report("w1").kind, tip]).to eq([:declined, before])
+      expect(result.report("w1").detail).to match(/not moved.*no admin dir/m)
+    end
+  end
+
   describe "a conflicting worker" do
     it "is skipped and the rest still land, its work on its ref" do
       commit_in(@repo, "f", "a\nTIP\nc\n")

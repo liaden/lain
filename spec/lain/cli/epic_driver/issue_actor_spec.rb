@@ -912,6 +912,19 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       expect([standing?("a"), standing?("b")]).to eq([false, true])
     end
 
+    it "names each branch already deleted when a later delete cannot read its marker at all" do
+      %w[a b].each { |id| owned_branch(id) }
+      unreadable = lambda do |*args, **options|
+        marker = args.last == "refs/lain/owned/heads/lain/issue/demo/b" && args.include?("--verify")
+        broken = marker && !standing?("a")
+        Lain::Shell::Out.new(*(broken ? ["sh", "-c", "echo bad ref >&2; exit 128"] : args), **options)
+      end
+
+      expect { Sync { earlier(IssueActorSpecAsker.new("delete"), shell_out_factory: unreadable).call(resumed: false) } }
+        .to raise_error(Lain::Isolation::WorkingBranch::Refused, %r{deleted lain/issue/demo/a.*bad ref}m)
+      expect([standing?("a"), standing?("b")]).to eq([false, true])
+    end
+
     it "lists a delete an earlier run left unfinished, and finishes it on delete" do
       owned_branch("a")
       tip = git(repo, "rev-parse", "lain/issue/demo/a")

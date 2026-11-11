@@ -26,6 +26,12 @@ module Lain
         def self.refused(why) = new(exitstatus: 1, stdout: "", stderr: why)
       end
 
+      class Failed < Error; end
+
+      # {#update_ref}'s old value when the write is unconditional.
+      ANY = Object.new.freeze
+      private_constant :ANY
+
       # A lease's checkout: a clone lain cut is questioned only through the
       # repository it pins ({Clone::Guard}), and any other is as written.
       #
@@ -78,6 +84,13 @@ module Lain
         raise error, (block_given? ? yield(shell) : failure(args, shell))
       end
 
+      # What git printed, for a read whose failure must not pass as an empty answer.
+      # @param error [Class] raised on a non-zero exit; the other arguments are {#run}'s
+      # @yieldparam shell [Shell::Out] the failed command, to word the message from
+      # @return [String] stdout
+      # @raise [Class] `error`
+      def out(*, error: Failed, **, &block) = run!(*, error:, **, &block).stdout
+
       def head = run("rev-parse", "HEAD")
 
       # @return [String] the ref HEAD points at, or "" on a detached HEAD
@@ -94,7 +107,7 @@ module Lain
       # @return [String]
       def trunk
         candidates = [remote_head, configured_default, WorkingBranch::TRUNK, "master"].reject(&:empty?)
-        candidates.find { |name| !target("refs/heads/#{name}").empty? } || WorkingBranch::TRUNK
+        candidates.find { |name| resolves?("refs/heads/#{name}") } || WorkingBranch::TRUNK
       end
 
       # Every shape of "git is half way through something", which is not the
@@ -114,7 +127,7 @@ module Lain
 
       def operation_in_progress?
         asked = IN_PROGRESS.flat_map { |marker| ["--git-path", marker] }
-        run("rev-parse", *asked).stdout.split("\n").any? { |path| File.exist?(File.expand_path(path, @dir)) }
+        out("rev-parse", *asked).split("\n").any? { |path| File.exist?(File.expand_path(path, @dir)) }
       end
 
       # MERGE_HEAD is git's own record that a merge is under way. Asked of git
@@ -130,25 +143,30 @@ module Lain
       # @param of [String] what it would be an ancestor of
       def ancestor?(commit, of = "HEAD") = Shell::Out.ok?(run("merge-base", "--is-ancestor", commit, of))
 
-      # What `ref` points at, or "" when it points at nothing. "No ref yet" and
-      # "a ref on some other commit" both mean the same write is still owed,
-      # and no commit is ever "", so no caller writes a nil guard.
+      # `--quiet` makes a missing ref exit 1 and leaves any other status as a
+      # read that went wrong, which must not pass as a ref that is not there.
+      # @return [String, nil] what `ref` points at, nil when it points at nothing
+      # @raise [Failed] when git could not answer
       def target(ref)
         shell = run("rev-parse", "--verify", "--quiet", ref)
-        Shell::Out.ok?(shell) ? shell.stdout.strip : ""
+        return shell.stdout.strip if Shell::Out.ok?(shell)
+        raise Failed, failure(["rev-parse"], shell) unless shell.exitstatus == 1
       end
 
       # Git's own compare-and-swap: with `held`, `update-ref` refuses unless
       # the ref still holds it, where "" means it must not exist at all, so the
       # loser of a race fails loudly instead of overwriting. With no `held` the
-      # write is unconditional.
+      # write is unconditional, and a nil one is refused: it is what a missing
+      # ref reads as, and must never silently widen "create" into "overwrite".
       #
       # `--create-reflog` is not decoration: git's default
       # `core.logAllRefUpdates` logs only refs/heads, refs/remotes, refs/notes
       # and HEAD, so for `refs/lain/` a bare `-m` is accepted and silently
       # dropped (measured, git 2.43).
-      def update_ref(ref, commit, held = nil, reason:)
-        run("update-ref", "--create-reflog", "-m", reason, ref, commit, *held)
+      def update_ref(ref, commit, held = ANY, reason:)
+        raise ArgumentError, "the old value of #{ref} is nil: pass \"\" to create it, or leave it out" if held.nil?
+
+        run("update-ref", "--create-reflog", "-m", reason, ref, commit, *(held unless held.equal?(ANY)))
       end
 
       # A shared clone's commits live in its own store until fetched, so a ref
@@ -191,7 +209,7 @@ module Lain
       # --` pathspec matches. NUL termination also keeps a filename holding a
       # newline in one piece. The bytes then need re-TAGGING, not converting.
       def unmerged
-        paths = run("diff", "--name-only", "--diff-filter=U", "-z").stdout.split("\0")
+        paths = out("diff", "--name-only", "--diff-filter=U", "-z").split("\0")
         paths.map { |path| path.force_encoding(FILESYSTEM) }
       end
 
@@ -201,6 +219,9 @@ module Lain
       def unresolved(paths) = paths.select { |path| read(path).match?(CONFLICTED) }
 
       private
+
+      # A tree git cannot read has no trunk, which {#trunk} answers by reaping nothing.
+      def resolves?(ref) = Shell::Out.ok?(run("rev-parse", "--verify", "--quiet", ref))
 
       def remote_head
         shell = run("symbolic-ref", "--quiet", "refs/remotes/origin/HEAD")

@@ -108,7 +108,7 @@ module Lain
 
         # @return [Array<Array(String, String)>] each of this root's pins whose clone is gone, and its commit
         def stale_pins
-          @git.run("for-each-ref", "--format=%(refname) %(objectname)", "#{@pins}/").stdout.split("\n")
+          @git.out("for-each-ref", "--format=%(refname) %(objectname)", "#{@pins}/").split("\n")
               .map(&:split).reject { |ref, _| dirs.any? { File.directory?(File.join(_1, File.basename(ref))) } }
         end
 
@@ -157,7 +157,7 @@ module Lain
 
         def tip(path)
           tree = at(path)
-          [tree.target("HEAD"), tree.symbolic_head]
+          [tree.target("HEAD").to_s, tree.symbolic_head]
         end
 
         def read_lock(path)
@@ -203,7 +203,7 @@ module Lain
            -> { @git.update_ref(pin(path), commit, reason: PINNED) }].lazy.map(&:call)
         end
 
-        def refs_deleted(tree) = tree.run("for-each-ref", "--format=delete %(refname)").stdout
+        def refs_deleted(tree) = tree.out("for-each-ref", "--format=delete %(refname)")
 
         def discarded(path, failed)
           FileUtils.rm_rf(path)
@@ -220,7 +220,7 @@ module Lain
 
         def repin(from, to)
           held = @git.target(pin(from))
-          return Done.ok if held.empty?
+          return Done.ok if held.nil?
 
           moved = @git.update_ref(pin(to), held, reason: PINNED)
           return moved unless Shell::Out.ok?(moved)

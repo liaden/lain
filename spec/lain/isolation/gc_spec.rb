@@ -261,6 +261,49 @@ RSpec.describe Lain::Isolation::Gc, :seam do
     end
   end
 
+  describe "a commit no branch can be asked about" do
+    def failing(marker, status)
+      lambda do |*argv, **kwargs|
+        if argv.include?(marker)
+          Lain::Shell::Out.new("sh", "-c", "echo broken >&2; exit #{status}")
+        else
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+      end
+    end
+
+    it "is read as reached by none when the repository does not hold it as a commit" do
+      dir = lease("w1")
+      commit_in(dir, "w.txt", "w\n")
+
+      record = record_for(gc(at: now + (6 * day), shell_out_factory: failing("cat-file", 128)), dir)
+
+      expect([record.action, record.reason]).to match([:kept, a_string_starting_with("unmerged commits")])
+    end
+
+    it "keeps an anchor, saying why, when asking which branches reach its readable commit fails" do
+      dir = lease("w1")
+      commit = commit_in(dir, "w.txt", "w\n")
+      run_git(@repo_root, "fetch", "-q", dir, commit)
+      ref = "refs/lain/worker/anchored-w1"
+      run_git(@repo_root, "update-ref", ref, commit)
+
+      record = record_for(gc(shell_out_factory: failing("--contains", 128)), ref)
+
+      expect([record.subject, record.action,
+              record.reason]).to match([:anchor, :kept, /git failed while it was judged.*broken/m])
+    end
+
+    it "keeps that one entry, saying why, when asking which branches reach a readable commit fails" do
+      dir = lease("w1")
+      commit_in(dir, "w.txt", "w\n")
+
+      record = record_for(gc(at: now + (6 * day), shell_out_factory: failing("--contains", 128)), dir)
+
+      expect([record.action, record.reason]).to match([:kept, /git failed while it was judged.*broken/m])
+    end
+  end
+
   describe "uncommitted work" do
     it "keeps a young dirty worktree, whatever its commits" do
       dir = lease("w1")
@@ -477,6 +520,23 @@ RSpec.describe Lain::Isolation::Gc, :seam do
       ensure
         try_git(@repo_root, "worktree", "remove", "--force", wt)
       end
+    end
+
+    it "keeps a merged branch, and says so, when git cannot list the worktrees" do
+      Lain::Isolation::WorkingBranch.epic("blind", repo_root: @repo_root)
+      land_on("epic/blind", "blind.txt")
+      blind = lambda do |*argv, **kwargs|
+        if argv.each_cons(2).include?(%w[worktree list])
+          Lain::Shell::Out.new("sh", "-c", "echo no admin dir >&2; exit 128")
+        else
+          Lain::Shell::Out.new(*argv, **kwargs)
+        end
+      end
+
+      record = record_for(gc(shell_out_factory: blind), "refs/heads/epic/blind")
+
+      expect(ref?("refs/heads/epic/blind")).to be(true)
+      expect(summary(record)).to match([:kept, :branch, /worktree listing failed.*no admin dir/])
     end
 
     it "keeps a merged epic branch a worktree took after the batch was judged" do

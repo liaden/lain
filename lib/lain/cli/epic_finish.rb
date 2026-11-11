@@ -122,7 +122,7 @@ module Lain
       def tip(epic_slug)
         branch = "epic/#{epic_slug}"
         checkout = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
-        if checkout.target("refs/heads/#{branch}").empty?
+        if checkout.target("refs/heads/#{branch}").nil?
           raise NoBranch, "there is no #{branch} branch in #{@root} -- #{@finisher.untouched}"
         end
 
@@ -195,7 +195,7 @@ module Lain
 
         def remote?
           checkout = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
-          !checkout.run("remote").stdout.strip.empty?
+          !checkout.out("remote").strip.empty?
         end
 
         def no_remote(epic_slug)

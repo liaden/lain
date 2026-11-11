@@ -669,7 +669,7 @@ module Lain
         # The first attempt whose anchor is not standing. Bounded only by the
         # anchors that exist, which is one per attempt actually made.
         def next_attempt(issue_id)
-          (1..).find { |attempt| parent.target(anchor_of(issue_id, attempt)).empty? }
+          (1..).find { |attempt| parent.target(anchor_of(issue_id, attempt)).nil? }
         end
 
         def anchor_of(issue_id, attempt)
@@ -1637,9 +1637,8 @@ module Lain
 
         def dirty(root)
           Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
-                                   .run("status", "--porcelain", "-z", "--no-renames",
-                                        "--untracked-files=all")
-                                   .stdout.split("\0").map { |entry| entry[3..] }
+                                   .out("status", "--porcelain", "-z", "--no-renames", "--untracked-files=all")
+                                   .split("\0").map { |entry| entry[3..] }
         end
 
         # The newest commit past `since` carrying exactly this step's message,
@@ -1649,14 +1648,14 @@ module Lain
 
           git = Lain::Isolation::Checkout.of(root, shell_out_factory: @shell_out_factory)
           wanted = message(target, digest)
-          git.run("log", "--first-parent", "--format=%H%x00%s", "#{since}..HEAD").stdout.split("\n")
+          git.out("log", "--first-parent", "--format=%H%x00%s", "#{since}..HEAD").split("\n")
              .map { |line| line.split("\0", 2) }
              .find { |sha, subject| subject == wanted && touched(git, sha) == [target] }&.first
         end
 
         # A message is only a claim; the commit's own paths are what it did.
         def touched(git, sha)
-          git.run("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", sha).stdout.split("\0")
+          git.out("diff-tree", "-r", "--no-commit-id", "--name-only", "-z", "--no-renames", sha).split("\0")
         end
 
         # A resumed or forked chat is never asked about earlier branches, so the

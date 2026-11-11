@@ -446,6 +446,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
         asked << args.last(2) if args.first.eql?("merge-base")
         real.run(*args)
       end
+      counting.define_singleton_method(:out) { |*args, **options| real.out(*args, **options) }
       isolation = Lain::Config::Isolation.from({ "verify" => passing }, path: nil)
       base = Lain::Isolation::WorkingBranch.new("main", repo_root: @repo, git: real)
       queue_for = lambda do |journal:, verify:|
@@ -486,6 +487,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
         git.define_singleton_method(:run) do |*args|
           args.first == "merge-base" && args.include?(sha) ? broken : real.run(*args)
         end
+        git.define_singleton_method(:out) { |*args, **options| real.out(*args, **options) }
       end
     end
 

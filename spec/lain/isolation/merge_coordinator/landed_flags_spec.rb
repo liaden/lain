@@ -65,6 +65,12 @@ RSpec.describe Lain::Isolation::MergeCoordinator::LandedFlags, :seam do
     expect(flags.for(landing({ "lib/a.rb" => "b\n" }))).to eq([])
   end
 
+  it "raises when git cannot list what the report changed, rather than flagging nothing" do
+    sha = commit({ ".github/x.yml" => "x\n" })
+
+    expect { flags.for(report("0" * 40, sha)) }.to raise_error(Lain::Isolation::Checkout::Failed, /git diff failed/)
+  end
+
   it "names nothing for a resolved report, which carries no base" do
     sha = commit({ ".github/x.yml" => "x\n" })
 

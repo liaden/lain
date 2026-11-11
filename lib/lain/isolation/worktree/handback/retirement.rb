@@ -88,7 +88,7 @@ module Lain
               named = Naming.new(worker_id)
               head = head_of(lease)
               held = @parent.target(named.ref)
-              free = held.empty? || nothing?(head) || within?(held, head)
+              free = held.nil? || nothing?(head) || within?(held, head)
               Standing.new(head:, refusal: (taken(named, held, head) unless free))
             rescue StandardError => e
               Standing.new(head: nil, refusal: broke(named, e))
@@ -109,9 +109,9 @@ module Lain
 
               held = @parent.target(named.ref)
               return anchored(named, commit) if held == commit
-              return taken(named, held, commit) unless held.empty? || held == from || within?(held, commit)
+              return taken(named, held, commit) unless held.nil? || held == from || within?(held, commit)
 
-              written(named, commit, @parent.update_ref(named.ref, commit, held, reason: ANCHORED))
+              written(named, commit, @parent.update_ref(named.ref, commit, held || "", reason: ANCHORED))
             rescue StandardError => e
               broke(named, e)
             end
