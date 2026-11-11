@@ -222,7 +222,9 @@ module Lain
       end
 
       def headline(rows)
-        "#{rows.size} #{"gate".pluralize(rows.size)} parked for sign-off, ready-to-review first"
+        held = rows.count(&:held)
+        "#{rows.size} #{"gate".pluralize(rows.size)} waiting for sign-off#{" (#{held} held)" if held.positive?}, " \
+          "ready-to-review first"
       end
 
       # Names what was UNDERSTOOD, not how many files were opened: a line nobody
@@ -269,7 +271,7 @@ module Lain
       # that parked it and the spike evidence behind it. `spiked` is whether a
       # spike ran at all, because an empty evidence cell means something else
       # when no policy ever asked for one.
-      Row = Data.define(:item, :parked_at, :waited, :reason, :question, :spiked, :tests) do
+      Row = Data.define(:item, :parked_at, :waited, :reason, :question, :spiked, :tests, :held) do
         # Coarse on purpose: a morning review asks "has this been sitting since
         # yesterday", never "how many seconds".
         def self.waited_label(seconds)
@@ -307,15 +309,29 @@ module Lain
         def stage_index = Lain::Epic::STAGES.index(item.stage) || Lain::Epic::STAGES.size
 
         def to_s
-          ["#{item.stage}  epic #{item.epic_slug}#{issue}  waiting #{self.class.waited_label(waited)}",
+          ["#{item.stage}  epic #{item.epic_slug}#{issue}  #{held ? "held" : "waiting"} " \
+           "#{self.class.waited_label(waited)}",
            "  question:  #{question || "<not recoverable from the journal>"}",
            *(tests ? ["  tests:     #{tests}"] : []),
            "  artifact:  #{item.artifact_digest}",
            "  evidence:  #{item.evidence_digest || no_evidence}",
-           *(reason ? ["  hesitation: #{reason}"] : [])].join("\n")
+           *reason_lines, *answer_lines].join("\n")
         end
 
         private
+
+        def reason_lines
+          return [] unless reason
+
+          [held ? "  held for:  #{reason}" : "  hesitation: #{reason}"]
+        end
+
+        def answer_lines
+          return [] unless held
+
+          ["  answer:    lain epic approve #{item.artifact_digest}",
+           "             lain epic deny #{item.artifact_digest}"]
+        end
 
         def issue = item.issue_id ? "  issue #{item.issue_id}" : ""
 
@@ -397,6 +413,16 @@ module Lain
           def admits?(record) = super && record["verdict"] == DEFERRED
         end
 
+        # A hold is answered by the next decision, so its newest record is what dates it.
+        class Holds < LatestBy
+          TYPE = Lain::Epic::SignoffQueue::JOURNAL_TYPE
+          HELD = Lain::Epic::GateDecision::WORDS.fetch(Lain::Approval::Verdict::Hold)
+
+          private
+
+          def admits?(record) = super && record["verdict"] == HELD
+        end
+
         # Only a deferred gate's wait: a live gate's is closed by its own decision.
         class Parks < LatestBy
           TYPE = PARKED_TYPE
@@ -421,7 +447,7 @@ module Lain
           def key_of(record) = [record["issue_id"].to_s, record["sha"].to_s]
         end
 
-        private_constant :LatestBy, :Deferrals, :Parks, :Evidence, :TestRuns
+        private_constant :LatestBy, :Deferrals, :Holds, :Parks, :Evidence, :TestRuns
 
         def initialize(records, now:)
           @now = now
@@ -429,8 +455,10 @@ module Lain
           records = records.to_a
           # NO rescue, here or anywhere below it. See the class comment.
           @queue = Lain::Epic::SignoffQueue.from_journal(records)
-          @maps = Journal::Projections.of(deferrals: Deferrals.unit, parks: Parks.unit, test_runs: TestRuns.unit,
-                                          evidence: Evidence.unit).over(Journal.records(records))
+          @signoff = Lain::Epic::Signoff.from_journal(records)
+          @maps = Journal::Projections.of(deferrals: Deferrals.unit, holds: Holds.unit, parks: Parks.unit,
+                                          test_runs: TestRuns.unit, evidence: Evidence.unit)
+                                      .over(Journal.records(records))
         end
 
         # @param slug [String, nil]
@@ -449,13 +477,16 @@ module Lain
 
         private
 
-        def built = @built ||= @queue.map { |item| row_for(item) }
+        def built
+          @built ||= [*@queue.map { |item| row_for(item, deferrals, held: false) },
+                      *@signoff.held_items.map { |item| row_for(item, holds, held: true) }]
+        end
 
-        def row_for(item)
-          deferral = deferrals.fetch(address(item)) { raise UnreadableRecord, orphan_message(item) }
+        def row_for(item, records, held:)
+          deferral = records.fetch(address(item)) { raise UnreadableRecord, orphan_message(item) }
           parked_at = parked_at(deferral, item)
           Row.new(item:, parked_at:, waited: waited(parked_at, item), reason: deferral["reason"],
-                  question: question_of(item), spiked: evidence.key?(address(item)), tests: tests_of(item))
+                  question: question_of(item), spiked: evidence.key?(address(item)), tests: tests_of(item), held:)
         end
 
         def question_of(item) = evidence.dig(address(item), "question") || parks.dig(address(item), "summary")
@@ -506,6 +537,8 @@ module Lain
         end
 
         def deferrals = @maps[:deferrals].value
+
+        def holds = @maps[:holds].value
 
         def parks = @maps[:parks].value
 

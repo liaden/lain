@@ -198,6 +198,20 @@ RSpec.describe Lain::Remote::Agenda do
     end
   end
 
+  describe "a gate a human held" do
+    it "is listed with the parked ones, and answering it journals as `lain epic approve` would" do
+      Lain::Journal.open(paths:, root:) do |journal|
+        journal.record(Lain::Epic::GateDecision.new(artifact_digest: digest_a, epic_slug: "alpha", stage: "research",
+                                                    verdict: Lain::Approval::Verdict::Hold.new(note: "later"),
+                                                    answered_by: "human", policy: "interactive", latency: 1.0))
+      end
+
+      expect(gates.each.map(&:digest)).to eq([digest_a])
+      gates.deny(digest_a, reason: "no")
+      expect(gates.each.to_a).to be_empty
+    end
+  end
+
   describe "when a gate was asked" do
     def gate_waits
       Dir[File.join(paths.filing_dir(root:), "*")].flat_map { journal_records(Pathname(_1), "awaiting_human") }

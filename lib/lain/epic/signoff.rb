@@ -87,6 +87,16 @@ module Lain
         moved(fields)
       end
 
+      # @return [Array<SignoffQueue::Item>] every digest a human held, read through each partition's {GateView}
+      def held_items
+        state.keys.flat_map do |partition|
+          view(partition, current: nil).held.map do |digest|
+            SignoffQueue::Item.new(artifact_digest: digest, epic_slug: partition.epic_slug, stage: partition.stage,
+                                   issue_id: partition.issue_id)
+          end
+        end
+      end
+
       # @param other [Signoff]
       # @return [Signoff] each partition as the newer half's moves leave the older half's ledger
       def combine(other)

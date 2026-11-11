@@ -238,12 +238,13 @@ module Lain
           @root = root
         end
 
-        # @return [Enumerator<Row>] every parked gate, oldest first within a partition
+        # @return [Enumerator<Row>] every parked or held gate, oldest first within a partition
         def each(&block)
           records = CLI::SessionJournals.of(@paths, @root, types: TYPES, damage: CLI::SessionJournals::Tolerate).to_a
           waits = waits(records)
           first = first_decided(records)
-          Epic::SignoffQueue.from_journal(records).map do |item|
+          queue = Epic::SignoffQueue.from_journal(records)
+          [*queue.to_a, *Epic::Signoff.from_journal(records).held_items].map do |item|
             row(item, waits[address_of(item)], first.fetch(address_of(item)))
           end.each(&block)
         end

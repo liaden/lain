@@ -227,6 +227,42 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
+  # Scenario: a held gate is listed, and approving it drains it
+  describe "a gate a human held" do
+    subject(:queue) { described_class.new(paths:, clock:, epics:, root:) }
+
+    before do
+      home.research.write("the research, such as it is\n")
+      write_journal("20260728T060000-100.ndjson",
+                    [decision(digest: digest_a, at: "2026-07-28T06:00:00.000000Z", policy: "interactive",
+                              verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"), answered_by: "human")])
+    end
+
+    it "lists it as held, with how to answer it" do
+      row = queue.listing.split("\n\n").find { |block| block.include?(digest_a) }
+
+      expect(row).to include("held", "after lunch", "lain epic approve #{digest_a}", "lain epic deny #{digest_a}")
+    end
+
+    it "counts it in the headline" do
+      expect(queue.listing.lines.first).to eq("1 gate waiting for sign-off (1 held), ready-to-review first\n")
+    end
+
+    it "approves it, and the queue no longer lists it" do
+      said = queue.approve(digest_a)
+
+      expect(said).to include("signed off #{digest_a}")
+      expect(described_class.new(paths:, clock:, root:).listing).to include("nothing parked for sign-off")
+      expect(refolded.held("alpha", "research")).to be_empty
+    end
+
+    it "denies it, and the queue no longer lists it" do
+      queue.deny(digest_a, reason: "no")
+
+      expect(described_class.new(paths:, clock:, root:).listing).to include("nothing parked for sign-off")
+    end
+  end
+
   # Scenario: implementation rows name their issue
   describe "parked gates for two issues" do
     before do

@@ -37,6 +37,16 @@ RSpec.describe Lain::Epic::Signoff do
   end
   sessions = g.array(g.one_of(*[any_decision] * 4, g.constant(turn)), min: 0, max: 14)
 
+  describe "#held_items" do
+    it "names each held draft with its partition, and none once it is answered" do
+      held = described_class.over([decided.call(verdicts::Hold.new(note: "later"), digest: "blake3:h1")])
+      answered = held.step(decided.call(verdicts::Approve.new, digest: "blake3:h1"))
+
+      expect(held.held_items.map { [_1.partition, _1.artifact_digest] }).to eq([[issue_a, "blake3:h1"]])
+      expect(answered.held_items).to be_empty
+    end
+  end
+
   describe "the laws" do
     include_examples "an incremental fold", projection: described_class, generator: record_lists, samples: 8
 

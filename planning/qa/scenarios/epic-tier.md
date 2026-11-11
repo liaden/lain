@@ -582,7 +582,7 @@ the next `lain epic submit` of that stage. *Driven 2026-09-14*:
 
 ```
 $ lain epic queue
-1 gate parked for sign-off, ready-to-review first
+1 gate waiting for sign-off, ready-to-review first
 research  epic demo  waiting 3s
   question:  <not recoverable from the journal>
   artifact:  blake3:3ad9c6cb…
