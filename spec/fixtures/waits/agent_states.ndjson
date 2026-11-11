@@ -1,0 +1,9 @@
+{"ts":"2026-11-02T17:12:00.000000Z","type":"message","digest":"blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","kind":"spawn","from":"main","to":"reviewer","payload":{"lifecycle":"launched","role":"reviewer"},"causal_parents":[],"correlation":null}
+{"ts":"2026-11-02T17:12:01.000000Z","type":"child_progress","spawn":"blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","role":"reviewer","turns":1}
+{"ts":"2026-11-02T17:12:02.000000Z","type":"awaiting_human","kind":"approval","ref":"call_c1","summary":"bash","requester":"reviewer","tool":"bash","tool_use_id":"call_c1","spawn":"blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"}
+{"ts":"2026-11-02T17:12:03.000000Z","type":"approval_decision","tool_use_id":"call_c1","requester":"reviewer","tool":"bash","surface":"tty","verdict":"approve","timed_out":false,"latency":0.0}
+{"ts":"2026-11-02T17:12:04.000000Z","type":"message","digest":"blake3:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd","kind":"message","from":"reviewer","to":"main","payload":{"lifecycle":"stopped"},"causal_parents":["blake3:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"],"correlation":null}
+{"ts":"2026-11-02T17:12:05.000000Z","type":"request_sent","digest":"blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","payload":{},"stream":true,"extra":{}}
+{"ts":"2026-11-02T17:12:06.000000Z","type":"run_interrupted","reason":"interrupted"}
+{"ts":"2026-11-02T17:12:07.000000Z","type":"request_sent","digest":"blake3:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee","payload":{},"stream":true,"extra":{}}
+{"ts":"2026-11-02T17:12:08.000000Z","type":"ask_settled","head":"blake3:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff","stop_reason":"end_turn","turns":1,"seconds":1.0}
