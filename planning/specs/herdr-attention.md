@@ -101,7 +101,7 @@ Where docs and code disagreed:
 | New record `reentry_note` | free | Replay and the bench loader ignore unknown types (`replay.rb:135-140, 273-278`, `loader.rb:61, 208`). |
 | `notify-feed` argv | must keep | morning-feed's `notify_feed_cli.rb`. Source stays `lain`. |
 | When notices reach the desktop and the feed | free to change where states are tracked | User ruling 2026-11-10: 30 s delay, skip the focused window, in-pane bell immediate. A chat without `LiveViews` (`--no-journal` without `--nvim`) keeps today's immediate notices. |
-| herdr CLI (0.9.5) | must keep | External. lain calls `pane report-agent`, `pane release-agent`, `pane report-metadata` and `agent get` for its own pane only. It calls `plugin pane open` and the `tab` verbs only when the user has linked the plugin, and `plugin link`, `unlink` and `list` only from `lain herdr`. Source `lain`, never `herdr:...`. |
+| herdr CLI (0.9.5) | must keep | External. lain calls `pane report-agent`, `pane release-agent`, `pane report-metadata` and `agent get` for its own pane only. It calls `plugin pane open` and the `tab` verbs only when the user has linked the plugin, and `plugin link`, `unlink` and `list` only from `lain herdr`, except that a chat runs a read-only `plugin list --json` once when it first needs a window (user ruling 2026-11-11). Source `lain`, never `herdr:...`. |
 | The user's herdr setup for Claude Code | must keep untouched | `~/.config/herdr/config.toml` (incl. its `$parked` row), the Claude integration hook, `~/bin/claude-session-hook`. lain checks pane ownership before every first report (T9). |
 | tmux options `@lain_*` | free | Internal to `lain up`. Adds `@lain_herdr`. |
 | `PaneCommand` exports | must keep as is | Shared by 5 pane kinds. |
@@ -919,7 +919,7 @@ end
   the panes exec (`pane_command.rb:64-77`). herdr requires a bare command name, so report it for
   integration check 4 instead of working around it.
 
-### T12: Combine tmux and herdr focus by where the chat runs          [risk: medium]
+### [x] T12: Combine tmux and herdr focus by where the chat runs          [risk: medium]
 
 **Depends on:** T8, T11
 **Files:** `lib/lain/frontend/focus.rb`, `lib/lain/herdr/focus.rb` (new),
@@ -1045,7 +1045,7 @@ constant, and the class keeps its name.
 **Stop and report if:**
 - `Bench::Session::Loader` reads `SessionRow` with an exact field list that a new field breaks.
 
-### T15: Send the re-entry note to the feed and to herdr          [risk: low]
+### [x] T15: Send the re-entry note to the feed and to herdr          [risk: low]
 
 **Depends on:** T13, T12
 **Files:** `lib/lain/cli/command/park.rb`, `lib/lain/herdr/reporter.rb`,
@@ -1247,7 +1247,7 @@ CLI::HerdrLink < Thor # the subcommand word is `herdr`; the class name keeps CLI
 - The id `lain` is refused (plugin ids allow letters, digits, `.`, `:`, `_` and `-`). Then use
   `lain.cockpit` in T19 too.
 
-### T19: Open lain's windows and popups in herdr          [risk: medium]
+### [x] T19: Open lain's windows and popups in herdr          [risk: medium]
 
 **Depends on:** T18, T11
 **Files:** `lib/lain/cli/herdr_surface.rb` (new), `spec/lain/cli/herdr_surface_spec.rb` (new),
@@ -1297,7 +1297,7 @@ module Lain
     class HerdrSurface
       Unavailable = Class.new(Up::TmuxUnavailable)
       PLUGIN = "lain"
-      def initialize(target:, shell_out_factory: ..., status_dir: ...) = ... # status files keyed by pane id
+      def initialize(target:, shell_out_factory: ..., status_dir: ...) = ... # status files keyed by a token passed before herdr returns the pane id
       def window(command:, name: nil, target_session: nil, cwd: nil, keep_failed: false) = ...
       def window_state(target:) = ...
       def popup(command:, title: nil, width: nil, height: nil, target_session: nil, cwd: nil) = ...
@@ -1314,7 +1314,7 @@ end
 - Status files would collect. Delete one when its tab closes or its final status is read, and
   report if `FleetWindows` reads a state twice after the end.
 
-### T20: Choose the herdr surface inside herdr          [risk: medium]
+### [x] T20: Choose the herdr surface inside herdr          [risk: medium]
 
 **Depends on:** T19, T15, T17
 **Files:** `lib/lain/cli/window_surface.rb` (new), `lib/lain/cli/fleet_windows.rb`,
@@ -1618,3 +1618,37 @@ Scenario: the example holds on a loaded box
 - 23:29 T11 last fixes done (promote example red by the fixed-path mutant; fault mask 29/1 red; mtimes reset; 767/0). Main verified. Landing attempt 1.
 - 23:42 T11 landed bfc398b1 (attempt 1)
 - 23:42 T11 landed bfc398b1 (attempt 1). Cleanup done; probes kept in t11-probes/. Branch deleted with -D: it was moved by fast-forward to e7f9f5c1, an ancestor of main, and its content landed as the T11 commit.
+- 23:42 T12 and T19 started, cut at 2401539a.
+- 23:43 T12 stopped: the resolver cannot reach Attention without a Wiring line (Wiring 306/306). Ruling: HerdrBinding becomes Wiring's one herdr collaborator (tty_factory, focus, later reporter, with a null form); Wiring takes herdr: in place of tty_factory:, net 0 lines; Files widened to wiring.rb, herdr_binding.rb, attention.rb, chat_launch.rb and specs. Continued.
+- 23:46 T19 handed back (NameError red; 16/0, 697/0; no edits needed in fork.rb or fleet_windows.rb). Open-reply shape assumed; status files keyed by token; no status 0. Medium review started with leave for 1 isolated real-herdr probe.
+- 23:48 T19 medium review REQUEST-CHANGES: BLOCKER, real plugin pane open nests pane_id and tab_id under result.plugin_pane.pane (isolated probe), so every real window raises; KeyError and popup-reason branches unpinned; opens take focus; an inline rubocop:disable. Token-keyed status files and no status 0 judged right. Fix round sent; second review follows.
+- 23:50 T19 round 2 done (real shape 22/13 red then 22/0; 703/0). Second review started, rerunning the isolated real-herdr probe through HerdrSurface.
+- 23:51 T19 review 2 APPROVE-WITH-FIXES: real probe through HerdrSurface passes (window, rename, state 7, nil for clean, missing tab raises Unavailable, popup); 4 of 5 back-outs red. 1 item: explicit target_session in window, drop it from popup, a misspelt keyword raises. Sent; main verifies.
+- 23:53 T19 last fix done (misspelt keyword 24/1 red; 705/0). Main verified. Landing attempt 1.
+- 00:02 T19 attempt 1 red: 34429 examples, 1 failure, pane_command_spec 'accounts for every LAIN_ name in lib/ and exe/' (the 3 plugin env names). Card-caused. Sent back: add them to that spec's excluded list. Ratchet list gains spec/lain/cli/pane_command_spec.rb.
+- 00:03 T12 built (24/11 red, load error, ArgumentError; 1818/0) but Wiring 308/306: attention no longer fits an endless line. Ruling: drop env: from Attention.for, focus: required (or pass the binding). approval_view_spec.rb:545 red alone on the long worktree cwd (copy-path artefact, like the wiring_spec pair). Continued.
+- 00:04 T19 ratchet fix (31/1 red; 582/0). Landing attempt 2.
+- 00:05 T12 done (positional switchboard, focus required; Wiring 306/306; 1099/0). Medium review started.
+- 00:17 T19 landed 377efec3 (attempt 2)
+- 00:17 T19 landed 377efec3 (attempt 2). Cleanup done; probes kept in t19-probes/.
+- 00:20 T12 medium review APPROVE-WITH-FIXES: real drive right on all 3 routes; resolver and env passed to HerdrBinding unpinned, focused == true unpinned, stale class comment. Sent; main verifies.
+- 00:23 T12 fixes done (each red by mutant; 1104/0; 18 files clean). Main verified. Landing attempt 1.
+- 00:35 T12 landed 4d559053 (attempt 1)
+- 00:35 T12 landed 4d559053 (attempt 1). Cleanup done. T15 started, cut at 4d559053.
+- 00:45 T15 handed back (13 red + load error; 474/0, wide run green after root: made required; report-metadata has --token and --clear-token on 0.9.5). Wiring line count unchanged. Main added /park docs lines. Low review started.
+- 00:47 T15 low review APPROVE-WITH-FIXES: park text unmasked in the herdr token and the feed (mask both with the reporter's mask); a spec sets a token named parked; a WHAT comment. Sent; main verifies.
+- 00:52 T15 fixes done (4 red; 6862/0). Main verified. Landing attempt 1.
+- 01:03 T15 landed 6f9cb9c1 (attempt 1)
+- 01:03 T15 landed 6f9cb9c1 (attempt 1). Cleanup done. T20 started, cut at 6f9cb9c1.
+- 01:10 T20 handed back (load error + 275/9 red; 623/0, 1615/0) with live_views.rb out of Files, a plugin-list parse unverified, and /fork deciding by is_a?(HerdrSurface). Rulings: Files widened to live_views.rb and its spec; replace is_a? with a message both surfaces answer; reviewer checks the plugin list shape against an isolated real herdr. Continued.
+- 01:12 T20 ruling 1 done (live_views red then 1182/0); ruling 2 blocked on scope: Files widened to tmux_surface.rb and herdr_surface.rb and their specs for #windows_from_here?(env). Plugin list parse expects JSON id lain or a text line starting lain; reviewer to verify. Continued.
+- 01:14 T20 ruling 2 done (20 red; 1268/0; 303 files clean; Wiring 1051 lines). Medium review started with leave for 1 isolated real-herdr probe of plugin list.
+- 01:18 T20 medium review REQUEST-CHANGES: BLOCKER, the plugin-linked regex never matches real herdr 0.9.5 plugin list (isolated probe recorded text and --json shapes), so herdr is never chosen; stubs invented the shape. Binding memo and live_views keyword unguarded; tmux-only messages. Fix round sent (plugin list --json, plugin_id); second review follows.
+- 01:22 T20 fix round done (8 red against the old regex; memo and keyword red by mutant; 1249/0). Second review (same reviewer) started.
+- 01:26 T20 review 2 APPROVE-WITH-FIXES, nits only: fresh isolated probe through WindowSurface.for gives TmuxSurface unlinked and HerdrSurface linked; all 8 back-outs red. Nits not taken (fork usage text unpinned, 1 long line rubocop accepts). Landing attempt 1.
+- 05:21 T20 attempt 1 red: 34489 examples, 1 failure, reporter_spec 'touches nothing else' (seed 17621): the chat ran herdr plugin list at launch, against the compatibility table. Asked the user; ruling: plugin list --json only lazily, on first window need, at most once per chat; table and T11 guard amended to allow exactly that. Sent back.
+- 05:23 T20 lazy probe done (reporter_spec red + 5 lazy specs red; 1289/0). Narrow re-check by the same reviewer.
+- 05:26 T20 laziness re-check APPROVE-WITH-FIXES: no launch probe without a window need, 1 shared probe, 4 of 5 mutants red; mutex unpinned, lock held across notes, a false comment. Sent; main verifies.
+- 05:28 T20 last fixes done (mutex 2-thread red by mutant; lock around the choice only; 1226/0). Main verified. Landing attempt 2.
+- 05:31 T20 landed a5831612 (attempt 2)
+- 05:31 T20 landed a5831612 (attempt 2). Cleanup done.
