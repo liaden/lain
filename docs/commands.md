@@ -581,6 +581,20 @@ Runs take a per-repository lock, so a second concurrent `gc` does nothing and sa
 stamp under `$XDG_STATE_HOME/lain/gc/` is older than 24 hours, logging beside it. The stamp is
 renewed only after a spawn succeeds, and two simultaneous launches start one run between them.
 
+### lain herdr
+
+Link, unlink or list lain's herdr plugin. No flags.
+
+```bash
+lain herdr link      # herdr plugin link <lain>/plugin/herdr
+lain herdr unlink    # herdr plugin unlink lain
+lain herdr status    # herdr plugin list
+```
+
+This is the only command that writes to herdr's configuration, and it does so by asking herdr: `link`
+records a link to the plugin folder this lain ships, so an upgrade of lain is picked up without
+linking again. A herdr not on `PATH` exits 1 saying so, and nothing is written.
+
 ### lain review
 
 Review a pull request or a branch. `lain review 4821` takes a pull request number,

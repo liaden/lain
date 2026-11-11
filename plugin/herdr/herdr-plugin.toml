@@ -1,0 +1,20 @@
+id = "lain"
+name = "lain"
+version = "0.1.0"
+min_herdr_version = "0.9.5"
+
+[[panes]]
+id = "run"
+title = "lain"
+# herdr closes a pane the moment its command exits and reports no status, so the
+# script records the status itself. The command runs in a child sh so an `exec`
+# inside it cannot replace the script before the status is written.
+command = ["sh", "-c", '''
+sh -c "$LAIN_RUN_COMMAND"
+status=$?
+printf '%s\n' "$status" > "$LAIN_RUN_STATUS"
+if [ "$status" -ne 0 ] && [ "${LAIN_KEEP_FAILED:-}" = 1 ]; then
+  exec sleep 31536000
+fi
+exit "$status"
+''', "lain-run"]

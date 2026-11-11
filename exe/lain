@@ -1420,6 +1420,9 @@ class LainCLI < Thor
   desc "worktrees SUBCOMMAND", "lain's worker checkouts: gc reaps the ones whose work is safe elsewhere"
   subcommand "worktrees", Worktrees
 
+  desc "herdr SUBCOMMAND", "Link lain's plugin into herdr"
+  subcommand "herdr", Lain::CLI::HerdrLink
+
   desc "land SUBCOMMAND ...ARGS", "queue commits for the merge coordinator"
   subcommand "land", Land
 
