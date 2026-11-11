@@ -956,6 +956,63 @@ RSpec.describe Lain::CLI::Epic do
       expect(graph_revisions).to be_empty
     end
 
+    # Scenario: splitting an ungated issue refuses when an approved neighbour changes
+    it "refuses to split an ungated issue whose approved neighbour's bytes the split changes" do
+      write_epic("alpha", chain)
+      before = epic_home.epic.read
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+
+      expect { command.split("b", "b1,b2", "alpha") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
+      expect(epic_home.epic.read).to eq(before)
+      expect(graph_revisions).to be_empty
+    end
+
+    it "refuses to split an issue whose approved downstream neighbour's derived Blocked by line the split changes" do
+      write_epic("alpha", chain)
+      before = epic_home.epic.read
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "c", approved: true))
+
+      expect { command.split("b", "b1,b2", "alpha") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"c".*approved.*issue_plan/m)
+      expect(epic_home.epic.read).to eq(before)
+    end
+
+    it "refuses to merge 2 ungated issues when an approved neighbour's bytes the merge changes" do
+      write_epic("alpha", graph_of(issue("a", blocks: ["b"]), issue("b"), issue("c"), issue("d", blocks: ["c"])))
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+
+      expect { command.merge("b", "c", "alpha", as: "bc") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
+    end
+
+    it "refuses to split an ungated issue whose approved neighbour only relates to it" do
+      write_epic("alpha", graph_of(issue("a", related: ["b"]), issue("b")))
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+
+      expect { command.split("b", "b1,b2", "alpha") }
+        .to raise_error(Lain::CLI::Epic::GatedIssue, /"a".*approved.*issue_plan/m)
+    end
+
+    it "splits an ungated issue when its neighbour's approval was later denied" do
+      write_epic("alpha", chain)
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true),
+              gate_decision(stage: "issue_plan", issue_id: "a", approved: false, policy: "interactive",
+                            verdict: Lain::Approval::Verdict::Deny.new))
+
+      expect { command.split("b", "b1,b2", "alpha") }.not_to raise_error
+    end
+
+    # Scenario: a split that changes no gated issue goes through
+    it "splits an ungated issue when the only gated issue is not a neighbour" do
+      write_epic("alpha", graph_of(issue("a"), issue("b"), issue("c")))
+      session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "a", approved: true))
+
+      command.split("b", "b1,b2", "alpha")
+
+      expect(epic_home.read_epic.ids).to include("b1", "b2")
+    end
+
     it "refuses to merge an issue holding an approved issue_plan gate, naming the gate" do
       write_epic("alpha", chain)
       session("gates.ndjson", gate_decision(stage: "issue_plan", issue_id: "b", approved: true))

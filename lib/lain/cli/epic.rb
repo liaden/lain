@@ -590,7 +590,7 @@ module Lain
         Lain::Epic::Home.refuse_unwritable_ids!(parsed)
         revised, fiber = yield(parsed)
         refuse_unemittable_arrivals!(parsed, revised)
-        refuse_gated_edit!(resolved, fiber)
+        refuse_gated_edit!(resolved, fiber, parsed, revised)
         home.epic.write(Lain::Epic::Document.to_markdown(revised, preamble:))
         journal_revision(resolved, fiber)
         Applied.new(resolved, fiber).to_s
@@ -615,10 +615,24 @@ module Lain
       #
       # @param slug [String] the epic being edited
       # @param fiber [Epic::GraphFiber] the edit about to be journaled
+      # @param before [Epic::Graph] the graph as read
+      # @param after [Epic::Graph] the graph the edit built
       # @raise [GatedIssue] naming the id and the gate holding it
-      def refuse_gated_edit!(slug, fiber)
+      def refuse_gated_edit!(slug, fiber, before, after)
         records = records_for(slug)
-        fiber.preimage.each { |issue_id| refuse_if_gated!(slug, records, issue_id) }
+        (fiber.preimage | rewritten_ids(before, after)).each { |issue_id| refuse_if_gated!(slug, records, issue_id) }
+      end
+
+      # A gate's digest is the {Epic::IssueView}'s bytes, which carry the derived
+      # Blocked by line, so a neighbour is rewritten when that view changes and
+      # not only when its stored {Epic::Issue} does. The authored half is the
+      # same on both sides, so it is left out of the comparison.
+      def rewritten_ids(before, after)
+        before.ids.select { |id| after.ids.include?(id) && view_digest(before, id) != view_digest(after, id) }
+      end
+
+      def view_digest(graph, id)
+        Lain::Epic::IssueView.new(issue: graph.fetch(id), graph:, authored: "").digest
       end
 
       def refuse_if_gated!(slug, records, issue_id)
