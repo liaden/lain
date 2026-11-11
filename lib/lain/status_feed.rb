@@ -102,29 +102,17 @@ module Lain
   #
   #   ORACLE SPEND IS NOT IN IT, deliberately: no `turn_usage` record carries
   #   it. {#turn_usage?} holds that argument and what a `#usage` duck once cost.
-  # * `approvals_pending` -- counted, never keyed. Both halves DO carry the
-  #   parked call's `tool_use_id` now, so a keyed pairing is available; what it
-  #   would have to be keyed by is `(tool_use_id, order within that id)`, since
-  #   one call parks more than once under one id -- a `read_file` of a gated
-  #   file parks at the path gate and again at the release. A counter answers
-  #   the one question this field asks, "how many are waiting", with no index
-  #   to keep; a keyed pairing would buy the ability to say WHICH, which
-  #   nothing on this surface renders.
+  # * `approvals_pending` and `waiting` -- read off {Journal::Projection::Waits},
+  #   the one fold of open waits this feed and the agent states share; its doc
+  #   holds how each wait opens and closes. `waiting` is the approvals plus each
+  #   gate and model question still open, a wave counted once.
   #
-  #   The pair breaks in exactly ONE place, and the halves fail asymmetrically.
-  #   NOT cancellation: `Async::Stop` descends from `Exception`, not
-  #   `StandardError`, so a stop inside the announcement write escapes
-  #   {Approval::Parked::Queue#record_evidence} before EITHER record is written. What
-  #   breaks the pair is the queue's `degrade` path, which writes a
-  #   `journal_error` instead. Losing the ASKED half under-reports and heals
-  #   when the call is decided; losing the DECIDED half over-reports and NEVER
-  #   heals. So the degrade record is counted too
-  #   ({#observe_degraded_approval}), and the floor at zero is a backstop for a
-  #   stream that was never paired, not the primary defence.
-  # * `waiting` -- `approvals_pending` plus each gate and model question whose
-  #   `awaiting_human` no `gate_decision` or `questions_consumed` has closed. A
-  #   wave is one question asked about several issues, so it counts once. A
-  #   hold closes nothing: the work waits until the human speaks again.
+  #   The approval pair breaks in exactly ONE place. NOT cancellation:
+  #   `Async::Stop` descends from `Exception`, not `StandardError`, so a stop
+  #   inside the announcement write escapes
+  #   {Approval::Parked::Queue#record_evidence} before EITHER record is written.
+  #   What breaks it is the queue's `degrade` path, which writes a
+  #   `journal_error` instead, and the fold counts that record too.
   # * `scope` / `approval` / `layers` / `mode_lighter` -- derived from a
   #   {Telemetry::ModeSwitch} by {ModeState}, whose doc holds the reasoning. All
   #   absent until the first switch, and forced to be: {Mode::Switch} journals
@@ -163,10 +151,9 @@ module Lain
   # namespace is a guess that silently starts catching the wrong record --
   # {#turn_usage?} records the one that was actually shipped and what it cost.
   #
-  # The approval pair is the ONE exception, for {Memory::JournalMemoryRoot}'s
-  # reason: {Approval::Parked::Queue} is the single writer of both records, and no other
-  # event in this fan-out is distinguishable from a park by shape alone (a
-  # `tool_use_id` reader would also match {Telemetry::ToolOutput}).
+  # The waits are the ONE exception: {Journal::Projection::Waits} matches its
+  # closing records by journal type as well, because a reader of a closed file
+  # reads them back as {Telemetry::Untyped} and the two readers share the fold.
   #
   # A publish is skipped when the derived state did not change, and the
   # comparison is {#observed} ALONE, never the run's own measures. A clock is
@@ -182,11 +169,6 @@ module Lain
     # on the Provider tree for nothing, and one constant is not a reason to
     # start.
     DEFAULT_CACHE_PROFILE = { ttl: 300 }.freeze
-
-    # {Journal#encode}'s self-describing failure record, which is also what
-    # {Approval::Parked::Queue#degrade} writes when it cannot journal a park or a
-    # decision -- the only raw Hash in the fan-out this class recognizes.
-    JOURNAL_ERROR = "journal_error"
 
     # Spelled again rather than imported from {Tools::AskHuman::HUMAN}: reaching
     # into the Tools tree from this struct would invert the dependency this
@@ -238,8 +220,7 @@ module Lain
       @unmeasured_turns = 0
       @run_tokens = nil
       @mode = ModeState::NONE
-      @approvals_pending = 0
-      @open_waits = {}
+      @waits = Journal::Projection::Waits.unit
       @compactions = 0
       @derivation_refusal_streak = 0
       @fleet = Fleet.new(clock: @clock)
@@ -554,54 +535,8 @@ module Lain
       nil
     end
 
-    # See the class doc for why an approval is counted rather than joined by
-    # id, and which half failing costs what. A gate and a question close on
-    # `ref`, which their closing records name.
     def observe_wait(event)
-      case event
-      when Telemetry::AwaitingHuman then opened(event)
-      when Approval::Parked::Queue::Pending then release_approval
-      when Epic::GateDecision then closed("gate", event.artifact_digest) unless event.held?
-      when Telemetry::QuestionsConsumed then event.digests.each { |digest| closed("question", digest) }
-      when Hash then observe_degraded_approval(event)
-      end
-    end
-
-    # A deferred gate is journaled after the denial that closed it, so nothing
-    # later in this run closes it again: it waits on the morning review.
-    def opened(event)
-      return @approvals_pending += 1 if event.kind == "approval"
-
-      return if event.deferred
-
-      (@open_waits[[event.kind, event.question_key || event.ref]] ||= Set.new) << event.ref
-    end
-
-    # A wave's question stays open until every issue it asked about is decided.
-    def closed(kind, ref)
-      key, refs = @open_waits.find { |(open_kind, _), open| open_kind == kind && open.include?(ref) }
-      return unless key
-
-      refs.delete(ref)
-      @open_waits.delete(key) if refs.empty?
-    end
-
-    # {Approval::Parked::Queue#degrade}'s stand-in record. The park (or the decision)
-    # HAPPENED -- only its evidence failed to serialize -- and the record names
-    # which class it stood in for, so the count can still move. The two names
-    # are read off the classes themselves, so a rename cannot drift them apart
-    # from what {Approval::Parked::Queue} actually writes.
-    def observe_degraded_approval(event)
-      return unless event["type"] == JOURNAL_ERROR
-
-      case event["entry_class"]
-      when Telemetry::AwaitingHuman.name then @approvals_pending += 1
-      when Approval::Parked::Queue::Pending.name then release_approval
-      end
-    end
-
-    def release_approval
-      @approvals_pending -= 1 if @approvals_pending.positive?
+      @waits = @waits.step(event)
     end
 
     def observe(event)
@@ -680,7 +615,7 @@ module Lain
     def observed
       { "cache_deadline" => @cache_deadline, "fleet" => @fleet.digests, "fleet_tree" => @fleet.tree,
         "inbox_count" => @inbox.pending_size,
-        "approvals_pending" => @approvals_pending, "waiting" => @approvals_pending + @open_waits.size,
+        "approvals_pending" => @waits.approvals_pending, "waiting" => @waits.waiting,
         "occupancy" => @occupancy,
         "window_guessed" => @window_guessed, "unmeasured_turns" => @unmeasured_turns,
         "compactions" => @compactions, "derivation_refusal_streak" => @derivation_refusal_streak,

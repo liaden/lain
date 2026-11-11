@@ -625,6 +625,14 @@ RSpec.describe Lain::StatusFeed do
       expect(counts).to eq([3, 2, 1, 0])
     end
 
+    it "publishes an open approval and an open gate as 1 pending approval and 2 waiting" do
+      feed = described_class.new(path:)
+
+      feed << approval_park(tool_use_id: "tu_1") << gate_wait("blake3:plan")
+
+      expect([published["approvals_pending"], published["waiting"]]).to eq([1, 2])
+    end
+
     it "counts a wave's waits as the one question they share" do
       feed = described_class.new(path:)
       %w[b c d].each do |id|
@@ -651,6 +659,18 @@ RSpec.describe Lain::StatusFeed do
       feed << gate_decision("blake3:denied", verdict: Lain::Approval::Verdict::Deny.new)
 
       expect(published["waiting"]).to eq(1)
+    end
+
+    it "closes each wait whose closing record arrives read back from a file" do
+      feed = described_class.new(path:)
+      feed << approval_park(tool_use_id: "tu_1") << gate_wait("blake3:plan") << question_wait("blake3:q")
+
+      [approval_decision(tool_use_id: "tu_1").to_journal, gate_decision("blake3:plan").to_journal,
+       Lain::Telemetry::QuestionsConsumed.new(turn: nil, digests: ["blake3:q"]).to_journal].each do |line|
+        feed << Lain::Telemetry.read(JSON.parse(JSON.generate(line)), strict: false)
+      end
+
+      expect([published["waiting"], published["approvals_pending"]]).to eq([0, 0])
     end
 
     it "is not moved by a decision on a gate nobody waited on" do

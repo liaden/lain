@@ -56,7 +56,7 @@ module GateDecisionFoldDiscipline
                                  "live decisions, not the journal, so it is not a second fold",
     "lain/remote/agenda.rb" => "dates a parked item by its first decision's timestamp",
     "lain/bench/epic_metrics.rb" => "counts decisions per partition",
-    "lain/status_feed.rb" => "closes a waiting item on a decision event",
+    "lain/journal/projection/waits.rb" => "closes a waiting item on a decision event, live or read back",
     "lain/cli/epic_queue.rb" => "reads a deferral as the evidence a parked item has a record behind it",
     "lain/cli/gate_verdict_rewrite.rb" => "rewrites records written before verdicts",
     "lain/cli/session_journals.rb" => "refuses and locates records written before verdicts"
@@ -70,6 +70,7 @@ module GateDecisionFoldDiscipline
     "lain/epic/gate_decision.rb" => "verdict_in parses the journaled word: where a record becomes a verdict",
     "lain/cli/gate_verdict_rewrite.rb" => "finds records written before verdicts",
     "lain/cli/session_journals.rb" => "finds records written before verdicts",
+    "lain/journal/projection/waits.rb" => "a hold closes no wait; records from before verdicts still close theirs",
     "lain/bench/approval_replay.rb" => "an approval_decision record's verdict",
     "lain/bench/approval_replay/call.rb" => "an approval_decision record's verdict",
     "lain/bench/approval_replay/recorded_judge.rb" => "a recorded judge's verdict",
