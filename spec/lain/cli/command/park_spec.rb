@@ -1,8 +1,21 @@
 # frozen_string_literal: true
 
+require "tmpdir"
+
 # `/park text` leaves a re-entry note in the session record. Zero model turns.
 RSpec.describe Lain::CLI::Command::Park do
-  subject(:command) { described_class.new }
+  subject(:command) { described_class.new(root: "/work/proj", feed:) }
+
+  let(:feed) { ->(*note) { fed << note } }
+  let(:fed) { [] }
+  let(:tokens) { [] }
+  let(:reporter) do
+    sent = tokens
+    Object.new.tap do |own|
+      own.define_singleton_method(:metadata) { |*args| sent << args }
+      own.define_singleton_method(:mask) { Lain::Herdr::Reporter::MASK }
+    end
+  end
 
   let(:journal) { [] }
   let(:session) { Lain::Session.new(journal:) }
@@ -11,7 +24,7 @@ RSpec.describe Lain::CLI::Command::Park do
                     context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse"),
                     session:)
   end
-  let(:env) { build_command_env(agent:) }
+  let(:env) { build_command_env(agent:, reporter:) }
 
   it "is the /park command and describes itself" do
     expect(command.name).to eq("park")
@@ -35,5 +48,41 @@ RSpec.describe Lain::CLI::Command::Park do
 
     expect(session.reentry_note).to eq("")
     expect(reply).to include("cleared")
+  end
+
+  it "writes the feed at once with the project as its title" do
+    command.call("waiting on CI", env)
+
+    expect(fed).to eq([["lain", "proj", "parked: waiting on CI"]])
+  end
+
+  it "masks a secret-named environment value in the feed body" do
+    value = "opensesame-plain-words-42"
+    with_env("LAIN_SPEC_PARK_TOKEN" => value) { command.call("echo #{value}", env) }
+
+    expect(fed.sole.last).to start_with("parked: echo").and(satisfy { !_1.include?(value) })
+  end
+
+  it "sets lain's own pane token, never one named parked" do
+    command.call("waiting on CI", env)
+
+    expect(tokens).to eq([["lain_parked", "waiting on CI"]])
+  end
+
+  it "clears the token and writes nothing to the feed on an empty park" do
+    command.call("  ", env)
+
+    expect([tokens, fed]).to eq([[["lain_parked", nil]], []])
+  end
+
+  it "runs the machine's notify-feed when no feed is handed in" do
+    Dir.mktmpdir("park-feed") do |dir|
+      out = File.join(dir, "out")
+      File.write(File.join(dir, "notify-feed"), "#!/bin/sh\n{ printf '%s|' \"$@\"; cat; } > #{out}\n", perm: 0o755)
+
+      described_class.new(root: "/work/proj", env: { "PATH" => dir }).call("waiting on CI", env)
+
+      expect(File.read(out)).to eq("lain|proj|parked: waiting on CI")
+    end
   end
 end

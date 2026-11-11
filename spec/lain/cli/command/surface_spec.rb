@@ -47,6 +47,12 @@ RSpec.describe Lain::CLI::Command::Surface do
                         status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
 
+  it "hands the reporter it was given to the env its commands read" do
+    reporter = Object.new
+
+    expect(build_surface(Dir.pwd, reporter:).env.reporter).to be(reporter)
+  end
+
   describe "/held" do
     def held_over(rail)
       with_project { |root| return build_surface(root, rail:).commands.dispatch("/held", &:itself) }

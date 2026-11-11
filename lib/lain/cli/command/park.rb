@@ -4,9 +4,19 @@ module Lain
   module CLI
     module Command
       # `/park text`: leave a re-entry note in the session record, which a
-      # resume prints first. Zero model turns; no text clears the note.
+      # resume prints first, and tell the feed and the herdr pane. Zero model
+      # turns; no text clears the note and the pane's token.
       class Park
-        def initialize = freeze
+        TOKEN = "lain_parked"
+
+        # @param root [String] the project root, whose basename titles the feed entry
+        # @param env [#[]] searched for `notify-feed` when no feed is handed in
+        # @param feed [#call] takes source, title and body ({Notices::Feed})
+        def initialize(root:, env: ENV, feed: Notices.for(env:))
+          @title = File.basename(root.to_s)
+          @feed = feed
+          freeze
+        end
 
         def name = "park"
 
@@ -15,7 +25,20 @@ module Lain
         def call(args, env)
           text = args.to_s.strip
           env.agent.session.record_reentry_note(text)
-          text.empty? ? "cleared the re-entry note" : "noted: #{text}"
+          text.empty? ? clear(env) : announce(text, env)
+        end
+
+        private
+
+        def announce(text, env)
+          @feed.call("lain", @title, "parked: #{env.reporter.mask.call(text)}")
+          env.reporter.metadata(TOKEN, text)
+          "noted: #{text}"
+        end
+
+        def clear(env)
+          env.reporter.metadata(TOKEN, nil)
+          "cleared the re-entry note"
         end
       end
     end

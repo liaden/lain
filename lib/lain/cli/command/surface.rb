@@ -50,7 +50,8 @@ module Lain
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
                        approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
-                       epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail)
+                       epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail,
+                       reporter: Herdr::Reporter::Null.new)
           @role_spawn = role_spawn
           @epic = epic
           @configured = middleware
@@ -69,7 +70,7 @@ module Lain
           # `goal` layer is that driver's to raise ({GoalDriver::Guard}).
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
                               model_switch:, mode_switch: goal_driver.guarding(mode_switch), snapshots:,
-                              epic_driver: epic_driver(epic, chronicle))
+                              epic_driver: epic_driver(epic, chronicle), reporter:)
         end
 
         attr_reader :env, :goal_driver
@@ -145,13 +146,13 @@ module Lain
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when the
         # session wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                         model_switch:, mode_switch:, snapshots:, epic_driver:)
+                         model_switch:, mode_switch:, snapshots:, epic_driver:, reporter:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new(project: place),
             approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.filing_dir(root: place.root)),
             tmux_surface: TmuxSurface.new, agent:, chronicle:,
-            model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:
+            model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:, reporter:
           )
         end
 
@@ -213,7 +214,7 @@ module Lain
         # sibling opened at its head (`/fork`), and the turns compaction must
         # keep (`/pin`, `/unpin`, `/keep`).
         def history_commands
-          [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new, Park.new,
+          [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new, Park.new(root: @root),
            ResumeSession.new(dir: Paths.new.filing_dir(root: @root))]
         end
 

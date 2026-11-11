@@ -3993,6 +3993,21 @@ RSpec.describe Lain::CLI::Wiring do
     # forever, which is the defect class this card exists to remove. So the call
     # is EXPECTED here, and against the run's own Store -- an `instance_of`
     # would still pass for a second, empty one, which retires exactly nothing.
+    it "hands the herdr binding's reporter to the commands' env" do
+      reporter = Lain::Herdr::Reporter::Null.new
+      wiring = Dir.mktmpdir do |dir|
+        herdr = Struct.new(:tty_factory, :focus, :reporter).new(tty_factory(dir), Lain::Frontend::Focus.tmux(env: {}),
+                                                                reporter)
+        new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"), herdr:,
+                   conductor_opener:).tap do |built|
+          built.run(backend:, resumed: nil, nvim: nil)
+          built.conductor.close(reason: :exit)
+        end
+      end
+
+      expect(wiring.command_env.reporter).to be(reporter)
+    end
+
     it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire", :seam do
       wiring = run_wiring
 
@@ -4072,7 +4087,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "asks the herdr binding's focus when a notice falls due" do
         allow(Lain::Config).to receive(:attention).and_return(Lain::Config::Attention.new(delay: 0))
         window = Struct.new(:asked) { def focused? = (self.asked = true) && false }.new
-        herdr = Struct.new(:tty_factory, :focus).new(nil, window)
+        herdr = Struct.new(:tty_factory, :focus, :reporter).new(nil, window, Lain::Herdr::Reporter::Null.new)
         notices = nil
         Dir.mktmpdir do |dir|
           herdr.tty_factory = screen_factory(dir)

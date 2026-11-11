@@ -22,7 +22,13 @@ module Lain
           attr_reader :tty_factory
 
           def focus = Frontend::Focus.tmux(env: @env)
+
+          # @return [Herdr::Reporter::Null]
+          def reporter = Herdr::Reporter::Null.new
         end
+
+        # @return [Herdr::Reporter]
+        attr_reader :reporter
 
         # @param notes [HeldNotes] the sink the resolver and the reporter write to
         # @param reporter [Herdr::Reporter]

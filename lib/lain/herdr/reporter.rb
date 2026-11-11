@@ -27,6 +27,16 @@ module Lain
 
       Report = Data.define(:state, :what)
 
+      # A chat with no herdr to tell drops every message, but its commands still mask through {MASK}.
+      Null = Data.define do
+        def mask = MASK
+        def call(_change) = nil
+        def to_proc = method(:call).to_proc
+        def metadata(_token, _value) = nil
+        def mask_with(_mask) = self
+        def release = nil
+      end
+
       # The tmux session of the cockpit pane this chat runs in, asked only when a report needs it.
       class CockpitSession
         FORMAT = "\#{session_name}"
@@ -84,6 +94,9 @@ module Lain
         @seq = 0
       end
 
+      # @return [#call] takes text and answers it with secrets masked
+      attr_reader :mask
+
       # @param mask [#call] the chat's own, once its secret source exists
       # @return [self]
       def mask_with(mask)
@@ -102,10 +115,10 @@ module Lain
       end
 
       # @param token [String] the metadata token's name
-      # @param value [String]
+      # @param value [String, nil] nil clears the token
       # @return [nil]
       def metadata(token, value)
-        enqueue([:metadata, "#{token}=#{value}"])
+        enqueue([:metadata, value.nil? ? ["--clear-token", token] : ["--token", "#{token}=#{plain(value)}"]])
         nil
       end
 
@@ -174,9 +187,9 @@ module Lain
               *message(report.what), *resume_command(target))
       end
 
-      def described(token)
+      def described(token_flags)
         target = @target || @resolver.current
-        herdr(target, "pane", "report-metadata", target.pane, *identity, "--token", token, *seq) if target
+        herdr(target, "pane", "report-metadata", target.pane, *identity, *token_flags, *seq) if target
       end
 
       def released
@@ -194,8 +207,10 @@ module Lain
       end
 
       def message(what)
-        what.to_s.empty? ? [] : ["--message", Frontend::TTY::Notifier.plain(what, mask: @mask)]
+        what.to_s.empty? ? [] : ["--message", plain(what)]
       end
+
+      def plain(text) = Frontend::TTY::Notifier.plain(text, mask: @mask)
 
       def resume_command(target)
         words = resume_words(target)

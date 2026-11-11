@@ -1104,6 +1104,8 @@ clears that turn rather than labeling the last one.
 `/park <text>` leaves a re-entry note for when you come back: what you are waiting on and what to do
 next. It is journaled in the session record, the latest note wins, and `lain chat --resume` prints it
 first, as `parked: <text>`. A fork carries the note too. `/park` with no text clears it.
+Parking also sends `parked: <text>` to the morning feed at once and, in a herdr pane lain reports to, sets
+the `lain_parked` token on that pane; clearing the note clears the token and sends nothing.
 
 ### /fork
 

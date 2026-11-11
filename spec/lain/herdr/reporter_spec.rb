@@ -265,11 +265,54 @@ RSpec.describe Lain::Herdr::Reporter do
 
   it "reports display metadata to its pane" do
     subject = reporter(resolver: fixed(target))
-    subject.metadata("parked", "fix the flake")
+    subject.metadata("lain_parked", "fix the flake")
     subject.release
 
     call = calls.find { _1.first(2) == %w[pane report-metadata] }
-    expect([call[2], flag(call, "--source"), flag(call, "--token")]).to eq(["w1:p7", "lain", "parked=fix the flake"])
+    expect([call[2], flag(call, "--source"),
+            flag(call, "--token")]).to eq(["w1:p7", "lain", "lain_parked=fix the flake"])
+  end
+
+  it "masks a secret-named environment value in a metadata token's value" do
+    value = "opensesame-plain-words-42"
+    with_env("LAIN_SPEC_REPORTER_TOKEN" => value) do
+      subject = reporter(resolver: fixed(target))
+      subject.metadata("lain_parked", "echo #{value}")
+      subject.release
+    end
+
+    sent = flag(calls.find { _1[1] == "report-metadata" }, "--token")
+    expect(sent).to start_with("lain_parked=echo").and(satisfy { !_1.include?(value) })
+  end
+
+  it "answers the mask it reports through" do
+    expect(reporter(resolver: fixed(target)).mask).to be(described_class::MASK)
+    expect(reporter(resolver: fixed(target)).mask_with(:chat).mask).to eq(:chat)
+  end
+
+  it "clears a metadata token when the value is nil, and sends nothing else new" do
+    subject = reporter(resolver: fixed(target))
+    tracker = Lain::AgentStates::Tracker.new(clock:)
+    tracker.on_change(&subject)
+    tracker << request
+    subject.metadata("lain_parked", "waiting on CI")
+    subject.metadata("lain_parked", nil)
+    subject.release
+
+    expect(calls.map { _1.first(2) }.uniq).to eq([%w[pane report-agent], %w[pane report-metadata],
+                                                  %w[pane release-agent]])
+    set, cleared = calls.select { _1[1] == "report-metadata" }
+    expect([flag(set, "--token"), flag(set, "--clear-token"), flag(cleared, "--clear-token"),
+            flag(cleared, "--token")]).to eq(["lain_parked=waiting on CI", nil, "lain_parked", nil])
+  end
+
+  describe Lain::Herdr::Reporter::Null do
+    it "answers the reporter's messages and does nothing" do
+      expect(described_class.new.mask).to be(Lain::Herdr::Reporter::MASK)
+      expect([described_class.new.metadata("t", "v"), described_class.new.release,
+              described_class.new.call(nil), described_class.new.mask_with(:m).class]).to eq([nil, nil, nil,
+                                                                                              described_class])
+    end
   end
 
   describe Lain::Herdr::Reporter::CockpitSession do

@@ -92,6 +92,13 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
     expect(build_terminal(described_class.new(notes:, reporter: reporter(stub_herdr), resolver: nobody), [])).to be(tty)
   end
 
+  it "hands back the reporter it was built with, and a null one when built without a launch" do
+    subject = reporter(stub_herdr)
+
+    expect(described_class.new(notes:, reporter: subject, resolver: nobody).reporter).to be(subject)
+    expect(described_class::Null.new.reporter).to eq(Lain::Herdr::Reporter::Null.new)
+  end
+
   describe "#focus" do
     def resolver_for(bin)
       target = Lain::Herdr::Target.new(bin:, pane: "w1:p7", socket: File.join(root, "s.sock"), via: :env)
