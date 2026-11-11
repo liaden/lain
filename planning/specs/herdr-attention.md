@@ -214,7 +214,7 @@ flowchart LR
 
 ## Tasks
 
-### T1: Name the spawn behind every wait on a human          [risk: medium]
+### [x] T1: Name the spawn behind every wait on a human          [risk: medium]
 
 **Depends on:** none
 **Files:**
@@ -281,12 +281,12 @@ Askers#enrol(parent, agent: nil, spawn: nil)
 - `awaiting_human_spec.rb:95-111` (the byte-exact line) changes for a main-chat record.
 - `Remote::Agenda` serializes `Pending` by its members onto the phone wire.
 
-### T2: Fold open waits once for the feed and the agent states          [risk: high]
+### [x] T2: Fold open waits once for the feed and the agent states          [risk: high]
 
 **Depends on:** T1
 **Files:** `lib/lain/journal/projection/waits.rb` (new), `lib/lain/status_feed.rb`,
 `spec/lain/journal/projection/waits_spec.rb` (new), `spec/lain/status_feed_spec.rb`,
-`spec/fixtures/sessions/waits/closing_records.ndjson` (new)
+`spec/fixtures/waits/closing_records.ndjson` (new; replay_spec reads every file under spec/fixtures/sessions/)
 **Reuse:** `StatusFeed`'s wait arms (`status_feed.rb:562-600`): `opened`, `release_approval`,
 `closed`, the question-wave close by `question_key`, deferred and held gates, and the degraded
 `journal_error` Hash. `Journal::Projection` (`projection.rb`). `Telemetry.read(hash, strict: false)`.
@@ -699,7 +699,7 @@ end
 - `ConversationScope#open`'s surfaces are stopped in an order that would close `Notices` while a
   notice is being written.
 
-### T9: Resolve a herdr pane lain may report to          [risk: high]
+### [x] T9: Resolve a herdr pane lain may report to          [risk: high]
 
 **Depends on:** none
 **Files:** `lib/lain/herdr.rb` (new), `lib/lain/herdr/target.rb` (new),
@@ -780,7 +780,7 @@ end
 - A spec that inherits the developer's `HERDR_*` could reach a real herdr.
   `spec/support/isolated_herdr_env.rb` removes those names for every example.
 
-### T10: Record the herdr pane when `lain up` attaches from herdr          [risk: medium]
+### [x] T10: Record the herdr pane when `lain up` attaches from herdr          [risk: medium]
 
 **Depends on:** T9
 **Files:** `lib/lain/cli/up.rb`, `spec/lain/cli/up_spec.rb`
@@ -809,7 +809,7 @@ Scenario: reattaching from a plain terminal clears it
 Scenario: a nested lain up never records
   Given lain up runs with TMUX set, whatever HERDR_* it inherited
   When it creates or switches to the cockpit
-  Then @lain_herdr is unset
+  Then @lain_herdr is neither written nor cleared
 
 Scenario: real-tmux specs never see the developer's herdr
   When up_spec's real-tmux examples run
@@ -960,7 +960,7 @@ Frontend::Focus.for(env:, resolver:) # tmux AND herdr in a cockpit inside herdr;
 - `agent get <pane>` needs a name herdr assigns rather than the pane id. `q2.out` shows the pane id
   works on 0.9.5.
 
-### T13: Journal a re-entry note with `/park` and replay it on resume          [risk: low]
+### [x] T13: Journal a re-entry note with `/park` and replay it on resume          [risk: low]
 
 **Depends on:** T1
 **Files:**
@@ -1009,7 +1009,7 @@ Session#record_reentry_note(note); Session#reentry_note
 - `spec/lain/cli/command/surface_spec.rb` pins command order in a way 1 new command breaks
   elsewhere. That spec is a shared file; hand back the diff.
 
-### T14: Show the re-entry note in `lain sessions`          [risk: low]
+### [x] T14: Show the re-entry note in `lain sessions`          [risk: low]
 
 **Depends on:** T13
 **Files:** `lib/lain/journal/projection/session_row.rb`, `lib/lain/cli/sessions.rb`,
@@ -1113,7 +1113,8 @@ Spec file: `spec/lain/cli/up_spec.rb`
 **Interface**
 
 ```ruby
-# Extracted for T16 and T17: the newest resumable session whose writer is dead and that has no session_closed
+# Extracted for T16 and T17: the newest resumable session after except, if its writer is dead and it has
+# no session_closed; older ones are not searched
 Resume::Selector#unclosed(except: nil) = ... # a path or nil
 ```
 
@@ -1176,7 +1177,7 @@ CLI::Command::ResumeSession # name "resume"; named so it can't shadow CLI::Resum
 - `ChatRestart`'s `ARMED` guard (`up.rb:499`) makes a `/resume` after a `/clear` a silent no-op.
 - `up_spec.rb:3541`'s regex on the restart script breaks.
 
-### T18: Ship lain's herdr plugin and `lain herdr link`          [risk: medium]
+### [x] T18: Ship lain's herdr plugin and `lain herdr link`          [risk: medium]
 
 **Depends on:** none
 **Files:** `plugin/herdr/herdr-plugin.toml` (new), `lib/lain/cli/herdr_link.rb` (new),
@@ -1531,3 +1532,46 @@ Scenario: the example holds on a loaded box
 - 19:48 T18 medium review APPROVE-WITH-FIXES, mechanical: no example for herdr exiting non-zero (ok? mutant survives); help prints 'herdr_link tree'; WHAT comment in plugin spec. Sent; main verifies.
 - 19:49 T7 landed 04c6ad9b (attempt 2)
 - 19:49 T6 T7 cleanup done (runtime log 1319 files).
+- 19:51 T18 fixes done (6/1 red on the ok? mutant; 576/0; help reads lain herdr). Main verified. Landing attempt 1.
+- 19:51 T1 fixes done (3 new examples, each red on its mutant; 1263/0). Main verified. Landing attempt 1 queued behind T18.
+- 20:02 T18 landed 272331e9 (attempt 1)
+- 20:07 T1 landed 5c16bb9a (attempt 1)
+- 20:07 T18 landed 272331e9, T1 landed 5c16bb9a. Cleanup done. T2 (opus) and T13 started, cut at 5c16bb9a.
+- 20:09 T9 high review APPROVE-WITH-FIXES: ownership rule holds on real tmux with a stub herdr (Claude pane named or unnamed gets no target; 13 of 15 mutants red). Fixes: from_option non-Hash JSON, a Mutex on the pane cache, 2 surviving mutants, AGENT vs SOURCE, 2 WHAT comments; substantive: agent_not_found's stream and exit code are unknown. Ruling: parse the error from either stream, and a real-herdr probe isolated by its own --session and XDG dirs records the shapes. Second review follows.
+- 20:10 T13 handed back (3 load errors red; 1294/0 and 454/0). Main applied surface.rb, surface_spec and docs wiring (59/0). Low review started.
+- 20:12 T13 low review APPROVE-WITH-FIXES: double read in parked_notice; first-notice ordering mutant unconfirmed. Sent. Fork showing the note judged right; main added that to the /park docs.
+- 20:13 T13 fixes done (ordering mutant 147/1 red; 1734/0). Main verified. Landing attempt 1.
+- 20:25 T13 landed d8e895d6 (attempt 1)
+- 20:38 T9 fixes done (28/7 red; 28/0 and 478/0). Isolated probe: agent_not_found goes to stderr with exit 1 and empty stdout; no source field in agent get. Stop condition 1 then fired (a session-only report reads as free). User allowed 2 read-only queries on this session's own Claude pane: agent get and pane get both name agent claude (agent_status working, agent_session source herdr:claude), exit 0, so a real Claude pane reads as held. Cleared with evidence. Second review (same reviewer) next.
+- 20:38 T13 landed d8e895d6 (attempt 1). Cleanup done. T2 stopped on gate_decision_fold_discipline_spec (reader moved to waits.rb); Files widened to it, continued. T14 started, cut at d8e895d6.
+- 20:40 T2 handed back (NameError + 164/1 red; 178/0 card, 628/0 with ratchets and the discipline spec). High review (opus) started.
+- 20:41 T14 handed back (42/3 red; 42/0, 1043/0). Low review started.
+- 20:42 T14 low review APPROVE-WITH-FIXES: note carry-forward past later records unpinned (mutant survives); nested ternary. Sent; main verifies.
+- 20:44 T9 review 2 APPROVE (11 mutants red twice each; the live Claude shape yields no target, 1 call, 1 note). 3 mechanical: note written under the Mutex deadlocks a re-entrant sink; a silent held-on-failure gets a note; a comment cites a probe file. Sent; main verifies.
+- 20:44 T14 fixes done (mutant 44/2 red; 1045/0). Main verified. Landing attempt 1.
+- 20:49 T14 landing stopped by pid (mine): wait-quiet counted the T2 reviewer's mutation probe (argv holds tmp/probes/) while the probe waited for the gate the landing held. The reviewer asked the main session to kill its probe after its own kill was refused; declined (the main session does not carry out a refused action for an agent), freed the gate instead. Pattern now drops tmp/probes/ and skips lock-blocked processes. T2 high review provisional APPROVE-WITH-FIXES pending 13 mutants: substantive, a deferred gate stays in asks and a later live ask for the same artifact inherits its agent and summary; nits: released drops a degraded park first, 18-line class doc, unnamed means degraded parks, fixture lacks prev (harmless). Real-data gate: 9 files, 676 wait records, identical counts at every step.
+- 21:01 T14 landed 3cb21ae6 (attempt 2)
+- 21:01 T14 cleanup done.
+- 21:02 T2 review final APPROVE-WITH-FIXES: 16 mutants, 14 caught, status_feed back-out caught. Fix round sent: deferred wait replaced by a later live ask for the same artifact (substantive); pin approval ref by tool_use_id; pin degraded-first release; rename unnamed to degraded_parks; trim doc. Second review follows.
+- 21:03 T9 last fixes done (31/3 red; 31/0, 481/0). Main verified the lock and note code. Landing attempt 1.
+- 21:15 T9 landed 65f523af (attempt 1)
+- 21:15 T9 landed 65f523af (attempt 1). Cleanup done; probes kept in t9-probes/. T10 started, cut at 65f523af.
+- 21:17 T2 fix round done (18/2 red for the deferred replace; surviving mutants 18/4 in a copy; 632/0). Extra: a deferred park on a live ask adds nothing. Second review (same reviewer) started, incl. real-data recount.
+- 21:21 T2 review 2 REQUEST-CHANGES: BLOCKER, answered closes a ref in a deferred wait first, so waiting sticks at 1 (fuzz vs old feed diverges 131-190 of 9000 steps per seed; real data never deferred, 0 diff). All back-outs red. Fix round 3 sent (repro spec + fuzz to 0); third review follows per the standing rule.
+- 21:23 T2 round 3 done (19/1 red; fuzz 3 seeds 0 diffs; 633/0). Third review started on a fresh opus reviewer.
+- 21:24 T10 handed back (5/5 red; 846/0, 866/0) with Metrics/MethodLength 16/15 on Up#initialize from a new env ivar. Ruling: env moves to call(env: ENV) / launch_plan where it is used; no limit raise. Continued.
+- 21:26 T10 reworked (env on call and launch_plan; 1119/0; rubocop clean). Medium review started.
+- 21:29 T10 medium review APPROVE-WITH-FIXES (every mutant red; set-option -u on an unset option exits 0 on tmux 3.7b). Substantive: nested reattach clears a still-right record. Ruling: nested neither writes nor clears; Up uses the exe's nested: rather than re-reading TMUX. Card scenario to reword: 'a nested lain up never writes or clears it'. Fix sent; short second review follows.
+- 21:32 T10 fixes done (7/3 red; 1121/0). Review 2 APPROVE (old clear-on-nested branch red at the reattach example; TMUX re-read red at 3). Landing attempt 1.
+- 21:36 T10 landed a2dab8af (attempt 1)
+- 21:36 T10 landed a2dab8af (attempt 1). Cleanup done. T16 started, cut at a2dab8af.
+- 21:37 T16 stopped: Files missed resume/selector.rb, where the public Selector#unclosed must live. Ruling: Files widened to selector.rb and its spec; probe as a launch_plan keyword or 1 collaborator up/unclosed_hint.rb. Continued.
+- 21:37 T2 review 3 APPROVE-WITH-FIXES, all mechanical: 2 surviving mutants (replacing ask position; approvals_pending vs waiting never told apart), 2 comment fixes, discipline reason, a per-event Array. Wider fuzz 0 diffs over 60000 steps incl. spawns, journal_error, Untyped, denies; real data agrees. Sent; main verifies.
+- 21:39 T2 last fixes done (both mutants 185/2 red; 635/0). Main verified. Landing attempt 1.
+- 21:41 T16 handed back (7/34 + 4 red; 11/0, 1607/0); probe keyword on launch_plan; unclosed judges only the newest. Low review started.
+- 21:43 T2 attempt 1 red: 34273 examples, 1 failure, replay_spec 'reads every committed session fixture at the current format' (seed 49944): the new fixture under spec/fixtures/sessions/ has no session header. Card-caused, not a flake. Sent back. Ratchet list gains spec/lain/session_record/replay_spec.rb for later briefs.
+- 21:44 T16 low review REQUEST-CHANGES: BLOCKER, the hint path lets UnusableHome and Unresolvable stop lain up (HOME '/' is real); writer_dead? NoMethodError on a vanished file; docstring split. Ruling on newest-only: keep (no endless hint from an old open file; /resume gets the previous session or nothing); card text amended. Fix round sent; second review follows.
+- 21:45 T2 fixture moved to spec/fixtures/waits/ (replay 71/1 red; 706/0). Landing attempt 2.
+- 21:46 T16 fix round done (UnusableHome red then green; vanished-file red on ENOENT; 13/0, 1609/0). Second review (same reviewer) started.
+- 21:49 T2 landed d6a17d83 (attempt 2)
+- 21:49 T2 landed d6a17d83 (attempt 2). Cleanup done.
