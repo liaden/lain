@@ -755,11 +755,18 @@ RSpec.describe Lain::Tools::Subagent do
         expect(content).to include("lib", "**/*.md")
       end
 
-      it "keeps the ceiling message and the last text block when the lists are huge" do
-        many = Array.new(5000) { |i| ["grep", { "pattern" => "needle#{i}", "path" => "lib" }] }
-        flood = mock(turn("first note", *many), turn("final text", read("Rakefile")))
+      def child_history(searches, pad: 0)
+        calls = Array.new(searches) do |i|
+          { "type" => "tool_use", "id" => "c#{i}", "name" => "grep",
+            "input" => { "pattern" => "n#{i}#{"p" * pad}", "path" => "lib" } }
+        end
+        events = [Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "n" }, *calls]),
+                  Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "final text" }])]
+        Struct.new(:timeline).new(events.each_entry)
+      end
 
-        content = dispatched_by_parent(provider: flood)["content"]
+      it "keeps the ceiling message and the last text block when the lists are huge" do
+        content = Lain::Tools::Subagent::Answer.new.partial(child_history(5000), "loop ran 2 iterations, ceiling is 2")
 
         expect(content).to start_with("loop ran 2 iterations, ceiling is 2")
         expect(content).to include("final text", "and ", " more")
@@ -773,16 +780,8 @@ RSpec.describe Lain::Tools::Subagent do
       it "stays within the bound however the lists land against it" do
         answer = Lain::Tools::Subagent::Answer.new
         limit = answer.bounds.limit
-        searches = limit / 8
         sizes = (0..19).map do |pad|
-          calls = Array.new(searches) do |i|
-            { "type" => "tool_use", "id" => "c#{i}", "name" => "grep",
-              "input" => { "pattern" => "n#{i}#{"p" * pad}", "path" => "lib" } }
-          end
-          events = [Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "n" }, *calls]),
-                    Struct.new(:role, :content).new("assistant", [{ "type" => "text", "text" => "final text" }])]
-          child = Struct.new(:timeline).new(events.each_entry)
-          answer.partial(child, "loop ran 2 iterations, ceiling is 2").bytesize
+          answer.partial(child_history(limit / 8, pad:), "loop ran 2 iterations, ceiling is 2").bytesize
         end
 
         expect(sizes).to all(be <= limit)

@@ -586,6 +586,11 @@ Unproven; counting only the example's own thread would settle it.
     Likely cause, not reproduced under added load: `lain land wait` gave up after 5s with
     no live drain lock holder, and a drainer still booting under load holds none yet. The enqueue now
     records the started drainer's pid in the home, and a live one counts for up to 60s of boot.
+  - 2026-11-11: `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
+    read files and written notes keeps the ceiling message and the last text block when the lists are huge`
+    (watchdog STUCK at 30.8 s and 30.3 s at load 25 to 29, 9 s of CPU alone). It drove 5000 real `grep` calls
+    through the loop; it now builds the child history and calls `Answer#partial` directly, about 0.1 s,
+    keeping every assertion.
   - 2026-10-30: `the repository is not a spec fixture has no example generated from a scan of repository
     content` (watchdog STUCK at 30s on 2026-10-28 twice, 2026-10-29 and 2026-10-30, about 16 s of CPU at load
     20 or more). The scanner now skips the syntax walk for a file whose text cannot hold the shape, and walks
@@ -1002,7 +1007,7 @@ Unproven; counting only the example's own thread would settle it.
   worker's seed on the base commit, on a card that adds 2 files nothing references:
   `Lain::Tools::Subagent a one-shot child that does not finish when the ceiling stops a child that had
   read files and written notes keeps the ceiling message and the last text block when the lists are
-  huge` (STUCK at 30.5 s, 11.2 s of CPU, inside `ChildEnv#environment`); and 2 repeats, each now a
+  huge` (STUCK at 30.5 s, 11.2 s of CPU, inside `ChildEnv#environment`; retired 2026-11-11, below); and 2 repeats, each now a
   follow-up card: `two cockpits on one machine leaves the second cockpit's editor answering after the
   first stops` (STARVED, 6% of a core) and `Lain::CLI::EpicSubmit Ctrl-C through the real CLI exits 130,
   with the fail-closed decision already journaled` (timed out waiting for the gate's prompt; the screen
