@@ -1606,6 +1606,21 @@ RSpec.describe Lain::Tools::AskHuman do
       end
     end
 
+    it "names the spawn of a child's question, and none for the main chat's" do
+      child = described_class.new(parent:, journal:, agent: "reviewer", spawn: "blake3:child")
+
+      [child, tool].each do |asker|
+        Sync do |task|
+          run = task.async { asker.call({ "question" => "which db?" }, invocation) }
+          task.yield
+          asker.reply("pg", asker.last_question.digest)
+          run.wait
+        end
+      end
+
+      expect(waits.map(&:spawn)).to eq(["blake3:child", nil])
+    end
+
     # A gate asks through #ask and journals its own wait, of kind gate.
     it "journals no wait for a question asked through #ask" do
       Sync { tool.withdraw(tool.ask("Approve the plan?")) }

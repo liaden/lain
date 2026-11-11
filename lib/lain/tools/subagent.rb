@@ -1601,14 +1601,14 @@ module Lain
         # and a defaulted one is how a production spawn would run ungated while
         # nothing said so. So it is refused unless it can build one at all.
         #
-        # It is a builder, `call(worker_env, task:)`, called once per child as
+        # It is a builder, `call(worker_env, task:, spawn:)`, called once per child as
         # that child is built, because a chat's stack reads a board that does
         # not exist yet when this seam does ({CLI::ToolGuard::Spawned}), and
         # because a stack is mutable, so one shared between children would let
         # a `#use` on one reach them all. The environment is what tells a guard
         # where a child leased into a checkout of its own writes; the task is
         # what the child was spawned to do, which a judged approval is weighed
-        # against. A builder that has no use for the task still takes it. It
+        # against. A builder that has no use for the task or the spawn still takes them. It
         # also answers `with(requester:)`, the same builder naming another
         # child: {Skill::RoleSpawn} tells the judge each child's role that way.
         #
@@ -1908,11 +1908,12 @@ module Lain
           # Minted afresh for a resumed child too, so what it leased to its own children before a stop is not read back.
           cell = Sensitivity::Bounds::Cell.new(Sensitivity::Bounds::NONE)
           union = child_union(chain.timeline, chain.escalation, Holder.of(-> { child }), spend, cell)
-          spawned(@seam.askers.enrol(chain.asking_handle, agent: @name), chain, union, view, task:, spend:, cell:)
-            .tap { |built| child = built.agent }
+          spawned(enrolled(chain), chain, union, view, task:, spend:, cell:).tap { |built| child = built.agent }
         end
 
         private
+
+        def enrolled(chain) = @seam.askers.enrol(chain.asking_handle, agent: @name, spawn: chain.spawn)
 
         # One spawn's own chain, built HERE rather than at the Agent, because
         # the asker is enrolled before the Agent exists and needs the feed.
@@ -2027,7 +2028,8 @@ module Lain
             provider: @seam.provider, context: child_context(session.worker_env),
             toolset: @policy.posture.rendered_toolset(union:, allowed:), handler: Effect::Handler::Live.new,
             timeline: chain.base, turn_middleware: recorded_turns(chain, mailbox),
-            model_middleware: child_budget, tool_middleware: child_stack(session.worker_env, allowed, task:, cell:),
+            model_middleware: child_budget,
+            tool_middleware: child_stack(session.worker_env, allowed, chain, task:, cell:),
             session:, budget: @budget, accounting: child_accounting(chain, spend), pipeline_source:, mailbox:,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
@@ -2097,10 +2099,11 @@ module Lain
         # first: the builder is the only place a child's gate comes from, so a
         # stack it does not end in the gate is refused here, as the child is
         # built and before any of its tools can run.
-        def child_stack(worker_env, allowed, task:, cell:)
+        def child_stack(worker_env, allowed, chain, task:, cell:)
           guard = @seam.tool_middleware
           guard = guard.holding(cell) if guard.respond_to?(:holding)
-          stack = Middleware::Gate.closes!(Middleware::Stack.new(guard.call(worker_env, task:).to_a))
+          built = guard.call(worker_env, task:, spawn: chain.spawn)
+          stack = Middleware::Gate.closes!(Middleware::Stack.new(built.to_a))
           return stack unless @policy.posture.refuses_over_union?
 
           stack.insert_before(path_refusal(stack),

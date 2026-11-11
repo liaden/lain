@@ -29,6 +29,22 @@ RSpec.describe Lain::CLI::Wiring::Askers do
     expect(called).to be(true)
   end
 
+  it "enrols a child's asker under its spawn, so its question's wait names it" do
+    journal = []
+    askers = described_class.new(observer: Lain::EventLog::ChainWriter::Null.new, journal:)
+    invocation = Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)
+    asker = askers.enrol(timeline, agent: "reviewer", spawn: "blake3:child").asker
+
+    Sync do |task|
+      run = task.async { asker.call({ "question" => "which file?" }, invocation) }
+      task.yield
+      asker.reply("a.rb", asker.last_question.digest)
+      run.wait
+    end
+
+    expect(journal.grep(Lain::Telemetry::AwaitingHuman)).to contain_exactly(have_attributes(spawn: "blake3:child"))
+  end
+
   describe "recording an answered question" do
     let(:journal) { [] }
     let(:invocation) { Lain::Tool::Invocation.new(context: Lain::Session::Null.instance) }

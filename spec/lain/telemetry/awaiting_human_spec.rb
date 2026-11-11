@@ -109,6 +109,23 @@ RSpec.describe Lain::Telemetry::AwaitingHuman do
     end
   end
 
+  describe "the spawn a wait is a child's" do
+    it "journals the spawn digest after the fields it follows, and omits it for the main chat" do
+      child = described_class.approval(parked(spawn: "blake3:child"))
+
+      expect([child.spawn, child.to_journal["spawn"]]).to eq(%w[blake3:child blake3:child])
+      expect(described_class.approval(parked).to_journal).not_to have_key("spawn")
+    end
+
+    it "reads a line with no spawn key as nil, every other field unchanged" do
+      old = described_class.new(kind: "question", ref: "d", summary: "q?", requester: "reviewer")
+
+      expect(old).to have_attributes(spawn: nil, requester: "reviewer", ref: "d")
+      expect(old.to_journal).to eq("type" => "awaiting_human", "kind" => "question", "ref" => "d",
+                                   "deadline" => nil, "summary" => "q?", "requester" => "reviewer")
+    end
+  end
+
   describe ".approval, from a parked Pending" do
     it "names the requester, the tool, the call and the moment the queue denies it unasked" do
       record = described_class.approval(parked)

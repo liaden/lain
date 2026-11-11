@@ -41,14 +41,19 @@ module Lain
           # @return [String, nil] the task the asking child was spawned with, in its parent model's words
           attr_reader :task
 
+          # @return [String, nil] the digest of the :spawn that started the asking child; nil for the main chat
+          attr_reader :spawn
+
           # @param context [Object] the context the policy seam already threads
           # @param requester [Requester, String] who is asking; anything but a bare word is refused here by
           #   {Requester}'s rule, at the one place it cannot be degraded away
           # @param task [String, nil] the task the asking child was spawned with
-          def initialize(context, requester, task: nil)
+          # @param spawn [String, nil] the digest of the :spawn that started it
+          def initialize(context, requester, task: nil, spawn: nil)
             @identity = Requester.of(requester)
             super(context)
             @task = task && -task.to_s
+            @spawn = spawn && -spawn.to_s
           end
 
           # @return [String] the asking requester's name, the key a remembered denial is held under and the

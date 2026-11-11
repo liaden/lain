@@ -18,7 +18,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     AwaitingHuman: { kind: "approval", ref: "tu_1", deadline: "2026-11-02T09:05:00Z", summary: "bash",
                      requester: "agent", tool: "bash", tool_use_id: "tu_1", humans_only: true, notes: ["a note"],
                      input_digest: d, deferred: true, epic_slug: "e", stage: "review", issue_id: "i1", sha: "abc",
-                     question_key: d },
+                     question_key: d, spawn: d },
     BudgetOvershoot: { ceiling: BigDecimal("1.5"), spent: BigDecimal("1.75"), overshoot: BigDecimal("0.25"),
                        model: "m", complete: true },
     CapabilityDegraded: { capability: "thinking", requirer: "agent", provider: "ollama" },

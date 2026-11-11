@@ -1667,7 +1667,7 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "ends as failed when the child could not be built, leaving no spawn open" do
       tool = build_subagent(provider: mock(text_response("unused")), mode: :actor,
-                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+                            tool_middleware: ->(_worker_env, task:, **) { raise "no stack for #{task}" })
 
       Sync do
         expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -1683,7 +1683,7 @@ RSpec.describe Lain::Tools::Subagent do
       spend = Lain::Budget::Shared.new
       tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, spend:,
                             holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1),
-                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+                            tool_middleware: ->(_worker_env, task:, **) { raise "no stack for #{task}" })
 
       Sync do
         expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(RuntimeError)
@@ -1696,7 +1696,7 @@ RSpec.describe Lain::Tools::Subagent do
       spend = Lain::Budget::Shared.new
       tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, spend:,
                             holder: Lain::Budget.ceilings(tokens: 1000).with(depth: 1),
-                            tool_middleware: ->(_worker_env, task:) { raise Async::Stop, task })
+                            tool_middleware: ->(_worker_env, task:, **) { raise Async::Stop, task })
 
       Sync do
         expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }.to raise_error(Async::Stop)
@@ -1714,7 +1714,7 @@ RSpec.describe Lain::Tools::Subagent do
         record.call(event)
       end
       tool = build_subagent(provider: mock(text_response("unused")), mode: :actor, observer: refusing, telemetry:,
-                            tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+                            tool_middleware: ->(_worker_env, task:, **) { raise "no stack for #{task}" })
 
       Sync do
         expect { tool.launch_actor("go", worker_env: Lain::WorkerEnv.default) }
@@ -2600,7 +2600,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "gives back the grant of a spawn whose child could not be built" do
       parent_agent = nil
       tool = held_by(-> { parent_agent }, provider: mock(text_response("unused")),
-                                          tool_middleware: ->(_worker_env, task:) { raise "no stack for #{task}" })
+                                          tool_middleware: ->(_worker_env, task:, **) { raise "no stack for #{task}" })
       parent_agent = parent_over(tool, [text_response("unused")], tokens: 1000)
 
       expect { tool.run("go") }.to raise_error(RuntimeError, "no stack for go")
@@ -3835,6 +3835,41 @@ RSpec.describe Lain::Tools::Subagent do
       expect(result["content"]).to include("read_file")
     end
 
+    # Through the real tool guard and a real queue, with no double between the
+    # child and the park: the wait the queue journals must name the spawn the
+    # child was started by.
+    describe "parking for approval under the real guard and queue" do
+      let(:journal_io) { StringIO.new }
+      let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io)) }
+      let(:guard) do
+        inputs = Lain::CLI::ToolGuard::Inputs.new(
+          ledger: Lain::Sensitivity::Ledger.new, approvals: nil, sensitivity:,
+          test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared, policy: queue,
+          policy_for: ->(_worker_env) { queue }, denial: Lain::Middleware::Gate::DENIAL,
+          bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new
+        )
+        Lain::CLI::ToolGuard::Detached.new(chronicle: Lain::CLI::ToolGuard::Journaled.new(journal: []),
+                                           guard_inputs: inputs, requester: "researcher")
+      end
+
+      def waits = journal_records(journal_io, "awaiting_human")
+
+      it "journals the child's parked read with the child's spawn digest" do
+        tool = build_subagent(provider: mock(tool_response(["r1", "read_file", { "path" => secret }]),
+                                             text_response("done")),
+                              tool_middleware: guard)
+
+        Sync do |task|
+          run = task.async { tool.call({ "prompt" => "read it" }, invocation) }
+          queue.dequeue.approve(surface: "tty")
+          run.wait
+        end
+
+        expect(waits).to contain_exactly(a_hash_including("requester" => "researcher",
+                                                          "spawn" => record.spawn.digest))
+      end
+    end
+
     # The other half of the discriminator, and the mutation guard: with the
     # policy absent the identical call is NOT gated and the bytes come back. An
     # assertion that only pinned the refusal would pass against a gate that
@@ -4148,6 +4183,23 @@ RSpec.describe Lain::Tools::Subagent do
 
     def actor_tool
       asking_subagent(mock(asks, text_response("done")), mode: :actor, log: Lain::Tools::Subagent::Log.new)
+    end
+
+    it "names the spawn the child was started by in its question's wait" do
+      journal = []
+      askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new, journal:)
+      tool = described_class.new(seam: asking_seam(mock(asks, text_response("done"))).with(askers:), toolset: union,
+                                 policy: spawn_policy(only: []))
+
+      Sync do |task|
+        run = task.async { tool.call({ "prompt" => "go" }, invocation) }
+        pumped_until(task) { !askers.questions.empty? }
+        askers.directory.reply("pg", askers.questions.dequeue.digest)
+        run.wait
+      end
+
+      waits = journal.grep(Lain::Telemetry::AwaitingHuman)
+      expect(waits).to contain_exactly(have_attributes(spawn: record.spawn.digest))
     end
 
     def unroutable!(digest)
@@ -5199,7 +5251,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "hands the guard the task the child was spawned with" do
       tasks = []
       tool = build_subagent(provider: mock(text_response("done")),
-                            tool_middleware: lambda { |env, task: nil|
+                            tool_middleware: lambda { |env, task: nil, **|
                               (tasks << task) && ToolRegistry::UNGUARDED.call(env)
                             })
 
@@ -5211,7 +5263,7 @@ RSpec.describe Lain::Tools::Subagent do
     it "hands the guard the task a background actor was launched with" do
       tasks = []
       tool = build_subagent(provider: mock(text_response("done")), mode: :actor,
-                            tool_middleware: lambda { |env, task: nil|
+                            tool_middleware: lambda { |env, task: nil, **|
                               (tasks << task) && ToolRegistry::UNGUARDED.call(env)
                             })
 

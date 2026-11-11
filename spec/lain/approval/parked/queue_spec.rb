@@ -495,6 +495,21 @@ RSpec.describe Lain::Approval::Parked::Queue do
       )
     end
 
+    it "names the child's spawn when the asking context carries one, and no spawn key otherwise" do
+      queue = described_class.new(journal:)
+      child = Lain::Approval::Parked::PolicySwitch::Requested.new(Lain::Session.new, "researcher",
+                                                                  spawn: "blake3:child")
+
+      Sync do |task|
+        runs = [child, nil].map { |context| task.async { queue.call(tool_call, context) } }
+        2.times { queue.dequeue.approve(surface: "tty") }
+        runs.each(&:wait)
+      end
+
+      expect(pending_records.map { _1["spawn"] }).to eq(["blake3:child", nil])
+      expect(pending_records.last).not_to have_key("spawn")
+    end
+
     it "names the moment the queue denies the call unasked" do
       queue = described_class.new(journal:, timeout: 300, wall: -> { Time.utc(2026, 11, 2, 9, 0, 0) })
 
@@ -1597,7 +1612,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key notes], %i[key file_facts], %i[key silence]])
+                %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

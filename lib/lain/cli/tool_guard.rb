@@ -157,9 +157,9 @@ module Lain
       # Given the agent's cell, the context also says whose bounds a path is
       # judged against: the ladder reads the board's one policy, which holds
       # nobody's leases ({Sensitivity::Policy.confined_at}).
-      Asking = Data.define(:policy, :requester, :task, :cell) do
-        def initialize(policy:, requester:, task: nil, cell: nil)
-          super(policy: Middleware::Gate::Callable.of(policy), requester:, task:, cell:)
+      Asking = Data.define(:policy, :requester, :task, :cell, :spawn) do
+        def initialize(policy:, requester:, task: nil, cell: nil, spawn: nil)
+          super(policy: Middleware::Gate::Callable.of(policy), requester:, task:, cell:, spawn:)
         end
 
         def call(effect, context) = rule(effect, context).allow?
@@ -171,7 +171,8 @@ module Lain
         private
 
         def requested(context)
-          Approval::Parked::PolicySwitch::Requested.new(cell ? Celled.new(context, cell) : context, requester, task:)
+          asked = cell ? Celled.new(context, cell) : context
+          Approval::Parked::PolicySwitch::Requested.new(asked, requester, task:, spawn:)
         end
       end
 
@@ -222,9 +223,10 @@ module Lain
 
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
+        # @param spawn [String, nil] the digest of the :spawn that started the child
         # @return [Middleware::Stack] a fresh one per child
-        def call(worker_env, task: nil)
-          ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, task:, cell:)
+        def call(worker_env, task: nil, spawn: nil)
+          ToolGuard.child_stack(chronicle, board.call, worker_env, requester:, task:, cell:, spawn:)
         end
 
         # @param cell [Sensitivity::Bounds::Cell] where the child's bounds are held, for its spawner to grow
@@ -256,12 +258,13 @@ module Lain
 
         # @param worker_env [WorkerEnv] the environment the child runs in
         # @param task [String, nil] what the child was spawned to do, asked about beside its name
+        # @param spawn [String, nil] the digest of the :spawn that started the child
         # @return [Middleware::Stack] a fresh one per child, over the one board
-        def call(worker_env, task: nil)
-          return leased(worker_env, task) if worker_env.checkout
+        def call(worker_env, task: nil, spawn: nil)
+          return leased(worker_env, task, spawn) if worker_env.checkout
 
           ToolGuard.working(chronicle, guard_inputs, worker_env,
-                            ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:, cell:),
+                            ToolGuard.named(guard_inputs.policy_for.call(worker_env), requester, task:, cell:, spawn:),
                             requester:, cell:)
         end
 
@@ -270,11 +273,11 @@ module Lain
 
         private
 
-        def leased(worker_env, task)
+        def leased(worker_env, task, spawn)
           fresh = LEASES.for(worker_env)
           # A run with no project root classes a program by the lease, which is a copy of the project.
           resolver = ::Lain::Shell::Executable::Resolver.new(root: worker_env.checkout, fresh:)
-          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:, resolver:, cell:)
+          ToolGuard.leased(chronicle, guard_inputs, worker_env, requester:, task:, fresh:, resolver:, cell:, spawn:)
         end
       end
 
@@ -553,10 +556,11 @@ module Lain
       # @param requester [Requester, String] who a human is told is asking
       # @param task [String, nil] what the child was spawned to do
       # @param cell [Sensitivity::Bounds::Cell, nil] where its bounds are held, so its spawner can grow them
+      # @param spawn [String, nil] the digest of the :spawn that started the child, named in the waits it parks
       # @return [Middleware::Stack]
-      def child_stack(chronicle, board, worker_env, requester:, task: nil, cell: nil)
+      def child_stack(chronicle, board, worker_env, requester:, task: nil, cell: nil, spawn: nil)
         inputs = board.guard_inputs
-        asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:, cell:)
+        asking = Asking.new(policy: inputs.policy_for.call(worker_env), requester:, task:, cell:, spawn:)
         bounded = bounded(inputs, worker_env)
         layered(chronicle, confined(inputs, bounded, cell), inputs.test_layout.roots_for(worker_env), asking,
                 requester:, held: held_for(bounded, home: inputs.sensitivity.home))
@@ -613,14 +617,16 @@ module Lain
       # @param fresh [#fresh?] whether a path was written during the lease
       # @param resolver [#for] what a command's programs resolve to, over `fresh`
       # @param cell [Sensitivity::Bounds::Cell, nil] as on {.child_stack}
+      # @param spawn [String, nil] as on {.child_stack}
       # @return [Middleware::Stack]
-      def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil, cell: nil)
+      def leased(chronicle, inputs, worker_env, fresh:, resolver:, requester: nil, task: nil, cell: nil, spawn: nil)
         bounded = bounded(inputs, worker_env)
         held = confined(inputs, bounded, cell)
         policy = LeasedPolicy.new(sensitivity: held.sensitivity, lease: worker_env.checkout,
                                   allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home,
                                   resolver:, fresh:)
-        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), named(policy, requester, task:, cell:),
+        asking = named(policy, requester, task:, cell:, spawn:)
+        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), asking,
                 requester:, held: held_for(bounded, home: inputs.sensitivity.home))
       end
 
@@ -632,9 +638,12 @@ module Lain
       # @param requester [Requester, String, nil]
       # @param task [String, nil] what the child was spawned to do
       # @param cell [Sensitivity::Bounds::Cell, nil] the asking agent's bounds, for a ladder to judge paths by
+      # A guard with no requester has no identity for a wait to name, and a chat's guard always names one.
+      #
+      # @param spawn [String, nil] as on {.child_stack}
       # @return [#rule]
-      def named(policy, requester, task: nil, cell: nil)
-        return Asking.new(policy:, requester:, task:, cell:) if requester
+      def named(policy, requester, task: nil, cell: nil, spawn: nil)
+        return Asking.new(policy:, requester:, task:, cell:, spawn:) if requester
 
         cell ? Celling.new(policy: Middleware::Gate::Callable.of(policy), cell:) : policy
       end

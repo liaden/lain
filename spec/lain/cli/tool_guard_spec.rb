@@ -538,6 +538,24 @@ RSpec.describe Lain::CLI::ToolGuard do
       expect(board.policy.contexts.map(&:requester)).to eq(%w[researcher])
     end
 
+    it "asks in a context naming the spawn the child was started by" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+      asking = described_class::Asking.new(policy: board.policy, requester: "researcher", spawn: "blake3:child")
+
+      asking.rule(:effect, :the_session)
+
+      expect(board.policy.contexts.map(&:spawn)).to eq(%w[blake3:child])
+    end
+
+    it "names the spawn in a chat child's wait through the Spawned builder" do
+      board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true))
+      builder = described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher")
+
+      dispatched(builder.call(Lain::WorkerEnv.default, spawn: "blake3:child"))
+
+      expect(board.policy.contexts.map(&:spawn)).to eq(%w[blake3:child])
+    end
+
     it "rules for a child through a bare callable it wraps, rather than raising out of the turn" do
       asked = []
       refusing = lambda do |_effect, context|
@@ -662,6 +680,16 @@ RSpec.describe Lain::CLI::ToolGuard do
 
     def held(board)
       described_class::Spawned.new(chronicle:, board: -> { board }, requester: "researcher")
+    end
+
+    it "names the spawn in a leased child's wait, through the lease's own policy" do
+      policy = ToolGuardSpecPolicy.new(verdict: true)
+      builder = described_class.detached(journal:, policy_for: ->(_worker_env) { policy }).with(requester: "researcher")
+
+      acted(->(worker_env) { builder.call(worker_env, spawn: "blake3:child") }, Lain::Tools::Bash.new,
+            { "command" => "echo hi" })
+
+      expect(policy.contexts.map(&:spawn)).to eq(%w[blake3:child])
     end
 
     it "refuses a write outside it by name, before any approval is asked" do

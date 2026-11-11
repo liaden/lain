@@ -187,6 +187,12 @@ RSpec.describe Lain::Approval::Parked::PolicySwitch do
       expect(tasked.task).to be_frozen
     end
 
+    it "carries the spawn the child was started by, and none for the main chat" do
+      spawned = described_class.new(session, "researcher", spawn: "blake3:child")
+
+      expect([spawned.spawn, wrapped("researcher").spawn]).to eq(["blake3:child", nil])
+    end
+
     # The delegation is the whole reason this is a SimpleDelegator rather than a
     # two-member value: {Approval::Escalation} forwards the context to every rung
     # untouched, so a rung that reads the run's Session must still get one.

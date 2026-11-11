@@ -648,6 +648,9 @@ module Lain
       # value the arrival already carries, so every surface reads one name.
       # Absent, the envelope's correlation stands in.
       #
+      # `spawn` is the digest of the :spawn that started the asking child, named in the wait this
+      # asker journals; nil for the main chat's own.
+      #
       # `notify` is where an arrival goes -- the run's own question queue, or
       # {NoArrival} when nobody wired one. {#ask} calls it on every question;
       # {#reopened} calls it again on a handback, which is NOT a second ask --
@@ -670,8 +673,9 @@ module Lain
       # who inherits what. Passing `to:` explicitly still overrides, for a
       # caller with no handle worth carrying an address on at all.
       def initialize(parent:, name: "ask_human", agent: nil, observer: EventLog::ChainWriter::Null.new, to: nil,
-                     notify: NoArrival, journal: Channel::Null.instance, epic_slug: nil)
+                     notify: NoArrival, journal: Channel::Null.instance, epic_slug: nil, spawn: nil)
         super()
+        @spawn = spawn
         @epic_slug = epic_slug
         @parent = Parent.over(parent)
         @name = name
@@ -846,7 +850,7 @@ module Lain
       # claimed, and a raise here would skip the park that releases it.
       def waiting(announcement, pending)
         @journal << Telemetry::AwaitingHuman.new(kind: "question", ref: pending.digest, summary: announcement.summary,
-                                                 requester: @agent)
+                                                 requester: @agent, spawn: @spawn)
       rescue StandardError
         nil
       end

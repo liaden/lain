@@ -177,7 +177,7 @@ module Lain
         # is held under and what the journal keeps, and `label` is what a surface shows.
         class Pending
           attr_reader :identity, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
-                      :within, :timeout, :reason, :authority
+                      :within, :timeout, :reason, :authority, :spawn
 
           # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
           # LEDGER lets a forgotten injection become a second ledger whose
@@ -203,7 +203,8 @@ module Lain
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
-                         silence: Silence::DENY)
+                         silence: Silence::DENY, spawn: nil)
+            @spawn = spawn
             @timeout = timeout
             @silence = silence
             @reasons = notes.map { Reason.of(_1) }.freeze
@@ -661,7 +662,8 @@ module Lain
                                 notes: context.respond_to?(:parked_because) ? context.parked_because : [],
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
-                                file_facts: @file_facts, silence: @silence)
+                                file_facts: @file_facts, silence: @silence,
+                                spawn: context.respond_to?(:spawn) ? context.spawn : nil)
           park(pending)
         end
 

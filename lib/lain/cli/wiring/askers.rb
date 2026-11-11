@@ -64,9 +64,11 @@ module Lain
         #   to the announcement, so it rides the Q event
         #   ({Tools::AskHuman::ASKED_BY}) and the surfaces that never see an
         #   arrival name the asker the same way this one does.
-        def enrol(parent, agent: nil)
+        # @param spawn [String, nil] the digest of the :spawn that started the asking child, named in
+        #   the wait its question journals; nil for the main chat's own asker
+        def enrol(parent, agent: nil, spawn: nil)
           registration = nil
-          asker = asker_over(parent, agent:) { |question| announce(question, asker:, registration:, agent:) }
+          asker = asker_over(parent, agent:, spawn:) { |question| announce(question, asker:, registration:, agent:) }
           registration = @directory.register(asker)
           Enrolled.new(asker:, registration:)
         end
@@ -77,11 +79,11 @@ module Lain
         # directory is what a `/inbox` answer routes through, and an unattended
         # run holding a half-built one would differ from an attended one in a
         # second place for no reason.
-        def asker_over(parent, agent:, &notify)
+        def asker_over(parent, agent:, spawn:, &notify)
           return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
 
           Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:, journal: @journal,
-                                    epic_slug: @epic_slug)
+                                    epic_slug: @epic_slug, spawn:)
         end
 
         # ONE arrival, and what rides the queue is the inbox item

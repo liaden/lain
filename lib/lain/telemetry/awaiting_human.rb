@@ -30,6 +30,7 @@ module Lain
         attribute :issue_id
         attribute :sha
         attribute :question_key
+        attribute :spawn
         validates :kind, inclusion: { in: KINDS, message: "must be approval, gate or question, got %<value>s" }
         validates :requester, presence: { message: "must name who the call was asked for, got nil" }, if: :approval?
         validates :tool, presence: { message: "must name the gated tool, got nil" }, if: :approval?
@@ -66,9 +67,11 @@ module Lain
     # @!attribute [r] question_key
     #   @return [String, nil] what the waits of one question share, so a reader
     #     counts a wave asked as one question once
+    # @!attribute [r] spawn
+    #   @return [String, nil] the digest of the :spawn a child's wait belongs to; nil for the main chat's
     AwaitingHuman = Data.define(:kind, :ref, :deadline, :summary, :requester, :tool, :tool_use_id, :humans_only,
                                 :notes, :input_digest, :deferred, :epic_slug, :stage, :issue_id, :sha,
-                                :question_key) do
+                                :question_key, :spawn) do
       include Journalable
 
       # The parked call's `input` and its `outstanding` regions are ABSENT and
@@ -83,7 +86,8 @@ module Lain
       def self.approval(pending)
         new(kind: "approval", ref: pending.tool_use_id, deadline: pending.deadline, summary: pending.tool,
             requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
-            humans_only: pending.humans_only?, notes: pending.notes, input_digest: pending.input_digest)
+            humans_only: pending.humans_only?, notes: pending.notes, input_digest: pending.input_digest,
+            spawn: pending.spawn)
       end
 
       # A part second is rounded up, so a deadline never reads earlier than the
@@ -106,16 +110,16 @@ module Lain
 
       def initialize(kind:, ref:, summary:, deadline: nil, requester: nil, tool: nil, tool_use_id: nil,
                      humans_only: false, notes: [], input_digest: nil, deferred: false, epic_slug: nil, stage: nil,
-                     issue_id: nil, sha: nil, question_key: nil)
+                     issue_id: nil, sha: nil, question_key: nil, spawn: nil)
         named = { ref:, deadline:, summary:, requester:, tool:, tool_use_id:, input_digest:, epic_slug:, stage:,
-                  issue_id:, sha:, question_key: }.transform_values { |value| value.presence && -value.to_s }
+                  issue_id:, sha:, question_key:, spawn: }.transform_values { |value| value.presence && -value.to_s }
         super(**Carriers::AwaitingHuman.settle!(kind:, humans_only: humans_only == true, deferred: deferred == true,
                                                 notes: notes.map { -_1.to_s }, **named))
       end
 
       def to_journal
         omitting_defaults(super, Carriers::AwaitingHuman, :requester, :tool, :tool_use_id, :humans_only, :notes,
-                          :input_digest, :deferred, :epic_slug, :stage, :issue_id, :sha, :question_key)
+                          :input_digest, :deferred, :epic_slug, :stage, :issue_id, :sha, :question_key, :spawn)
       end
     end
   end
