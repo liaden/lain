@@ -1149,6 +1149,21 @@ RSpec.describe Lain::Compaction::Source do
       expect(starved(line, usage: 30_000)).to include("compacted" => true, "refused" => nil)
     end
 
+    it "compacts a warm rewrite below the floor when it frees enough to end the starvation" do
+      line = crossover_timeline(neutral_pad + 50)
+
+      expect(rewrite_delta(line)).to eq(-50)
+      expect(starved(line,
+                     usage: 25_525)).to include("signals" => ["read_starved"], "compacted" => true, "refused" => nil)
+    end
+
+    it "refuses a warm rewrite below the floor when it cannot end the starvation" do
+      line = crossover_timeline(neutral_pad + 50)
+
+      expect(starved(line, usage: 25_600)).to include("signals" => ["read_starved"], "compacted" => false,
+                                                      "refused" => "below_floor")
+    end
+
     it "refuses the same rewrite below the floor when only a cold cache warrants it" do
       line = crossover_timeline(neutral_pad + 1)
       built = source(need: build_need(byte_threshold: 100))

@@ -986,7 +986,7 @@ module Lain
 
         scheduler = scheduler_for(outcome.replay)
         rewrite = scheduler.measure(unadvanced)
-        refused = refusal(rewrite, need, head, cold, scheduler:, model: base.model, session:)
+        refused = refusal(rewrite, need, head, cold, scheduler:, model: base.model, session:, room:)
         return defer(**turn, outcome:, refused:) if refused
         return defer(**turn, outcome:) unless worth_forcing?(need, head, cold, room, rewrite)
 
@@ -1000,14 +1000,15 @@ module Lain
       # An approaching window or a crossed hard cap is never weighed: it forces the rewrite
       # whatever it saves, because what it heads off, an over-window request or a history past
       # its ceiling, costs more than any rewrite. A cold cache has no prefix left to break, so
-      # it weighs as no cache at all.
-      def refusal(rewrite, need, head, cold, scheduler:, model:, session:)
+      # it weighs as no cache at all. A rewrite that ends read starvation is exempt from the floor,
+      # since refusing it would leave the same starved render to repeat every turn.
+      def refusal(rewrite, need, head, cold, scheduler:, model:, session:, room:)
         return INFLATES unless rewrite.shrinks?
         return if need.signals.include?(Need::ApproachingWindow::KIND) || scheduler.capped?(head.bytesize)
 
         verdict = WORTH.call(rewrite:, ttl: cold ? nil : @cold.ttl, prices: @scheduling.price(model),
                              steps_left: horizon(session))
-        verdict unless verdict == Worth::COMPACT
+        verdict unless verdict == Worth::COMPACT || (verdict == Worth::BELOW_FLOOR && cures?(need, room, rewrite))
       end
 
       def horizon(session)
@@ -1017,8 +1018,11 @@ module Lain
       # A warm cache is broken only for a rewrite that ends the starvation; one that leaves reads
       # starved would repeat every turn.
       def worth_forcing?(need, head, cold, room, rewrite)
-        cold || timely?(need.without(Need::ReadStarved::KIND), head, cold) || room.cured_by?(rewrite)
+        cold || timely?(need.without(Need::ReadStarved::KIND), head, cold) || cures?(need, room, rewrite)
       end
+
+      # Only a starved render has a starvation to end; a room that was never short is trivially "cured".
+      def cures?(need, room, rewrite) = need.signals.include?(Need::ReadStarved::KIND) && room.cured_by?(rewrite)
 
       def room_left(usage, resolution, ceiling)
         ReplyReserve.room(window: resolution.window_tokens, used: usage.to_i, ceiling: ceiling.to_i)
