@@ -1,10 +1,9 @@
 # frozen_string_literal: true
 
-require "timeout"
-
 # Two real `lain up` cockpits on one machine: different projects, one shared XDG tree, each on its
 # own tmux socket, each replaying its own recorded turn.
-RSpec.describe "two cockpits on one machine", :e2e do
+RSpec.describe "two cockpits on one machine", :e2e, budget: 60,
+                                                    starvable: "five boots in a row, which a loaded box starves" do
   def prompts
     { "a" => "Reply with the single word alpha and nothing else.",
       "b" => "Reply with the single word bravo, then count from one to five in words." }
@@ -12,14 +11,13 @@ RSpec.describe "two cockpits on one machine", :e2e do
 
   def flags = %w[--provider ollama --model qwen3:4b --seed 1 --temperature 0]
 
-  def patience = E2E::Cassette.recording? ? 300 : 20
+  # The watchdog is the bound: a wait that ends sooner would turn a starved box into a red.
+  def patience = 300
 
   def key_of(sandbox) = Lain::Paths.new(env: sandbox.env).project_hash(sandbox.project.to_s)
 
   def answers?(cockpit)
-    Timeout.timeout(15) { cockpit.editor.evaluate("1+1") == 2 }
-  rescue Timeout::Error
-    raise "a cockpit editor did not evaluate 1+1 within 15s"
+    cockpit.editor.evaluate("1+1") == 2
   end
 
   # A swap file collides only with a dirty peer, so the first cockpit's scratch buffer is made dirty
@@ -56,10 +54,10 @@ RSpec.describe "two cockpits on one machine", :e2e do
       E2E::Cassette.serve("two_cockpits_b") do |upstream_b, _cassette_b|
         first = E2E::Sandbox.create
         second = E2E::Sandbox.create(share_state_with: first, project: "proj-b")
-        cockpit_a = E2E::Cockpit.start(first, upstream_a, *flags)
+        cockpit_a = E2E::Cockpit.start(first, upstream_a, *flags, boot_seconds: patience)
         run_turn(cockpit_a, prompts.fetch("a"))
         dirty_scratch_buffer(cockpit_a)
-        cockpit_b = E2E::Cockpit.start(second, upstream_b, *flags, boot_seconds: 15)
+        cockpit_b = E2E::Cockpit.start(second, upstream_b, *flags, boot_seconds: patience)
         both_answer = [answers?(cockpit_a), answers?(cockpit_b)]
         run_turn(cockpit_b, prompts.fetch("b"))
         seen = observe(cockpit_a, cockpit_b)
