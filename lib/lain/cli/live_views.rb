@@ -119,16 +119,20 @@ module Lain
       # @param agent_states [AgentStates::Tracker] first in the tee, so the feed publishes the state
       #   a record made
       # @param window_surface [#window] where --windows opens its panes
+      # @param child_argv [ChildArgv] the command lines --windows hands its panes; by default one that
+      #   tails the chronicle's session
       # @option options [String, nil] :nvim the editor socket to attach a live
       #   Channel to; absent means no nvim sink and no Channel is built at all
-      def initialize(options:, chronicle:, status_feed:, agent_states:, window_surface: TmuxSurface.new)
+      def initialize(options:, chronicle:, status_feed:, agent_states:, window_surface: TmuxSurface.new,
+                     child_argv: ChildArgv.new(root: nil, cwd: nil, journal_path: -> { chronicle.journal_path },
+                                               typed: {}, chat_flags: []))
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]
         # Built BEFORE the tee (it goes IN it), then pointed AT the tee's own
         # journal so its capped-overflow notice lands on the same record
         # stream. Null under no --windows, so no window machinery constructs
         # unless the flag is set (and $TMUX present).
-        @fleet = FleetWindows.for(options, surface: window_surface)
+        @fleet = FleetWindows.for(options, child_argv:, surface: window_surface)
         @journal = chronicle.wrap_tee(sink([agent_states, @channel, status_feed, @fleet].compact))
         @fleet.notice = @journal
         chronicle.listen(status_feed.transition_listener)

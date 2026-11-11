@@ -958,8 +958,8 @@ module Lain
       def build_repl(tty:, agent:, backend:, input:)
         @replies = HumanReplies.new(tty:, conductor: @conductor, ask_human: directory, questions:, goal: goal_driver)
         @command_surface = assemble_surface(agent:, library: backend.library, window: backend.context_window,
-                                            endpoint: chat_endpoint(backend),
-                                            middleware: backend.middleware)
+                                            endpoint: chat_endpoint(backend), middleware: backend.middleware,
+                                            profile: backend.run_profile)
         # Bound rather than injected: the registry is built FROM this object, so
         # no constructor ordering exists in which HumanReplies could take one.
         # Both prompts then dispatch through the one bound registry, which is
@@ -1000,10 +1000,10 @@ module Lain
       # planning/archive/chunk-review-missing-objects.md carry it. Hoisting the
       # duplicate reads into locals would hide the tell without naming the
       # object.
-      def assemble_surface(agent:, library:, window:, endpoint:, middleware:)
+      def assemble_surface(agent:, library:, window:, endpoint:, middleware:, profile:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
-                             cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr,
+                             cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr, profile:,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor,
                                                          endpoint:),

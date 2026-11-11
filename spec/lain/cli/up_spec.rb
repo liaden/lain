@@ -1209,6 +1209,18 @@ RSpec.describe Lain::CLI::Up do
       expect(messages).to include("last session #{name} was not closed: lain up -- --resume #{name}")
     end
 
+    it "still names the session when the chat args only seed a first question" do
+      leave_open(writer:)
+      seeded = %w[--prompt hi]
+
+      plan = described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
+                                 shell_out_factory: tmux, chat_args: seeded, chat_preflight: ->(_args) { [] },
+                                 gc_schedule: -> {})
+                            .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:)
+
+      expect(plan.messages).to include("last session #{name} was not closed: lain up -- --resume #{name}")
+    end
+
     it "says nothing while the session's writer still runs" do
       leave_open(writer: Lain::Liveness::Writer.current)
 
@@ -3610,7 +3622,7 @@ RSpec.describe Lain::CLI::Up, ".respawn_chat" do
 
   context "when the cockpit was launched resuming a session" do
     let(:argv_log) { File.join(dir, "argv") }
-    let(:chat_args) { ["--resume", "old-session", "--fork=a@b", "--epic", "plans"] }
+    let(:chat_args) { ["--resume", "old-session", "--fork=a@b", "--epic", "plans", "--prompt", "hi"] }
 
     # The input pane runs the same binary, so only the chat's own starts count.
     def chat_starts = (File.exist?(argv_log) ? File.readlines(argv_log) : []).grep(/\Achat /)
@@ -3638,9 +3650,9 @@ RSpec.describe Lain::CLI::Up, ".respawn_chat" do
       wait_until(reason: "the second chat start") { chat_starts.size == 2 }
 
       first, second = chat_starts
-      expect(first).to include("--resume old-session", "--fork=a@b", "--epic plans")
+      expect(first).to include("--resume old-session", "--fork=a@b", "--epic plans", "--prompt hi")
       expect(second).to include("--epic plans")
-      expect(second).not_to include("--resume", "old-session", "--fork")
+      expect(second).not_to include("--resume", "old-session", "--fork", "--prompt", "hi")
     end
   end
 

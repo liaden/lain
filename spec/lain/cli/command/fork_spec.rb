@@ -66,6 +66,19 @@ RSpec.describe Lain::CLI::Command::Fork do
               name: "fork-ab12ab12ab12", cwd: Dir.pwd)
     end
 
+    it "pins the live run's root, so a chat started with --root from elsewhere forks into that project" do
+      argv = Lain::CLI::ChildArgv.new(root: "/proj", cwd: "/proj", journal_path: -> { "/sessions/#{session}" },
+                                      typed: {}, chat_flags: [])
+      rooted = build_command_env(agent:, chronicle:, fork_point:, tmux_surface:, supervisor:, child_argv: argv)
+
+      text = fork_command.call("", rooted)
+
+      expect(tmux_surface).to have_received(:window)
+        .with(command: Lain::CLI::PaneCommand.call("chat", "--root", "/proj", "--cwd", "/proj", "--fork", selector),
+              name: "fork-ab12ab12ab12", cwd: Dir.pwd)
+      expect(text).to include("lain chat --root /proj --cwd /proj --fork #{selector}")
+    end
+
     it "proves the selector resolves through the SAME ForkPoint the child will use, before any window opens" do
       fork_command.call("", env)
 

@@ -6,9 +6,10 @@ module Lain
       Env = Data.define(:status, :sessions, :approvals, :supervisor,
                         :replies, :fork_point, :tmux_surface, :agent,
                         :model_switch, :mode_switch, :chronicle, :role_spawn, :snapshots,
-                        :epic_driver, :reporter) do
-        def initialize(reporter: Herdr::Reporter::Null.new, **readers)
+                        :epic_driver, :reporter, :child_argv) do
+        def initialize(reporter: Herdr::Reporter::Null.new, child_argv: ChildArgv.bare, **readers)
           readers[:reporter] = reporter
+          readers[:child_argv] = child_argv
           absent = readers.select { |_name, reader| reader.nil? }.keys
           raise ArgumentError, "Command::Env readers must not be nil (wire a Null collaborator): #{absent.inspect}" \
             unless absent.empty?

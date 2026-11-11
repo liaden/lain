@@ -4318,6 +4318,15 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    it "hands commands the live run's project and typed model flags, so a fork reopens this project", :seam do
+      env = run_wiring.command_env
+      argv = env.child_argv.chat("--fork", "s.ndjson@abc")
+
+      expect(argv).to eq(["chat", "--root", project_dir, "--cwd", project_dir, "--provider", "ollama",
+                          "--fork", "s.ndjson@abc"])
+      expect(Lain::CLI::ChildArgv.printable(argv)).to start_with("lain chat --root #{project_dir} --cwd #{project_dir}")
+    end
+
     it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired", :seam do
       wiring = run_wiring
       env = wiring.command_env
@@ -6550,8 +6559,11 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     it "is assigned by the time the command surface is assembled" do
       wire
 
-      expect { wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, endpoint: nil, middleware: Lain::Config::Middleware.empty) }
-        .to raise_error(ArgumentError, /\[:replies, :agent\]/)
+      expect do
+        wiring.send(:assemble_surface, agent: nil, library: nil, window: nil, endpoint: nil,
+                                       middleware: Lain::Config::Middleware.empty,
+                                       profile: Lain::CLI::RunProfile.from_options({}))
+      end.to raise_error(ArgumentError, /\[:replies, :agent\]/)
     end
 
     # A subagent's tool stack is built by {CLI::ToolGuard::Spawned} over the

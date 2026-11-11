@@ -13,13 +13,13 @@ RSpec.describe Lain::CLI::Command::Env do
       epic_driver: Lain::CLI::EpicDriver::Factory::Unmounted }
   end
 
-  it "is a frozen value over the fifteen readers" do
+  it "is a frozen value over the sixteen readers" do
     env = described_class.new(**readers)
 
     expect(env).to be_frozen
     expect(env.to_h.keys)
       .to eq(%i[status sessions approvals supervisor replies fork_point tmux_surface agent
-                model_switch mode_switch chronicle role_spawn snapshots epic_driver reporter])
+                model_switch mode_switch chronicle role_spawn snapshots epic_driver reporter child_argv])
   end
 
   it "holds the reporter it is given and a null one otherwise, and refuses nil" do

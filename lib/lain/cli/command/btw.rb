@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "shellwords"
-
 module Lain
   module CLI
     module Command
@@ -42,9 +40,9 @@ module Lain
         # tmux pane sources no interactive chruby (see CLAUDE.md's toolchain
         # note), so a bare `lain chat` would exec the wrong ruby -- while the
         # PRINTED fallback (no usable tmux) runs in the user's own shell and
-        # stays the bare `lain chat` line. `cwd: Dir.pwd` pins the parent's
-        # project root so the child's session dir resolves the SAME project,
-        # exactly as /fork pins its window. The rescue is scoped to this method
+        # stays the bare `lain chat` line. `cwd: Dir.pwd` is only where the popup
+        # starts; the project the child resolves comes from the --root and --cwd
+        # {ChildArgv} puts on its command line, as for /fork. The rescue is scoped to this method
         # (mirroring /fork's own rescue) so it never reads a local that a raise
         # skipped.
         def call(args, env)
@@ -52,11 +50,11 @@ module Lain
           raise Error, "usage: #{usage}" if question.empty?
 
           selector = anchored_selector(env)
-          rendered(env.tmux_surface.popup(command: PaneCommand.call("chat", "--btw", "--fork", selector,
-                                                                    "--prompt", question),
+          argv = env.child_argv.chat("--btw", "--fork", selector, "--prompt", question)
+          rendered(env.tmux_surface.popup(command: PaneCommand.call(*argv),
                                           cwd: Dir.pwd, title: "btw", width: WIDTH, height: HEIGHT))
         rescue TmuxSurface::TmuxUnavailable => e
-          "btw: no usable tmux (#{e.message}); run it yourself:\n  #{printable(selector, question)}"
+          "btw: no usable tmux (#{e.message}); run it yourself:\n  #{ChildArgv.printable(argv)}"
         end
 
         private
@@ -92,13 +90,6 @@ module Lain
         def session_path(env)
           env.journal_path or
             raise Error, "no session record to fork from (--no-journal); /btw needs a journaled session"
-        end
-
-        # The bare, hand-runnable form for the no-tmux fallback -- shell-escaped
-        # because it lands in the user's own shell, unlike the popup's
-        # pane_command recipe tmux hands to ITS OWN `$SHELL -c`.
-        def printable(selector, question)
-          "lain chat --btw --fork #{Shellwords.escape(selector)} --prompt #{Shellwords.escape(question)}"
         end
 
         def rendered(placement)

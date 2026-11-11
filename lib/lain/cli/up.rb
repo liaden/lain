@@ -472,22 +472,6 @@ module Lain
         def live = @tmux.run("list-panes", "-t", @window, "-F", PANE_ID).stdout.split
       end
 
-      # `lain up -- ARGS` may name a session to resume or fork; a restart is a new chat, so
-      # the respawned command drops them. A bare `--resume X` takes its value as the next word.
-      class FreshChatArgs
-        PICKERS = %w[--resume --fork].freeze
-
-        def self.call(args)
-          valued = false
-          args.reject do |arg|
-            picker = PICKERS.include?(arg)
-            drop = picker || arg.start_with?(*PICKERS.map { |flag| "#{flag}=" }) || (valued && !arg.start_with?("-"))
-            valued = picker
-            drop
-          end
-        end
-      end
-
       # Restarts a cockpit's chat pane from inside that chat, which `respawn-pane -k`
       # alone cannot do without killing the asker mid-reply: the pane's process gets
       # SIGHUP and its leases, journal and parked approvals never see their ensures.
@@ -1623,7 +1607,7 @@ module Lain
         @tmux.run("set-option", "-p", "-t", chat, "remain-on-exit", "on")
         flags = cockpit ? @cockpit.chat_flags : []
         @tmux.act("set-option", "-t", target, ChatRestart::FRESH,
-                  chat_pane_command(flags, FreshChatArgs.call(@chat_args)))
+                  chat_pane_command(flags, ChildArgv.fresh(@chat_args)))
         @tmux.act("respawn-pane", "-k", "-t", chat, "-c", @cwd, chat_pane_command(flags))
       end
 
@@ -1735,7 +1719,7 @@ module Lain
 
       # A reattach already has a chat running, and a hint must never stop the launch it decorates.
       def unclosed_hint(report, env, probe)
-        return [] unless report.created && FreshChatArgs.call(@chat_args) == @chat_args
+        return [] unless report.created && ChildArgv.fresh(@chat_args, drop: ChildArgv::SESSION_PICKERS) == @chat_args
 
         root = Project::Resolver.new(home: env["HOME"], paths: @paths).call(cwd: @cwd).project.root
         path = Resume::Selector.new(dir: @paths.filing_dir(root:), probe:).unclosed

@@ -38,8 +38,9 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
   end
   let(:notices) { [] }
+  let(:child_argv) { Lain::CLI::ChildArgv.bare }
   let(:fleet) do
-    described_class.new(surface:, role_for: ->(_record) { "researcher" }, notice: notices, spawner:)
+    described_class.new(child_argv:, surface:, role_for: ->(_record) { "researcher" }, notice: notices, spawner:)
   end
 
   let(:parent) { "blake3:9f00111122223333" }
@@ -111,7 +112,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       expect(pumps.size).to eq(1)
 
       dead_spawner = ->(&pump) { pumps << pump and FakeFleetPump.new(pump, true) }
-      dying = described_class.new(surface:, notice: notices, spawner: dead_spawner)
+      dying = described_class.new(child_argv:, surface:, notice: notices, spawner: dead_spawner)
       dying << spawn_record
       dying << spawn_record(digest: "blake3:6bbb111122223333")
       expect(pumps.size).to eq(3)
@@ -121,7 +122,7 @@ RSpec.describe Lain::CLI::FleetWindows do
   # The :spawn names no role, so a window opened on it can only carry the
   # fallback; the role arrives on the child's progress record, which follows.
   describe "a window named from the child's progress record" do
-    let(:nameless) { described_class.new(surface:, notice: notices, spawner:) }
+    let(:nameless) { described_class.new(child_argv:, surface:, notice: notices, spawner:) }
 
     def progress(role, spawn: spawn_digest, **)
       Lain::Telemetry::ChildProgress.new(spawn:, turns: 0, role:, task_line: "go", **)
@@ -196,7 +197,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
 
     it "falls back to the subagent tool's own name when no role seam is wired" do
-      nameless = described_class.new(surface:, notice: notices, spawner:)
+      nameless = described_class.new(child_argv:, surface:, notice: notices, spawner:)
       nameless << spawn_record
       nameless.drain_pending
 
@@ -287,7 +288,7 @@ RSpec.describe Lain::CLI::FleetWindows do
         recorded << args
         FakeFleetShellOut.new(args.include?("rename-window") ? 1 : 0, "", "can't find window")
       end
-      fleet = described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: failing),
+      fleet = described_class.new(child_argv:, surface: Lain::CLI::TmuxSurface.new(shell_out_factory: failing),
                                   notice: notices, spawner:)
       fleet << spawn_record
       fleet << farewell_record
@@ -323,7 +324,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
 
     def fleet_over(factory)
-      described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: factory),
+      described_class.new(child_argv:, surface: Lain::CLI::TmuxSurface.new(shell_out_factory: factory),
                           role_for: ->(_record) { "researcher" }, notice: notices, spawner:)
     end
 
@@ -412,7 +413,8 @@ RSpec.describe Lain::CLI::FleetWindows do
     # model round trip of slack for nothing but a queue.
     it "does not let the check ride the open: the pump opens the window and asks nothing yet" do
       Sync do
-        live = described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: dead_pane_factory),
+        dead = Lain::CLI::TmuxSurface.new(shell_out_factory: dead_pane_factory)
+        live = described_class.new(child_argv:, surface: dead,
                                    role_for: ->(_record) { "researcher" }, notice: notices)
         live << spawn_record
         sleep(0)
@@ -492,7 +494,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
         FakeFleetShellOut.new(0, "", "")
       end
-      fleet = described_class.new(surface: Lain::CLI::TmuxSurface.new(shell_out_factory: no_tmux),
+      fleet = described_class.new(child_argv:, surface: Lain::CLI::TmuxSurface.new(shell_out_factory: no_tmux),
                                   notice: notices, spawner:)
       fleet << spawn_record
 
@@ -540,7 +542,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
 
     it "opens in the directory it was given, so a caller can pin the project root" do
-      elsewhere = described_class.new(surface:, notice: notices, spawner:, cwd: Dir.tmpdir)
+      elsewhere = described_class.new(child_argv:, surface:, notice: notices, spawner:, cwd: Dir.tmpdir)
       elsewhere << spawn_record
       elsewhere.drain_pending
 
@@ -557,14 +559,27 @@ RSpec.describe Lain::CLI::FleetWindows do
                                    "researcher-5aaa1111 [done]"]])
     end
 
-    it "composes whatever subcommand it is given, so the watch argv is named in one place" do
-      elsewhere = described_class.new(surface:, notice: notices, spawner:,
-                                      watch_argv: %w[watch --session /tmp/somewhere.ndjson])
+    it "watches the chat it was opened from, naming that session in the window" do
+      child_argv = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { "/tmp/somewhere.ndjson" },
+                                            typed: {}, chat_flags: [])
+      elsewhere = described_class.new(surface:, notice: notices, spawner:, child_argv:)
       elsewhere << spawn_record
       elsewhere.drain_pending
 
       expect(opened_command)
         .to eq(Lain::CLI::PaneCommand.call("watch", "--session", "/tmp/somewhere.ndjson", spawn_digest))
+    end
+
+    it "names the chat's session in a capped actor's printed line too" do
+      child_argv = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { "/tmp/second.ndjson" },
+                                            typed: {}, chat_flags: [])
+      second = described_class.new(surface:, notice: notices, spawner:, child_argv:)
+      5.times { |i| second << spawn_record(digest: format("blake3:%04x111122223333", i)) }
+      second << usage_record
+      second.drain_pending
+
+      expect(notices.first.actors.map { |actor| actor["watch"] })
+        .to eq(["lain watch --session /tmp/second.ndjson blake3:0004111122223333"])
     end
 
     it "keeps the capped actor's printed line the bare one a human types, not the pane recipe" do
@@ -737,7 +752,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     # as a PID) and `.`/`:` are separators inside a `=name` rename target --
     # the panel's naming probe. The role contributes only conservative bytes.
     def fleet_for(role)
-      described_class.new(surface:, role_for: ->(_record) { role }, notice: notices, spawner:)
+      described_class.new(child_argv:, surface:, role_for: ->(_record) { role }, notice: notices, spawner:)
     end
 
     it "neutralizes tmux format expansion in the window name" do
@@ -770,17 +785,19 @@ RSpec.describe Lain::CLI::FleetWindows do
   end
 
   describe ".for" do
+    let(:child_argv) { Lain::CLI::ChildArgv.bare }
+
     it "answers the Null sink outside tmux -- no window machinery constructs" do
-      expect(described_class.for({ windows: true }, env: {})).to be_a(described_class::Null)
+      expect(described_class.for({ windows: true }, child_argv:, env: {})).to be_a(described_class::Null)
     end
 
     it "answers the Null sink without the flag, even inside tmux" do
-      expect(described_class.for({}, env: { "TMUX" => "/tmp/tmux-1000/default,42,0" }))
+      expect(described_class.for({}, child_argv:, env: { "TMUX" => "/tmp/tmux-1000/default,42,0" }))
         .to be_a(described_class::Null)
     end
 
     it "answers a live sink only with the flag AND $TMUX" do
-      expect(described_class.for({ windows: true }, env: { "TMUX" => "/tmp/tmux-1000/default,42,0" }))
+      expect(described_class.for({ windows: true }, child_argv:, env: { "TMUX" => "/tmp/tmux-1000/default,42,0" }))
         .to be_a(described_class)
     end
 
@@ -788,11 +805,11 @@ RSpec.describe Lain::CLI::FleetWindows do
       target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
       herdr = Lain::CLI::HerdrSurface.new(target:)
 
-      expect(described_class.for({ windows: true }, env: {}, surface: herdr)).to be_a(described_class)
+      expect(described_class.for({ windows: true }, child_argv:, env: {}, surface: herdr)).to be_a(described_class)
     end
 
     it "answers the Null sink for a tmux surface outside tmux, whatever surface it is handed" do
-      expect(described_class.for({ windows: true }, env: {}, surface: Lain::CLI::TmuxSurface.new))
+      expect(described_class.for({ windows: true }, child_argv:, env: {}, surface: Lain::CLI::TmuxSurface.new))
         .to be_a(described_class::Null)
     end
 
@@ -808,7 +825,7 @@ RSpec.describe Lain::CLI::FleetWindows do
   describe "the pump under a real reactor (default spawner)" do
     it "performs queued commands on its own fiber at the next scheduler tick, never on the caller's stack" do
       Sync do
-        live = described_class.new(surface:, role_for: ->(_record) { "researcher" }, notice: notices)
+        live = described_class.new(child_argv:, surface:, role_for: ->(_record) { "researcher" }, notice: notices)
         live << spawn_record
         expect(recorded).to be_empty
 
@@ -823,7 +840,7 @@ RSpec.describe Lain::CLI::FleetWindows do
         opened << args
         FakeFleetShellOut.new(0, "", "")
       })
-      live = described_class.new(surface: latched, notice: notices)
+      live = described_class.new(child_argv:, surface: latched, notice: notices)
       Thread.new { live << spawn_record }.join
 
       Sync { expect(opened.pop(timeout: 5)).to include("new-window") }
@@ -837,7 +854,7 @@ RSpec.describe Lain::CLI::FleetWindows do
         sleep(0.01)
         described_class::Pump::DEFAULT_SPAWNER.call(&pump)
       end
-      live = described_class.new(surface:, notice: notices, spawner: counting)
+      live = described_class.new(child_argv:, surface:, notice: notices, spawner: counting)
       records = Array.new(12) { |i| spawn_record(digest: "blake3:5aaa11112222#{format("%04d", i)}") }
       described_class::CAP_PER_TURN.then { |cap| records.first(cap) }
                                    .map { |record| Thread.new { live << record } }.each(&:join)
@@ -848,7 +865,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "leaves no thread behind once closed" do
       before = Thread.list
-      live = described_class.new(surface:, notice: notices)
+      live = described_class.new(child_argv:, surface:, notice: notices)
       Thread.new { live << spawn_record }.join
       live.drain_pending
       live.close
@@ -858,7 +875,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "keeps an unexpected pump-thread failure off $stderr" do
       broken = Lain::CLI::TmuxSurface.new(shell_out_factory: ->(*_args) { raise "boom" })
-      live = described_class.new(surface: broken, notice: notices)
+      live = described_class.new(child_argv:, surface: broken, notice: notices)
 
       expect do
         Thread.new { live << spawn_record }.join
@@ -867,7 +884,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     end
 
     it "drops a late event silently once closed" do
-      live = described_class.new(surface:, notice: notices)
+      live = described_class.new(child_argv:, surface:, notice: notices)
       Thread.new { live << spawn_record }.join
       live.close
 
@@ -877,7 +894,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "keeps a vanished tmux server off $stderr when a queued open fails on the pump thread" do
       gone = Lain::CLI::TmuxSurface.new(shell_out_factory: ->(*_args) { raise Lain::CLI::TmuxSurface::TmuxUnavailable })
-      live = described_class.new(surface: gone, notice: notices)
+      live = described_class.new(child_argv:, surface: gone, notice: notices)
       Thread.new { live << spawn_record }.join
 
       expect { live.close }.not_to output.to_stderr
@@ -948,7 +965,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     def plant_session(cwd: Dir.pwd)
       dir = File.join(pane_state_home, "lain", "sessions", Lain::Paths.new.project_hash(cwd))
       FileUtils.mkdir_p(dir)
-      File.write(File.join(dir, "20260828T000000-1.ndjson"), %({"type":"session_started"}\n))
+      File.join(dir, "20260828T000000-1.ndjson").tap { |path| File.write(path, %({"type":"session_started"}\n)) }
     end
 
     def deaths_seen = notices.select { |record| record.to_journal["type"] == "window_died" }
@@ -988,7 +1005,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     it "opens a role-named window on spawn and retitles it done on the farewell, leaving it open" do
       plant_session
       as_a_pane_would(program: lain_exe) do
-        fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+        fleet = described_class.new(child_argv:, surface: real_surface, role_for: ->(_record) { "researcher" },
                                     notice: notices, spawner:, session: "lain")
         fleet << spawn_record
         fleet.drain_pending
@@ -1010,7 +1027,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       # answers 127. The rest of the recipe is the real one.
       as_a_pane_would(program: "/nonexistent/lain") do
         Sync do
-          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+          fleet = described_class.new(child_argv:, surface: real_surface, role_for: ->(_record) { "researcher" },
                                       notice: notices, session: "lain")
           fleet << spawn_record
           sleep(0.3)
@@ -1033,16 +1050,18 @@ RSpec.describe Lain::CLI::FleetWindows do
     # `lain watch` runs the composed command and keeps running it. On the
     # PRODUCTION spawner and the real turn of slack, so this is the death
     # detector above asked the same question and falling silent.
-    # Nothing else would notice a {FleetWindows::WATCH_ARGV} naming a
-    # subcommand that does not exist: no argv is injected here, so the default
-    # is what a real pane resolves, and the example above points at a program
-    # that is never reached.
-    it "leaves a window running the default watch subcommand alive, with nothing reported dead" do
-      plant_session
+    # Nothing else would notice a watch argv naming a subcommand that does not
+    # exist, or a session path no `lain watch` can open: the argv here tails the
+    # planted session, and the example above points at a program that is never
+    # reached.
+    it "leaves a window running the watch subcommand alive, with nothing reported dead" do
+      session_file = plant_session
+      tailing = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { session_file }, typed: {},
+                                         chat_flags: [])
       as_a_pane_would(program: lain_exe) do
         Sync do
-          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
-                                      notice: notices, session: "lain")
+          fleet = described_class.new(child_argv: tailing, surface: real_surface,
+                                      role_for: ->(_record) { "researcher" }, notice: notices, session: "lain")
           fleet << spawn_record
           # Longer than the pane interpreter's own boot, measured at 1.13s to
           # the point a wrong subcommand exits -- 1.00-1.16s idle and
@@ -1076,7 +1095,7 @@ RSpec.describe Lain::CLI::FleetWindows do
       relative = Pathname(lain_exe).relative_path_from(Pathname(Dir.pwd)).to_s
       as_a_pane_would(program: relative) do
         Sync do
-          fleet = described_class.new(surface: real_surface, role_for: ->(_record) { "researcher" },
+          fleet = described_class.new(child_argv:, surface: real_surface, role_for: ->(_record) { "researcher" },
                                       notice: notices, session: "lain", cwd: elsewhere)
           fleet << spawn_record
           sleep(2.0)

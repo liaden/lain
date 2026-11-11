@@ -150,7 +150,8 @@ module Lain
         end
 
         def continuing(label, recorded, current)
-          "recorded with #{label} #{recorded}; continuing with #{current} (the current flags win)"
+          "recorded with #{label} #{ChildArgv.mask(recorded.to_s)}; " \
+            "continuing with #{ChildArgv.mask(current.to_s)} (the current flags win)"
         end
 
         # Read straight off THIS file's own header record, the same duck

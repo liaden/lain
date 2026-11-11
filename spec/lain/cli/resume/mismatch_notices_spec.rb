@@ -115,6 +115,16 @@ RSpec.describe Lain::CLI::Resume::MismatchNotices do
     end
   end
 
+  it "masks credentials in a typed api base that differs from the recorded one, both of them" do
+    header = { "provider" => "ollama", "model" => "m", "api_base" => "http://rec:fake-one@h:1" }
+    profile = Lain::CLI::RunProfile.from_options({ provider: "ollama", api_base: "http://me:fake-two@g:2" })
+
+    notices = described_class.new(path: "unused", header:).call(profile:, model: "m")
+
+    expect(notices).to eq(["recorded with api base http://***@h:1; continuing with http://***@g:2 " \
+                           "(the current flags win)"])
+  end
+
   it "does not treat a recorded summarizer section as a disagreement" do
     header = { "provider" => "anthropic", "model" => "claude-opus-4-8",
                "summarizer" => { "provider" => "ollama", "model" => "qwen3:4b" } }

@@ -51,7 +51,7 @@ module Lain
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
                        approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
                        epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail,
-                       herdr: Wiring::HerdrBinding::Null.new)
+                       herdr: Wiring::HerdrBinding::Null.new, profile: RunProfile.from_options({}))
           @role_spawn = role_spawn
           @epic = epic
           @configured = middleware
@@ -70,7 +70,7 @@ module Lain
           # `goal` layer is that driver's to raise ({GoalDriver::Guard}).
           @env = assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
                               model_switch:, mode_switch: goal_driver.guarding(mode_switch), snapshots:,
-                              epic_driver: epic_driver(epic, chronicle), herdr:)
+                              epic_driver: epic_driver(epic, chronicle), herdr:, profile:)
         end
 
         attr_reader :env, :goal_driver
@@ -146,14 +146,14 @@ module Lain
         # `approvals` falls back, to the genuine {Env::NoApprovals} Null when the
         # session wired no queue.
         def assemble_env(agent:, replies:, supervisor:, approvals:, chronicle:, status_feed:,
-                         model_switch:, mode_switch:, snapshots:, epic_driver:, herdr:)
+                         model_switch:, mode_switch:, snapshots:, epic_driver:, herdr:, profile:)
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new(project: place),
             approvals: approvals || Env::NoApprovals, supervisor:,
             replies:, fork_point: ForkPoint.new(dir: Paths.new.filing_dir(root: place.root)),
             tmux_surface: herdr.window_surface, agent:, chronicle:,
             model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:,
-            reporter: herdr.reporter
+            reporter: herdr.reporter, child_argv: ChildArgv.for(root: @root, cwd: @cwd, chronicle:, profile:)
           )
         end
 

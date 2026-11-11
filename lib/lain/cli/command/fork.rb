@@ -1,7 +1,5 @@
 # frozen_string_literal: true
 
-require "shellwords"
-
 module Lain
   module CLI
     module Command
@@ -110,19 +108,21 @@ module Lain
         # the printed line is runnable as-is.
         def open_fork(env)
           selector = anchored_selector(env)
-          printable = "lain chat --fork #{Shellwords.escape(selector)}"
-          opens_windows?(env) ? place_window(env, selector, printable) : outside_tmux(printable)
+          argv = env.child_argv.chat("--fork", selector)
+          printable = ChildArgv.printable(argv)
+          opens_windows?(env) ? place_window(env, argv, printable) : outside_tmux(printable)
         end
 
         # The WINDOW command is {PaneCommand.call}'s recipe, not the printable
         # line: a tmux pane sources no interactive chruby, so a bare `lain chat`
         # would exec the wrong ruby -- while the PRINTED line runs in the user's
-        # own shell and stays bare. `cwd:` pins the parent's project root so the
-        # child's session dir resolves the SAME project. The rescue is scoped to
+        # own shell and stays bare. `cwd:` is only where the pane starts; the project
+        # the child resolves comes from the --root and --cwd {ChildArgv} puts on
+        # its command line. The rescue is scoped to
         # this method so it can never read a local the raise skipped.
-        def place_window(env, selector, printable)
-          placement = env.tmux_surface.window(command: PaneCommand.call("chat", "--fork", selector),
-                                              name: window_name(selector), cwd: Dir.pwd)
+        def place_window(env, argv, printable)
+          placement = env.tmux_surface.window(command: PaneCommand.call(*argv),
+                                              name: window_name(argv.last), cwd: Dir.pwd)
           placed(placement, printable)
         rescue TmuxSurface::TmuxUnavailable => e
           "#{e.message}\nrun the fork yourself: #{printable}"

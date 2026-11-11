@@ -74,11 +74,6 @@ module Lain
       # siblings, short enough for a tmux status line.
       SHORT = 8
 
-      # What a fleet window runs, ahead of the spawn digest. An ARRAY, not a
-      # shell line: it is composed into {PaneCommand.call}'s recipe, which
-      # escapes every argument itself.
-      WATCH_ARGV = %w[watch].freeze
-
       # The {Tools::Subagent} tool's own default name, restated rather than
       # imported: reaching into the Tools tree from the CLI would invert a
       # dependency this class does not have.
@@ -308,18 +303,19 @@ module Lain
       # @param options [Hash] the invoked command's parsed flags
       # @param env [Hash] the process environment, read for TMUX
       # @param surface [#window] where windows open; {WindowSurface}'s choice for this chat
+      # @param child_argv [ChildArgv] the live run's command lines
       # @option options [Boolean] :windows whether the operator asked for windows
       # @return [FleetWindows, Null]
-      def self.for(options, env: ENV, surface: TmuxSurface.new)
+      def self.for(options, child_argv:, env: ENV, surface: TmuxSurface.new)
         return Null.new unless options[:windows] && surface.windows_from_here?(env)
 
-        new(surface:)
+        new(surface:, child_argv:)
       end
 
       # @param surface [TmuxSurface] the one object that shells out to tmux
-      # @param watch_argv [Array<String>] the lain subcommand a window runs;
-      #   the spawn digest is appended and the whole thing composed by
-      #   {PaneCommand.call}
+      # @param child_argv [ChildArgv] the lain `watch` command a window runs, which
+      #   tails this chat's session; the spawn digest is appended and the whole
+      #   thing composed by {PaneCommand.call}
       # @param cap [Integer] windows allowed per turn before capping
       # @param role_for [#call] record -> role name (nil for no role); the
       #   seam a roster-aware wiring can fill later
@@ -335,11 +331,11 @@ module Lain
       #   wrong from inside the pane.
       # @param spawner [#call] takes the pump block, answers a task duck
       #   (#finished?) or nil; injectable so specs drain deterministically
-      def initialize(surface:, watch_argv: WATCH_ARGV, cap: CAP_PER_TURN, role_for: ROLELESS,
+      def initialize(surface:, child_argv:, cap: CAP_PER_TURN, role_for: ROLELESS,
                      notice: Channel::Null.instance, session: nil,
                      cwd: Project::Resolver.default_project.cwd,
                      spawner: Pump::DEFAULT_SPAWNER)
-        @watch_argv = watch_argv
+        @child_argv = child_argv
         @cap = cap
         @role_for = role_for
         # Both deduped-frozen, the house idiom for a value a Data will carry
@@ -454,7 +450,7 @@ module Lain
         role = @role_for.call(record)
         @unnamed << digest unless role
         name = window_name(window_role(role || FALLBACK_ROLE), digest)
-        command = PaneCommand.call(*@watch_argv, digest).freeze
+        command = PaneCommand.call(*@child_argv.watch, digest).freeze
         @windows[digest] = name
         @opened += 1
         @pump.enqueue(Pump::Open.new(command:, name:, session: @session, cwd: @cwd))
@@ -489,7 +485,7 @@ module Lain
       # The bare line, for a human to type. The window itself runs the pane
       # recipe instead -- unreadable in a notice, and useless in a shell that
       # already has lain on its PATH.
-      def watch_line(digest) = "lain #{(@watch_argv + [digest]).join(" ")}"
+      def watch_line(digest) = ChildArgv.printable([*@child_argv.watch, digest])
 
       # A lineage closes on a terminal message -- the actor farewell's
       # `lifecycle: "stopped"` marker (a one-shot's completion speaks it too),

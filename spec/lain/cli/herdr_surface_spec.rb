@@ -254,7 +254,8 @@ RSpec.describe Lain::CLI::HerdrSurface do
     end
 
     it "serves FleetWindows, opening and naming its window" do
-      fleet = Lain::CLI::FleetWindows.new(surface:, role_for: ->(_record) { "researcher" }, spawner: ->(&_pump) {})
+      fleet = Lain::CLI::FleetWindows.new(surface:, child_argv: Lain::CLI::ChildArgv.bare,
+                                          role_for: ->(_record) { "researcher" }, spawner: ->(&_pump) {})
       spawn = Lain::Telemetry::Message.new(
         digest: "blake3:5aaa111122223333", kind: :spawn, from: "blake3:9f00111122223333", to: nil,
         payload: { "prefix" => "fresh", "posture" => "schema", "only" => nil,

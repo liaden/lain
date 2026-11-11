@@ -10,6 +10,7 @@ class LiveViewsSpecChronicle
   def initialize = @journal = RecordingChannel.new
 
   def wrap_tee(sink) = Lain::CLI::JournalTee.new(@journal, sink)
+  def journal_path = "/sessions/this-chat.ndjson"
   def listen(_listener) = self
   def observe(_observer) = self
 end
@@ -56,6 +57,34 @@ RSpec.describe Lain::CLI::LiveViews do
   end
 
   describe "#fleet" do
+    it "opens a watch window that tails this chat's own session" do
+      ran = []
+      shell = Struct.new(:exitstatus, :stdout, :stderr) { def run_command = self }
+      recording = lambda do |*args|
+        ran << args
+        shell.new(0, "", "")
+      end
+      surface = Class.new(Lain::CLI::TmuxSurface) { def windows_from_here?(_env) = true }
+                     .new(shell_out_factory: recording)
+      views = described_class.new(options: { journal: true, windows: true }, chronicle:, status_feed:, agent_states:,
+                                  window_surface: surface)
+      head = "blake3:0abc111122223333"
+      spawn = Lain::Telemetry::Message.new(
+        digest: "blake3:5aaa111122223333", kind: :spawn, from: "blake3:9f00111122223333", to: nil,
+        correlation: "blake3:9f00111122223333", causal_parents: [head],
+        payload: { "prefix" => "fresh", "posture" => "schema", "only" => nil, "spawned_from" => head,
+                   "lifecycle" => "launched" }
+      )
+
+      Sync do
+        views.fleet << spawn
+        views.fleet.drain_pending
+        sleep(0.05)
+      end
+
+      expect(ran.flatten.grep(/--session/).first.shellsplit).to include("--session", "/sessions/this-chat.ndjson")
+    end
+
     it "opens its windows through the surface it was given, with no $TMUX needed" do
       target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "/s", via: :env)
       surface = Lain::CLI::HerdrSurface.new(target:)

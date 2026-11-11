@@ -48,6 +48,22 @@ RSpec.describe Lain::CLI::Command::Btw do
       expect(text).to include("popup")
     end
 
+    it "pins the live run's root, cwd and typed flags, in the popup and in the printed fallback" do
+      argv = Lain::CLI::ChildArgv.new(root: "/proj", cwd: "/proj/app", journal_path: -> { journal_path },
+                                      typed: { provider: "ollama" }, chat_flags: [])
+      rooted = build_command_env(chronicle:, agent:, supervisor: Lain::Supervisor::Null, tmux_surface:,
+                                 child_argv: argv)
+      selector = "#{File.basename(journal_path)}@#{head}"
+      words = ["chat", "--root", "/proj", "--cwd", "/proj/app", "--provider", "ollama", "--btw", "--fork", selector,
+               "--prompt", "why?"]
+      expect(tmux_surface).to receive(:popup).with(hash_including(command: Lain::CLI::PaneCommand.call(*words)))
+                                             .and_raise(Lain::CLI::TmuxSurface::TmuxUnavailable, "no tmux")
+
+      text = command.call("why?", rooted)
+
+      expect(text).to include(Lain::CLI::ChildArgv.printable(words))
+    end
+
     it "durably journals the head BEFORE the popup opens -- the child forks a recorded turn" do
       expect(chronicle).to receive(:catch_up).with(timeline).ordered
       expect(tmux_surface).to receive(:popup).ordered.and_return(placement)
