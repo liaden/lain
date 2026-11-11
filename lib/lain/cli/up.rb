@@ -1417,9 +1417,10 @@ module Lain
       #
       # @param nested [Boolean] forwarded to {#attach_command} unchanged
       # @param env [Hash{String=>String}] the launching process's environment, forwarded to {#call}
+      # @param probe [Liveness::Probe] decides whether the newest session's writer is gone
       # @return [LaunchPlan]
       # @raise [ChatDied] the chat pane died before anyone could attach to it
-      def launch_plan(nested:, env: ENV)
+      def launch_plan(nested:, env: ENV, probe: Liveness::Probe.new)
         report = call(env:, nested:)
         died = @corpse&.call
         input_died = @input_corpse&.call
@@ -1428,7 +1429,8 @@ module Lain
         # A dead INPUT pane is not a reason to withhold the transcript, so it
         # is said rather than raised -- first, on {Report}'s warnings-first
         # rule.
-        LaunchPlan.new(messages: [*input_died, *report.messages], argv: attach_command(nested:))
+        LaunchPlan.new(messages: [*input_died, *report.messages, *unclosed_hint(report, env, probe)],
+                       argv: attach_command(nested:))
       end
 
       # `switch-client` when the CALLING shell is itself an attached tmux
@@ -1721,6 +1723,17 @@ module Lain
         @tmux.act("set-window-option", "-t", chat_target, "pane-border-status", "top")
         @panes.title
         enable_extended_keys
+      end
+
+      # A reattach already has a chat running, and a hint must never stop the launch it decorates.
+      def unclosed_hint(report, env, probe)
+        return [] unless report.created && FreshChatArgs.call(@chat_args) == @chat_args
+
+        root = Project::Resolver.new(home: env["HOME"], paths: @paths).call(cwd: @cwd).project.root
+        path = Resume::Selector.new(dir: @paths.filing_dir(root:), probe:).unclosed
+        path ? ["last session #{File.basename(path)} was not closed: lain up -- --resume #{File.basename(path)}"] : []
+      rescue Lain::Error, SystemCallError
+        []
       end
 
       # Rewritten on every launch, so a reattach from another pane or a plain terminal never leaves

@@ -1160,6 +1160,80 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  describe "the hint at a session a reboot left open" do
+    around do |example|
+      Dir.mktmpdir("lain-up-unclosed") do |dir|
+        @dir = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:existing) { false }
+    let(:tmux) { ->(*args, **) { FakeShellOut.new(args[1] == "has-session" && !existing ? 1 : 0, "") } }
+    let(:probe) { Lain::Liveness::Probe.new }
+    let(:chat_args) { [] }
+    let(:name) { "20260727T090000-111.ndjson" }
+    let(:writer) { Lain::Liveness::Writer.current.with(start: "1") }
+
+    def leave_open(writer:)
+      context = Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse")
+      header = Lain::SessionRecord.header(context:, toolset: Lain::Toolset.new([EchoTool.new]), writer:,
+                                          sections: SessionSections.complete)
+      FileUtils.mkdir_p(paths.filing_dir(root: @dir))
+      File.write(File.join(paths.filing_dir(root: @dir), name), "#{JSON.generate(header)}\n")
+    end
+
+    def messages
+      described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
+                          shell_out_factory: tmux, chat_args:, chat_preflight: ->(_args) { [] },
+                          gc_schedule: -> {})
+                     .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:).messages
+    end
+
+    it "names the session and the command that resumes it" do
+      leave_open(writer:)
+
+      expect(messages).to include("last session #{name} was not closed: lain up -- --resume #{name}")
+    end
+
+    it "says nothing while the session's writer still runs" do
+      leave_open(writer: Lain::Liveness::Writer.current)
+
+      expect(messages.grep(/was not closed/)).to be_empty
+    end
+
+    it "says nothing when the chat args already pick a session" do
+      leave_open(writer:)
+
+      expect(described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
+                                 shell_out_factory: tmux, chat_args: ["--resume", name],
+                                 chat_preflight: ->(_args) { [] }, gc_schedule: -> {})
+        .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:).messages.grep(/was not closed/)).to be_empty
+    end
+
+    it "still launches, with no hint, when HOME is unusable" do
+      leave_open(writer:)
+
+      plan = described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
+                                 shell_out_factory: tmux, chat_args:, chat_preflight: ->(_args) { [] },
+                                 gc_schedule: -> {})
+                            .launch_plan(nested: false, env: { "HOME" => nil }, probe:)
+
+      expect(plan.messages.grep(/was not closed/)).to be_empty
+    end
+
+    context "when the cockpit already exists" do
+      let(:existing) { true }
+
+      it "says nothing" do
+        leave_open(writer:)
+
+        expect(messages.grep(/was not closed/)).to be_empty
+      end
+    end
+  end
+
   # The status feed, this HUD and the TTY prompt all default to the project's
   # `.lain/state.json`. Each used to carry its own literal; all three now name
   # the ONE locator, which is a THIRD object none of them owns -- so the

@@ -308,4 +308,84 @@ RSpec.describe Lain::CLI::Resume::Selector do
       expect(picked).to eq("20260727T090000-111.ndjson")
     end
   end
+
+  describe "#unclosed" do
+    subject(:selector) { described_class.new(dir: @dir, probe: Lain::Liveness::Probe.new) }
+
+    let(:dead) { Lain::Liveness::Writer.current.with(start: "1") }
+    let(:live) { Lain::Liveness::Writer.current }
+
+    def open_session(name, writer:, at:)
+      write(name, [Lain::SessionRecord.header(context:, toolset:, sections: SessionSections.complete,
+                                              writer:).merge("ts" => at)])
+    end
+
+    def close(path)
+      File.open(path, "a") { |file| file.puts(JSON.generate({ "type" => "session_closed", "head" => nil })) }
+    end
+
+    it "names the newest session whose writer is dead and that never closed" do
+      open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z")
+
+      expect(File.basename(selector.unclosed)).to eq("20260727T090000-111.ndjson")
+    end
+
+    it "is nil when the newest session closed" do
+      close(open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z"))
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "is nil when the newest session's writer is still running" do
+      open_session("20260727T090000-111.ndjson", writer: live, at: "2026-07-27T09:00:00Z")
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "is nil when the header names no writer" do
+      open_session("20260727T090000-111.ndjson", writer: CoreGraph::NO_WRITER, at: "2026-07-27T09:00:00Z")
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "is nil when the file's header cannot be read any more" do
+      open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z")
+      selector.send(:resumable_names)
+      allow(Lain::Journal).to receive(:records).and_wrap_original do |original, lines, type:|
+        type == Lain::SessionRecord::HEADER_TYPE ? [] : original.call(lines, type:)
+      end
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "is nil when the close record cannot be read after a readable header" do
+      open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z")
+      selector.send(:resumable_names)
+      allow(Lain::Journal).to receive(:records).and_wrap_original do |original, lines, type:|
+        raise Errno::ENOENT if type == Lain::CLI::Watch::SESSION_CLOSED_TYPE
+
+        original.call(lines, type:)
+      end
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "is nil when there are no sessions" do
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "judges the newest session, not an older one left open" do
+      open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z")
+      close(open_session("20260728T090000-222.ndjson", writer: dead, at: "2026-07-28T09:00:00Z"))
+
+      expect(selector.unclosed).to be_nil
+    end
+
+    it "skips the excepted path" do
+      open_session("20260727T090000-111.ndjson", writer: dead, at: "2026-07-27T09:00:00Z")
+      newest = open_session("20260728T090000-222.ndjson", writer: dead, at: "2026-07-28T09:00:00Z")
+
+      expect(File.basename(selector.unclosed(except: newest))).to eq("20260727T090000-111.ndjson")
+    end
+  end
 end

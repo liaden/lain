@@ -31,8 +31,10 @@ module Lain
         NAMED_LIMIT = 3
 
         # @param dir [String] the project's session directory
-        def initialize(dir:)
+        # @param probe [Liveness::Probe] asks whether an open session's writer still runs
+        def initialize(dir:, probe: Liveness::Probe.new)
           @dir = dir
+          @probe = probe
         end
 
         # @param selector [String, nil]
@@ -40,6 +42,17 @@ module Lain
         # @raise [Refusal]
         def call(selector)
           path_of(chosen(selector.to_s))
+        end
+
+        # Judges the newest resumable session only, after `except`: an older open file whose chat was
+        # resumed past it is not news, so a caller gets the previous session or nothing.
+        #
+        # @param except [String, nil] a path never offered, such as the session the caller is in
+        # @return [String, nil] the newest resumable session that has no close record and whose
+        #   writer is dead
+        def unclosed(except: nil)
+          path = resumable_names.map { |name| path_of(name) }.reject { |candidate| candidate == except }.last
+          path if path && !closed?(path) && writer_dead?(path)
         end
 
         # @param header [Hash{String=>Object}, nil] a file's first header record
@@ -155,6 +168,18 @@ module Lain
           end
 
           name
+        end
+
+        def closed?(path)
+          Journal.records(File.foreach(path), type: Watch::SESSION_CLOSED_TYPE).first
+        rescue SystemCallError
+          true
+        end
+
+        # A file that vanished since it was listed has no header, and is not a candidate.
+        def writer_dead?(path)
+          header = first_header(path)
+          !header.nil? && Liveness::Writer.from_header(header).verdict(@probe) == :dead
         end
 
         def newest
