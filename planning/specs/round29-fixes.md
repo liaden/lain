@@ -1855,6 +1855,7 @@ Found during this run and not planned here. Each needs its own plan or a user ru
 - **F14:** LeaseCommit follow-ups: the include regex in `RunFiles#hooks_directory`, `cd .git && git commit`, and `Guard` reading the default Paths. Defence in depth only; the sandbox is the boundary.
 - **F15:** `Clone::Guard.container` reads the default Paths, not the injected `paths:`, so a clone under a custom state home is not recognised (T41 review).
 - **F16:** a drained research item cannot run as the researcher: `lain chat` has no role option, and a `@researcher/research` line runs in a subagent confined to its own scratch directory, so its report never reaches the lease. Needs a user ruling among a `--role` option, a role spawn in the parent's checkout, or a parent turn after a role-bound line (T41 stop).
+- **F17:** `Surfaces::REFUSED` (`lib/lain/approval/escalation.rb`) still ends "or the window closed and the fail-closed doctrine did", which no timed-out call reaches since T15. The text is pinned by `spec/fixtures/sessions/approval_replay/ask.ndjson`, and `bin/regenerate-session-fixtures` also rewrites the variance and planted-compaction fixtures and re-measures latencies, so the fixture needs a narrower rewrite.
 
 ## Integration checks
 
@@ -2204,3 +2205,17 @@ Found during this run and not planned here. Each needs its own plan or a user ru
 - 09:08 T23 reviewer data checked from its transcript: QA sandbox copies under ~/tmp (lain-qa-2026-11-11-e) and tmp/ trees, find excluded */.local/state/*; no live state read. T23 worktree removed
 - 09:22 T15 done (627 card examples, 6010 wider green); sent back to fix remembered silence-deny journaling as human (remembered_denials.rb widened in)
 - 09:28 T15 follow-up done (remembered silence deny journals automatic); review started (medium)
+- 09:30 plan folded and committed 51e1f10f. F4, F8 cut at 51e1f10f, started
+- 09:31 F8 done; main shortened patience to 10s and checked: Offload inline -> 2 failures, restored -> 6 green. Landing; traps edit deferred to a docs commit
+- 09:32 F4 done (gated by Async::Variable); lands after F8
+- 09:34 F8 landed b7c8fbca
+- 09:35 F8 landed b7c8fbca
+- 09:45 F4 landed 5faddd21
+- 10:19 T15 review REQUEST-CHANGES (silence deny unliftable). User ruling: a human's next line lifts the clock's remembered denials for that chat; human denials never. Mechanical 2,3,4,6 done; item 5 widened to 4 tripwire specs; fix round sent; second review after
+- 10:28 T15 round 3 back (forget_lapsed, tripwire authority); ARCHITECTURE wiring applied; second review started
+- 10:29 toolchain-traps landed 14ff75c7: Offload pair and fan-out order retired (F8, F4); EpicDriver stop-during-read and 2 TmuxSurface examples added by name
+- 10:37 T15 review 2 APPROVE-WITH-FIXES (9 items, 3 surviving mutants on human-line scope). Ruling item 9: a human> answer lifts too. Item 8 taken (regenerate fixture). Fix round sent
+- 10:52 T15 round 4 back: 1-7, 9 done (human_replies.rb added); item 8 stopped (regenerate script rewrites variance and planted fixtures, latencies vary): left, follow-up card. Third review (substantive item 9)
+- 11:05 T15 review 3 APPROVE; nits 2,3 applied by main; nit 1 (describe nesting) and 4 (NoLapses ownership) declined; landing
+- 11:08 T15 landed 6de1bfb5
+- 11:09 T15 landed 6de1bfb5 (hook suite passed, runtime log 1346)
