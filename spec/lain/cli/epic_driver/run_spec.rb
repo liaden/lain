@@ -76,11 +76,14 @@ class RunSpecActors
   end
 end
 
-# The issue's implementation gate. It answers whether the commit may land,
-# which is the only thing the loop asks of it.
+# The issue's implementation gate. It answers the gate's view after the
+# decision it journals, folded by the real Signoff, which is all the loop asks of it.
 class RunSpecGate
-  def initialize(parked: [], raising: [], delay: nil)
-    @parked = parked
+  VERDICTS = { parked: Lain::Epic::GateDecision::Deferred, held: Lain::Approval::Verdict::Hold,
+               denied: Lain::Approval::Verdict::Deny }.freeze
+
+  def initialize(parked: [], held: [], denied: [], raising: [], delay: nil)
+    @answers = { parked:, held:, denied: }
     @raising = raising
     @delay = delay
     @asked = []
@@ -93,7 +96,20 @@ class RunSpecGate
     sleep(@delay) unless @delay.nil?
     raise Lain::Error, "#{issue_id}'s gate could not be asked" if @raising.include?(issue_id)
 
-    !@parked.include?(issue_id)
+    answer = @answers.find { |_, ids| ids.include?(issue_id) }&.first
+    self.class.view(issue_id, sha, VERDICTS.fetch(answer, Lain::Approval::Verdict::Approve).new)
+  end
+
+  def address(issue_id, sha) = self.class.address(issue_id, sha)
+
+  def self.address(issue_id, sha) = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
+
+  def self.view(issue_id, sha, verdict = Lain::Approval::Verdict::Approve.new)
+    decision = Lain::Epic::GateDecision.new(artifact_digest: address(issue_id, sha), epic_slug: "demo",
+                                            stage: "implementation", verdict:, answered_by: "human",
+                                            policy: "hands_off", latency: 0.0, issue_id:)
+    partition = Lain::Epic::SignoffQueue::Partition.new(epic_slug: "demo", stage: "implementation", issue_id:)
+    Lain::Epic::Signoff.unit.step(decision).view(partition, current: address(issue_id, sha))
   end
 end
 
@@ -465,7 +481,9 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
                landing: landing&.call(RunSpecLanding.new(statuses)))
     end
 
-    def gate_torn_for(id) = ->(issue_id, sha:, **) { issue_id == id ? raise(torn_record) : !sha.nil? }
+    def gate_torn_for(id)
+      ->(issue_id, sha:, **) { issue_id == id ? raise(torn_record) : RunSpecGate.view(issue_id, sha) }
+    end
 
     it "ends the run in words, keeping what already landed, when a later gate meets it" do
       run, _actors, landing = reading_b_torn(gate: gate_torn_for("b"))
@@ -585,6 +603,94 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(result.landed).to be_empty
       expect(result.reported.first.reason).to include("implementation gate")
       expect(statuses.fetch("a")).to eq("in_flight")
+    end
+
+    it "says a denied gate was denied, and does not send the human to the queue" do
+      statuses = { "a" => "in_flight" }
+      run, _actors, landing = run_over(issues: [issue("a")], statuses:, reports: { "a" => anchored("sha-a") },
+                                       gate: RunSpecGate.new(denied: ["a"]))
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to eq(format(described_class::Unopened::GATE_DENIED, sha: "sha-a"))
+      expect(landing.landed).to be_empty
+    end
+
+    it "says a held gate was held, with how to answer it" do
+      statuses = { "a" => "in_flight" }
+      gate = RunSpecGate.new(held: ["a"])
+      run, _actors, landing = run_over(issues: [issue("a")], statuses:, reports: { "a" => anchored("sha-a") }, gate:)
+
+      reason = run.call.reported.first.reason
+
+      address = gate.address("a", "sha-a")
+      expect(reason).to eq(format(described_class::Unopened::GATE_HELD, sha: "sha-a", digest: address))
+      expect(reason).to include("lain epic approve #{address}")
+      expect(landing.landed).to be_empty
+    end
+
+    it "reports denied from the driver's gate, read off the journaled decision" do
+      statuses = { "a" => "in_flight" }
+      records = []
+      submit = Object.new
+      submit.define_singleton_method(:submit) do |_stage, slug, issue:, digest:, **|
+        address = Lain::Epic::Submission.implementation(slug:, issue_id: issue, digest:).digest
+        records << Lain::Epic::GateDecision.new(artifact_digest: address, epic_slug: slug, stage: "implementation",
+                                                verdict: Lain::Approval::Verdict::Deny.new(note: "wrong table"),
+                                                answered_by: "human", policy: "hands_off", latency: 0.0,
+                                                issue_id: issue).to_journal
+      end
+      gate = Lain::CLI::EpicDriver::Factory::Gate.new(submit:, slug: "demo", journals: -> { records })
+      run, _actors, landing = run_over(issues: [issue("a")], statuses:, reports: { "a" => anchored("sha-a") }, gate:)
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to eq(format(described_class::Unopened::GATE_DENIED, sha: "sha-a"))
+      expect(landing.landed).to be_empty
+    end
+
+    def silent_gate(records)
+      submit = Object.new
+      submit.define_singleton_method(:submit) { |*, **| nil }
+      Lain::CLI::EpicDriver::Factory::Gate.new(submit:, slug: "demo", journals: -> { records })
+    end
+
+    it "says a gate nobody decided has no decision, and how to submit it again" do
+      run, _actors, landing = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                                       reports: { "a" => anchored("sha-a") }, gate: silent_gate([]))
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to include("no decision on sha-a", "lain epic submit implementation demo --issue a --digest sha-a")
+      expect(reason).not_to include("open")
+      expect(landing.landed).to be_empty
+    end
+
+    it "does not call a commit nobody decided denied, when an older commit was denied" do
+      older = Lain::Epic::GateDecision.new(artifact_digest: RunSpecGate.address("a", "sha-0"), epic_slug: "demo",
+                                           stage: "implementation", verdict: Lain::Approval::Verdict::Deny.new,
+                                           answered_by: "human", policy: "hands_off", latency: 0.0, issue_id: "a")
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                      reports: { "a" => anchored("sha-a") }, gate: silent_gate([older.to_journal]))
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to include("no decision on sha-a")
+      expect(reason).not_to include("denied")
+    end
+
+    it "says a gate approved at an older commit was approved at other bytes, as epic status does" do
+      older = Lain::Epic::GateDecision.new(artifact_digest: RunSpecGate.address("a", "sha-0"), epic_slug: "demo",
+                                           stage: "implementation", verdict: Lain::Approval::Verdict::Approve.new,
+                                           answered_by: "human", policy: "hands_off", latency: 0.0, issue_id: "a")
+      run, _actors, landing = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" },
+                                       reports: { "a" => anchored("sha-a") }, gate: silent_gate([older.to_journal]))
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to include("was approved at other bytes and must be submitted again", "sha-a")
+      expect(reason).not_to include("edited")
+      expect(landing.landed).to be_empty
     end
   end
 
@@ -1636,7 +1742,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     def gated_into(log)
       lambda do |issue_id, sha:, tests: nil|
         log << [:gated, issue_id, sha, tests]
-        true
+        RunSpecGate.view(issue_id, sha)
       end
     end
 

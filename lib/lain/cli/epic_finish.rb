@@ -19,8 +19,8 @@ module Lain
     # Every constant from the epic, forge and isolation tiers is spelled in
     # full: a bare `Epic` here resolves to the sibling {CLI::Epic}.
     class EpicFinish
-      # An epic with an issue that has not landed. Refused before anything is
-      # pushed or merged.
+      # An epic with an issue that has not landed, a gate still parked or held,
+      # or no issues at all. Refused before anything is pushed or merged.
       class Unfinished < Error; end
 
       # An epic with no `epic/<slug>` branch to finish. Refused before anything
@@ -86,7 +86,7 @@ module Lain
 
       # @param slug [String, nil] the epic; omitted resolves to the sole one
       # @return [Said] status 1 when the finish stopped, else 0
-      # @raise [Unfinished] naming every issue that is not done
+      # @raise [Unfinished] naming every issue that is not done, or every gate still waiting
       def finish(slug = nil)
         epic_slug = @epics.resolve_slug(slug, remedy: Lain::Epic::Remedy.finish("SLUG"))
         finished!(epic_slug)
@@ -97,12 +97,53 @@ module Lain
       private
 
       def finished!(epic_slug)
-        open = @epics.progress(epic_slug).graph.reject { |issue| issue.status == Lain::Epic::DONE }
+        graph = @epics.progress(epic_slug).graph
+        graphed!(epic_slug, graph)
+        issues_done!(epic_slug, graph)
+        gates_answered!(epic_slug)
+      end
+
+      def graphed!(epic_slug, graph)
+        return if graph.any?
+
+        raise Unfinished, "epic #{epic_slug} has no issues: its epic.md parses to an empty graph -- " \
+                          "#{@finisher.untouched}"
+      end
+
+      def issues_done!(epic_slug, graph)
+        open = graph.reject { |issue| issue.status == Lain::Epic::DONE }
         return if open.empty?
 
         raise Unfinished, "epic #{epic_slug} is not finished: " \
                           "#{open.map { |issue| "#{issue.id} is #{issue.status}" }.join(", ")} -- " \
                           "#{remedies(epic_slug, open).join(", and ")}, and #{@finisher.untouched}"
+      end
+
+      def gates_answered!(epic_slug)
+        waiting = gate_views(epic_slug).flat_map do |view|
+          view.waiting.map { |digest| waiting_gate(view.partition, digest, "parked") } +
+            view.held.map { |digest| waiting_gate(view.partition, digest, "held") }
+        end
+        return if waiting.empty?
+
+        raise Unfinished, "epic #{epic_slug} still waits on #{waiting.join(", ")} -- answer " \
+                          "#{waiting.size == 1 ? "it" : "each"} at `#{Lain::Epic::Remedy.queue(epic_slug)}` " \
+                          "first, and #{@finisher.untouched}"
+      end
+
+      def gate_views(epic_slug)
+        signoff = Lain::Epic::Signoff.from_journal(signoffs.to_a)
+        signoff.state.keys.select { |partition| partition.epic_slug == epic_slug.to_s }.map do |partition|
+          signoff.view(partition, current: nil)
+        end
+      end
+
+      # FRESH per invocation, never memoized: {SessionJournals} caches its walk.
+      def signoffs = SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+
+      def waiting_gate(partition, digest, phase)
+        issue = " for issue #{partition.issue_id}" if partition.issue_id
+        "the #{partition.stage} gate#{issue} #{phase} at #{digest}"
       end
 
       # An abandoned issue is work somebody dropped; landing it would ship that work.

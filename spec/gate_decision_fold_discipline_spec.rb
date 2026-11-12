@@ -56,7 +56,10 @@ module GateDecisionFoldDiscipline
                                      "Signoff#view's landable digest",
     "lain/cli/epic.rb" => "collects records for the sign-off queue",
     "lain/cli/epic_land.rb" => "collects records for landing's approvals",
-    "lain/cli/epic_driver/factory.rb" => "collects records for landing's approvals",
+    "lain/cli/epic_finish.rb" => "collects records for the Signoff fold; what still waits is " \
+                                 "each GateView's",
+    "lain/cli/epic_driver/factory.rb" => "collects records for landing's approvals, and folds them " \
+                                         "through Signoff#view for the gate's GateView",
     "lain/cli/wiring/planning_build.rb" => "collects records for the planning view",
     "lain/epic/progress.rb" => "collects records for the sign-off queue",
     "lain/cli/epic_submit.rb" => "collects records for the sign-off queue; ReadBack reads this command's own " \

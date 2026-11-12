@@ -152,18 +152,14 @@ module Lain
           # @param issue_id [String] whose gate this is
           # @param sha [String] the anchored commit
           # @param tests [Telemetry::TestsRan, nil] what the suite did on that commit
-          # @return [Boolean] whether the gate approved this exact commit
+          # @return [Epic::GateView] the gate as it stands over this exact commit
           def call(issue_id, sha:, tests: nil)
             @submit.submit("implementation", @slug, issue: issue_id, digest: sha, tests:)
-            approved?(issue_id, sha)
+            partition = Lain::Epic::SignoffQueue::Partition.new(epic_slug: @slug, stage: "implementation", issue_id:)
+            Lain::Epic::Signoff.from_journal(@journals.call).view(partition, current: address(issue_id, sha))
           end
 
           private
-
-          def approved?(issue_id, sha)
-            Lain::Forge::LocalLanding::Approvals.from(@journals.call)
-                                                .approved?(address(issue_id, sha), issue_id)
-          end
 
           def address(issue_id, sha)
             Lain::Epic::Submission.implementation(slug: @slug, issue_id:, digest: sha).digest
@@ -815,8 +811,6 @@ module Lain
 
         ANCHOR_REFUSED = "its work could not be anchored, so nothing was submitted"
 
-        GATE_PARKED = "its implementation gate parked %<sha>s for sign-off, so nothing landed: see `lain epic queue`"
-
         UNCARRIED = "it could not be carried any further, so nothing landed"
 
         UNREADABLE = "the run stopped because a session journal could not be read, so it carried nothing further: " \
@@ -912,7 +906,7 @@ module Lain
             @poll = poll
           end
 
-          # @return [Boolean, Symbol] the gate's answer, or {STOPPED}
+          # @return [Epic::GateView, Symbol] the gate's answer, or {STOPPED}
           def call(issue_id, sha:, tests: nil) = watching { @gate.call(issue_id, sha:, tests:) }
 
           # A child the stopped block spawned is killed by that child's own
@@ -964,6 +958,47 @@ module Lain
             asking.wait
             answered(asking)
           end
+        end
+
+        # The phase belongs to the issue's whole gate, so every sentence names the commit this run anchored.
+        module Unopened
+          GATE_PARKED = "its implementation gate parked %<sha>s for sign-off, so nothing landed: see `lain epic queue`"
+
+          GATE_HELD = "a human held its implementation gate (%<digest>s), so %<sha>s did not land: answer it with " \
+                      "`lain epic approve %<digest>s` or `lain epic deny %<digest>s`"
+
+          GATE_DENIED = "its implementation gate denied %<sha>s, so nothing landed"
+
+          GATE_UNDECIDED = "its implementation gate has no decision on %<sha>s, so nothing landed: submit it again " \
+                           "with `%<remedy>s`"
+
+          GATE_STALE = "%<note>s, so %<sha>s did not land"
+
+          # @param view [Epic::GateView] the gate over the issue's commit, in any phase but approved
+          # @param slug [String] the epic
+          # @param issue_id [String]
+          # @param sha [String] the anchored commit
+          # @return [String]
+          def self.reason(view, slug:, issue_id:, sha:)
+            case view.phase
+            when :parked then format(GATE_PARKED, sha:)
+            when :held then format(GATE_HELD, sha:, digest: view.held.last)
+            when :denied then denied(view, slug, issue_id, sha)
+            when :open then undecided(slug, issue_id, sha)
+            else format(GATE_STALE, sha:, note: Lain::CLI::Epic.unsubmitted_note("its implementation", view))
+            end
+          end
+
+          # The partition stands denied over whichever commit was refused last, which need not be this one.
+          def self.denied(view, slug, issue_id, sha)
+            view.denied?(view.current) ? format(GATE_DENIED, sha:) : undecided(slug, issue_id, sha)
+          end
+
+          def self.undecided(slug, issue_id, sha)
+            remedy = Lain::Epic::Remedy.submit("implementation", slug, issue: issue_id, digest: sha)
+            format(GATE_UNDECIDED, sha:, remedy:)
+          end
+          private_class_method :denied, :undecided
         end
 
         # The grading hook's Null: nobody is benching an ordinary
@@ -1074,8 +1109,8 @@ module Lain
         #   when its plan is not approved or the issue carries no subject
         # @param actors [#call] an {IssueActor}
         # @param supervisor [Supervisor] the epic's own, already running
-        # @param gate [#call] `call(issue_id, sha:)`, answering whether the
-        #   issue's implementation gate has approved that commit
+        # @param gate [#call] `call(issue_id, sha:)`, answering the issue's
+        #   implementation gate as an {Epic::GateView} over that commit
         # @param landing [#call] `call(issue_id, sha:, ref:)`, the landing queue
         #   -- the only thing that merges. Its answer is believed: an entry that
         #   is not `done` did not land.
@@ -1438,9 +1473,9 @@ module Lain
           opened = @asking.call(entry.issue_id, sha: report.sha, tests:)
           return reported(entry, format(HUMAN_ABANDONED, sha: report.sha, ref: report.ref)) if @halted
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
-          return reported(entry, format(GATE_PARKED, sha: report.sha)) unless opened
+          return land(entry, report) if opened.phase == :approved
 
-          land(entry, report)
+          reported(entry, Unopened.reason(opened, slug: @slug, issue_id: entry.issue_id, sha: report.sha))
         end
 
         def halted(entry, report)

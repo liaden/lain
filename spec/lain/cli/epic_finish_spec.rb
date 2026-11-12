@@ -181,6 +181,84 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     end
   end
 
+  def gate_address(sha) = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: sha).digest
+
+  def gate_decision(verdict, digest:, slug: "demo", stage: "implementation", issue_id: "a")
+    Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: slug, stage:, verdict:, answered_by: "human",
+                                 policy: "deferred", latency: 0.0, issue_id:)
+  end
+
+  def journal_decisions(*decisions)
+    lines = decisions.map do |decision|
+      "#{JSON.generate(decision.to_journal.merge("ts" => "2026-01-01T00:00:00.000000Z"))}\n"
+    end
+    File.write(File.join(paths.filing_dir(root:), "gates.ndjson"), lines.join)
+  end
+
+  def journal_gates(*decisions)
+    journal_decisions(*decisions.map { |sha, verdict| gate_decision(verdict, digest: gate_address(sha)) })
+  end
+
+  describe "an epic whose gates still wait" do
+    def decided(verdict)
+      journal_gates([tip, verdict])
+      gate_address(tip)
+    end
+
+    it "refuses with a parked gate, naming it, and merges nothing" do
+      address = decided(Lain::Epic::GateDecision::Deferred.new)
+
+      expect { command.finish("demo") }.to raise_error(described_class::Unfinished) { |error|
+        expect(error.message).to include("parked", "implementation", "issue a", address)
+      }
+      expect(forge_actions).to be_empty
+      expect(github).not_to have_received(:pr_create)
+      expect(remote_ref("refs/heads/epic/demo")).to be_empty
+    end
+
+    it "refuses with a held gate, naming it, and merges nothing" do
+      address = decided(Lain::Approval::Verdict::Hold.new(note: "after lunch"))
+
+      expect { command.finish("demo") }.to raise_error(described_class::Unfinished) { |error|
+        expect(error.message).to include("held", "implementation", "issue a", address)
+      }
+      expect(forge_actions).to be_empty
+      expect(github).not_to have_received(:pr_create)
+    end
+  end
+
+  describe "gates that wait on nothing this finish lands" do
+    let(:approve) { Lain::Approval::Verdict::Approve.new }
+
+    it "finishes past another epic's parked gate" do
+      journal_decisions(gate_decision(approve, digest: gate_address(tip)),
+                        gate_decision(Lain::Epic::GateDecision::Deferred.new, slug: "demo2",
+                                                                              digest: gate_address("1" * 40)))
+
+      expect(command.finish("demo").text).to include("finished demo")
+    end
+
+    it "finishes past an approved plan whose issue was dropped from epic.md but kept on disk" do
+      Lain::Epic::Home.resolve(config:, paths:, root:, slug: "demo").issue("x").write("# x\n\nplan\n")
+      journal_decisions(gate_decision(approve, digest: gate_address(tip)),
+                        gate_decision(approve, digest: "p" * 64, stage: "issue_plan", issue_id: "x"))
+
+      expect(command.finish("demo").text).to include("finished demo")
+    end
+  end
+
+  describe "an epic.md that parses to no issues" do
+    it "refuses naming the empty graph, while epic/demo exists, and merges nothing" do
+      write_epic("demo", {})
+
+      expect { command.finish("demo") }.to raise_error(described_class::Unfinished) { |error|
+        expect(error.message).to include("no issues")
+      }
+      expect(forge_actions).to be_empty
+      expect(github).not_to have_received(:pr_create)
+    end
+  end
+
   # The removed promotion pushed one remote branch per issue beneath the
   # epic's name, and git cannot hold a branch and branches nested under it.
   describe "per-issue branches the old promotion left on the remote" do
@@ -328,6 +406,22 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     it "is what `lain epic finish SLUG --local` runs" do
       env = { "XDG_STATE_HOME" => state_home, "XDG_CONFIG_HOME" => File.join(@tmp, "config"), "HOME" => state_home }
       before = git(root, "rev-parse", "main")
+
+      with_env(env) do
+        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
+        home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "a", status: "done")]))
+        expect { Dir.chdir(root) { LainCLI::Epic.start(%w[finish demo --local], debug: true) } }
+          .to output(/finished demo.*nothing was pushed/m).to_stdout
+      end
+
+      expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, tip])
+    end
+
+    # A draft parked before the approved one waits on nothing, so it must not hold the finish up.
+    it "finishes through `lain epic finish SLUG --local` past a draft an approval superseded" do
+      env = { "XDG_STATE_HOME" => state_home, "XDG_CONFIG_HOME" => File.join(@tmp, "config"), "HOME" => state_home }
+      before = git(root, "rev-parse", "main")
+      journal_gates(["0" * 40, Lain::Epic::GateDecision::Deferred.new], [tip, Lain::Approval::Verdict::Approve.new])
 
       with_env(env) do
         home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
