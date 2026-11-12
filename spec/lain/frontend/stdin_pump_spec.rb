@@ -412,6 +412,105 @@ RSpec.describe Lain::Frontend::StdinPump do
     end
   end
 
+  describe "a prompt withdrawn over a line being typed" do
+    let(:opened) { [] }
+
+    before do
+      allow(Reline::IOGate).to receive(:dumb?).and_return(false)
+      Reline.core.line_editor.reset_variables
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("\r")
+      allow(Reline).to receive(:readmultiline) do
+        Reline.pre_input_hook&.call
+        Reline.core.line_editor.reset_line
+        Reline.core.line_editor.insert_multiline_text(typed)
+        opened << true
+        Async::Task.current.sleep(30)
+      end
+    end
+
+    after do
+      Reline.core.line_editor.reset_line
+      Reline::IOGate.instance_variable_get(:@buf)&.clear
+    end
+
+    def read_and_withdraw(task)
+      reading = task.async { rail.read(:you, "you> ") }
+      count = opened.size
+      pumped_until(task, reason: "the read drawn") { opened.size > count }
+      reading.stop
+      settle_for(task, 0.1)
+    end
+
+    context "with words on 1 line" do
+      let(:typed) { "part" }
+
+      it "counts the read the kept words start as typed at, so a Ctrl-C over it clears" do
+        typed_at = pumped(terminal) do |pump|
+          read_and_withdraw(Async::Task.current)
+          again = Async::Task.current.async { rail.read(:you, "you> ") }
+          pumped_until(Async::Task.current, reason: "the 2nd read drawn") { opened.size == 2 }
+          settle_for(Async::Task.current, 0.1)
+          pump.typed?(rail.published).tap { again.stop }
+        end
+
+        expect(typed_at).to be(true)
+      end
+    end
+
+    context "with words over 2 lines" do
+      let(:typed) { "one\ntwo" }
+
+      it "keeps them whole, as 1 paste the next sweep completes" do
+        pumped(terminal) do |pump|
+          read_and_withdraw(Async::Task.current)
+          pump.sweep
+        end
+
+        expect(rail.take_held).to eq("one\ntwo")
+      end
+    end
+  end
+
+  describe "a restored read stopped before it opens" do
+    let(:reads) { [] }
+
+    before do
+      allow(Reline::IOGate).to receive(:dumb?).and_return(false)
+      Reline.core.line_editor.reset_variables
+      allow(Lain::Frontend::LineEditor).to receive(:typed_ahead).and_return("")
+      allow(Reline).to receive(:readmultiline) do
+        reads << true
+        if reads.size == 1
+          Reline.pre_input_hook&.call
+          Reline.core.line_editor.reset_line
+          Reline.core.line_editor.insert_text("part")
+        end
+        Async::Task.current.sleep(30)
+      end
+    end
+
+    after do
+      Reline.core.line_editor.reset_line
+      Reline::IOGate.instance_variable_get(:@buf)&.clear
+    end
+
+    it "leaves the words for the next read once, not twice" do
+      carried = pumped(terminal) do |pump|
+        task = Async::Task.current
+        2.times do |index|
+          reading = task.async { rail.read(:you, "you> ") }
+          pumped_until(task, reason: "read #{index}") { reads.size > index }
+          reading.stop
+          settle_for(task, 0.05)
+        end
+        gate = Reline::IOGate.instance_variable_get(:@buf).to_a.pack("C*")
+        [pump.instance_variable_get(:@unfinished).partial, gate].join
+      end
+
+      expect(carried).to eq("part")
+    end
+  end
+
   # A line the human finished at a `[y/N]` in the instant another surface
   # decided its call: the prompt is gone, so the line is not an answer to
   # anything, and it is held and said to be rather than reaching `you>` unseen.

@@ -1257,11 +1257,12 @@ RSpec.describe Lain::Frontend::Intake do
 
   describe "#interrupt" do
     def producer(typed:)
-      Struct.new(:typed) do
+      Struct.new(:typed, :discards) do
         def sweep = nil
         def untouched?(_prompt) = !typed
         def typed?(_prompt) = typed
-      end.new(typed)
+        def discard_draft = self.discards += 1
+      end.new(typed, 0)
     end
 
     def arrived(name, generation) = Lain::CLI::Conductor::IdleSignals::Arrived.new(name:, generation:)
@@ -1291,6 +1292,22 @@ RSpec.describe Lain::Frontend::Intake do
 
     it "names the kinds that are line prompts" do
       expect(described_class::LINE_KINDS).to eq(%i[you command])
+    end
+
+    [[true, 1, "tells its producer to discard its draft over a typed line"],
+     [false, 0, "leaves its producer alone over an empty line"]].each do |typed, discards, title|
+      it title do
+        held = producer(typed:)
+        rail.attach(held)
+        Sync do |task|
+          reading = task.async { rail.read(:you, "you> ") }
+          pumped_until(task) { rail.published.kind == :you }
+          rail.interrupt(arrived(:sigint, rail.published.generation))
+          reading.stop
+        end
+
+        expect(held.discards).to eq(discards)
+      end
     end
 
     %i[you command].each do |kind|

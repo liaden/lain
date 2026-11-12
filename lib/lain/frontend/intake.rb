@@ -304,6 +304,7 @@ module Lain
         return :passed unless arrived.name == :sigint && prompt.generation == arrived.generation
         return :passed unless LINE_KINDS.include?(prompt.kind) && typed?(prompt)
 
+        @lock.synchronize { @producers.keys }.each(&:discard_draft)
         preempt(prompt)
         :cleared
       end

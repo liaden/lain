@@ -1134,6 +1134,7 @@ RSpec.describe Lain::CLI::Conductor do
         def sweep = nil
         def untouched?(_prompt) = !typed
         def typed?(_prompt) = typed
+        def discard_draft = nil
       end.new(typed)
     end
 

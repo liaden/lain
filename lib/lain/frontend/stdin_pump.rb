@@ -36,6 +36,7 @@ module Lain
         def self.untouched?(_prompt) = true
         def self.typed?(_prompt) = false
         def self.keep(_partial) = nil
+        def self.discard_draft = nil
 
         def self.exclusively(**) = yield(true)
       end
@@ -132,7 +133,7 @@ module Lain
         # switches the terminal raw, which beside an open read would take the
         # bytes that read is waiting on.
         @terminal = Mutex.new
-        @editing = NOT_EDITING
+        @editing = @restored = NOT_EDITING
         @served = 0
         @ended = false
       end
@@ -177,6 +178,11 @@ module Lain
         nil
       end
 
+      def discard_draft
+        LineEditor.discard_draft
+        nil
+      end
+
       # Whether nothing has been typed at `prompt` in the line editor drawing it
       # now. Only a prompt that answers nothing is asked about, and only on a
       # terminal: a stream's next line is its next line whatever prompt it
@@ -184,7 +190,7 @@ module Lain
       def untouched?(prompt) = @editing.prompt == prompt && LineEditor.untouched?
 
       # Whether words are typed at `prompt` in the line editor drawing it now.
-      def typed?(prompt) = @editing.prompt == prompt && LineEditor.typed?
+      def typed?(prompt) = [@editing, @restored].any? { |draw| draw.prompt == prompt } && LineEditor.typed?
 
       # The terminal, held for the length of the block, so a caller that has to
       # switch its mode does it with no read of this pump's open on it.
@@ -377,11 +383,23 @@ module Lain
       def edited(draw)
         line = @terminal.synchronize do
           typed_back = draw.prompt.answer? ? swept_ahead(draw) : take_unfinished.partial
-          LineEditor.before_first_draw(-> { opened(draw, typed_back) }) { editor_read(draw, typed_back) }
+          begin
+            LineEditor.before_first_draw(-> { opened(draw, typed_back) }) { editor_read(draw, typed_back) }
+          ensure
+            carried_over(draw)
+          end
         end
         line.nil? ? Intake::Eof.new : typed(draw, line)
       ensure
-        @editing = NOT_EDITING
+        @editing = @restored = NOT_EDITING
+      end
+
+      # Runs inside the terminal lock the read held, which {#keep} would wait on for ever.
+      def carried_over(draw)
+        return unless [@editing, @restored].include?(draw)
+
+        kept = !draw.prompt.answer? && LineEditor.typed? ? LineEditor.draft : ""
+        @unfinished = Typeahead.pending([], "#{@unfinished.partial}#{kept}") unless kept.empty?
       end
 
       def swept_ahead(draw)
@@ -399,7 +417,7 @@ module Lain
         # The read is said to be open first: the sweep below reads the
         # terminal, and a pane asking meanwhile whether this prompt is being
         # typed at would be told it is.
-        editing(draw) if typed_back.empty?
+        typed_back.empty? ? editing(draw) : @restored = draw
         drop_typed_cycles
       end
 

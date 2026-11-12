@@ -1316,6 +1316,42 @@ RSpec.describe Lain::Frontend::LineEditor do
     end
   end
 
+  describe ".draft" do
+    let(:editor) { instance_double(Reline::LineEditor, finished?: false, whole_buffer: "one\ntwo") }
+
+    before do
+      allow(Reline::IOGate).to receive(:dumb?).and_return(false)
+      allow(Reline.core).to receive(:line_editor).and_return(editor)
+    end
+
+    it "wraps a draft spanning lines as a paste, so typing it back submits nothing early" do
+      expect(described_class.draft).to eq("\e[200~one\ntwo\e[201~")
+    end
+
+    it "is the words themselves when they fit one line" do
+      allow(editor).to receive(:whole_buffer).and_return("one")
+
+      expect(described_class.draft).to eq("one")
+    end
+
+    it "is empty once the line has been accepted" do
+      allow(editor).to receive(:finished?).and_return(true)
+
+      expect(described_class.draft).to eq("")
+    end
+  end
+
+  describe ".discard_draft" do
+    it "empties the open read's buffer, so nothing is left to carry to the next read" do
+      allow(Reline::IOGate).to receive(:dumb?).and_return(false)
+      Reline.core.line_editor.insert_text("half a thought")
+
+      described_class.discard_draft
+
+      expect(described_class.draft).to eq("")
+    end
+  end
+
   # A real terminal, because the defect lives in the order of two reads that no
   # double reproduces: the gate's default bindings (up arrow, bracketed paste)
   # are installed only by Reline's own lazy inputrc read.

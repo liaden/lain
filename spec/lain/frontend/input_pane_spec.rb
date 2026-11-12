@@ -1398,6 +1398,22 @@ RSpec.describe Lain::Frontend::InputPane do
         end
       end
 
+      it "keeps a line typed at you> when the call parked behind it is answered elsewhere" do
+        chat = drawn_pane("you")
+        echo = echoed_until { |seen| seen.include?("you> ") }
+        @pty.first.write("half a thought")
+        # The cursor move ends the editor's render, so the one waited for below is the redrawn read's.
+        echoed_until(echo) { |seen| seen.include?("\e[20G") }
+
+        say(chat, { "v" => "unpublished", "header" => "" })
+        publish(chat, { "kind" => "you", "text" => "you> ", "generation" => 2 })
+        echoed_until(+"") { |seen| seen.include?("\e[20G") }
+        @pty.first.write("\r")
+        chat.timeout = nil
+
+        expect(frames_through_line(chat).last["text"]).to eq("half a thought")
+      end
+
       it "takes back every row of a 2 row line on Ctrl-C, not only the cursor's" do
         drawn_pane("you")
         echo = echoed_until { |seen| seen.include?("you> ") }

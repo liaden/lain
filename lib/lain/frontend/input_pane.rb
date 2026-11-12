@@ -157,9 +157,17 @@ module Lain
         return quit if name == :sigterm || @client.nil?
 
         return @draft.discard { |kind, value| drafted(@client, kind, value) } if name == :sigint && !@draft.empty?
-        return redrawn_whole(task, @client, above: LineEditor.rows_above_cursor) if name == :sigint && typing?
+        return cleared_whole(task) if name == :sigint && typing?
 
         emit(@client, { "v" => "signal", "name" => name.to_s })
+      end
+
+      # The pump keeps a withdrawn read's words for the next one; a Ctrl-C is
+      # the one withdrawal that means to lose them.
+      def cleared_whole(task)
+        above = LineEditor.rows_above_cursor
+        @pump.discard_draft
+        redrawn_whole(task, @client, above:)
       end
 
       # Only the {Intake::LINE_KINDS}: at an approval or a `human>` ask, a Ctrl-C

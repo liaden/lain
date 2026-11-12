@@ -117,6 +117,23 @@ module Lain
           !editor.finished? && !editor.whole_buffer.empty?
         end
 
+        # The words typed in the open read, as the next read can be started
+        # from; a paste when they span lines, since no prompt takes a pasted
+        # line end for Enter.
+        def draft
+          return "" unless typed?
+
+          text = ::Reline.core.line_editor.whole_buffer
+          text.include?("\n") ? "\e[200~#{text}\e[201~" : text
+        end
+
+        # A withdrawal carries typed words to the next read, so a Ctrl-C that
+        # means to lose them has to take them out first.
+        def discard_draft
+          ::Reline.core.line_editor.reset_line unless ::Reline::IOGate.dumb?
+          nil
+        end
+
         # How many screen rows of the open read sit above its cursor, so a
         # caller can wipe the whole read and not only the cursor's row. A dumb
         # gate draws none: the kernel echoes its line.

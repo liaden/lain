@@ -216,6 +216,8 @@ module Lain
       # A pane clears its own typed line in its own process, so the chat never has one to take back.
       def typed?(_prompt) = false
 
+      def discard_draft = nil
+
       # Say goodbye, then take the path down. The order is the contract: a pane
       # that reads `closed` exits, and one whose stream simply ends waits for
       # the chat to come back. The goodbye cannot block -- this runs on the
