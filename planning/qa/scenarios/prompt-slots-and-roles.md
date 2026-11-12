@@ -5,7 +5,7 @@
 **What it exercises:** `Prompt::Slots`' three-level override surface — `.lain/slots/system.md`
 (top-level, one hole), `.lain/slots/role/<name>.md` (one per built-in role, named exactly as the role is), and
 `.lain/slots/skill/<skill>/<hole>.md` (per-skill, many holes) — its `UnknownSlot` refusals
-(`slots.rb:103` top-level filename, `slots.rb:114` role-namespace filename, `slots.rb:164`
+(`slots.rb:106` top-level and role-namespace filenames, `slots.rb:230`
 role-render-time), and the 4096-token minimum-cacheable-prefix floor
 (`CacheProfile::ANTHROPIC.min_prefix_tokens`) the shipped default sits well under.
 
@@ -31,9 +31,10 @@ tmux not required for §1–§5. §6 needs `ANTHROPIC_API_KEY` exported and spen
 None of the three levels silently ignores a typo — every one of them raises
 `Lain::Prompt::UnknownSlot`, naming the file and the known set, rather than treating an unrecognized
 filename as extra data nobody reads. This scenario drives the first two directly (§1–§4); the
-skill level's own render-time refusal is unit-spec covered (`Prompt::SkillSlots#source`,
-`slots_spec.rb`'s `#render_skill` describe block) and is not one of the three line numbers this
-scenario was written to cover, so it is not driven here.
+skill level refuses at launch too (a typo'd hole with a did-you-mean, a directory matching no skill,
+a hole file for a skill that takes no holes, a loose file directly in `slots/skill/`, a `skill.md`
+among the holes); those are unit-spec covered (`skill_slots_spec.rb`, `library_spec.rb`) and are not
+driven here.
 
 ## 1 — a top-level override lands verbatim, and is journaled once
 
@@ -67,7 +68,7 @@ Confirm two things, neither needing a model call:
 - The first `request_sent`'s system blocks contain the override text — the record is attribution,
   not a second copy of the prompt, so this is where the actual rendered bytes live.
 
-## 2 — an unknown top-level slot filename refuses at launch, by name (`slots.rb:103`)
+## 2 — an unknown top-level slot filename refuses at launch, by name (`slots.rb:106`)
 
 ```bash
 mv .lain/slots/system.md .lain/slots/systemm.md
@@ -106,7 +107,7 @@ approval roles refuse an override, §5c),
 level; this drives the same claim through the real cockpit against a real `.lain/` tree. Delete
 the fixture before §4.
 
-## 4 — an unknown role slot filename refuses at launch, naming the known roles (`slots.rb:114`)
+## 4 — an unknown role slot filename refuses at launch, naming the known roles (`slots.rb:106`)
 
 ```bash
 echo 'cook something' > .lain/slots/role/chef.md
@@ -173,7 +174,7 @@ shipped role templates cannot drift" example already compares `Role::Catalog.nam
 (shipped but naming no catalog role) fails it exactly as loudly as a role with no template. Read
 its pass/fail off the suite, not off this scenario.
 
-`slots.rb:164`'s render-time `UnknownSlot` (a role name with neither an override nor a shipped
+`slots.rb:230`'s render-time `UnknownSlot` (a role name with neither an override nor a shipped
 template) is **unreachable for a built-in** through this project-config surface — every built-in
 ships a default, so hitting it would mean the packaging itself is broken, not a project's `.lain/`
 tree. Spec-covered, not driven here.
@@ -283,8 +284,8 @@ free half settled the byte count, not the wire behavior, and the two must not be
 
 ## What this scenario does not cover
 
-The skill-level slot region's own render-time refusal (`Prompt::SkillSlots#source`) — unit-spec
-covered, not one of this scenario's three line numbers. And growing an override **past** the
+The skill-level slot region's launch refusals (`Prompt::SkillSlots.read_fills`) and its render-time
+miss (`Prompt::SkillSlots#source`), unit-spec covered, not driven here. And growing an override **past** the
 4096-token floor to observe an actual cache **hit** — that needs a bigger fixture and a third
 completion, and is a natural follow-up for `rails-blog.md`'s cache-economics work rather than
 something this scenario's budget covers.

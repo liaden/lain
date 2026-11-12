@@ -489,7 +489,8 @@ RSpec.describe Lain::Prompt::Slots do
         slot_file(root, "role/dev.md")
         slot_file(root, "skill/review/guidance.md")
 
-        expect(described_class.load(root:).render_role(:dev)).to eq("a fill")
+        expect(described_class.load(root:, declared_holes: { "review" => ["guidance"] }).render_role(:dev))
+          .to eq("a fill")
       end
     end
   end
@@ -561,7 +562,8 @@ RSpec.describe Lain::Prompt::Slots do
     end
 
     it "raises ImpureSlot for an impure reference in the hole" do
-      with_skill_slots(overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
+      with_skill_slots(shipped: { %w[create-plan conventions] => "SHIPPED" },
+                       overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
         expect { slots.render_skill("create-plan", "conventions") }
           .to raise_error(Lain::Prompt::ImpureSlot, /Time/)
       end
@@ -573,7 +575,7 @@ RSpec.describe Lain::Prompt::Slots do
     # quiet) would put a nondeterministic value above the cache line, which is
     # the one failure this whole check exists to prevent.
     it "raises ImpureSlot on EVERY call, including after a sibling hole renders successfully" do
-      with_skill_slots(shipped: { %w[create-plan steady] => "steady" },
+      with_skill_slots(shipped: { %w[create-plan steady] => "steady", %w[create-plan conventions] => "SHIPPED" },
                        overrides: { %w[create-plan conventions] => "Now: <%= Time.now %>" }) do |slots|
         impure = -> { slots.render_skill("create-plan", "conventions") }
 

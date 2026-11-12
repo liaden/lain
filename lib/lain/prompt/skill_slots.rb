@@ -16,17 +16,51 @@ module Lain
       class << self
         # Two-level read: `<dir>/<skill>/<hole>.md` -> `{ skill => { hole =>
         # body } }`. `skill.md` is the SCAFFOLD ({Skill::Catalog} reads it),
-        # never a hole, so it is excluded. Inner hashes freeze so the whole
-        # two-level structure is deeply immutable.
+        # never a hole, so it is excluded -- but its skill stays a key, so a
+        # bare {Slots.load} still knows a skill with no holes. Inner hashes
+        # freeze so the whole two-level structure is deeply immutable.
         def read(dir)
           Dir.glob(File.join(dir, "*", "*.md"))
-             .reject { |path| File.basename(path, ".md") == "skill" }
              .group_by { |path| File.basename(File.dirname(path)) }
-             .transform_values { |paths| read_holes(paths).freeze }
+             .transform_values { |paths| read_holes(paths.reject { |path| scaffold?(path) }).freeze }
              .freeze
         end
 
+        # The project's overrides, checked against the known skills and their
+        # holes: a loose file is refused, a directory must name a skill, a file
+        # one of its holes.
+        def read_fills(dir, known:, skills_dir:)
+          Slots.loose_files(dir).each { |path| Slots.refuse_loose!(path, known.keys) }
+          skills = Dir.glob(File.join(dir, "*")).select { |path| File.directory?(path) }
+          skills.each_with_object({}) do |path, fills|
+            name = File.basename(path)
+            Slots.refuse_unknown!(path, name, known: known.keys, level: "skill slot directory")
+            fills[name] = read_skill_dir(path, name, known.fetch(name), skills_dir).freeze
+          end.freeze
+        end
+
+        # Every skill the project can name, mapped to the holes it declares:
+        # those with a shipped default plus those its front-matter lists.
+        def known_holes(templates, declared)
+          (templates.keys | declared.keys).to_h do |skill|
+            [skill, templates.fetch(skill, {}).keys | declared.fetch(skill, [])]
+          end
+        end
+
         private
+
+        def read_skill_dir(path, name, holes, skills_dir)
+          Slots.region_fills(path, known: holes, level: "slot file",
+                                   owner: " for skill #{name.inspect}") do |file, base|
+            refuse_scaffold!(file, File.join(skills_dir, name, "skill.md")) if base == "skill"
+          end
+        end
+
+        def refuse_scaffold!(file, home)
+          raise UnknownSlot, "#{file.inspect} is a skill scaffold, not a hole; a project skill lives at #{home.inspect}"
+        end
+
+        def scaffold?(path) = File.basename(path, ".md") == "skill"
 
         def read_holes(paths)
           paths.to_h { |path| [File.basename(path, ".md"), File.read(path)] }

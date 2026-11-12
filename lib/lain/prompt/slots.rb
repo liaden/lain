@@ -45,16 +45,23 @@ module Lain
         # Every filename is validated against {KNOWN} (top-level) and the shipped
         # role set, and its extension against {EXTENSION}. Session-fixed: this
         # is the one disk read, and #render works from the returned frozen
-        # snapshot. The shipped skill dir is injectable so a spec can point the
+        # snapshot. The skill tree is checked too: each directory against the known
+        # skills and each file against that skill's holes. The shipped skill dir is injectable so a spec can point the
         # hole defaults at a fixture tree, exactly as {Skill::Catalog.load}
-        # injects its shipped scaffolds.
-        def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR, environment: Environment.none)
-          dir = ProjectDir.new(root:).slots
+        # injects its shipped scaffolds. +declared_holes+ is `{ skill => [hole] }`
+        # from the skills' own front-matter, so a project skill's holes are known.
+        def load(root: Dir.pwd, skill_shipped_dir: SKILL_TEMPLATE_DIR, declared_holes: {},
+                 environment: Environment.none)
+          project = ProjectDir.new(root:)
+          dir = project.slots
+          shipped_skills = SkillSlots.read(skill_shipped_dir)
+          known = SkillSlots.known_holes(shipped_skills, declared_holes)
+          skill_fills = SkillSlots.read_fills(File.join(dir, "skill"), known:, skills_dir: project.skills)
           new(
             fills: read_fills(dir),
             role_fills: read_role_fills(File.join(dir, "role")),
-            skill_slots: SkillSlots.new(fills: SkillSlots.read(File.join(dir, "skill")),
-                                        templates: SkillSlots.read(skill_shipped_dir)),
+            skill_slots: SkillSlots.new(fills: skill_fills,
+                                        templates: shipped_skills),
             environment:
           )
         end
@@ -80,29 +87,54 @@ module Lain
           @shipped_skill_slots ||= SkillSlots.new(fills: {}, templates: SkillSlots.read(SKILL_TEMPLATE_DIR))
         end
 
-        private
-
-        def read_fills(dir)
+        # The one validator for every flat region of override files: `name.md`
+        # files directly in `dir`, each refused unless its name is in +known+.
+        # The block runs on a candidate before the unknown check, for the
+        # refusals only one region has. Returns `{ name => body }`.
+        # @api private
+        def region_fills(dir, known:, level:, owner: nil)
           slot_files(dir).each_with_object({}) do |path, fills|
             name = File.basename(path, ".md")
-            raise UnknownSlot, "unknown slot file #{path.inspect}; known slots: #{KNOWN.join(", ")}" \
-              unless KNOWN.include?(name)
-
+            yield path, name if block_given?
+            refuse_unknown!(path, name, known:, level:, owner:)
             fills[name] = File.read(path)
           end
         end
 
-        def read_role_fills(dir)
-          known = shipped_role_templates
-          slot_files(dir).each_with_object({}) do |path, fills|
-            name = File.basename(path, ".md")
-            misspelt!(path, name, known)
-            refuse_approval_role!(path, name)
-            raise UnknownSlot, "unknown role slot file #{path.inspect}; known roles: #{known.keys.join(", ")}" \
-              unless known.key?(name)
+        # @api private
+        def refuse_unknown!(path, name, known:, level:, owner: nil)
+          return if known.include?(name)
 
-            fills[name] = File.read(path)
+          raise UnknownSlot, "unknown #{level} #{path.inspect}#{owner}; #{suggestion(name, known)}"
+        end
+
+        # @api private
+        def loose_files(dir)
+          Dir.glob(File.join(dir, "*")).select { |path| File.file?(path) && !editor_leftover?(File.basename(path)) }
+        end
+
+        # @api private
+        def refuse_loose!(path, skills)
+          raise UnknownSlot, "slot file #{path.inspect} sits directly in the skill slots, but holes live in " \
+                             "skill/<skill>/<hole>.md; #{suggestion(File.basename(path).sub(/\..*\z/, ""), skills)}"
+        end
+
+        private
+
+        def read_fills(dir) = region_fills(dir, known: KNOWN, level: "slot file")
+
+        def read_role_fills(dir)
+          region_fills(dir, known: shipped_role_templates.keys, level: "role slot file") do |path, name|
+            misspelt!(path, name, shipped_role_templates)
+            refuse_approval_role!(path, name)
           end
+        end
+
+        def suggestion(name, known)
+          return "nothing is declared there, so it takes no holes" if known.empty?
+
+          near = DidYouMean::SpellChecker.new(dictionary: known).correct(name).first
+          "#{"did you mean #{near.inspect}? " if near}known: #{known.join(", ")}"
         end
 
         def refuse_approval_role!(path, name)

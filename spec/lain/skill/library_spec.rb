@@ -88,6 +88,31 @@ RSpec.describe Lain::Skill::Library do
     end
   end
 
+  describe "project slot files are checked against the skill's declared slots" do
+    def project_skill(root, slots:)
+      write(File.join(root, ".lain", "skills", "where", "skill.md"),
+            "---\nslots:\n  - spot\n---\n<%= render(\"spot\") %>")
+      write(File.join(root, ".lain", "slots", "skill", "where", "#{slots}.md"), "here")
+    end
+
+    it "accepts a hole file the project skill declares" do
+      Dir.mktmpdir do |root|
+        project_skill(root, slots: "spot")
+
+        expect(described_class.load(root:).renderer.render(:where)).to eq("here")
+      end
+    end
+
+    it "refuses a hole file the project skill did not declare" do
+      Dir.mktmpdir do |root|
+        project_skill(root, slots: "sopt")
+
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e| expect(e.message).to include("sopt.md", "spot") }
+      end
+    end
+  end
+
   describe "the backend's injected paths" do
     it "puts the epic home under the injected state home" do
       Dir.mktmpdir do |root|
