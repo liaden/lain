@@ -30,14 +30,17 @@ RSpec.describe Lain::Journal::Projection::AgentStates do
   states = ->(*records) { described_class.over(records).agents.to_h { [_1.id, _1.state] } }
 
   it "starts with main idle" do
-    expect(described_class.unit.agents.map(&:to_h)).to eq([{ id: main, state: :idle, what: nil }])
+    expect(described_class.unit.agents.map(&:to_h)).to eq([{ id: main, state: :idle, what: nil, failure: nil }])
   end
 
   it "blocks the child a wait names and not main" do
     fold = described_class.over([spawn_of.call(child), wait_of.call("call_c1", child, summary: "rm -rf build")])
 
     expect([fold.agents.map(&:to_h), fold.rollup]).to eq(
-      [[{ id: main, state: :idle, what: nil }, { id: child, state: :blocked, what: "rm -rf build" }], :blocked]
+      [
+        [{ id: main, state: :idle, what: nil, failure: nil },
+         { id: child, state: :blocked, what: "rm -rf build", failure: nil }], :blocked
+      ]
     )
   end
 
@@ -75,7 +78,7 @@ RSpec.describe Lain::Journal::Projection::AgentStates do
                                   causal_parents: [], correlation: nil)
     fold = described_class.over([bare, completion.call(child, "stopped")])
 
-    expect(fold.agents.map(&:to_h)).to include({ id: child, state: :done, what: nil })
+    expect(fold.agents.map(&:to_h)).to include({ id: child, state: :done, what: nil, failure: nil })
   end
 
   it "rolls up blocked over working and done" do
@@ -113,6 +116,64 @@ RSpec.describe Lain::Journal::Projection::AgentStates do
                                   payload: { "result" => "ok" }, causal_parents: [child], correlation: nil)
 
     expect(states.call(spawn_of.call(child), bare)[child]).to eq(:done)
+  end
+
+  it "makes main done when the ask ended on a reply or provider failure, so the human away is told" do
+    failures = %i[max_tokens transport stalled_stream quota].map do |reason|
+      states.call(request.call, telemetry::RunInterrupted.new(head: nil, reason:))[main]
+    end
+
+    expect(failures).to all(eq(:done))
+  end
+
+  it "keeps main idle for each stop the human made" do
+    human = %i[interrupted grace_expired stopped].map do |reason|
+      states.call(request.call, telemetry::RunInterrupted.new(head: nil, reason:))[main]
+    end
+
+    expect(human).to all(eq(:idle))
+  end
+
+  it "makes main done for a failure read back from a file" do
+    line = JSON.parse(JSON.generate(telemetry::RunInterrupted.new(head: nil, reason: :max_tokens).to_journal))
+
+    expect(states.call(request.call, telemetry.read(line, strict: false))).to eq(main => :done)
+  end
+
+  describe "why a failed ask failed" do
+    failed = telemetry::RunInterrupted.new(head: nil, reason: :max_tokens)
+    agent_after = ->(*records) { described_class.over(records).agents.first }
+    read_back = lambda do |record|
+      telemetry.read(JSON.parse(JSON.generate(record.to_journal)), strict: false)
+    end
+
+    it "is carried on the done agent" do
+      expect(agent_after.call(request.call, failed).failure).to eq("max_tokens")
+    end
+
+    it "is dropped when the next ask settles" do
+      expect(agent_after.call(request.call, failed, request.call, settled).failure).to be_nil
+    end
+
+    it "is replaced by a later stop the human made" do
+      stopped = telemetry::RunInterrupted.new(head: nil, reason: :stopped)
+
+      expect(agent_after.call(request.call, failed, request.call, stopped).failure).to be_nil
+    end
+
+    it "is carried when the failure is read back from a file" do
+      expect(agent_after.call(request.call, read_back.call(failed)).failure).to eq("max_tokens")
+    end
+
+    it "is nothing for an ask that settled" do
+      expect(agent_after.call(request.call, settled).failure).to be_nil
+    end
+  end
+
+  it "reads a record with a null reason back as a failure without raising" do
+    line = JSON.parse(JSON.generate(telemetry::RunInterrupted.new(head: nil).to_journal)).merge("reason" => nil)
+
+    expect(states.call(request.call, telemetry.read(line, strict: false))).to eq(main => :done)
   end
 
   it "ends working on an interrupt" do

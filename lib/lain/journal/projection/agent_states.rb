@@ -18,15 +18,21 @@ module Lain
         #   @return [Symbol] one of {::Lain::AgentStates::ORDER}
         # @!attribute [r] what
         #   @return [String, nil] what the human is asked, for a blocked agent; the spawn's role, for a finished child
-        Agent = Data.define(:id, :state, :what)
+        # @!attribute [r] failure
+        #   @return [String, nil] why the main chat's last ask failed, for a done agent that did not finish
+        Agent = Data.define(:id, :state, :what, :failure) do
+          def initialize(id:, state:, what:, failure: nil) = super
+        end
 
         # @return [AgentStates]
-        def self.unit = new({ waits: Waits.unit, base: { ::Lain::AgentStates::MAIN => :idle }, roles: {} })
+        def self.unit
+          new({ waits: Waits.unit, base: { ::Lain::AgentStates::MAIN => :idle }, roles: {}, failure: nil })
+        end
 
         # @param record [Telemetry::Journalable, Telemetry::Untyped, ::Lain::AgentStates::Seen]
         # @return [AgentStates]
         def step(record)
-          with(waits: waits.step(record), base: advanced(record), roles: named(record))
+          with(waits: waits.step(record), base: advanced(record), roles: named(record), failure: failure_after(record))
         end
 
         # A wait naming a spawn with no spawn record is not shown as an agent.
@@ -51,13 +57,16 @@ module Lain
 
         def roles = state.fetch(:roles)
 
+        def failure = state.fetch(:failure)
+
         def with(**changes) = self.class.new(state.merge(changes))
 
         def agent(id, resting)
           wait = waits.open_for(id).first
           return Agent.new(id:, state: :blocked, what: wait.summary) if wait
 
-          Agent.new(id:, state: resting, what: resting == :done ? roles[id] : nil)
+          Agent.new(id:, state: resting, what: resting == :done ? roles[id] : nil,
+                    failure: resting == :done && id == ::Lain::AgentStates::MAIN ? failure : nil)
         end
 
         def named(record)
@@ -65,15 +74,33 @@ module Lain
           spawned ? { record.digest => spawned }.merge(roles) : roles
         end
 
+        # Why main's last ask failed, until a later stop or a settled ask replaces it.
+        def failure_after(record)
+          reason = stop_reason(record)
+          return nil if record.is_a?(Telemetry::AskSettled)
+          return failure if reason.nil?
+
+          Telemetry::RunInterrupted.human?(reason) ? nil : reason.to_s
+        end
+
+        # The reason a run ended, whether the record is live or read back untyped from a file.
+        def stop_reason(record)
+          case record
+          when Telemetry::RunInterrupted then record.reason
+          when Telemetry::Untyped then record["reason"] || :torn if record["type"] == "run_interrupted"
+          end
+        end
+
         def advanced(record)
+          reason = stop_reason(record)
+          return main(Telemetry::RunInterrupted.human?(reason) ? :idle : :done) unless reason.nil?
+
           case record
           when Telemetry::RequestSent then Telemetry::RequestSent.agent?(record.to_journal) ? main(:working) : base
           when Telemetry::AskSettled then main(:done)
-          when Telemetry::RunInterrupted then main(:idle)
           when Telemetry::Message then messaged(record)
           when Telemetry::ChildProgress then progressed(record.spawn)
           when ::Lain::AgentStates::Seen then seen(record.agent)
-          when Telemetry::Untyped then read_back(record)
           else base
           end
         end
@@ -81,10 +108,6 @@ module Lain
         def set(id, resting) = base.merge(id => resting)
 
         def main(resting) = set(::Lain::AgentStates::MAIN, resting)
-
-        def read_back(record)
-          record["type"] == "run_interrupted" ? main(:idle) : base
-        end
 
         def messaged(record)
           return set(record.digest, :working) if record.kind == :spawn && !base.key?(record.digest)

@@ -2481,4 +2481,43 @@ RSpec.describe Lain::Frontend::TTY do
       expect(tickers).to eq(0)
     end
   end
+
+  describe "#announce" do
+    let(:rung) { [] }
+    let(:belled) do
+      described_class.new(channel:, output:, pastel: Pastel.new(enabled: false), tmux: ->(note) { rung << note },
+                          layers: -> { Lain::Mode::LayerSet.new([:notify]) })
+    end
+
+    def announced(record)
+      belled.announce(record)
+      belled.drain_and_render
+    end
+
+    def interrupted(reason) = Lain::Telemetry::RunInterrupted.new(head: "ab", reason:)
+
+    it "rings once for a settled ask, through the render loop" do
+      announced(Lain::Telemetry::AskSettled.new(head: "ab", stop_reason: :end_turn, turns: 2, seconds: 1.5))
+
+      expect(rung).to eq(["ask settled: end_turn after 2 turns in 1.5s"])
+    end
+
+    it "rings once for a failed ask and prints nothing of its own" do
+      announced(interrupted(:max_tokens))
+
+      expect([rung, output.string]).to eq([["ask failed: max_tokens"], described_class::Bell::BEL])
+    end
+
+    it "stays silent for a stop the human made" do
+      %i[interrupted grace_expired stopped].each { announced(interrupted(_1)) }
+
+      expect(rung).to be_empty
+    end
+
+    it "drops the record on a closed channel rather than raising into the ask" do
+      channel.close
+
+      expect(belled.announce(interrupted(:max_tokens))).to be_nil
+    end
+  end
 end

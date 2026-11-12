@@ -17,7 +17,7 @@ RSpec.describe "a tool result's bytes reaching a commit", :seam do
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
   let(:journal) { RecordingChannel.new }
   let(:chronicle) { Lain::CLI::Chronicle.new(journal:) }
-  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil) }
+  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, announce: nil) }
   let(:approving) do
     Lain::Middleware::Stack.new([Lain::Middleware::Gate.new(policy: Lain::Middleware::Gate::ApproveAll.new)])
   end

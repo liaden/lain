@@ -48,6 +48,19 @@ RSpec.describe Lain::AgentStates::Notices do
 
   def working(id = "main") = Lain::Journal::Projection::AgentStates::Agent.new(id:, state: :working, what: nil)
 
+  def failed(why, id = "main")
+    Lain::Journal::Projection::AgentStates::Agent.new(id:, state: :done, what: nil, failure: why)
+  end
+
+  it "says a failed ask failed, and why, where a finished one says done" do
+    subject = notices
+    change(tracker, failed("max_tokens"))
+    now[0] += 31
+    subject.tick
+
+    expect(sent).to eq(["failed: main (max_tokens)"])
+  end
+
   it "notifies once about a wait that outlasts the delay" do
     subject = notices
     change(tracker, blocked)

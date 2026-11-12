@@ -73,7 +73,10 @@ module Lain
 
       def glance(agent) = agent.state == :done ? @tracker.seen(agent.id) : nil
 
-      def note(agent) = "#{agent.state}: #{agent.what || agent.id}"
+      def note(agent)
+        subject = agent.what || agent.id
+        agent.failure ? "failed: #{subject} (#{agent.failure})" : "#{agent.state}: #{subject}"
+      end
     end
   end
 end

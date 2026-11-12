@@ -42,9 +42,16 @@ module Lain
           @chronicle = chronicle
           @clock = clock
           @unfold = NOTHING_FOLDED
+          @settled = []
           # An Ask is built per prompt, so construction time is the prompt's start.
           @started = @clock.call
         end
+
+        # The record of an ask that settled, held back rather than announced: the terminal draws it from a
+        # render thread, so announcing before the reply is on screen puts the line above the reply.
+        #
+        # @return [Array<Telemetry::AskSettled>] empty until {#settle} has seen a reply
+        attr_reader :settled
 
         # @param text [String] the line to ask
         # @param iterations [Integer, nil] this line's iteration ceiling; nil leaves the agent's own
@@ -112,9 +119,10 @@ module Lain
         def record_settled(response)
           @chronicle.catch_up(@agent.timeline)
           seconds = @clock.call - @started
-          @chronicle.settled(Telemetry::AskSettled.new(head: @agent.timeline.head_digest,
-                                                       stop_reason: response.stop_reason,
-                                                       turns: @agent.iterations, seconds:))
+          record = Telemetry::AskSettled.new(head: @agent.timeline.head_digest, stop_reason: response.stop_reason,
+                                             turns: @agent.iterations, seconds:)
+          @chronicle.settled(record)
+          @settled << record
         end
 
         def remedy_for(response)
@@ -150,6 +158,7 @@ module Lain
         def anchor(reason:, status: nil, detail: nil, reset_at: nil)
           @chronicle.catch_up(@agent.timeline)
           @chronicle.interrupted(head: @agent.timeline.head_digest, **{ reason:, status:, detail:, reset_at: }.compact)
+          @tty.announce(Telemetry::RunInterrupted.new(head: @agent.timeline.head_digest, reason:))
         end
 
         # The Agent is about to send a turn cut from the stranded turn's parent.

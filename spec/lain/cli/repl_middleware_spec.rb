@@ -53,7 +53,7 @@ RSpec.describe Lain::CLI::ReplMiddleware do
 
   describe "a tool middleware that raises" do
     let(:raising) { Class.new(Lain::Middleware::Base) { def call(_env) = raise("boom") } }
-    let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil) }
+    let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, announce: nil) }
     let(:chronicle) { instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil) }
 
     it "ends the ask as a refusal naming the member, journaled as middleware" do

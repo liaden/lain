@@ -457,7 +457,8 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
         recorder, session = wiring.run_state(nil)
         agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
-        Lain::CLI::Repl::Ask.new(agent:, tty: instance_double(Lain::Frontend::TTY, render_error: nil), chronicle:)
+        Lain::CLI::Repl::Ask.new(agent:, tty: instance_double(Lain::Frontend::TTY, render_error: nil, announce: nil),
+                                 chronicle:)
       end
     end
 

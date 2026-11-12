@@ -579,6 +579,92 @@ RSpec.describe Lain::CLI::Repl do
     end
   end
 
+  describe "the line that an ask settled", :seam do
+    # A catch_up as slow as a real journal's fsync, which is the gap the render thread can win a race in.
+    let(:slow_chronicle) do
+      Class.new(Lain::CLI::Chronicle::Null) do
+        def catch_up(...)
+          sleep(0.02)
+          super
+        end
+      end.new
+    end
+
+    it "is drawn below the reply, on a real terminal's render thread" do
+      Dir.mktmpdir do |dir|
+        text = run_chat("hello\n", dir:, chronicle: slow_chronicle)
+
+        expect(text.index("hello from the mock")).to be < text.index("ask settled")
+      end
+    end
+
+    it "announces after the reply is rendered, whatever the terminal's thread does" do
+      screen = instance_spy(Lain::Frontend::TTY)
+      repl = described_class.new(agent: instance_double(Lain::Agent, timeline: nil), tty: screen,
+                                 chronicle: Lain::CLI::Chronicle::Null.new, commands: nil, replies: nil,
+                                 conductor: nil)
+      reply = Lain::Response.new(content: [{ "type" => "text", "text" => "hi" }], stop_reason: :end_turn)
+      record = Lain::Telemetry::AskSettled.new(head: "ab", stop_reason: :end_turn, turns: 1, seconds: 0.1)
+
+      repl.send(:deliver, reply, [record])
+
+      expect(screen).to have_received(:render_response).with(reply).ordered
+      expect(screen).to have_received(:announce).with(record).ordered
+    end
+
+    describe "a line a middleware refused after the turn settled" do
+      let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024) }
+      let(:mailbox) do
+        Lain::Context::Mailbox::Live.new(recipient: Lain::EventLog::ChainWriter.method(:correlation_of),
+                                         observer: ->(_) {})
+      end
+      let(:out) { StringIO.new }
+      let(:tty) do
+        Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: out, input: StringIO.new,
+                                pastel: Pastel.new(enabled: false), history_path: File::NULL)
+      end
+      let(:notes) { Lain::CLI::HumanNotes.new(mailbox:, in_flight: -> { false }) }
+      let(:conductor) do
+        Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new, signals: Lain::CLI::Signals.new,
+                                 rail: Lain::Frontend::Intake.new(screen: tty, notes:), grace: 5)
+      end
+      let(:refusing_first) do
+        Class.new(Lain::Middleware::Base) do
+          def call(env)
+            result = yield(env)
+            @seen = (@seen || 0) + 1
+            raise Lain::Error, "refused after the turn" if @seen == 1
+
+            result
+          end
+        end.new
+      end
+
+      it "does not announce its settled record on the next line" do
+        announced = []
+        allow(tty).to receive(:announce) { |record| announced << record.class }
+        queued = %w[first second]
+        allow(conductor).to receive(:read_prompt) { queued.shift }
+        agent = Lain::Agent.new(provider: Lain::Provider::Mock.new(responses: [text_response("one"),
+                                                                               text_response("two")]),
+                                toolset: Lain::Toolset.new([]), context:, mailbox:)
+        passing = Struct.new(:nothing) do
+          def dispatch(_text) = yield
+          def serves_replies?(_text) = false
+        end.new(nil)
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+
+        described_class.new(agent:, tty:, replies:, commands: passing, conductor:, notes:,
+                            middleware: Lain::Middleware::Stack.new([refusing_first]),
+                            chronicle: Lain::CLI::Chronicle::Null.new)
+                       .run(forks: no_forks, nvim: nil, store: nil, session: nil)
+
+        expect(announced).to eq([Lain::Telemetry::AskSettled])
+      end
+    end
+  end
+
   # The ONE line in any process that puts an editor's review rig within a
   # tool's reach. Everything downstream of it -- the changeset drawn in nvim, the
   # sidebar gestures, the verdict a `:w` writes -- is unreachable without it, and

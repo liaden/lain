@@ -14,7 +14,9 @@ RSpec.describe Lain::CLI::Repl::Ask do
   let(:timeline) { instance_double(Lain::Ext::Timeline, head_digest: "sha-head") }
   let(:context) { instance_double(Lain::Context, max_tokens: 4096) }
   let(:agent) { instance_double(Lain::Agent, timeline:, context:, iterations: 3) }
-  let(:tty) { instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil) }
+  let(:tty) do
+    instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, render_response: nil, announce: nil)
+  end
   let(:journal) { [] }
   let(:chronicle) do
     instance_double(Lain::CLI::Chronicle::Null, catch_up: nil, interrupted: nil, replaced: nil).tap do |double|
@@ -117,6 +119,35 @@ RSpec.describe Lain::CLI::Repl::Ask do
       expect(journal.map(&:class)).to eq([Lain::Telemetry::AskSettled])
       expect(journal.first).to have_attributes(head: "sha-head", stop_reason: "end_turn", turns: 3)
       expect(journal.first.seconds).to be_a(Float).and be >= 0
+    end
+
+    it "hands the settled record back for the caller to announce after the reply, and announces nothing itself" do
+      allow(agent).to receive(:ask).and_return(response)
+
+      ask.settle(ask.attempt("go"))
+
+      expect(ask.settled).to eq([journal.first])
+      expect(tty).not_to have_received(:announce)
+    end
+
+    it "announces a failed stop to the terminal as the interruption it journaled" do
+      truncated = Lain::Response.new(content: [], stop_reason: :max_tokens)
+      allow(agent).to receive(:ask).and_return(truncated)
+
+      ask.settle(ask.attempt("go"))
+
+      expect(tty).to have_received(:announce).once
+      expect(tty).to have_received(:announce)
+        .with(Lain::Telemetry::RunInterrupted.new(head: "sha-head", reason: :max_tokens))
+    end
+
+    it "announces a refusal, and not a settled ask" do
+      allow(agent).to receive(:ask).and_raise(Lain::Budget::Exceeded.new("ceiling"))
+
+      ask.settle(ask.attempt("go"))
+
+      expect(tty).to have_received(:announce).once
+      expect(tty).to have_received(:announce).with(an_instance_of(Lain::Telemetry::RunInterrupted))
     end
 
     it "journals a held ask as settled, saying held" do

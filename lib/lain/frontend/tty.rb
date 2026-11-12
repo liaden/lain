@@ -455,6 +455,10 @@ module Lain
       # says a file is waiting on them now that no desktop surface does.
       def render_warning(message) = render_line(:warning, message)
 
+      # A settled or failed ask, put through {#render} like any other event,
+      # so the bell rings for it.
+      def announce(record) = @channel.offer(record)
+
       private
 
       # Empty string, never nil, when `output` is not a real terminal or
@@ -532,7 +536,12 @@ module Lain
         @indicator.clear unless rendered.nil?
         rendered = stamp(rendered) if decorator&.stamped? && !rendered.nil?
         @countdown.print_above(fitted(rendered, decorator), line_shaped: decorator.line_shaped?) unless rendered.nil?
-        @bell.ring(decorator.note) if decorator.respond_to?(:note) && rendered
+        ring_for(decorator)
+      end
+
+      def ring_for(decorator)
+        note = decorator.note if decorator.respond_to?(:note)
+        @bell.ring(note) if note
       end
 
       def indicator_on(countdown, clock:)

@@ -343,7 +343,7 @@ module Lain
         raise env if env.is_a?(Lain::Error)
         return deliver(outcome.note(nil)) if env.nil? && supervised.closed?
 
-        env.to_h.key?(:response) ? deliver(env.response) : render_missing_response
+        env.to_h.key?(:response) ? deliver(env.response, env.fetch(:settled, [])) : render_missing_response
       end
 
       # A {Lain::Error} raised by the SUPERVISOR itself, outside the task, is
@@ -362,7 +362,8 @@ module Lain
       # renders it as it always has.
       def middleware_env(text)
         @middleware.call({ text:, agent: @agent }) do |inner|
-          inner.merge(response: respond(inner.fetch(:text), iterations: inner.fetch(:iterations, nil)))
+          response, settled = respond(inner.fetch(:text), iterations: inner.fetch(:iterations, nil))
+          inner.merge(response:, settled:)
         end
       rescue Lain::Error => e
         e
@@ -392,15 +393,19 @@ module Lain
       # {#middleware_turn} settles it.
       def respond(text, iterations: nil)
         ask = Ask.new(agent: @agent, tty: @tty, chronicle: @chronicle)
-        ask.settle(outcome.note(ask.attempt(text, iterations:)))
+        [ask.settle(outcome.note(ask.attempt(text, iterations:))), ask.settled]
       end
 
       # Turns durable before the reply renders: the belt over the chronicle's
       # per-iteration braces (idempotent), and it re-anchors the head a graceful
       # close records.
-      def deliver(response)
+      #
+      # The settled records ride out with the response and are announced only after it is drawn: the
+      # terminal's render thread would otherwise put the line above the reply.
+      def deliver(response, settled = [])
         @chronicle.catch_up(@agent.timeline)
         @tty.render_response(response) if response
+        settled.each { @tty.announce(_1) }
       end
 
       def farewell?(text) = %w[exit quit].include?(text.strip.downcase)

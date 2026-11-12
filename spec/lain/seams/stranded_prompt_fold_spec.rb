@@ -29,7 +29,7 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
   let(:warnings) { [] }
   let(:project_dir) { File.realpath(Dir.mktmpdir("fold-seam")) }
   let(:tty) do
-    instance_double(Lain::Frontend::TTY, render_error: nil).tap do |double|
+    instance_double(Lain::Frontend::TTY, render_error: nil, announce: nil).tap do |double|
       allow(double).to receive(:render_warning) { |message| warnings << message }
     end
   end

@@ -16,6 +16,7 @@ module Lain
           Telemetry::AssistantText => AssistantText,
           Telemetry::JudgeRuled => JudgeRuled,
           Telemetry::AskSettled => AskSettled,
+          Telemetry::RunInterrupted => RunInterrupted,
           Telemetry::EditApplied => EditDiff,
           ::Lain::Provider::Residency::Waiting => ResidencyWaiting
         }.freeze

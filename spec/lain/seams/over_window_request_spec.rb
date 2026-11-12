@@ -100,7 +100,7 @@ RSpec.describe "a prompt that does not fit the served context", :seam do
     Lain::CLI::Command::Rewind.new.call(count.to_s, build_command_env(agent:, chronicle:))
   end
 
-  def tty = @tty ||= instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil)
+  def tty = @tty ||= instance_double(Lain::Frontend::TTY, render_error: nil, render_warning: nil, announce: nil)
 
   def published = JSON.parse(File.read(File.join(@dir, "state.json")))
 

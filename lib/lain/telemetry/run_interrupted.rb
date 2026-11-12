@@ -55,6 +55,18 @@ module Lain
       REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
                    middleware max_tokens context_full refusal truncated malformed unknown quota].freeze
 
+      # The stops a person made: the rest ended the ask without them.
+      HUMAN = %i[interrupted grace_expired stopped].freeze
+
+      # A reason read back from a session file is a String and a live one a Symbol, so the test is on the name.
+      HUMAN_NAMES = HUMAN.map(&:to_s).freeze
+
+      # @param reason [Object] any value; one that names no stop is not a human's
+      def self.human?(reason) = HUMAN_NAMES.include?(reason.to_s)
+
+      # @return [Boolean] whether the human is the one who ended the run
+      def human? = self.class.human?(reason)
+
       # Mirrors {SessionClosed.reason!}, nil-tolerance included: a guard that
       # refuses differently from its sibling is one a reader has to check
       # twice.
