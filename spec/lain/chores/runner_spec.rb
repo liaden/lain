@@ -72,6 +72,17 @@ RSpec.describe Lain::Chores::Runner, :seam do
     end
   end
 
+  def reporting(report)
+    lambda do |*argv, **options|
+      root = options.fetch(:chdir)
+      FileUtils.mkdir_p(File.join(root, "planning"))
+      File.write(File.join(root, report), "# x and y: research\n")
+      git(root, "add", report)
+      git(root, "commit", "-q", "-m", "research x and y")
+      chat(exit: 0).call(*argv, **options)
+    end
+  end
+
   def runner(spawner:, land: lander, backend: self.backend, **)
     factory = lambda do |path|
       landed_from << path
@@ -134,15 +145,28 @@ RSpec.describe Lain::Chores::Runner, :seam do
     expect(notes.sole.last).to eq("failed: no commit #{session}")
   end
 
-  it "fails a refused or torn run with the session path, enqueues nothing, and lets release judge what to keep" do
+  it "lands a commit the chat made before it exited nonzero, and says how the chat exited" do
     chores("- [ ] add a spec for Foo#bar")
 
-    runner(spawner: chat(exit: 1, commit: true)).to_a
+    outcome = runner(spawner: chat(exit: 1, commit: true)).to_a.sole
 
+    head = git(@lease_path, "rev-parse", "HEAD")
+    expect(outcome.status).to eq(:landed)
+    expect(lander).to have_received(:queued).with("HEAD", id: outcome.item.id)
+    expect(line).to eq("- [x] add a spec for Foo#bar  <!-- landed; chat exited 1 #{head} #{session} -->")
+    expect(releases).to eq([false])
+  end
+
+  it "fails a chat that exited nonzero with HEAD unmoved, with the chat's failure and no enqueue" do
+    chores("- [ ] add a spec for Foo#bar")
+
+    outcome = runner(spawner: chat(exit: 1)).to_a.sole
+
+    expect(outcome.status).to eq(:failed)
     expect(line).to eq("- [!] add a spec for Foo#bar  <!-- chat exited 1 #{session} -->")
     expect(lander).not_to have_received(:queued)
     expect(releases).to eq([false])
-    expect(notes.sole.last).to start_with("failed: ")
+    expect(notes.sole.last).to eq("failed: chat exited 1 #{session}")
   end
 
   describe "the wait's answer" do
@@ -160,6 +184,25 @@ RSpec.describe Lain::Chores::Runner, :seam do
         expect(releases).to be_empty
         expect(notes.sole.last).to eq("failed: #{said} #{head} #{session}")
       end
+    end
+
+    it "adds how the chat exited to a wait's answer on a commit made before a nonzero exit" do
+      allow(lander).to receive(:wait).and_return(1)
+
+      runner(spawner: chat(exit: 1, commit: true)).to_a
+
+      head = git(@lease_path, "rev-parse", "HEAD")
+      expect(line).to eq("- [!] add a spec for Foo#bar  <!-- not landed; chat exited 1 #{head} #{session} -->")
+    end
+
+    it "adds how the chat exited to a refusal of a commit made before a nonzero exit" do
+      allow(lander).to receive(:wait).and_raise(Lain::Error, "no landing entry-1 was queued for main")
+
+      runner(spawner: chat(exit: 1, commit: true)).to_a
+
+      head = git(@lease_path, "rev-parse", "HEAD")
+      expect(line).to eq("- [!] add a spec for Foo#bar  " \
+                         "<!-- no landing entry-1 was queued for main; chat exited 1 #{head} #{session} -->")
     end
 
     it "reads a refusal as its message and keeps the lease for a human" do
@@ -227,6 +270,16 @@ RSpec.describe Lain::Chores::Runner, :seam do
       lambda do |*argv, **options|
         chat(command:).call(*argv, **options).tap { pids << _1 }
       end
+    end
+
+    it "lands a commit the chat made before it was stopped for running too long, saying it timed out" do
+      stub_const("#{described_class}::KILL_AFTER", 0.3)
+
+      outcome = runner(spawner: chat(command: %w[sleep 30], commit: true), chat_timeout: 0.2).to_a.sole
+
+      head = git(@lease_path, "rev-parse", "HEAD")
+      expect(outcome.status).to eq(:landed)
+      expect(line).to eq("- [x] add a spec for Foo#bar  <!-- landed; timed out #{head} #{session} -->")
     end
 
     it "sends the group TERM first, which a chat that traps it can act on" do
@@ -302,11 +355,26 @@ RSpec.describe Lain::Chores::Runner, :seam do
 
     outcome = runner(spawner: chat(exit: 0)).to_a.sole
 
-    expect(spawns.sole[:argv].last(2)).to eq(["--prompt", "/research compare x and y"])
+    expect(spawns.sole[:argv].last(2))
+      .to eq(["--prompt", Lain::Chores::Brief.for(Lain::Chores::Item.parse("- [ ] [research] compare x and y"))])
     expect(outcome.status).to eq(:researched)
     expect(line).to eq("- [x] [research] compare x and y  <!-- researched #{session} -->")
     expect(landed_from).to be_empty
     expect(releases).to eq([false])
+  end
+
+  it "lands the report a research chat committed, from inside the lease under the item's id" do
+    chores("- [ ] [research] compare x and y")
+    report = "planning/x-and-y-research-2026-11.md"
+
+    outcome = runner(spawner: reporting(report)).to_a.sole
+
+    head = git(@lease_path, "rev-parse", "HEAD")
+    expect(git(@lease_path, "show", "#{head}:#{report}")).to eq("# x and y: research")
+    expect(landed_from).to eq([@lease_path])
+    expect(lander).to have_received(:queued).with("HEAD", id: outcome.item.id)
+    expect(outcome).to have_attributes(status: :researched, sha: head)
+    expect(line).to eq("- [x] [research] compare x and y  <!-- researched #{head} #{session} -->")
   end
 
   it "takes the session the chat filed last when the lease's directory already holds one" do
@@ -409,6 +477,38 @@ RSpec.describe Lain::Chores::Runner, :seam do
 
       expect(decisions.sole).to have_attributes(verdict: :allow, rule: "lease_commit")
       expect(outcome.status).to eq(:landed)
+    end
+
+    # The drainer runs in this process when the landing asks for one, so the merge onto main is the real one.
+    # A clone is recognised only under the process's own state home, so the lease and the landing both use it.
+    it "lands a research chat's committed report on main through the real landing" do
+      clone_backend = Lain::CLI::IsolationBackend.resolve("worktree", root: @main)
+      chores("- [ ] [research] compare x and y")
+      File.write(File.join(@main, ".git", "info", "exclude"), ".lain/\n", mode: "a")
+      write_config(@main, "isolation verify: #{%w[sh -c true].inspect}\n")
+      report = "planning/x-and-y-research-2026-11.md"
+      inline = Object.new
+      draining = ->(branch, root) { Lain::CLI::Land.new(cwd: root).drain(branch:, project: root) }
+      inline.define_singleton_method(:drain) { |branch:, root:, **| draining.call(branch, root) && true }
+      land = ->(lease) { Lain::CLI::Land.new(cwd: lease, spawner: inline) }
+
+      outcome = described_class.new(queue:, backend: clone_backend, lain: program, land:, notices:, paths:,
+                                    max_cost: 2, wait_timeout: 60, spawner: reporting(report)).to_a.sole
+
+      expect(outcome.status).to eq(:researched), outcome.summary
+      expect(git(@main, "show", "main:#{report}")).to eq("# x and y: research")
+    end
+
+    it "adds how the chat exited to a HEAD it cannot read" do
+      unreadable = lambda do |*argv, **options|
+        chat(exit: 1, commit: true).call(*argv, **options)
+                                   .tap { FileUtils.rm_rf(File.join(options.fetch(:chdir), ".git")) }
+      end
+
+      runner(spawner: unreadable).to_a
+
+      expect(line)
+        .to eq("- [!] add a spec for Foo#bar  <!-- #{described_class::UNREADABLE}; chat exited 1 #{session} -->")
     end
 
     it "fails a lease whose HEAD git cannot read at all, with no enqueue" do

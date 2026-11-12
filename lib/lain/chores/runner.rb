@@ -78,16 +78,21 @@ module Lain
         after_chat(item, lease, status, session)
       end
 
+      # Judged by what the chat committed, not how it exited: a chat stopped at its ceiling after
+      # committing has still done the work.
       def after_chat(item, lease, status, session)
-        return released(lease, failed(item, session, chat_failure(status))) unless status&.success?
-        return released(lease, Outcome.new(item:, status: :researched, session:, sha: nil, note: "researched")) if
-          item.tag == Brief::RESEARCH
-
         head = head_of(lease)
-        return released(lease, failed(item, session, UNREADABLE)) if head.nil?
-        return released(lease, failed(item, session, "no commit")) if head == lease.origin.base
+        return released(lease, failed(item, session, ended(UNREADABLE, status))) if head.nil?
+        return released(lease, unmoved(item, status, session)) if head == lease.origin.base
 
-        landed(item, lease, session, head)
+        landed(item, lease, session, head, status)
+      end
+
+      def unmoved(item, status, session)
+        return failed(item, session, chat_failure(status)) unless status&.success?
+        return Outcome.new(item:, status: :researched, session:, sha: nil, note: "researched") if research?(item)
+
+        failed(item, session, "no commit")
       end
 
       def head_of(lease)
@@ -96,14 +101,19 @@ module Lain
         nil
       end
 
-      def landed(item, lease, session, head)
+      def landed(item, lease, session, head, status)
         waited, refusal = waited_on(item, lease.origin.path)
-        return failed(item, session, refusal, sha: head) if refusal
+        return failed(item, session, ended(refusal, status), sha: head) if refusal
         raise Interrupt if waited == INTERRUPTED
-        return failed(item, session, WAITS.fetch(waited), sha: head) unless waited.zero?
+        return failed(item, session, ended(WAITS.fetch(waited), status), sha: head) unless waited.zero?
 
-        released(lease, Outcome.new(item:, status: :landed, session:, sha: head, note: "landed"))
+        done = research?(item) ? :researched : :landed
+        released(lease, Outcome.new(item:, status: done, session:, sha: head, note: ended(done.to_s, status)))
       end
+
+      def research?(item) = item.tag == Brief::RESEARCH
+
+      def ended(note, status) = status&.success? ? note : "#{note}; #{chat_failure(status)}"
 
       # @return [Array(Integer, nil), Array(nil, String)] the wait's answer, or the refusal's message
       def waited_on(item, path)

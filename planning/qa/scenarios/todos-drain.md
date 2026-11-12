@@ -186,15 +186,33 @@ there with its commit, because a lease holding a commit nobody landed is kept fo
 it kept, not reaped). Restore the verify afterwards. The `wait timed out` and `no drainer` endings are the same line with
 those words and belong to `merge-coordinator.md` §6.
 
+**A chat that commits and then fails still lands.** The drain judges the item by what the chat committed, not by
+how it exited. Give a chore that commits early and then runs out of room, for example
+`lain todos drain --max-cost 0.05` on `create notes/early.txt with the word early, commit it, then read every file
+under lib/ and summarise each one`, or lower the budget's iteration ceiling for the run. The chat exits nonzero after
+its commit. The line reads `[x] ... <!-- landed; chat exited <n> <sha> <session> -->` (or `landed; timed out` if
+the chat was stopped at its timeout), and `git -C $QA/repo show main:notes/early.txt` prints `early`. A chat that
+exits nonzero with nothing committed is still `[!] ... chat exited <n> <session>`, with no sha and no landing. A
+landing that then fails says both: `[!] ... not landed; chat exited <n> <sha> <session>`.
+
 ## 4: A chore that is a question
 
 `lain todos add '[research] what does lain todos status print'`, written exactly so, with the tag after the box. The
-chat's prompt is `/research what does lain todos status print`, not the commit brief, and the item ends researched
-without a landing:
+chat's prompt is not the commit brief. Its first line is `/research what does lain todos status print`, and a second
+paragraph asks the chat to commit the report in its checkout so the drain can land it. The drain judges the item by
+what the chat committed, so it has 2 endings:
 
-- the line reads `- [x] [research] ... <!-- researched <session path> -->`; there is no sha;
-- `main` has not moved and no `lain land` entry was made (`lain land status --branch main` lists nothing new);
-- the drain's result line begins `researched`, the exit status is 0, and the lease is released.
+- **The chat committed its report.** The report lands like a chore in §2. The line reads
+  `- [x] [research] ... <!-- researched <sha> <session path> -->`, `git -C $QA/repo show main:planning/<slug>-research-<YYYY-MM>.md`
+  prints the report, and `lain land status --branch main` lists the entry. The drain's result line begins
+  `researched` and the exit status is 0.
+- **The chat exited 0 and committed nothing.** The line reads `- [x] [research] ... <!-- researched <session path> -->`
+  with no sha. `main` has not moved and no `lain land` entry was made. Any report the chat wrote but did not commit is
+  still in the lease, which is kept because it holds uncommitted work.
+
+Known gap: the drain starts its chat in the default role, not as `researcher`. The research skill tells a chat that is
+not the researcher to ask for a re-run as `@researcher/research`, so expect the second ending, with the journal's reply
+naming that re-run. If the report does land, record which role the session says the chat ran as.
 
 Check that a `[research]` tag the file spells in another case (`[Research]`) is an ordinary tag and runs the commit
 brief. The comparison is exact (`Brief::RESEARCH`).

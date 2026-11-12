@@ -15,10 +15,16 @@ module Lain
         commit. Nobody will answer a question, so decide for yourself. Stop once the commit is made.
       TEXT
 
+      REPORT = <<~TEXT
+        /research %<text>s
+
+        Commit the report in this checkout once it is written, so the drain can land it.
+      TEXT
+
       # @param item [Item] the claimed chore
       # @return [String] the chat's --prompt
       def self.for(item)
-        item.tag == RESEARCH ? "/research #{item.text}" : format(CHORE, text: item.text)
+        format(item.tag == RESEARCH ? REPORT : CHORE, text: item.text)
       end
     end
   end
