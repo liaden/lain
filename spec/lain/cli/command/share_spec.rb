@@ -74,6 +74,41 @@ RSpec.describe Lain::CLI::Command::Share do
     expect(journal).not_to have_received(:record)
   end
 
+  it "refuses a session with no turns and spawns nothing" do
+    Dir.mktmpdir do |dir|
+      bare = File.join(dir, "bare.ndjson")
+      File.write(bare, "#{JSON.generate({ "type" => "session" })}\n")
+      empty = lambda { |file|
+        Lain::CLI::Export.new(selector: file, paths: instance_double(Lain::Paths, filing_dir: dir),
+                              project: instance_double(Lain::Project, root: "/x"))
+      }
+      chronicle = instance_double(Lain::CLI::Chronicle::Null, journal_path: bare)
+
+      expect { described_class.new(exports: empty, shell: gh, journal:).call("", build_command_env(chronicle:)) }
+        .to raise_error(Lain::Error, /no turns.*nothing was exported or shared/)
+    end
+    expect(spawned).to be_empty
+    expect(journal).not_to have_received(:record)
+  end
+
+  it "refuses by name when an earlier file of the resume chain is gone, and spawns nothing" do
+    Dir.mktmpdir do |dir|
+      orphan = File.join(dir, "orphan.ndjson")
+      header = { "type" => "session", "resumed_from" => { "file" => "gone.ndjson" } }
+      File.write(orphan, "#{JSON.generate(header)}\n")
+      paths = instance_double(Lain::Paths, filing_dir: dir)
+      allow(paths).to receive(:chain_file) { |name, dir:| File.join(dir, name) }
+      chain = lambda { |file|
+        Lain::CLI::Export.new(selector: file, paths:, project: instance_double(Lain::Project, root: "/x"))
+      }
+      chronicle = instance_double(Lain::CLI::Chronicle::Null, journal_path: orphan)
+
+      expect { described_class.new(exports: chain, shell: gh, journal:).call("", build_command_env(chronicle:)) }
+        .to raise_error(Lain::Error, /gone\.ndjson.*nothing was exported or shared/m)
+    end
+    expect(spawned).to be_empty
+  end
+
   it "says region in the singular when one was masked" do
     allow(export).to receive(:masked).and_return(1)
 

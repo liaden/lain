@@ -64,6 +64,8 @@ RSpec.describe Lain::CLI::Export do
               { "type" => "command_redacted", "tool_use_id" => "tu_b", "regions" => 2, "prior" => 0 },
               { "type" => "search_redacted", "tool_use_id" => "tu_c", "path" => "a.rb", "regions" => 4,
                 "released" => 0 }]
+    masked.unshift({ "type" => "turn", "digest" => "t1", "role" => "user", "parent" => nil, "meta" => {},
+                     "content" => [{ "type" => "text", "text" => "hi" }] })
     File.write(File.join(sessions_dir, "three.ndjson"), "#{masked.map { |record| JSON.generate(record) }.join("\n")}\n")
 
     expect([export("three").masked, export("three").call(format: :html)]).to match([7, include("7 regions")])
@@ -79,6 +81,75 @@ RSpec.describe Lain::CLI::Export do
   it "refuses html while regions were released unless told to include them" do
     expect { export.call(format: :html) }.to raise_error(Lain::Error, /released/)
     expect(export.call(format: :html, include_released: true)).to include("2 regions were released")
+  end
+
+  context "with a session resumed once" do
+    let(:earlier) do
+      [{ "type" => "session", "format" => 1 },
+       { "type" => "turn", "digest" => "a1", "role" => "user", "parent" => nil, "meta" => {},
+         "content" => [{ "type" => "text", "text" => "before the resume" }] },
+       { "type" => "read_released", "tool_use_id" => "tu_9", "path" => ".env", "regions" => 3,
+         "requester" => "agent", "surface" => "tty" }]
+    end
+    let(:later) do
+      [{ "type" => "session", "format" => 1, "resumed_from" => { "file" => "earlier.ndjson" } },
+       { "type" => "turn", "digest" => "b1", "role" => "assistant", "parent" => "a1", "meta" => {},
+         "content" => [{ "type" => "text", "text" => "after the resume" }] }]
+    end
+    let(:later_lines) { later.map { |record| JSON.generate(record) } }
+
+    before do
+      File.write(File.join(sessions_dir, "earlier.ndjson"), "#{earlier.map { |r| JSON.generate(r) }.join("\n")}\n")
+      File.write(File.join(sessions_dir, "later.ndjson"), "#{later_lines.join("\n")}\n")
+      allow(paths).to receive(:chain_file) { |name, dir:| File.join(dir, name) }
+    end
+
+    it "shows the turns from before and after the resume in the html" do
+      html = export("later").call(format: :html, include_released: true)
+
+      expect(html).to include("before the resume", "after the resume")
+    end
+
+    it "counts the regions released in an earlier file, so the html gate still refuses" do
+      expect { export("later").call(format: :html) }.to raise_error(Lain::Error, /3 regions were released/)
+    end
+
+    it "keeps the jsonl to the one file" do
+      expect(export("later").call(format: :jsonl)).to eq("#{later_lines.join("\n")}\n")
+    end
+  end
+
+  it "refuses an html page whose only turn was rewound to the empty head" do
+    rewound = [{ "type" => "session", "format" => 1 }, session_records[1],
+               { "type" => "rewound", "from" => "d1", "to" => nil }]
+    File.write(File.join(sessions_dir, "rew.ndjson"), "#{rewound.map { |r| JSON.generate(r) }.join("\n")}\n")
+
+    expect { export("rew").call(format: :html) }.to raise_error(Lain::Error, /no turns/)
+  end
+
+  context "when an earlier file of the resume chain is gone" do
+    before do
+      orphan = [{ "type" => "session", "format" => 1, "resumed_from" => { "file" => "gone.ndjson" } },
+                session_records[1]]
+      File.write(File.join(sessions_dir, "orphan.ndjson"), "#{orphan.map { |r| JSON.generate(r) }.join("\n")}\n")
+      allow(paths).to receive(:chain_file) { |name, dir:| File.join(dir, name) }
+    end
+
+    it "refuses the html by name, saying nothing was exported" do
+      expect { export("orphan").call(format: :html) }
+        .to raise_error(Lain::Error, /gone\.ndjson.*released.*nothing was exported or shared/m)
+    end
+
+    it "still writes the jsonl of the one file" do
+      expect(export("orphan").call(format: :jsonl)).to include("session")
+    end
+  end
+
+  it "refuses an html page with no turns, and still writes the jsonl" do
+    File.write(File.join(sessions_dir, "bare.ndjson"), "#{JSON.generate({ "type" => "session", "format" => 1 })}\n")
+
+    expect { export("bare").call(format: :html) }.to raise_error(Lain::Error, /no turns.*nothing was exported/)
+    expect(export("bare").call(format: :jsonl)).to include("session")
   end
 
   it "writes out with mode 0600 and refuses an existing path unless forced" do

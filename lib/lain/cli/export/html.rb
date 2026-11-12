@@ -23,6 +23,9 @@ module Lain
           @prefixes = prefixes([[root, "<project>"], [home, "~"]])
         end
 
+        # @return [Boolean] whether the page would show no turn, whatever turn records exist
+        def empty? = rows.none? { |row| row["type"] == "turn" }
+
         # @return [String]
         def render = ERB.new(File.read(TEMPLATE), trim_mode: "-").result(binding)
 
