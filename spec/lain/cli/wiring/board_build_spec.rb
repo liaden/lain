@@ -62,6 +62,19 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
 
+  describe "whether the session can contain a call" do
+    it "reaches the board's queue as the toolset says it" do
+      Dir.mktmpdir("board-containment") do |dir|
+        base = File.realpath(dir)
+        root, home = %w[repo home].map { File.join(base, _1).tap { |made| FileUtils.mkdir_p(made) } }
+        containment = Lain::Confine::Sandbox::Containment::ABLE
+
+        expect(board_for(root, home, containment:).approvals.containment).to be(containment)
+        expect(board_for(root, home).approvals.containment).to be(Lain::Confine::Sandbox::Containment::NONE)
+      end
+    end
+  end
+
   def bash_of(command, **rest)
     Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command }.merge(rest))
   end

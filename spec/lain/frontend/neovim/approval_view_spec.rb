@@ -206,6 +206,102 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     expect(described_class::HINT).to eq("-- y approve, n deny  (:LainApprove / :LainDeny / :LainHold [note])")
   end
 
+  describe "a call that reads secrets" do
+    let(:secret) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+    let(:containment) { Lain::Confine::Sandbox::Containment::ABLE }
+
+    def parked_ask(queue, command, index, disclosure)
+      context = Struct.new(:identity, :disclosure, :parsed_command)
+                      .new(Lain::Requester.main, disclosure, Lain::Shell::Parse.new.call(command))
+      queue.adjudicate(effect("bash", { "command" => command }, "tu_#{index + 1}"), context)
+    end
+
+    def parked_secret(disclosure: secret, commands: ["pwd"])
+      Sync do |task|
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5, containment:)
+        asking = commands.each_with_index.map do |command, index|
+          task.async { parked_ask(queue, command, index, disclosure) }
+        end
+        spun_until { queue.count == commands.size }
+        view.sweep(queue)
+        queue.first.tap { yield _1 }
+      ensure
+        asking&.each(&:stop)
+      end
+    end
+
+    it "says in its hint that y runs a call that reads secrets contained, and how to choose network" do
+      parked_secret { nil }
+
+      expect(rpc.last[:lines].last)
+        .to eq("-- y runs a call that reads secrets contained, without network, where files lain masks cannot " \
+               "be read; network runs it unconfined, with network; n deny  " \
+               "(:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])")
+    end
+
+    it "keeps the plain hint when no parked call reads secrets" do
+      parked_secret(disclosure: Lain::Approval::Disclosure::NONE) { nil }
+
+      expect(rpc.last[:lines].last).to eq(described_class::HINT)
+    end
+
+    it "approves with network on :LainApprove network, and plainly on a note asking for it" do
+      chosen = ["approve network", "approve: network please"].map do |verdict|
+        parked_secret { view.decide(1, verdict, generation:) }
+      end
+
+      expect(chosen.map { [_1.approved?, _1.network?] }).to eq([[true, true], [true, false]])
+    end
+
+    context "when a workspace session could grant the call a build tool's ports" do
+      let(:containment) do
+        netting = Struct.new(:nothing) { def supports?(_layer) = true }.new
+        Lain::Confine::Sandbox.new(root: "/srv/project", home: "/home/h", masks: nil, probe: netting,
+                                   fence: "/srv/lain-fence", journal:, workspace: true).containment
+      end
+
+      it "names the ports in its hint rather than saying the call has no network" do
+        parked_secret(commands: ["cargo fetch .env"]) { nil }
+
+        expect(rpc.last[:lines].last).to include("TCP ports 443")
+        expect(rpc.last[:lines].last).not_to include("without network")
+      end
+
+      it "names the ports of any row, though the first parked earns none" do
+        parked_secret(commands: ["git fetch", "cargo fetch .env"]) { nil }
+
+        expect(rpc.last[:lines].last).to include("TCP ports 443")
+        expect(rpc.last[:lines].last).not_to include("without network")
+      end
+    end
+
+    context "when lain cannot contain it" do
+      let(:containment) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
+
+      it "says on the row why, and in its hint that y will not run it" do
+        parked_secret { nil }
+
+        expect(rpc.last[:lines].join("\n")).to include("lain cannot contain it here (the box lacks bwrap)")
+        expect(rpc.last[:lines].last)
+          .to eq("-- y will not run a call that reads secrets; network runs it unconfined, with network; n deny  " \
+                 "(:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])")
+      end
+    end
+
+    context "when confinement is off" do
+      let(:containment) { Lain::Confine::Sandbox::Containment::OFF }
+
+      it "says on the row that it runs unconfined, and keeps the plain hint" do
+        parked_secret { nil }
+
+        # A wrapped row continues on an indented line, so the lines are joined back unindented.
+        expect(rpc.last[:lines].map(&:strip).join)
+          .to include("it will run unconfined, with network, because confinement is off")
+        expect(rpc.last[:lines].last).to eq(described_class::HINT)
+      end
+    end
+  end
+
   describe "a decision that is not a tool call" do
     let(:decision) do
       Lain::Approval::Parked::Queue::Decision.new(requester: "egress", kind: "egress",

@@ -32,9 +32,19 @@ module Lain
         [kind, /\A\s*(?:#{words})(?:(?:#{grammar[:tail]})\s*\z|(?:#{grammar[:separator]})(?<note>\S.*))/mi]
       end.freeze
 
+      # Two fixed spellings, with an approval's strict tail, so no note can be read as consent to network.
+      NETWORK = /\A\s*(?:(?:approved|approve)\s+)?network(?:(?:#{GRAMMAR.dig(Verdict::Approve, :tail)})\s*\z|
+                 (?:#{GRAMMAR.dig(Verdict::Approve, :separator)})(?<note>\S.*))/mix
+      NETWORK_WORD = "network"
+
       # @param line [String]
+      # @param network [Boolean] whether the asker offers the network answer; where it does not, as at an
+      #   epic gate, that answer is unrecognised
       # @return [Verdict::Approve, Verdict::Hold, Verdict::Deny, Unrecognised]
-      def self.parse(line)
+      def self.parse(line, network: false)
+        chosen = network && NETWORK.match(line.to_s)
+        return Verdict::Approve.new(note: chosen[:note], network: true) if chosen
+
         kind, match = PATTERNS.lazy.map { |k, pattern| [k, pattern.match(line.to_s)] }.find { _2 }
         return Unrecognised.new(text: line.to_s.dup.freeze) unless match
 
@@ -42,9 +52,9 @@ module Lain
       end
 
       # @param verdict [Verdict::Approve, Verdict::Hold, Verdict::Deny]
-      # @return [String] the normal form {parse} reads back to an equal verdict
+      # @return [String] the normal form {parse} reads back to an equal verdict, offering network for one that chose it
       def self.render(verdict)
-        word = WORDS.fetch(Verdict.coerce(verdict).class).first
+        word = Verdict.coerce(verdict).network? ? NETWORK_WORD : WORDS.fetch(verdict.class).first
         verdict.note ? "#{word}, #{verdict.note}" : word
       end
     end

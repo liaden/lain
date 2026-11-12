@@ -444,7 +444,17 @@ RSpec.describe LainCLI do
 
     it "says in --confine's help that workspace is the default and a call the human approves runs unconfined" do
       expect(described_class.commands.fetch("chat").options.fetch(:confine).description)
-        .to include("default workspace", "a call you approve yourself still runs traced and unconfined")
+        .to include("default workspace", "a call you approve yourself runs traced and unconfined")
+    end
+
+    it "says in --confine's help that an approved call that reads secrets runs contained unless network is chosen" do
+      expect(described_class.commands.fetch("chat").options.fetch(:confine).description)
+        .to include("reads secrets", "contained, without network", "network")
+    end
+
+    it "says in --confine's help that a contained build tool's fetch keeps its ports, which the prompt names" do
+      expect(described_class.commands.fetch("chat").options.fetch(:confine).description)
+        .to include("a build tool's fetch keeps its ports", "the prompt names them")
     end
 
     it "refuses a bad bench arm at launch, naming the allowed values, and exits nonzero" do

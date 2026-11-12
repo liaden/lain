@@ -65,6 +65,15 @@ module Lain
       HOME_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s is home or holds it, so a " \
                     "write there would reach home. Retrying will be refused again. Stop and ask the human to set " \
                     "TMPDIR elsewhere and restart, then wait for the answer."
+      UNCONTAINABLE = "REFUSED by the sandbox, not a transient error: this call was approved, but it reads " \
+                      "secrets and this box cannot give it a private network, so it cannot run contained. Retrying " \
+                      "will be refused again. Stop and ask the human to approve it with network, which runs it " \
+                      "unconfined, then wait for the answer."
+      CONTAINED = "This call ran contained, as it was approved without network: files lain masks cannot be read " \
+                  "in the sandbox, and it had no network. To see a masked file's values, use read_file."
+      CONTAINED_PORTED = "This call ran contained, as it was approved: files lain masks cannot be read in the " \
+                         "sandbox, and it could reach the host's network only on TCP ports %<ports>s, which its " \
+                         "build tool fetches over. To see a masked file's values, use read_file."
       # Each profile build that refuses for a path, and the sentence that says why.
       UNBUILT = { Confine::Profiles::NoTmpdir => NO_TMPDIR, Confine::Profile::HomeTmpdir => HOME_TMPDIR,
                   Confine::Profile::HoldsState => HOLDS_STATE, Confine::Profile::Tampered => TAMPERED }.freeze
@@ -113,6 +122,8 @@ module Lain
           return overmasked(confinement, e, sinks)
         rescue Confine::Profile::Unsealable => e
           return unsealable(confinement, e, sinks)
+        rescue Confine::Profiles::Uncontainable => e
+          return refused_before(confinement, e, UNCONTAINABLE, sinks, on: nil)
         rescue *UNBUILT.keys => e
           return refused_before(confinement, e, phrased(unbuilt(e), path: printable(e.path)), sinks)
         end
@@ -127,11 +138,25 @@ module Lain
       def run_under(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
-                                           trace: profile.trace, refused:, granted: granted(profile, confinement))
+                                           trace: profile.trace, refused:, granted: granted(profile, confinement),
+                                           network: confinement.ruling.network?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
         run = { command:, cwd:, env:, timeout:, launch: launch(profile), pinned_env: pinned_env(profile), **sinks }
-        profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
+        told_contained(confinement, profile) do
+          profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
+        end
+      end
+
+      def told_contained(confinement, profile)
+        capture = yield
+        confinement.ruling.contained? ? appended(capture, "#{contained_line(profile)}\n") : capture
+      end
+
+      # A build grant keeps its ports under a contained approval, so the line must not claim no network.
+      def contained_line(profile)
+        ports = profile.connect_ports
+        ports.empty? ? CONTAINED : format(CONTAINED_PORTED, ports: ports.join(", "))
       end
 
       def pinned_env(profile)
@@ -196,7 +221,10 @@ module Lain
       # spill, fed from the live sinks, never carries it.
       def worded(capture, record, profile, cwd)
         line = notice(capture, record, profile, cwd)
-        return capture if line.empty?
+        line.empty? ? capture : appended(capture, line)
+      end
+
+      def appended(capture, line)
         return Capture.new(**capture.to_h, stderr: capture.stderr + line, size: capture.size + line.bytesize) if
           capture.size + line.bytesize <= @ceiling
 
@@ -288,7 +316,7 @@ module Lain
       # The profile refused the call before it was built, so the record names the path it refused on.
       def refused_before(confinement, error, line, sinks, on: error.path)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: error.profile, trace: false,
-                                           refused: [on])
+                                           refused: [on].compact)
         refusal(line, sinks)
       end
 

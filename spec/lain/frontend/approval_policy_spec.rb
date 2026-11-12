@@ -950,6 +950,94 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
+  describe "a call that reads secrets" do
+    let(:containment) { Lain::Confine::Sandbox::Containment::ABLE }
+
+    def secret
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                 containment:)
+    end
+
+    def shown(held = secret)
+      seen = nil
+      described_class.new(output:, pastel: Pastel.new(enabled: false),
+                          reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(held)
+      seen
+    end
+
+    def answered(line)
+      held = secret
+      described_class.new(output:, pastel: Pastel.new(enabled: false), reader: ->(_prompt) { "#{line}\n" })
+                     .decide(held)
+      held
+    end
+
+    context "when lain can contain it" do
+      it "says once that a y runs it contained, without network, and offers the network answer" do
+        seen = shown
+        choice = "y runs it contained, without network, where files lain masks cannot be read; " \
+                 "network runs it unconfined, with network [y/N/network] "
+
+        expect(seen.to_s).to end_with("approve bash(#{effect.input.inspect})? #{choice}")
+        expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? #{choice}")
+        expect(seen.to_s.scan("contained").size).to eq(1)
+      end
+
+      it "takes the network answer" do
+        expect(shown.takes?("network")).to be(true)
+      end
+
+      it "approves with network on the network answer, and plainly on a y" do
+        expect([answered("network"), answered("approve network"), answered("y")].map { [_1.approved?, _1.network?] })
+          .to eq([[true, true], [true, true], [true, false]])
+      end
+
+      it "reads a note asking for network as a plain approval" do
+        expect(answered("approve: network please")).to have_attributes(approved?: true, network?: false)
+      end
+
+      it "names the network answer when it refuses a line" do
+        said = []
+        described_class::Asked.new("approve? ", secret).refused { |note| said << note }
+
+        expect(said).to eq(["y, n, hold or network answers the approval"])
+      end
+    end
+
+    context "when lain cannot contain it" do
+      let(:containment) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
+
+      it "says why, that a y will not run it, and that network runs it unconfined" do
+        seen = shown
+
+        expect(seen.to_s).to include("lain cannot contain it here (the box lacks bwrap)")
+        expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? y will not run it; " \
+                                      "network runs it unconfined, with network [y/N/network] ")
+        expect(seen.to_s).not_to include("y runs it contained")
+      end
+    end
+
+    context "when confinement is off" do
+      let(:containment) { Lain::Confine::Sandbox::Containment::OFF }
+
+      it "says it runs unconfined, and offers no network answer" do
+        seen = shown
+
+        expect(seen.to_s).to include("it will run unconfined, with network, because confinement is off")
+        expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? [y/N] ")
+      end
+    end
+  end
+
+  it "neither offers nor takes the network answer on an ordinary call" do
+    seen = nil
+    described_class.new(output:, pastel: Pastel.new(enabled: false),
+                        reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
+
+    expect(seen.to_s).not_to include("network")
+    expect(seen.takes?("network")).to be(false)
+  end
+
   # A `/command` typed at the drawn `[y/N]` was meant for the chat -- `/goal off`
   # while a goal's iteration waits on the call -- so the prompt says it does not
   # take one, and the terminal holds it for `you>` and asks again.

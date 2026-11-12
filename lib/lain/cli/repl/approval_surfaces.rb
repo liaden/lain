@@ -179,7 +179,7 @@ module Lain
           end
 
           def said(pending)
-            pending.reasons.map { "; #{_1}" }.join
+            [*pending.reasons, *pending.containment.note].map { "; #{_1}" }.join
           end
 
           def stamp(line) = "#{@wall_clock.call.strftime("%H:%M:%S")} #{line}"

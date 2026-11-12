@@ -81,6 +81,12 @@ module Lain
         # has to learn what to press FROM the thing in front of them.
         HINT = "-- y approve, n deny  (:LainApprove / :LainDeny / :LainHold [note])"
 
+        # Shown when a parked call reads secrets, led by what y and network do there, so a push that fails for
+        # want of network is no surprise.
+        NETWORK_HINT = "-- %<choice>s; n deny  (:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])"
+        # The hint sits under every parked row, so its y names which of them it contains.
+        SECRET_CALL = "a call that reads secrets"
+
         # A FOLD's measurement rather than a terminal's: a closed item shows
         # this line plus `10_folds.lua`'s "  (+N lines)" marker on ONE screen
         # line, and the cockpit's nvim pane measures 110 columns. Generous at
@@ -373,7 +379,7 @@ module Lain
           return undecided(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
           return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
-          answer = read(verdict)
+          answer = read(verdict, network: resolved.owner.offers_network?)
           return undecided(unknown(verdict)) if answer.is_a?(Approval::Reply::Unrecognised)
 
           settled(resolved.owner, answer, line)
@@ -382,9 +388,9 @@ module Lain
         # The whole line first, so a note punctuated onto the word survives;
         # the editor's plain "approve <note>" has no separator Reply's approve
         # grammar accepts, so it falls back to the word and the rest.
-        def read(verdict)
+        def read(verdict, network:)
           line = verdict.to_s.strip
-          whole = Approval::Reply.parse(line)
+          whole = Approval::Reply.parse(line, network:)
           return whole unless whole.is_a?(Approval::Reply::Unrecognised)
 
           word, said = line.split(/\s+/, 2)
@@ -497,8 +503,18 @@ module Lain
 
           calls = parked.map { |pending| call_of(pending) }
           items = parked.zip(calls).map { |pending, call| lines_for(pending, call) }
-          Rendering.new(lines: items.flatten(1) + notes + ["", HINT], owners: owners_for(items, parked),
+          Rendering.new(lines: items.flatten(1) + notes + ["", hint_for(parked)], owners: owners_for(items, parked),
                         calls:, call_index: call_index_for(items))
+        end
+
+        def hint_for(parked)
+          offering = parked.select(&:offers_network?).map(&:containment)
+          offering.empty? ? HINT : format(NETWORK_HINT, choice: widest(offering).choice(SECRET_CALL))
+        end
+
+        # One hint stands under every row, so it names every port any of them could be granted.
+        def widest(containments)
+          containments.reduce { |wide, other| wide.with(ports: (wide.ports | other.ports).freeze) }
         end
 
         # Names the call because the row it described is gone from the list.
@@ -567,7 +583,7 @@ module Lain
         end
 
         def judged(pending)
-          said = pending.reasons.map(&:to_s)
+          said = [*pending.reasons.map(&:to_s), *pending.containment.note]
           said.empty? ? "" : "(#{said.join("; ")}) "
         end
       end

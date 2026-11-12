@@ -854,7 +854,10 @@ class LainCLI < Thor
                   "default #{Lain::CLI::Arms::DEFAULT.confine}): workspace " \
                   "runs a command the judge, a rule or bypass approved in the workspace sandbox, reader runs " \
                   "it traced and unconfined; both run a read-only command in the reader sandbox, and a call you " \
-                  "approve yourself still runs traced and unconfined".freeze
+                  "approve yourself runs traced and unconfined, except one that reads secrets: a plain y runs " \
+                  "that one contained, without network, in the sandbox, though under workspace a build tool's " \
+                  "fetch keeps its ports and the prompt names them, and only the network answer runs it " \
+                  "unconfined".freeze
     BENCH_CONFINE = "How far bash is confined in each arm (#{Lain::Bench::CLI::CONFINES.join(", ")}; " \
                     "default #{Lain::Bench::CLI::DEFAULT_CONFINE}). " \
                     "reader runs a read-only command whose paths stay in the checkout in the reader sandbox; " \

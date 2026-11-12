@@ -120,6 +120,24 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
       end
     end
 
+    it "approves with network when the human runs :LainApprove network on a call that reads secrets" do
+      frontend = described_class.new(forks: no_forks, channel:, socket_path: @socket)
+      secret = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+      reading = ->(queue, effect) { queue.call(effect, Struct.new(:disclosure).new(secret)) }
+
+      frontend.run do |handle|
+        settled = with_parked_approval(handle, ask: reading,
+                                               containment: Lain::Confine::Sandbox::Containment::ABLE) do
+          wait_until_editor { buffer_lines("lain://approval").join.include?("pwd") }
+          inspector.command("buffer lain://approval")
+          inspector.command("LainApprove network")
+        end
+
+        expect(settled).to be(true)
+        expect(decisions.last).to include("verdict" => "approve", "network" => true)
+      end
+    end
+
     # `y` is a GLOBAL command's keymap only inside this buffer, and the command
     # behind it reads the CURRENT window's cursor -- so typed elsewhere it must
     # answer nothing rather than whatever the list holds on that line. The
@@ -660,9 +678,11 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # working deny answers, so a hung run must be distinguishable from a decided
   # one. `:unsettled` is that third answer.
   def with_parked_approval(frontend, input: { "command" => "pwd" }, grace: 8,
-                           ask: ->(queue, effect) { queue.call(effect, nil) })
+                           ask: ->(queue, effect) { queue.call(effect, nil) },
+                           containment: Lain::Confine::Sandbox::Containment::OFF)
     settled = Thread::Queue.new
     effect = ApprovalSeamSupport::Effect.new("bash", input, "tu_1")
+    @containment = containment
     worker = Thread.new { serve_approval(frontend, effect, settled, grace, ask) }
     yield
     Timeout.timeout(20) { settled.pop }
@@ -678,7 +698,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
   # fail-closed denial can never stand in for a deny the human pressed.
   def serve_approval(frontend, effect, settled, grace, ask)
     Sync do |task|
-      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60)
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 60, containment: @containment)
       surfaces = approval_surfaces(task, frontend, queue)
       gated = task.async { ask.call(queue, effect) }
       settled.push(within(task, grace) { gated.finished? } ? gated.wait : :unsettled)

@@ -1449,6 +1449,50 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       end
     end
 
+    describe "whether a human's plain approval of a secret-bearing call can run contained" do
+      let(:workspace) { Lain::CLI::Arms::OFF.with(confine: :workspace) }
+      let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }
+
+      def containment(arms, **over)
+        build_with(options, arms:, probe:, fence:, **over).tap { _1.build(recorder, ask_human:) }
+                                                          .board_inputs.fetch(:containment)
+      end
+
+      context "when the box offers every layer and a private network" do
+        let(:runner) { netted }
+
+        it "says it can, under --confine workspace and under --confine reader" do
+          expect([containment(workspace), containment(reader)].map(&:able?)).to eq([true, true])
+        end
+
+        it "says it cannot when bash runs in a container, which the sandbox never wraps" do
+          expect(containment(workspace, exec: Lain::Exec::Docker.new(image: "img:1", project: "/srv/project")))
+            .to have_attributes(confines?: true, able?: false)
+        end
+      end
+
+      it "says it cannot, and why, when the box gives no private network" do
+        expect(containment(workspace)).to have_attributes(confines?: true, able?: false)
+      end
+
+      context "when the box cannot build the sandbox" do
+        let(:runner) { bare_box }
+
+        it "says it cannot" do
+          expect(containment(workspace)).to have_attributes(confines?: true, able?: false)
+        end
+      end
+
+      it "says confinement is off under --confine off" do
+        expect(containment(Lain::CLI::Arms::OFF).note).to end_with("because confinement is off")
+      end
+
+      it "says bash is not sandboxed under --confine classes" do
+        expect(containment(Lain::CLI::Arms::OFF.with(confine: :classes)))
+          .to have_attributes(confines?: false, note: end_with("because bash is not sandboxed"))
+      end
+    end
+
     %i[off classes].each do |arm|
       it "builds no sandbox under --confine #{arm}" do
         exec = bash_exec(built(Lain::CLI::Arms::OFF.with(confine: arm)))

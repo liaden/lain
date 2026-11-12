@@ -166,6 +166,74 @@ RSpec.describe Lain::Confine::Sandbox do
     end
   end
 
+  describe "#containment" do
+    let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }
+
+    it "can contain a call when the box offers every layer and a private network" do
+      netting = Lain::Confine::Probe.new(fence:, journal:, runner: netted, ptrace_scope: -> { "0" })
+      able = described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: netting, fence:, journal:)
+
+      expect(able.containment).to have_attributes(confines?: true, able?: true)
+    end
+
+    it "cannot contain a call, saying why, when the box gives no private network" do
+      expect(sandbox.containment).to have_attributes(confines?: true, able?: false,
+                                                     because: a_string_including("private network"))
+    end
+
+    it "cannot contain a call, naming the missing layers, when the box lacks one" do
+      bare = Lain::Confine::Probe.new(fence:, journal:, runner: ->(_argv) { ["", false] }, ptrace_scope: -> { "0" })
+      lacking = described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: bare, fence:, journal:)
+
+      expect(lacking.containment).to have_attributes(able?: false, because: a_string_including("bwrap"))
+    end
+
+    it "says what a plain approval does in each state, on the row and at the answer" do
+      netting = Lain::Confine::Probe.new(fence:, journal:, runner: netted, ptrace_scope: -> { "0" })
+      able = described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: netting, fence:, journal:)
+      states = [able.containment, sandbox.containment, described_class::Containment.off("bash is not sandboxed")]
+
+      expect(states.map { [_1.note, _1.choice] }).to match(
+        [[nil, a_string_including("y runs it contained, without network", "cannot be read")],
+         [a_string_including("lain cannot contain it here", "private network"),
+          "y will not run it; network runs it unconfined, with network"],
+         ["it will run unconfined, with network, because bash is not sandboxed", nil]]
+      )
+    end
+  end
+
+  describe "what a plain approval of a fetch says about the network" do
+    let(:fetch) { [%w[cargo fetch .env]] }
+    let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }
+
+    def able(workspace:)
+      netting = Lain::Confine::Probe.new(fence:, journal:, runner: netted, ptrace_scope: -> { "0" })
+      described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: netting, fence:, journal:, workspace:)
+                     .containment
+    end
+
+    it "names the ports a workspace fetch may be granted, and never says it runs without network" do
+      choice = able(workspace: true).over(fetch).choice
+
+      expect(choice).to include("TCP ports 443")
+      expect(choice).not_to include("without network")
+    end
+
+    it "says without network for a reader call, which no grant reaches" do
+      choice = able(workspace: false).over(fetch).choice
+
+      expect(choice).to include("without network")
+      expect(choice).not_to include("443")
+    end
+
+    it "says without network for a workspace call that no build tool's list accepts" do
+      choices = [[%w[git status]], [%w[git fetch --upload-pack=x]], [%w[cargo fetch], %w[cat]], []]
+                .map { able(workspace: true).over(_1).choice }
+
+      expect(choices.map { [_1.include?("without network"), _1.include?("443")] }).to all(eq([true, false]))
+    end
+  end
+
   describe ".degraded" do
     it "journals the sandbox as unavailable for the reason given and answers the exec it was handed" do
       exec = described_class.degraded(inner, journal:, requirer: "Spec", because: "no box")

@@ -116,4 +116,38 @@ RSpec.describe Lain::Approval::Reply do
   it "keeps a note led by punctuation whole" do
     expect(parsed("approve, ! x")).to eq(verdict::Approve.new(note: "! x"))
   end
+
+  describe "the network answer" do
+    def offered(line) = described_class.parse(line, network: true)
+
+    it "reads network and approve network as an approval with network" do
+      expect(%w[network NETWORK].push("approve network").map { offered(_1) })
+        .to all(eq(verdict::Approve.new(network: true)))
+    end
+
+    it "takes a note after a separator, as an approval does" do
+      expect(offered("network, push to origin")).to eq(verdict::Approve.new(note: "push to origin", network: true))
+    end
+
+    it "takes a note only after a comma, colon or dash, and nothing after a bare space or a question" do
+      expect(["network: push", "network - push", "approve network, push"].map { offered(_1) })
+        .to all(eq(verdict::Approve.new(note: "push", network: true)))
+      expect(["network please", "network?", "approve network please"].map { offered(_1) })
+        .to all(be_a(described_class::Unrecognised))
+    end
+
+    it "never reads a note as consent to network" do
+      expect(offered("approve: network please")).to eq(verdict::Approve.new(note: "network please"))
+    end
+
+    it "is unrecognised where it is not offered, as at an epic gate" do
+      expect(["network", "approve network"].map { parsed(_1) }).to all(be_a(described_class::Unrecognised))
+    end
+
+    it "renders a form that reads back where it is offered" do
+      [verdict::Approve.new(network: true), verdict::Approve.new(note: "a, b", network: true)].each do |chosen|
+        expect(offered(described_class.render(chosen))).to eq(chosen)
+      end
+    end
+  end
 end

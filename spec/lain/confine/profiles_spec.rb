@@ -768,6 +768,16 @@ RSpec.describe Lain::Confine::Profiles do
             .to eq([false, true])
         end
 
+        it "keeps a grant's ports for a contained approval of a fetch, off the private network" do
+          answers["lain-fence"] = ["{\"abi\":6,\"private_net\":false,\"rights\":{},\"skipped\":[]}\n", true]
+          approved = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved",
+                                                              authority: :human, contained: true)
+          fetch = Lain::Confine::Request.new(ruling: approved, executables: [git], argv: [%w[git fetch origin]],
+                                             cwd: root, root:, tool_use_id: "toolu_1")
+
+          expect(profiles.for(fetch)).to have_attributes(name: :grant, connect_ports: [443], private_net: false)
+        end
+
         it "grants a rule's or bypass's approval too, the rungs that earn the workspace profile" do
           expect(%w[rules bypass].map { profile_of(%w[git fetch origin], git, rung: _1).name }).to eq(%i[grant grant])
         end
@@ -1379,6 +1389,41 @@ RSpec.describe Lain::Confine::Profiles do
         workspace = described_class.new(masks:, probe:, home:, root:, workspace: true,
                                         tmpdir: File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) })
         expect(workspace.for(request(ruling("auto")))).to have_attributes(name: :workspace, trace: false)
+      end
+    end
+
+    describe "a human's approval of a secret-bearing call without network", :seam do
+      let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+      let(:netted) { ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], private_net: false })}\n", true] }
+
+      def human(contained: false, network: false)
+        Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority: :human,
+                                                 contained:, network:)
+      end
+
+      it "runs under the reader profile with a private network when the workspace switch is off" do
+        answers["lain-fence"] = netted
+
+        expect(profiles.for(request(human(contained: true))))
+          .to have_attributes(name: :reader, private_net: true, connect_ports: [], confined?: true)
+      end
+
+      it "runs under the workspace profile with a private network when the workspace switch is on" do
+        answers["lain-fence"] = netted
+        workspace = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+        expect(workspace.for(request(human(contained: true)))).to have_attributes(name: :workspace, private_net: true)
+      end
+
+      it "is refused where the box cannot give the call a private network" do
+        expect { profiles.for(request(human(contained: true))) }
+          .to raise_error(described_class::Uncontainable) { expect(_1.profile).to eq(:reader) }
+      end
+
+      it "stays traced and unconfined when the human chose network" do
+        answers["lain-fence"] = netted
+
+        expect(profiles.for(request(human(network: true)))).to eq(Lain::Confine::Profile::TRACED)
       end
     end
   end

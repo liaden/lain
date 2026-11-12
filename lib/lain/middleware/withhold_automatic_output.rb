@@ -101,19 +101,12 @@ module Lain
       # Mutable for one write from each, and built per call, so parallel calls
       # never share one.
       class Carried < SimpleDelegator
-        # The ruling of a call no ladder ruled on, which allowed nothing.
-        module Unruled
-          def self.allow? = false
-          def self.human? = false
-          def self.rule = nil
-        end
-
         attr_reader :ruling, :held
 
         def initialize(context, barred:)
           super(context)
           @barred = barred
-          @ruling = Unruled
+          @ruling = Confine::Request::UNRULED
           @held = Tool::Spill::Held::None
         end
 

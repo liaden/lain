@@ -90,7 +90,7 @@ module Lain
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
       Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable,
-                           :builds)
+                           :builds, :contained, :network)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -150,8 +150,12 @@ module Lain
         #
         # `builds` carries a rule's word that its allow runs a build, which the sandbox reads to choose a
         # profile that can write.
+        #
+        # `contained` is a surface's plain allow of a call that reads secrets, which the sandbox runs confined
+        # with no network beyond a build tool's granted ports; `network` is a human's choice to run it unconfined.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
-                       said: nil, rule: nil, note: nil, liftable: false, builds: false)
+                       said: nil, rule: nil, note: nil, liftable: false, builds: false, contained: false,
+                       network: false)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -161,7 +165,8 @@ module Lain
 
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
-                note: spoken(note), liftable: liftable == true, builds: builds == true)
+                note: spoken(note), liftable: liftable == true, builds: builds == true,
+                contained: contained == true, network: network == true)
         end
 
         def allow? = verdict == :allow
@@ -175,11 +180,14 @@ module Lain
         def final? = final
         def liftable? = liftable
         def builds? = builds
+        def contained? = contained
+        def network? = network
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
             "faulted" => fault, "authority" => authority.to_s, "final" => final }
-            .merge(note ? { "note" => note } : {}).freeze
+            .merge(note ? { "note" => note } : {}, contained ? { "contained" => true } : {},
+                   network ? { "network" => true } : {}).freeze
         end
 
         private
@@ -897,6 +905,10 @@ module Lain
         POSTPONED = "a human postponed this call"
         LAPSED = "the window closed with no answer, and the silence rule postponed this call"
         POSTPONED_TOLD = "postponed%<by>s%<said>s; issue it again later, when it will park for an answer"
+        UNCONTAINED = "a surface approved this call, but lain cannot contain it here"
+        UNCONTAINED_TOLD = "not run: it was approved, but it reads secrets and lain cannot run it contained " \
+                           "here (%<because>s); it runs only if the human answers network, which runs it " \
+                           "unconfined, with network"
 
         # The SAME object `/approve` drains, readable here so "the gate asks
         # through the session's one queue" stays an identity a caller can check
@@ -921,7 +933,7 @@ module Lain
           pending = @queue.adjudicate(effect, context)
           authority = pending.authority
           surface = pending.surface
-          return Ruling.allow(rung: NAME, because: "#{APPROVED} (#{surface})", authority:) if pending.approved?
+          return approved(pending) if pending.approved?
           return postponed(pending) if pending.postponed?
 
           Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:,
@@ -929,6 +941,21 @@ module Lain
         end
 
         private
+
+        def approved(pending)
+          return uncontained(pending) if pending.contained? && !pending.containment.able?
+
+          Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority: pending.authority,
+                       contained: pending.contained?, network: pending.network?)
+        end
+
+        # Liftable, since the next issue parks again and the human may then answer network.
+        def uncontained(pending)
+          because = pending.containment.because
+          Ruling.deny(rung: NAME, because: "#{UNCONTAINED} (#{pending.surface}): #{because}",
+                      authority: pending.authority, final: true, liftable: true,
+                      told: format(UNCONTAINED_TOLD, because:))
+        end
 
         # Final so the model is not told a retry now could help, and liftable
         # because the next issue of the call parks for the human again.

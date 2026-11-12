@@ -446,5 +446,12 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
 
       expect([seen.ruling.allow?, seen.ruling.human?, seen.ruling.rule]).to eq([false, false, nil])
     end
+
+    it "is the ruling that allowed nothing, which contains nothing either, for a call the gate does not judge" do
+      ungated = instance_double(Lain::Tools::Bash, held?: false)
+
+      expect(through_gate(Lain::Middleware::Gate::ApproveAll.new, ungated).ruling)
+        .to be(Lain::Confine::Request::UNRULED).and have_attributes(contained?: false)
+    end
   end
 end

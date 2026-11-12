@@ -12,6 +12,7 @@ module Lain
         attribute :created_sealed, default: -> { [] }
         attribute :kept_tmpdir
         attribute :granted, default: -> { [] }
+        attribute :network, default: -> { false }
       end
     end
 
@@ -28,12 +29,17 @@ module Lain
     #
     # `granted` names the programs a parsed command was handed as grants that the
     # profile lets run, on the record written before the call.
-    Sandbox = Data.define(:tool_use_id, :profile, :trace, :refused, :created_sealed, :kept_tmpdir, :granted) do
+    #
+    # `network` says a human chose to let a call that reads secrets reach the
+    # network, which is why it ran unconfined.
+    Sandbox = Data.define(:tool_use_id, :profile, :trace, :refused, :created_sealed, :kept_tmpdir, :granted,
+                          :network) do
       include Journalable
 
-      def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [])
+      def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [],
+                     network: false)
         super(**Carriers::Sandbox.settle!(tool_use_id:, profile: profile&.to_sym, trace:, refused:, created_sealed:,
-                                          kept_tmpdir:, granted:))
+                                          kept_tmpdir:, granted:, network: network == true))
       end
     end
   end

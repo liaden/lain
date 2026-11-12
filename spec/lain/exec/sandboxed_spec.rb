@@ -96,6 +96,65 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect([inner.calls, capture.exit_status, recorded("sandbox").sole.refused]).to eq([[], 126, [planted]])
     end
 
+    describe "a human's approval of a call that reads secrets" do
+      def human(contained: false, network: false)
+        ruled = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority: :human,
+                                                         contained:, network:)
+        Lain::Confine::Request.new(ruling: ruled, executables: [], cwd: root, root:, tool_use_id: "toolu_1")
+      end
+
+      it "records that the human chose network" do
+        run(confinement: human(network: true))
+
+        expect(recorded("sandbox").sole).to have_attributes(network: true)
+      end
+
+      it "records no choice of network on a contained call" do
+        run(confinement: human(contained: true))
+
+        expect(recorded("sandbox").sole).to have_attributes(network: false)
+      end
+
+      it "tells the model a contained call ran with masked files hidden and no network" do
+        capture = run(confinement: human(contained: true))
+
+        expect(capture.stderr).to include("files lain masks cannot be read in the sandbox", "it had no network",
+                                          "read_file")
+      end
+
+      it "adds nothing to an ordinary call" do
+        expect(run.stderr).not_to include(described_class::CONTAINED)
+      end
+
+      context "when the contained call earned a build tool's ports" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(connect_ports: [443, 80]) }
+
+        it "names the ports it could reach rather than saying it had no network" do
+          capture = run(confinement: human(contained: true))
+
+          expect(capture.stderr).to include("files lain masks cannot be read in the sandbox", "443, 80", "read_file")
+          expect(capture.stderr).not_to include("no network", "without network")
+        end
+      end
+
+      context "when the profiles cannot contain the call" do
+        let(:profiles) do
+          Class.new do
+            def for(_request) = raise(Lain::Confine::Profiles::Uncontainable.new(profile: :reader))
+          end.new
+        end
+
+        it "runs nothing, and the refusal names the network answer" do
+          capture = run(confinement: human(contained: true))
+
+          expect(inner.calls).to be_empty
+          expect(capture.stderr).to include(described_class::UNCONTAINABLE)
+          expect(described_class::UNCONTAINABLE).to include("network")
+          expect(recorded("sandbox").sole).to have_attributes(profile: :reader, refused: [])
+        end
+      end
+    end
+
     describe "the grants its record names" do
       let(:tool) { File.join(home, ".cargo/bin/rg") }
       let(:profile) { Lain::Confine::Profile.reader(root:, home:, exec_files: [tool]) }

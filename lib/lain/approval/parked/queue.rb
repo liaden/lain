@@ -177,7 +177,7 @@ module Lain
         # is held under and what the journal keeps, and `label` is what a surface shows.
         class Pending
           attr_reader :identity, :tool, :tool_use_id, :input, :outstanding, :surface, :decision, :latency, :cwd,
-                      :within, :timeout, :reason, :authority, :spawn
+                      :within, :timeout, :reason, :authority, :spawn, :containment
 
           # Defaulting here is NOT the ledger's no-default rule bent: a defaulted
           # LEDGER lets a forgotten injection become a second ledger whose
@@ -201,12 +201,16 @@ module Lain
           # gate counted directory names from, see {Sensitivity::Policy.base_of}.
           # `file_facts` is what the path's landing is read off at construction.
           # `named` is the paths a bash call names, as its stack read them; absent,
-          # they are read off the command when first asked.
+          # they are read off the command when first asked. `containment` is what
+          # a plain approval of this call does when it reads secrets; a call that
+          # reads none is handed the unstated one, and is offered no network answer.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
-                         silence: Silence::DENY, spawn: nil, named: nil)
+                         silence: Silence::DENY, spawn: nil, named: nil,
+                         containment: ::Lain::Confine::Sandbox::Containment::NONE)
             @spawn = spawn
+            @containment = containment
             @timeout = timeout
             @silence = silence
             @reasons = notes.map { Reason.of(_1) }.freeze
@@ -217,11 +221,17 @@ module Lain
             place(cwd, within, file_facts)
             @outstanding = outstanding || Outstanding::NONE
             @identity = identity
+            begin_asking(clock)
+          end
+
+          def begin_asking(clock)
             @clock = clock
             @asked_at = clock.call
             @promise = Promise.new
             @offered = nil
+            @network = false
           end
+          private :begin_asking
 
           # @return [String, nil] where the path this call names lands when that
           #   differs, read off the facts the queue was built over at park time
@@ -268,8 +278,9 @@ module Lain
           # at all, which is how that stays true.
           #
           # A deny's or a hold's note is the human's own words, which the model
-          # reads as the last clause of its tool result. Flattened to one line
-          # with no control bytes, so it cannot open a line or a sequence of its own.
+          # reads as the last clause of its tool result; an approval's is kept
+          # apart, for the journal only. Flattened to one line with no control
+          # bytes, so it cannot open a line or a sequence of its own.
           #
           # `authority` defaults to automatic so that a surface which forgets to
           # declare fails safe: its allow is suppressed over a fault like any
@@ -293,13 +304,28 @@ module Lain
             @surface = surface.to_s
             @authority = authority
             @decision = DECISIONS.fetch(verdict.class)
+            @network = verdict.network?
             @reason = flattened(verdict.note) unless verdict.approved?
+            @approval_note = flattened(verdict.note) if verdict.approved?
             @latency = @clock.call - @asked_at
             @promise.resolve(@decision)
           end
           private :resolve
 
           def humans_only? = @humans_only
+
+          # @return [Boolean] whether a surface offers the network answer: the call reads secrets and the
+          #   session confines such a call
+          def offers_network? = containment.confines?
+
+          # @return [Boolean] whether the approval chose network
+          def network? = @network
+
+          # Any surface's, since a machine's approval is no more consent to network than a person's plain one.
+          #
+          # @return [Boolean] whether an approval is to run the call contained, with no network beyond a build
+          #   tool's granted ports
+          def contained? = approved? && offers_network? && !network?
 
           # @return [String] what the journal and the surfaces call this pending's kind
           def kind = "tool"
@@ -466,7 +492,9 @@ module Lain
           def to_journal
             { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
               "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
-              "latency" => latency }.merge(reason ? { "reason" => reason } : {}, digest_entry, kind_entry)
+              "latency" => latency }.merge(reason ? { "reason" => reason } : {}, digest_entry, kind_entry,
+                                           network? ? { "network" => true } : {},
+                                           @approval_note ? { "note" => @approval_note } : {})
           end
 
           private
@@ -537,9 +565,16 @@ module Lain
         # @param file_facts [FileFacts::Live, FileFacts::Recorded] where a denied path lands, from
         #   {Sensitivity::Policy#file_facts}
         # @param silence [Silence::Hold, Silence::Deny] what an unanswered window settles as
+        # @param containment [Confine::Sandbox::Containment] whether the session can run a call that reads secrets
+        #   contained, which a plain approval of one does; unstated, the row says nothing of it
+        # @param verdict [Shell::Verdict] the session's one shell verdict, which decides whether bash runs a call
+        #   as argv, so whether a build tool's ports could be granted
         def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
-                       wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE, silence: Silence::DENY)
+                       wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE, silence: Silence::DENY,
+                       containment: Confine::Sandbox::Containment::NONE, verdict: ::Lain::Shell::Verdict.new(home:))
           @journal = journal
+          @containment = containment
+          @verdict = verdict
           @silence = silence
           @home = home
           @file_facts = file_facts
@@ -656,6 +691,9 @@ module Lain
         # @return [FileFacts::Live, FileFacts::Recorded] what a remembered denial's landing is read off
         attr_reader :file_facts
 
+        # @return [Confine::Sandbox::Containment] what a plain approval of a call that reads secrets does
+        attr_reader :containment
+
         private
 
         # Journaled BEFORE the pending is parked, never between the two mutations
@@ -663,20 +701,34 @@ module Lain
         # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
         # yield point between them.
         def admit(effect, context, outstanding)
+          disclosure = Disclosure.in(context)
+          containment = disclosure.secret_bearing? ? @containment.over(term_argvs(effect, context)) : Confine::Sandbox::Containment::NONE
           pending = Pending.new(effect:, identity: Queue.identity_for(context, @requester), clock: @clock,
                                 timeout: @timeout, wall: @wall, outstanding:,
                                 humans_only: context.respond_to?(:automatic_approval_barred?) &&
                                              context.automatic_approval_barred?,
-                                notes: notes_of(context), named: named_of(effect, context),
+                                notes: notes_of(context, disclosure), named: named_of(effect, context),
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
                                 file_facts: @file_facts, silence: @silence,
-                                spawn: context.respond_to?(:spawn) ? context.spawn : nil)
+                                spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:)
           park(pending)
         end
 
-        def notes_of(context)
-          [*(context.parked_because if context.respond_to?(:parked_because)), *Disclosure.in(context).notes]
+        # The containment stays off the reasons: the phone shows them and cannot answer network.
+        def notes_of(context, disclosure)
+          [*(context.parked_because if context.respond_to?(:parked_because)), *disclosure.notes]
+        end
+
+        # Bash runs argv only for a term the session's verdict allows, and a build grant needs argv, so this
+        # decides as {Tools::Bash} does, off the same verdict and the same parse.
+        def term_argvs(effect, context)
+          command = effect.input["command"] if effect.name == BASH
+          return [] unless command.is_a?(String)
+
+          parsed = ::Lain::Middleware::ParsedCommand.carried(command, context)
+          decision = parsed ? @verdict.of(parsed) : @verdict.call(command)
+          decision.allow? ? decision.term.stages.map(&:argv) : []
         end
 
         def named_of(effect, context)

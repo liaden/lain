@@ -119,6 +119,8 @@ module Lain
       #   the judge approves runs under; the toolset's to say, since the arm alone does not build the sandbox
       # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] the judge's approvals this session, which every
       #   judged rung settles an exact repeat by; none by default
+      # @param containment [Confine::Sandbox::Containment] whether the toolset's bash can run a call that reads
+      #   secrets contained, which the queue's rows say and a plain approval needs; unstated by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
       # @option options [String] :approval the session starts at this approval
@@ -133,10 +135,10 @@ module Lain
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
                    denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
                    masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT,
-                   memo: Approval::JudgeMemo.off)
+                   memo: Approval::JudgeMemo.off, containment: Confine::Sandbox::Containment::NONE)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
-            request:, secrets:, denied_tools:, stops:, masks:, memo:,
+            request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
       end
@@ -248,6 +250,7 @@ module Lain
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
       # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] as on {.for}; none by default
       # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] as on {.for}; none by default
+      # @param containment [Confine::Sandbox::Containment] as on {.for}; unstated by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -257,7 +260,8 @@ module Lain
                      display: Channel::Null.instance, arms: Arms::OFF, request: Approval::Judge::Unrequested,
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                      stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
-                     silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off)
+                     silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off,
+                     containment: Confine::Sandbox::Containment::NONE)
         @attended = attended
         @masks = masks
         @display = display
@@ -266,7 +270,7 @@ module Lain
         hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = queue_over(sensitivity, approval_timeout, silence) if @attended
+        @approvals = queue_over(sensitivity, approval_timeout, silence, containment) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
@@ -507,9 +511,9 @@ module Lain
       def faults = Approval::Escalation::Faults.new(@journal)
 
       # Over the path policy's own file facts, so a remembered denial lands where the gate's paths do.
-      def queue_over(sensitivity, timeout, silence)
+      def queue_over(sensitivity, timeout, silence, containment)
         Approval::Parked::Queue.new(journal: @journal, timeout:, home: sensitivity.home,
-                                    file_facts: sensitivity.file_facts, silence:)
+                                    file_facts: sensitivity.file_facts, silence:, containment:, verdict: @verdict)
       end
 
       # Every launch journals the mode it started in: the session header

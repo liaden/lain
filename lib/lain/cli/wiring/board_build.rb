@@ -61,6 +61,8 @@ module Lain
         # @param stops [Lain::Tripwire::Stops, Lain::Tripwire::Stops::None] who the tripwire stopped
         # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] the workspace sandbox a call
         #   the judge approves runs under, as {ToolsetBuild#board_inputs} answers; none by default
+        # @param containment [Confine::Sandbox::Containment] whether bash can run a call that reads secrets
+        #   contained, as {ToolsetBuild#board_inputs} answers; unstated by default
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
         # @return [Switchboard]
@@ -69,7 +71,7 @@ module Lain
                 config: Config.load(root: project.root), display: Channel::Null.instance,
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
                 child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None,
-                masks: Lain::Approval::Judgement::Unmasked,
+                masks: Lain::Approval::Judgement::Unmasked, containment: Lain::Confine::Sandbox::Containment::NONE,
                 **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
@@ -87,7 +89,7 @@ module Lain
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
-                          request:, secrets: secrets(project:, sensitivity:, child_env:),
+                          request:, secrets: secrets(project:, sensitivity:, child_env:), containment:,
                           denied_tools: config.approval.deny_tools, stops:, masks:, memo: judge_memo(config))
         end
 

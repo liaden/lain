@@ -256,6 +256,20 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
       expect(notes).to contain_exactly(a_string_including("auto-denies in 0:01"))
     end
 
+    context "when the parked call reads secrets the box cannot contain" do
+      let(:queue) do
+        Lain::Approval::Parked::Queue.new(journal:, timeout: 0.1,
+                                          containment: Lain::Confine::Sandbox::Containment.unable("no bwrap"))
+      end
+
+      it "says in the announcement why the call would not run contained" do
+        reads_env = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+        fan_out(attached: editor, context: Struct.new(:identity, :disclosure).new(Lain::Requester.main, reads_env))
+
+        expect(notes).to contain_exactly(a_string_including("lain cannot contain it here (no bwrap)"))
+      end
+    end
+
     # Scenario: the prompts say what silence does
     context "when the project leaves silence unset" do
       let(:queue) do

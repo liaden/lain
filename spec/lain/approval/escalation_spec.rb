@@ -431,6 +431,88 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  describe "a human's approval of a call that reads secrets" do
+    let(:secret) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+    let(:context) { Struct.new(:disclosure).new(secret) }
+    let(:containment) { Lain::Confine::Sandbox::Containment::ABLE }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1, containment:) }
+
+    def answered(verdict, context: self.context, authority: :human)
+      Sync do |task|
+        ruled = task.async { described_class::Surfaces.new(queue).call(effect, context) }
+        task.with_timeout(1) { queue.dequeue }.decide(verdict, surface: "tty", authority:)
+        task.with_timeout(1) { ruled.wait }
+      end
+    end
+
+    it "is contained, with no network, when the human answered a plain approval" do
+      expect(answered(Lain::Approval::Verdict::Approve.new))
+        .to have_attributes(verdict: :allow, contained?: true, network?: false)
+    end
+
+    it "is contained when a machine surface approved it, as the secret oracle may" do
+      expect(answered(Lain::Approval::Verdict::Approve.new, authority: :automatic))
+        .to have_attributes(verdict: :allow, contained?: true, network?: false)
+    end
+
+    it "journals that it ran contained, and says nothing of containment for an ordinary allow" do
+      plain = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved")
+
+      expect(answered(Lain::Approval::Verdict::Approve.new).record).to include("contained" => true)
+      expect(plain.record).not_to have_key("contained")
+    end
+
+    it "runs as a human approval does today when the human chose network" do
+      expect(answered(Lain::Approval::Verdict::Approve.new(network: true)))
+        .to have_attributes(verdict: :allow, contained?: false, network?: true)
+    end
+
+    it "is contained when a note asks for network, which is never consent to it" do
+      expect(answered(Lain::Approval::Verdict::Approve.new(note: "network please")))
+        .to have_attributes(contained?: true, network?: false)
+    end
+
+    it "is not contained when the call reads no secret and lain could read it" do
+      plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
+
+      expect(answered(Lain::Approval::Verdict::Approve.new, context: plain)).to have_attributes(contained?: false)
+    end
+
+    it "journals the human's choice of network on the escalation record" do
+      Sync do |task|
+        ruled = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, context) }
+        task.with_timeout(1) { queue.dequeue }
+            .decide(Lain::Approval::Verdict::Approve.new(network: true), surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
+
+      expect(rulings.find { _1["rung"] == "surfaces" }).to include("network" => true)
+    end
+
+    context "when the box cannot contain the call" do
+      let(:containment) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
+
+      it "refuses a plain approval, naming why and the network answer" do
+        ruling = answered(Lain::Approval::Verdict::Approve.new)
+
+        expect(ruling).to have_attributes(verdict: :deny, authority: :human, final?: true, liftable?: true)
+        expect(ruling.told).to include("the box lacks bwrap", "network")
+      end
+
+      it "runs the call when the human chose network" do
+        expect(answered(Lain::Approval::Verdict::Approve.new(network: true))).to have_attributes(verdict: :allow)
+      end
+    end
+
+    context "when confinement is off" do
+      let(:containment) { Lain::Confine::Sandbox::Containment::OFF }
+
+      it "runs a plain approval as today, since nothing could contain it" do
+        expect(answered(Lain::Approval::Verdict::Approve.new)).to have_attributes(verdict: :allow, contained?: false)
+      end
+    end
+  end
+
   # Scenario: the ladder remains fail-closed
   describe "fail-closed" do
     it "denies a call that reaches the timeout with no answer from any surface" do

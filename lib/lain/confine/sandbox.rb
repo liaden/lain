@@ -8,6 +8,81 @@ module Lain
     # bench arm build it the same way, so they cannot come to confine differently.
     class Sandbox
       LAYERS = %i[bwrap landlock].freeze
+      NO_PRIVATE_NET = "the box cannot give a call a private network"
+
+      Containment = Data.define(:state, :because, :grants, :ports)
+
+      # Whether a plain approval of a call that reads secrets can run it
+      # contained: under a confined profile with no network beyond a build
+      # tool's granted ports. `:able` can,
+      # `:unable` cannot, so such an approval is refused until the human
+      # chooses network, and `:off` confines nothing, by the session's choice.
+      # `:unstated` is a queue nobody told, which says nothing on the row.
+      # `grants` is whether a contained call runs under the workspace profile,
+      # whose build tools keep their ports, and `ports` the ones a parked call could earn.
+      class Containment
+        NETWORK_CHOICE = "network runs it unconfined, with network"
+        ABLE_CHOICE = "y runs %<call>s contained, without network, where files lain masks cannot be read; " \
+                      "#{NETWORK_CHOICE}".freeze
+        PORTED_CHOICE = "y runs %<call>s contained, where files lain masks cannot be read, and its build tool may " \
+                        "reach the host's network on TCP ports %<ports>s; #{NETWORK_CHOICE}".freeze
+        UNABLE_CHOICE = "y will not run %<call>s; #{NETWORK_CHOICE}".freeze
+        UNABLE_NOTE = "lain cannot contain it here (%<because>s)"
+        OFF_NOTE = "it will run unconfined, with network, because %<because>s"
+        CONFINEMENT_OFF = "confinement is off"
+
+        # @param because [String] why the box cannot contain a call
+        # @return [Containment]
+        def self.unable(because) = new(state: :unable, because:)
+
+        # @param because [String] why the session confines nothing
+        # @return [Containment]
+        def self.off(because) = new(state: :off, because:)
+
+        # @param grants [Boolean] whether the session can grant a contained call its build tool's ports
+        # @return [Containment]
+        def self.able(grants:) = grants ? new(state: :able, grants: true) : ABLE
+
+        def initialize(state:, because: nil, grants: false, ports: [])
+          super(state:, because: because&.then { -_1.to_s }, grants: grants == true, ports: ports.dup.freeze)
+        end
+
+        # @param argvs [Array<Array<String>>] the parked call's stages as the term arm would run them
+        # @return [Containment] this one, with the ports that call could be granted where the session grants any
+        def over(argvs) = able? && grants ? with(ports: Profiles.grantable_ports(argvs)) : self
+
+        # @return [Boolean] whether a plain approval of a secret-bearing call is meant to run contained
+        def confines? = %i[able unable].include?(state)
+
+        # @return [Boolean] whether it can
+        def able? = state == :able
+
+        # @return [String, nil] why the call does not run contained, for the row; nil when it does or nothing
+        #   was stated, since {#choice} then says it
+        def note
+          case state
+          when :unable then format(UNABLE_NOTE, because:)
+          when :off then format(OFF_NOTE, because:)
+          end
+        end
+
+        # @param call [String] how the answer names the call, which a list of several rows must spell out
+        # @return [String, nil] what y and network do, where the network answer is offered
+        def choice(call = "it")
+          case state
+          when :able then ports.empty? ? format(ABLE_CHOICE, call:) : ported(call)
+          when :unable then format(UNABLE_CHOICE, call:)
+          end
+        end
+
+        ABLE = new(state: :able)
+        OFF = off(CONFINEMENT_OFF)
+        NONE = new(state: :unstated)
+
+        private
+
+        def ported(call) = format(PORTED_CHOICE, call:, ports: ports.join(", "))
+      end
 
       # @param probe [Probe]
       # @return [Array<Symbol>] the layers the box does not offer
@@ -61,6 +136,16 @@ module Lain
         profiles = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks,
                                 **@profiling)
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
+      end
+
+      # @return [Containment] whether this box can run a call contained, with no network beyond a build tool's ports
+      def containment
+        lacking = self.class.lacking(@probe)
+        return Containment.unable(reason_for(lacking)) if lacking.any?
+
+        return Containment.unable(NO_PRIVATE_NET) unless @probe.supports?(:private_net)
+
+        Containment.able(grants: @profiling[:workspace])
       end
 
       # Starts the mask classification of a sandbox that was built.

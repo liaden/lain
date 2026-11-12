@@ -1151,6 +1151,14 @@ and a pasted block of several lines whatever its first line says, leaves the app
 prompt, with one line saying `a y or n answers the approval`. A prompt that lapses on its clock tells the model so
 (`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
 
+A call that reads secrets (a file holding a sensitive region, or files lain cannot name or scan whole) runs contained
+on a plain `y`, where files lain masks cannot be read and it has no network, and its `[y/N/network]` prompt says so.
+Under `--confine workspace`, a build tool's fetch that earns its ports (such as `cargo fetch`) keeps them while
+contained, and the prompt names those ports instead of saying it has no network. Answer `network` (or `approve network`, or `:LainApprove network` in nvim) to run it unconfined as before, with
+network, which a `git push` needs. A note never chooses network. Where lain cannot contain the call, a plain `y` is
+refused and the row says to answer `network`; with `--confine off` or `--confine classes` the row says the call will
+run unconfined. The phone keeps approve, hold and deny, and its approve runs contained.
+
 ### /deny
 
 `/deny <reason>` refuses a parked call and hands your reason to the agent as the last clause of its tool result. With 1 call

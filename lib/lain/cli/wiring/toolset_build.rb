@@ -31,6 +31,8 @@ module Lain
         # ({Approval::Parked::Queue}'s `requester:`) without claiming an identity the
         # spawn never took.
         SPAWN_REQUESTER = Requester::UNNAMED
+        UNWRAPPED = "bash runs in a container lain does not confine"
+        UNSANDBOXED = "bash is not sandboxed"
 
         # The role the chat's own subagent spawns, named ONCE: what it may do
         # (its `only`-set, through {Backend#spawn_policy}) and what a human is
@@ -369,14 +371,27 @@ module Lain
 
         # What the board reads of the bash this built: the workspace sandbox's masks, but only where the
         # sandbox wraps bash, since a container is never wrapped and a box that cannot build the sandbox
-        # runs bash unconfined.
+        # runs bash unconfined; and whether a plain approval of a call that reads secrets can run it
+        # contained.
         #
-        # @return [Hash{Symbol=>Approval::Judgement::Masking, Approval::Judgement::Unmasked}] `masks:`
+        # @return [Hash{Symbol=>Object}] `masks:`, an {Approval::Judgement::Masking} or
+        #   {Approval::Judgement::Unmasked}, and `containment:`, a {Confine::Sandbox::Containment}
         def board_inputs
-          { masks: @arms.workspace? && wrapped? ? Approval::Judgement::Masking.new(@masks) : Approval::Judgement::Unmasked }
+          { masks: @arms.workspace? && wrapped? ? Approval::Judgement::Masking.new(@masks) : Approval::Judgement::Unmasked,
+            containment: }
         end
 
         private
+
+        # A container is never wrapped, so it never contains a call. The classes arm names no confinement
+        # yet leaves bash unsandboxed, so it is said apart from --confine off.
+        def containment
+          return Lain::Confine::Sandbox::Containment.off(UNSANDBOXED) if @arms.confine == :classes
+          return Lain::Confine::Sandbox::Containment::OFF unless @arms.sandboxed?
+          return Lain::Confine::Sandbox::Containment.unable(UNWRAPPED) unless @sandbox
+
+          @sandbox.containment
+        end
 
         def wrapped? = !@confined.nil? && !@confined.equal?(@exec)
 

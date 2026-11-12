@@ -1134,7 +1134,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
   describe "the notes a context carries" do
     let(:noted) { Lain::Approval::Escalation::Noted.new(nil, "cat is /repo/bin/cat") }
 
-    def notes_of(context)
+    def notes_of(context, queue: self.queue)
       Sync do |task|
         run = task.async { queue.adjudicate(tool_call, context) }
         pending = task.with_timeout(1) { queue.dequeue }
@@ -1158,6 +1158,93 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
       expect(notes_of(disclosing)).to eq(["a rung's note", '".env" holds 1 sensitive region',
                                           'it names "127.0.0.1" as a network destination'])
+    end
+
+    it "keeps what a plain approval does on this box out of the reasons, which the phone shows and cannot act on" do
+      disclosure = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+      unable = described_class.new(journal:, containment: Lain::Confine::Sandbox::Containment.unable("no bwrap"))
+
+      expect(notes_of(Struct.new(:disclosure).new(disclosure),
+                      queue: unable)).to eq(['".env" holds 1 sensitive region'])
+    end
+
+    it "contains a machine surface's approval of a secret-bearing call, as a person's" do
+      contained = described_class.new(journal:, containment: Lain::Confine::Sandbox::Containment::ABLE)
+      disclosure = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+      pending = Sync do |task|
+        run = task.async { contained.adjudicate(tool_call, Struct.new(:disclosure).new(disclosure)) }
+        task.with_timeout(1) { contained.dequeue }.tap { _1.approve(surface: "oracle") }.tap { run.wait }
+      end
+
+      expect(pending).to be_contained
+    end
+
+    it "journals an approval's note, so a note asking for network is kept" do
+      Sync do |task|
+        run = task.async { queue.adjudicate(tool_call, nil) }
+        task.with_timeout(1) { queue.dequeue }
+            .decide(Lain::Approval::Verdict::Approve.new(note: "network please"), surface: "tty", authority: :human)
+        run.wait
+      end
+
+      expect(journal_records(journal_io, "approval_decision").last).to include("note" => "network please")
+        .and(satisfy { !_1.key?("network") })
+    end
+
+    describe "the ports a parked call that reads secrets may be granted" do
+      let(:reads_env) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+      let(:granting) { Lain::Confine::Sandbox::Containment.able(grants: true) }
+
+      def ports_of(command, carried: command, queue: described_class.new(journal:, containment: granting))
+        context = Struct.new(:disclosure, :parsed_command).new(reads_env, carried && Lain::Shell::Parse.new.call(carried))
+        Sync do |task|
+          run = task.async { queue.adjudicate(tool_call("bash", { "command" => command }), context) }
+          pending = task.with_timeout(1) { queue.dequeue }
+          pending.deny(surface: "spec")
+          run.wait
+          pending.containment.ports
+        end
+      end
+
+      it "names the ports a build tool's fetch could be granted" do
+        expect(ports_of("cargo fetch .env")).to eq([443])
+      end
+
+      it "asks the session's verdict, so a program it excludes earns nothing" do
+        no_cargo = Struct.new(:nothing) { def permits?(program) = program != "cargo" }.new
+        queue = described_class.new(journal:, containment: granting,
+                                    verdict: Lain::Shell::Verdict.new(capability_set: no_cargo))
+
+        expect(ports_of("cargo fetch .env", queue:)).to eq([])
+      end
+
+      it "reads a carried parse only for the command it was made of" do
+        expect(ports_of("git fetch", carried: "cargo fetch .env")).to eq([])
+      end
+
+      it "reads the command itself when no parse was carried" do
+        expect(ports_of("cargo fetch .env", carried: nil)).to eq([443])
+      end
+    end
+
+    it "says nothing of containment on a call that reads no secret" do
+      contained = described_class.new(journal:, containment: Lain::Confine::Sandbox::Containment::ABLE)
+
+      expect(notes_of(Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE), queue: contained)).to eq([])
+    end
+
+    it "journals a human's choice of network on the decision" do
+      contained = described_class.new(journal:, containment: Lain::Confine::Sandbox::Containment::ABLE)
+      disclosure = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+      Sync do |task|
+        run = task.async { contained.adjudicate(tool_call, Struct.new(:disclosure).new(disclosure)) }
+        task.with_timeout(1) { contained.dequeue }
+            .decide(Lain::Approval::Verdict::Approve.new(network: true), surface: "tty", authority: :human)
+        run.wait
+      end
+
+      expect(journal_records(journal_io, "approval_decision").last).to include("verdict" => "approve",
+                                                                               "network" => true)
     end
 
     it "answers reasons with lain's words plain and everyone else's quoted, in the order given" do
@@ -1641,7 +1728,8 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(described_class::Pending.instance_method(:initialize).parameters)
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
-                %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named]])
+                %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named],
+                %i[key containment]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

@@ -12,9 +12,12 @@ module Lain
     # its target dir, so with the workspace switch on it runs under the workspace
     # profile, and with the switch off it stays on the reader. With the workspace
     # switch on, an automatic allow by the judge, a rule or bypass runs under the
-    # workspace profile, since no person saw the command. Any other allow is
-    # traced and not confined: a human's, and a surface's, whose machine
-    # answers stand beside a person's in the same queue.
+    # workspace profile, since no person saw the command. A surface's plain
+    # allow of a call that reads secrets runs contained, under the workspace
+    # profile with the switch on and the reader's with it off, and in a
+    # private network either way. Any other allow is traced and not confined:
+    # a human's that chose network, and a surface's of a call that read no
+    # secret, whose machine answers stand beside a person's in the same queue.
     #
     # A workspace call earns its build tool's ports, the grant profile, only
     # through {BuildGrant}: one fetching stage of a trusted program, while
@@ -54,6 +57,17 @@ module Lain
         end
       end
 
+      # A contained call needs a private network, and this box cannot make one.
+      class Uncontainable < Error
+        attr_reader :profile
+
+        # @param profile [Symbol] the profile the call would have run under
+        def initialize(profile:)
+          @profile = profile
+          super("cannot give a contained #{profile} call a private network")
+        end
+      end
+
       # The rungs whose automatic allow earns the workspace profile, named so a new rung earns nothing by default.
       WORKSPACE_RUNGS = [Approval::Judged::NAME, Approval::Escalation::Rules::NAME,
                          Approval::Escalation::Bypass::NAME].freeze
@@ -76,6 +90,16 @@ module Lain
         # @param _root [String]
         # @return [true]
         def self.any_under?(_root) = true
+      end
+
+      # What a parked call is told before its programs resolve: the first half of {BuildGrant#program}, read off
+      # the argv alone. Trust and freshness can only withdraw a grant, so these ports bound what one may reach.
+      #
+      # @param argvs [Array<Array<String>>] each stage's argv on the term arm; none on the string arm
+      # @return [Array<Integer>] the ports a contained workspace call of them could be granted, else none
+      def self.grantable_ports(argvs)
+        name = argvs.one? ? BuildGrant.asked(argvs.first) : nil
+        name ? Profile::GRANTS.fetch(name) : []
       end
 
       # @param masks [#masks] the session's {MaskList}, asked on every call so a
@@ -111,8 +135,10 @@ module Lain
       # @raise [Profile::Unsealable] when a workspace seal is reached through a link inside the writes
       # @raise [NoTmpdir] when the TMPDIR cannot hold the workspace call's own dir
       # @raise [Profile::HomeTmpdir] when the TMPDIR a workspace call would write is home or holds it
+      # @raise [Uncontainable] when a contained call needs a private network this box cannot make
       def for(request)
         ruling = request.ruling
+        return contained(request) if ruling.allow? && ruling.contained?
         return workspace(request) if workspace?(ruling)
         return reader(request) if composed?(ruling)
 
@@ -126,6 +152,13 @@ module Lain
       def workspace?(ruling)
         @workspace && ruling.allow? && !ruling.human? && WORKSPACE_RUNGS.include?(ruling.rung) &&
           (ruling.builds? || !composed?(ruling))
+      end
+
+      # Refused before a workspace call's dir is made. A build grant keeps its own ports, as {#networked} says.
+      def contained(request)
+        raise Uncontainable.new(profile: @workspace ? :workspace : :reader) unless @probe.supports?(:private_net)
+
+        @workspace ? workspace(request) : reader(request).with(private_net: true)
       end
 
       def traceable? = @probe.supports?(:trace)
@@ -339,12 +372,26 @@ module Lain
         # @return [String, nil] a key of {Profile::GRANTS}
         def program(request, root)
           stage, argv = sole(request)
-          name = argv&.first
-          return unless OPTIONS.key?(name) && trusted?(stage, name) && asked?(OPTIONS.fetch(name), argv.drop(1))
-          return unless inside?(request.cwd, root)
+          name = argv && self.class.asked(argv)
+          return unless name && trusted?(stage, name) && inside?(request.cwd, root)
 
           name unless @fresh.any_under?(root)
         end
+
+        # @param argv [Array<String>]
+        # @return [String, nil] the build tool whose lists take this subcommand and every option, else nil
+        def self.asked(argv)
+          name = argv.first
+          subcommands = OPTIONS.fetch(name, nil)
+          listed = subcommands&.fetch(argv[1], nil)
+          name if listed && argv.drop(2).select { _1.start_with?("-") }.all? { listed?(listed, _1) }
+        end
+
+        def self.listed?(listed, option)
+          counted = option.sub(COUNT, "=")
+          listed.include?(option) ? !option.end_with?("=") : listed.include?(counted)
+        end
+        private_class_method :listed?
 
         private
 
@@ -356,16 +403,6 @@ module Lain
         def trusted?(stage, name)
           stage.name == name && stage.wrappers.empty? && stage.anomalies.empty? &&
             self.class.placed?(stage, home: @home) && stage.run_files.none? { _1.fresh || _1.klass == :unresolved }
-        end
-
-        def asked?(subcommands, args)
-          listed = subcommands.fetch(args.first, nil)
-          listed && args.drop(1).select { _1.start_with?("-") }.all? { listed?(listed, _1) }
-        end
-
-        def listed?(listed, option)
-          counted = option.sub(COUNT, "=")
-          listed.include?(option) ? !option.end_with?("=") : listed.include?(counted)
         end
 
         def inside?(cwd, root) = cwd.nil? || Landing.under?(Profile.landing(cwd), Profile.landing(root))

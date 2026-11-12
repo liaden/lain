@@ -30,6 +30,15 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  describe "what its queue says a plain approval of a secret-bearing call does" do
+    it "is the containment it was built with, and unstated by default" do
+      off = Lain::Confine::Sandbox::Containment::OFF
+
+      expect(switchboard(containment: off).approvals.containment).to be(off)
+      expect(switchboard.approvals.containment).to be(Lain::Confine::Sandbox::Containment::NONE)
+    end
+  end
+
   describe "a git read under auto approval" do
     def asked_under(**masking)
       Dir.mktmpdir("lain-switchboard-masked") do |dir|

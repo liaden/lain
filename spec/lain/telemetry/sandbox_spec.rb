@@ -6,7 +6,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
   it "journals no arm or task of its own" do
     expect(record.to_journal).to eq(
       "type" => "sandbox", "tool_use_id" => "tu_1", "profile" => :reader, "trace" => false, "refused" => [],
-      "created_sealed" => [], "kept_tmpdir" => nil, "granted" => []
+      "created_sealed" => [], "kept_tmpdir" => nil, "granted" => [], "network" => false
     )
   end
 
@@ -23,6 +23,12 @@ RSpec.describe Lain::Telemetry::Sandbox do
     expect(kept.to_journal).to include("kept_tmpdir" => "/t/lain-call-1")
   end
 
+  it "journals that a human chose to let the call reach the network" do
+    chosen = described_class.new(tool_use_id: "tu_1", profile: :traced, trace: true, refused: [], network: true)
+
+    expect(chosen.to_journal).to include("network" => true)
+  end
+
   it "stays Ractor shareable" do
     expect(Ractor.shareable?(record)).to be(true)
   end
@@ -35,11 +41,12 @@ RSpec.describe Lain::Telemetry::Sandbox do
                                    refused: ["/bin/curl"],
                                    created_sealed: ["/repo/.git/commondir"],
                                    kept_tmpdir: "/t/lain-call-1",
-                                   granted: ["/home/u/.local/bin/rg"])
+                                   granted: ["/home/u/.local/bin/rg"],
+                                   network: true)
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"workspace","trace":true,' \
         '"refused":["/bin/curl"],"created_sealed":["/repo/.git/commondir"],' \
-        '"kept_tmpdir":"/t/lain-call-1","granted":["/home/u/.local/bin/rg"]}'
+        '"kept_tmpdir":"/t/lain-call-1","granted":["/home/u/.local/bin/rg"],"network":true}'
       )
     end
 
@@ -50,7 +57,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
                                    refused: [])
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"reader","trace":false,"refused":[],' \
-        '"created_sealed":[],"kept_tmpdir":null,"granted":[]}'
+        '"created_sealed":[],"kept_tmpdir":null,"granted":[],"network":false}'
       )
     end
 

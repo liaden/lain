@@ -51,4 +51,24 @@ RSpec.describe Lain::Approval::Verdict do
         .to raise_error(ArgumentError, /Approve.*Hold.*Deny/)
     end
   end
+
+  describe "an approval with network" do
+    it "is not chosen by default" do
+      expect(described_class::Approve.new.network?).to be(false)
+    end
+
+    it "is chosen only when asked for" do
+      expect(described_class::Approve.new(note: "x", network: true).network?).to be(true)
+    end
+
+    it "differs from a plain approval with the same note" do
+      expect(described_class::Approve.new(network: true)).not_to eq(described_class::Approve.new)
+    end
+
+    it "is refused on a hold or a deny" do
+      [described_class::Hold, described_class::Deny].each do |kind|
+        expect { kind.new(network: true) }.to raise_error(ArgumentError, /network/)
+      end
+    end
+  end
 end
