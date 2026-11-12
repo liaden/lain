@@ -626,6 +626,17 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(output.string).to include("no questions pending")
     end
 
+    it "hands the asker the surface an answer came from" do
+      Sync do
+        item = announced(ask_human, "q1?")
+        allow(directory).to receive(:reply).and_call_original
+
+        replies.answer("go left", item.digest, answered_by: "remote:pixel")
+
+        expect(directory).to have_received(:reply).with("go left", item.digest, answered_by: "remote:pixel")
+      end
+    end
+
     it "answers false for a set already answered" do
       Sync do
         item = announced(ask_human, "q1?")
@@ -672,8 +683,8 @@ RSpec.describe Lain::CLI::HumanReplies do
                                                         digest: item.digest, asked_at: item.asked_at + 1)
       typed = ["config.rb"]
       allow(conductor).to receive(:read_reply) { typed.shift || Async::Task.current.sleep(30) }
-      allow(directory).to receive(:reply).and_wrap_original do |reply, *args|
-        reply.call(*args).tap { questions.enqueue(handback) }
+      allow(directory).to receive(:reply).and_wrap_original do |reply, *args, **keywords|
+        reply.call(*args, **keywords).tap { questions.enqueue(handback) }
       end
 
       with_surfaces { output.string.include?("type `send`") }
@@ -1460,11 +1471,11 @@ RSpec.describe Lain::CLI::HumanReplies do
     it "keeps answering after a delivery raises, and tells the human why" do
       allow(conductor).to receive(:read_reply).and_return("postgres")
       deliveries = 0
-      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args, **keywords|
         deliveries += 1
         raise "store is on fire" if deliveries == 1
 
-        original.call(*args)
+        original.call(*args, **keywords)
       end
       other = other_asker
 
@@ -1891,9 +1902,9 @@ RSpec.describe Lain::CLI::HumanReplies do
 
       it "echoes nothing for the second answer to a set already answered" do
         reply_calls = 0
-        allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+        allow(directory).to receive(:reply).and_wrap_original do |original, *args, **keywords|
           reply_calls += 1
-          original.call(*args)
+          original.call(*args, **keywords)
         end
         answered = nil
         Sync { answered = listed(ask_human, "which db?") }
@@ -2077,8 +2088,8 @@ RSpec.describe Lain::CLI::HumanReplies do
       allow(directory).to receive(:awaiting?).and_wrap_original do |original, digest|
         original.call(digest).tap { |awaited| looked_unawaited ||= !awaited }
       end
-      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
-        original.call(*args).tap do
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args, **keywords|
+        original.call(*args, **keywords).tap do
           pumped_until(Async::Task.current, reason: "the watch looked at the answered set") { looked_unawaited }
         end
       end
@@ -2107,8 +2118,8 @@ RSpec.describe Lain::CLI::HumanReplies do
     it "says the ask was stopped when a rail answer for it was refused before the watch looked" do
       reading_at_the_terminal
       refused = false
-      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
-        original.call(*args)
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args, **keywords|
+        original.call(*args, **keywords)
       rescue Lain::Tools::AskHuman::NoPendingQuestion
         refused = true
         raise
@@ -2174,10 +2185,10 @@ RSpec.describe Lain::CLI::HumanReplies do
         original.call(digest).tap { |withdrawn| looked_during_claim ||= withdrawn.nil? }
       end
       run = nil
-      allow(directory).to receive(:reply).and_wrap_original do |original, *args|
+      allow(directory).to receive(:reply).and_wrap_original do |original, *args, **keywords|
         run.stop
         pumped_until(Async::Task.current, reason: "the watch looked during the claim") { looked_during_claim }
-        original.call(*args)
+        original.call(*args, **keywords)
       end
 
       Sync do |task|
@@ -2300,7 +2311,7 @@ RSpec.describe Lain::CLI::HumanReplies do
           @reopened_read = reopened_read
         end
 
-        def reply(_answer, digest)
+        def reply(_answer, digest, **)
           @questions.enqueue(Lain::CLI::HumanReplies::InboxItem.new(question: "too long -- type send",
                                                                     from: "chat", digest:, asked_at: Time.now))
           Async::Task.current.sleep(0.005) until @reopened_read.call

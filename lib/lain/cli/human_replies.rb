@@ -119,9 +119,10 @@ module Lain
         def self.ask(_anchor_id, _question) = Nothing
       end
 
-      # `ask_human:` is whatever answers `#reply(answer, digest)` for the set a
-      # digest names: the run's {Tools::AskHuman::Directory} in production, a
-      # lone {Tools::AskHuman} for a single-asker caller. Which object it is has
+      # `ask_human:` is whatever answers `#reply(answer, digest, answered_by:)`
+      # for the set a digest names, the keyword naming the surface or nil: the
+      # run's {Tools::AskHuman::Directory} in production, a lone
+      # {Tools::AskHuman} for a single-asker caller. Which object it is has
       # stopped mattering here, which is the point -- this class no longer knows
       # WHICH agent is stuck.
       #
@@ -273,9 +274,10 @@ module Lain
       #
       # @param text [String]
       # @param digest [String] the set it answers
+      # @param answered_by [String, nil] the surface it came from, journaled with the answer
       # @return [Boolean] whether this answer reached the set first
-      def answer(text, digest)
-        deliver(text, digest)
+      def answer(text, digest, answered_by: nil)
+        deliver(text, digest, answered_by:)
       rescue Lain::Tools::AskHuman::NoPendingQuestion
         settled(digest)
         false
@@ -406,10 +408,10 @@ module Lain
       # the read's close a stopped ask. The claim ends in `ensure`, so no raise
       # can strand it: an answer handed on settles them, and one that was not,
       # a refusal or an unwind, answered nothing and lets them go.
-      def deliver(answer, digest)
+      def deliver(answer, digest, answered_by: nil)
         open = @reads.on(digest).each(&:claim)
         queued = @queued.on(digest)
-        delivered = handed_on(answer, digest)
+        delivered = handed_on(answer, digest, answered_by)
         handed = true
         settled(digest, open, queued)
         echo(answer) if delivered
@@ -418,8 +420,8 @@ module Lain
         open&.each { |read| handed ? read.settle : read.release }
       end
 
-      def handed_on(answer, digest)
-        @ask_human.reply(answer, digest)
+      def handed_on(answer, digest, answered_by)
+        @ask_human.reply(answer, digest, answered_by:)
       rescue Lain::Promise::AlreadyResolved
         nil
       end

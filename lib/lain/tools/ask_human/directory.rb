@@ -66,7 +66,7 @@ module Lain
           def self.asked(digest) = digest
           def self.holds?(_digest) = false
           def self.awaiting?(_digest) = false
-          def self.reply(_answer, digest) = raise(NoPendingQuestion, Directory.unanswerable(digest))
+          def self.reply(_answer, digest, **) = raise(NoPendingQuestion, Directory.unanswerable(digest))
           def self.deregister = nil
           def self.size = 0
         end
@@ -91,8 +91,8 @@ module Lain
             # answer needs to hear that the line was stale and nothing was lost.
             def awaiting?(digest) = @asker.awaiting?(digest)
 
-            def reply(answer, digest)
-              @asker.reply(answer, digest)
+            def reply(answer, digest, answered_by: nil)
+              @asker.reply(answer, digest, answered_by:)
             rescue NoPendingQuestion
               raise NoPendingQuestion, Directory.unanswerable(digest)
             end
@@ -107,7 +107,7 @@ module Lain
           module Answered
             def self.awaiting?(_digest) = false
 
-            def self.reply(_answer, digest)
+            def self.reply(_answer, digest, **)
               raise Promise::AlreadyResolved, "the question set #{digest} was already answered"
             end
           end
@@ -139,8 +139,8 @@ module Lain
           # Unreachable today rather than impossible, and a lock HERE would not
           # close it: {Outstanding}'s own check and resolve straddle the same
           # write, so the window belongs to whatever resolves the promise.
-          def reply(answer, digest)
-            delivered = @names.fetch(digest, Unheld).reply(answer, digest)
+          def reply(answer, digest, answered_by: nil)
+            delivered = @names.fetch(digest, Unheld).reply(answer, digest, answered_by:)
             @names[digest] = Answered
             delivered
           end
@@ -179,12 +179,13 @@ module Lain
         #
         # @param answer [String] what the human typed
         # @param digest [String] the Q event of the set this answers
+        # @param answered_by [String, nil] the surface the answer came from
         # @return [Lain::Ext::Event] the A :message event the asker wrote
         # @raise [NoPendingQuestion] naming the digest, when no registered asker
         #   holds that name -- unknown, deregistered, or withdrawn
         # @raise [Promise::AlreadyResolved] when this directory already routed
         #   an answer to that name
-        def reply(answer, digest) = holder_of(digest).reply(answer, digest)
+        def reply(answer, digest, answered_by: nil) = holder_of(digest).reply(answer, digest, answered_by:)
 
         def awaiting?(digest) = holder_of(digest).awaiting?(digest)
 

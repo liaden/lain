@@ -100,14 +100,19 @@ module Lain
 
       # @param digest [String] the artifact address to sign off
       # @param reason [String, nil] the human's rationale, journaled verbatim
+      # @param answered_by [String] the surface the human answered on
       # @return [String] the confirmation
       # @raise [UnknownDigest] naming the digest and listing the parked ones
-      def approve(digest, reason: nil) = drain(digest, Lain::Approval::Verdict::Approve.new(note: reason))
+      def approve(digest, reason: nil, answered_by: HUMAN)
+        drain(digest, Lain::Approval::Verdict::Approve.new(note: reason), answered_by)
+      end
 
       # A denial is terminal too: a refused artifact awaits nobody's sign-off
       # either, so it drains the partition exactly as an approval does.
       # @see #approve
-      def deny(digest, reason: nil) = drain(digest, Lain::Approval::Verdict::Deny.new(note: reason))
+      def deny(digest, reason: nil, answered_by: HUMAN)
+        drain(digest, Lain::Approval::Verdict::Deny.new(note: reason), answered_by)
+      end
 
       private
 
@@ -137,12 +142,12 @@ module Lain
         SessionJournals.new(dirs:, types:, damage:)
       end
 
-      def drain(digest, verdict)
+      def drain(digest, verdict, answered_by)
         digest = digest.to_s
         rows = review.find(digest)
         raise UnknownDigest, unknown_message(digest, approved: verdict.approved?) if rows.empty?
 
-        decisions = in_stage_order(rows).map { |row| row.terminal(verdict) }
+        decisions = in_stage_order(rows).map { |row| row.terminal(verdict, answered_by:) }
         advances = Advances.new(decisions) { epics }
         ensure_open!(decisions) if verdict.approved?
         confirmation(digest, decisions, append(decisions, advances))
@@ -296,9 +301,9 @@ module Lain
 
         def address = "#{item.artifact_digest}  (#{item.partition})"
 
-        def terminal(verdict)
+        def terminal(verdict, answered_by:)
           Lain::Epic::GateDecision.new(artifact_digest: item.artifact_digest, epic_slug: item.epic_slug,
-                                       stage: item.stage, verdict:, answered_by: HUMAN,
+                                       stage: item.stage, verdict:, answered_by:,
                                        policy: Lain::Epic::SignoffQueue::SIGNOFF_POLICY,
                                        latency: waited, evidence_digest: item.evidence_digest,
                                        issue_id: item.issue_id, criteria_digest: item.criteria_digest)

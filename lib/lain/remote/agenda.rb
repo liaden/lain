@@ -35,9 +35,9 @@ module Lain
       end
 
       # @param queue [Enumerable<Approval::Parked::Queue::Pending>] the parked calls
-      # @param gates [#each, #approve, #deny] the deferred gate rows ({Gates})
+      # @param gates [#each, #approve, #deny] the deferred gate rows ({Gates}); each answer names who gave it
       # @param replies [#waiting, #answer] the open human questions, and their answer path, which
-      #   answers whether this answer won ({CLI::HumanReplies})
+      #   answers whether this answer won and journals who gave it ({CLI::HumanReplies})
       # @param wall [#call] the time of day, stamped on a call when first seen
       def initialize(queue:, gates:, replies:, wall: -> { Time.now })
         @sources = [Calls.new(queue, wall), Waves.new(gates, wall), Questions.new(replies)]
@@ -131,6 +131,9 @@ module Lain
       # The deferred gates, one item per epic and stage, so a wave is one
       # question with an issue list. A changed wave is a new item.
       class Waves
+        # A deferred gate already waits, so a hold would answer nothing and the phone would show it landed.
+        HOLD_REFUSAL = "a gate cannot be held: it already waits for an answer, so approve or deny it"
+
         def initialize(gates, wall)
           @gates = gates
           @wall = wall
@@ -141,7 +144,7 @@ module Lain
         def sightings
           @gates.each.group_by { [_1.epic, _1.stage] }.map do |(epic, stage), rows|
             Sighting.new(key: [:gate, epic, stage, *rows.map(&:digest)], build: ->(id) { item(id, rows) },
-                         route: ->(answer, _surface) { decide(rows, answer) })
+                         route: ->(answer, surface) { decide(rows, answer, surface) })
           end
         rescue JournalUnreadable => e
           [Sighting.new(key: [:unreadable, e.message], build: ->(id) { unreadable(id, e.message) },
@@ -162,39 +165,56 @@ module Lain
 
         def item(id, rows)
           GateQuestion.new(id:, requester: GATE_REQUESTER, epic: rows.first.epic, stage: rows.first.stage,
-                           issues: rows.filter_map(&:issue), question: rows.filter_map(&:question).uniq.join("\n"),
+                           issues: rows.map { key_of(_1) }.uniq, question: rows.filter_map(&:question).uniq.join("\n"),
                            asked_at: rows.map(&:asked_at).min, releases: 0)
         end
 
-        # A hold leaves the item parked, which is where a deferred gate already
-        # waits. Approvals go first because only an approval can refuse (its epic
-        # may not open): a refusal then lands before any denial is journaled,
+        # An epic-wide stage has no issue, so the stage's own name is the key
+        # an answer cites, and the app's map over the issues reaches it.
+        def key_of(row) = row.issue || row.stage
+
+        # Approvals go first because only an approval can refuse (its epic may
+        # not open): a refusal then lands before any denial is journaled,
         # though the approvals before it stay journaled. A row the desk answered
         # first is no longer parked, so the answer is false even when rows
         # before it were already written.
-        def decide(rows, answer)
+        def decide(rows, answer, surface)
           ordered(verdicts(rows, answer)).each do |row, verdict|
-            @gates.public_send(verdict.approved? ? :approve : :deny, row.digest, reason: verdict.note)
+            @gates.public_send(verdict.approved? ? :approve : :deny, row.digest, reason: verdict.note,
+                                                                                 answered_by: surface)
           end
           true
         rescue CLI::EpicQueue::UnknownDigest
           false
         end
 
-        def ordered(verdicts)
-          verdicts.reject { |_row, verdict| verdict.held? }.partition { |_row, verdict| verdict.approved? }.flatten(1)
+        def ordered(verdicts) = verdicts.partition { |_row, verdict| verdict.approved? }.flatten(1)
+
+        # Refused rather than taken: an answer that decides nothing reads as
+        # landed, and the item would then wait with no surface able to answer it.
+        def verdicts(rows, answer)
+          raise ArgumentError, "a gate answer names no issue; answer #{keys(rows)}" if answer == {}
+
+          pairs = paired(rows, answer)
+          raise ArgumentError, HOLD_REFUSAL if pairs.any? { |_row, verdict| verdict.held? }
+
+          pairs
         end
 
-        def verdicts(rows, answer)
+        def paired(rows, answer)
           return rows.map { [_1, Approval::Verdict.coerce(answer)] } unless answer.is_a?(Hash)
 
-          answer.map { |issue, verdict| [row_for(rows, issue), Approval::Verdict.coerce(verdict)] }
+          answer.flat_map { |key, verdict| keyed(rows, key, verdict) }
         end
 
-        def row_for(rows, issue)
-          rows.find { _1.issue == issue } ||
-            raise(ArgumentError, "issue #{issue.inspect} is not in this gate (#{rows.map(&:issue).join(", ")})")
+        def keyed(rows, key, verdict)
+          found = rows.select { key_of(_1) == key }
+          raise ArgumentError, "issue #{key.inspect} is not in this gate (#{keys(rows)})" if found.empty?
+
+          found.map { [_1, Approval::Verdict.coerce(verdict)] }
         end
+
+        def keys(rows) = rows.map { key_of(_1) }.uniq.join(", ")
       end
 
       # Keyed by digest, not by arrival: a reply handed back for being too long
@@ -205,7 +225,7 @@ module Lain
         def sightings
           @replies.waiting.map do |asked|
             Sighting.new(key: [:question, asked.digest], build: ->(id) { item(id, asked) },
-                         route: ->(text, _surface) { @replies.answer(text!(text), asked.digest) })
+                         route: ->(text, surface) { @replies.answer(text!(text), asked.digest, answered_by: surface) })
           end
         end
 
@@ -250,9 +270,13 @@ module Lain
         end
 
         # A fresh {CLI::EpicQueue} per answer: it reads its fold once per instance.
-        def approve(digest, reason: nil) = epic_queue.approve(digest, reason:)
+        def approve(digest, reason: nil, answered_by: CLI::EpicQueue::HUMAN)
+          epic_queue.approve(digest, reason:, answered_by:)
+        end
 
-        def deny(digest, reason: nil) = epic_queue.deny(digest, reason:)
+        def deny(digest, reason: nil, answered_by: CLI::EpicQueue::HUMAN)
+          epic_queue.deny(digest, reason:, answered_by:)
+        end
 
         private
 

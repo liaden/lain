@@ -68,7 +68,7 @@ class ReplRecordedAnswers
 
   attr_reader :answered
 
-  def reply(answer, digest) = @answered << [answer, digest]
+  def reply(answer, digest, **) = @answered << [answer, digest]
 
   def awaiting?(_digest) = true
 end

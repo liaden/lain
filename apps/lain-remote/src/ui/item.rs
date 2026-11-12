@@ -82,7 +82,7 @@ impl ItemView {
             field("requester", requester),
           ])
           .collect(),
-        replies: verdicts,
+        replies: vec![Reply::Approve, Reply::Deny],
       },
       AgendaItem::Question { id, requester, question, options, asked_at } => Self {
         id: id.clone(),
@@ -119,7 +119,8 @@ pub fn answer(item: &AgendaItem, reply: &Reply, note: &str) -> Option<Answer> {
       device: None,
     }),
     AgendaItem::GateQuestion { id, issues, .. } => {
-      let verdict = verdict(reply, note)?;
+      // lain refuses a held gate: a deferred gate already waits, so a hold would answer nothing.
+      let verdict = verdict(reply, note).filter(|verdict| !matches!(verdict, Verdict::Hold { .. }))?;
       Some(Answer::Gate {
         id: id.clone(),
         verdicts: issues.iter().map(|issue| (issue.clone(), verdict.clone())).collect(),
@@ -293,7 +294,7 @@ mod tests {
       vec![Reply::Approve, Reply::Hold, Reply::Deny],
       ItemView::of(&parked_call()).replies
     );
-    assert_eq!(vec![Reply::Approve, Reply::Hold, Reply::Deny], ItemView::of(&gate()).replies);
+    assert_eq!(vec![Reply::Approve, Reply::Deny], ItemView::of(&gate()).replies);
     assert_eq!(
       vec![
         Reply::Option("main".to_string()),
@@ -334,15 +335,15 @@ mod tests {
 
   #[test]
   fn a_gate_verdict_covers_every_issue() {
-    let sent = answer(&gate(), &Reply::Hold, "later");
+    let sent = answer(&gate(), &Reply::Deny, "later");
 
     let note = Some("later".to_string());
     assert_eq!(
       Some(Answer::Gate {
         id: "g1".to_string(),
         verdicts: vec![
-          ("i1".to_string(), Verdict::Hold { note: note.clone() }),
-          ("i2".to_string(), Verdict::Hold { note }),
+          ("i1".to_string(), Verdict::Deny { note: note.clone() }),
+          ("i2".to_string(), Verdict::Deny { note }),
         ],
         device: None,
       }),
@@ -376,5 +377,6 @@ mod tests {
   fn a_reply_the_item_cannot_take_sends_nothing() {
     assert_eq!(None, answer(&question(), &Reply::Deny, ""));
     assert_eq!(None, answer(&parked_call(), &Reply::Text, "x"));
+    assert_eq!(None, answer(&gate(), &Reply::Hold, "later"));
   }
 }

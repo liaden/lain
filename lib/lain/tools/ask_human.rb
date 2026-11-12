@@ -763,15 +763,16 @@ module Lain
       # @param answer [String, Unanswered] what the human typed, or the answer
       #   nobody gave
       # @param digest [String] the Q event of the set this answers
+      # @param answered_by [String, nil] the surface the answer came from, journaled when named
       # @return [Lain::Ext::Event] the A :message event, or the record that says the
       #   question went unanswered
       # @raise [NoPendingQuestion] naming the digest, when no set of that name
       #   is awaiting a reply
       # @raise [Promise::AlreadyResolved] when that set was already answered
-      def reply(answer, digest)
+      def reply(answer, digest, answered_by: nil)
         pending = @outstanding.answerable!(digest)
         recorded = recorded_reply(answer, pending)
-        answer_recorded(answer, pending)
+        answer_recorded(answer, pending, answered_by)
         pending.resolve(answer)
         recorded
       end
@@ -904,13 +905,13 @@ module Lain
       # Here, where {#reply} resolves the park, because a gate asks through
       # {#ask} and awaits the promise itself, never reaching {#delivered}.
       # Total, like {#retired}: the answer is already on its way.
-      def answer_recorded(answer, pending)
+      def answer_recorded(answer, pending, answered_by)
         text = delivered_text(answer, pending)
         return if text.nil?
 
         @journal << Telemetry::QuestionAnswered.new(question: withheld(asked_text(pending.announcement)),
                                                     answer: withheld(text), requester: @agent,
-                                                    epic_slug: Lain.live(@epic_slug))
+                                                    epic_slug: Lain.live(@epic_slug), answered_by:)
       rescue StandardError
         nil
       end

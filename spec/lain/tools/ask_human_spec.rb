@@ -1522,6 +1522,18 @@ RSpec.describe Lain::Tools::AskHuman do
                                                             requester: "reviewer", epic_slug: "nyotes"))
       end
 
+      it "names the surface an answer came from, and names none for an answer given without one" do
+        Sync do |task|
+          run = task.async { tool.call({ "question" => "Do owners bless both?" }, invocation) }
+          task.yield
+          tool.reply("yes", tool.last_question.digest, answered_by: "remote:pixel")
+          run.wait
+        end
+        ask_and_answer("no")
+
+        expect(recorded.map(&:answered_by)).to eq(["remote:pixel", nil])
+      end
+
       it "masks a credential in the answer with the table the Intake's history uses" do
         key = "AKIA#{"A" * 16}"
         ask_and_answer("use #{key} for it")

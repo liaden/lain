@@ -47,6 +47,18 @@ RSpec.describe Lain::Tools::AskHuman::Directory do
     end
   end
 
+  it "hands the asker the surface the answer came from" do
+    journal = []
+    parent = Lain::Dag::Factory.timeline(store:).commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
+    asker = Lain::Tools::AskHuman.new(parent:, journal:)
+    Sync do
+      _registration, pending = asking(asker, "which file?")
+      directory.reply("config.rb", pending.digest, answered_by: "remote:pixel")
+    end
+
+    expect(journal.grep(Lain::Telemetry::QuestionAnswered).map(&:answered_by)).to eq(["remote:pixel"])
+  end
+
   # ---- Scenario: an unknown digest is refused, not guessed ------------------
 
   # Not guessed means not PROBED either: a registered asker is never handed a

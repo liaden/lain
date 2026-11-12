@@ -31,6 +31,36 @@ module RemoteSurfaceSpecSupport
     def approve(*, **) = raise(Lain::CLI::EpicQueue::MissingEpicDocument, @message)
   end
 
+  # One open question, recording each answer with who gave it.
+  class OneQuestion
+    attr_reader :answers
+
+    def initialize = @answers = []
+
+    def waiting
+      return [] if @answers.any?
+
+      [Lain::CLI::HumanReplies::InboxItem.new(question: "which branch?", from: "agent", digest: "blake3:q1",
+                                              asked_at: Time.at(0))]
+    end
+
+    def answer(text, digest, answered_by: nil) = (@answers << [text, digest, answered_by]) && true
+  end
+
+  # One issue-less research gate, recording each answer with who gave it.
+  class StageGate
+    attr_reader :answers
+
+    def initialize = @answers = []
+
+    def each(&block)
+      [Lain::Remote::Agenda::Gates::Row.new(digest: "d1", epic: "e", stage: "research", issue: nil,
+                                            question: "sign off?", asked_at: Time.at(0))].each(&block)
+    end
+
+    def approve(digest, reason: nil, answered_by: nil) = @answers << [:approve, digest, reason, answered_by]
+  end
+
   # Gate journals the fold cannot read, whose message names one of them.
   class UnreadableGates
     Unreadable = Class.new(Lain::Error) { include Lain::JournalUnreadable }
@@ -409,6 +439,48 @@ RSpec.describe Lain::Approval::RemoteSurface do
       expect(shown).to eq([Lain::Tool::Result.ok("ran ls -la"), true])
       expect(records("approval_surface_fault").map { _1["error"] })
         .to contain_exactly(a_string_including("MissingEpicDocument", "no epic document for e"))
+    end
+
+    it "refuses a gate answer with no verdicts, shows the phone why, and takes the answer keyed by the stage" do
+      stage_gate = RemoteSurfaceSpecSupport::StageGate.new
+      shown = Sync do |task|
+        task.with_timeout(20) do
+          watching = task.async { surface(relay.socket, agenda: agenda_over(gates: stage_gate)).watch }
+          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+          item = phone.until_open(&:any?).first
+          phone.answer(wire::Answer::Gate.new(id: item.id, verdicts: [], device: nil))
+          again = phone.until_open { |open| open.any? { _1.question.include?("names no issue") } }.first
+          phone.answer(wire::Answer::Gate.new(id: again.id, verdicts: again.issues.map { [_1, approve(item).verdict] },
+                                              device: nil))
+          wait_until(reason: "the keyed answer landed") { stage_gate.answers.any? }
+          [item.issues, again.question]
+        ensure
+          phone&.stop
+          watching&.stop
+        end
+      end
+
+      expect(shown).to match([%w[research], a_string_including("refused", "names no issue")])
+      expect(stage_gate.answers).to eq([[:approve, "d1", nil, "remote:pixel"]])
+    end
+
+    it "hands a question's answer on with the device that gave it" do
+      asked = RemoteSurfaceSpecSupport::OneQuestion.new
+      Sync do |task|
+        task.with_timeout(20) do
+          agenda = Lain::Remote::Agenda.new(queue:, gates: RemoteSurfaceSpecSupport::NoGates.new, replies: asked)
+          watching = task.async { surface(relay.socket, agenda:).watch }
+          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+          item = phone.until_open(&:any?).first
+          phone.answer(wire::Answer::Question.new(id: item.id, option: nil, text: "main", device: nil))
+          wait_until(reason: "the answer was handed on") { asked.answers.any? }
+        ensure
+          phone&.stop
+          watching&.stop
+        end
+      end
+
+      expect(asked.answers).to eq([["main", "blake3:q1", "remote:pixel"]])
     end
 
     it "shows the phone a refusal without the path under home it names" do

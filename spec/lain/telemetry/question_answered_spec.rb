@@ -16,8 +16,16 @@ RSpec.describe Lain::Telemetry::QuestionAnswered do
     expect(bare.to_journal.keys).to contain_exactly("type", "question", "answer")
   end
 
+  it "journals the surface that answered, and leaves it out when none was named" do
+    phoned = described_class.new(question: "q?", answer: "a", answered_by: "remote:pixel")
+
+    expect(phoned.to_journal).to include("answered_by" => "remote:pixel")
+    expect(record.to_journal).not_to have_key("answered_by")
+  end
+
   it "is deeply frozen, built from mutable strings" do
-    mutable = described_class.new(question: +"q?", answer: +"a", requester: +"r", epic_slug: +"s")
+    mutable = described_class.new(question: +"q?", answer: +"a", requester: +"r", epic_slug: +"s",
+                                  answered_by: +"remote:pixel")
 
     expect(mutable).to be_deeply_frozen
   end

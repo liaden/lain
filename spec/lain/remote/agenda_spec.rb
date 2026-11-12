@@ -16,9 +16,9 @@ module AgendaSpecSupport
       @before = before
     end
 
-    def deny(digest, reason: nil)
+    def deny(digest, reason: nil, answered_by: nil)
       @before.call(digest)
-      __getobj__.deny(digest, reason:)
+      __getobj__.deny(digest, reason:, answered_by:)
     end
   end
 
@@ -28,17 +28,16 @@ module AgendaSpecSupport
 
     attr_reader :answers
 
-    def initialize(*issues)
-      @rows = issues.map do |issue|
-        Row.new(digest: "blake3:#{issue}", epic: "alpha", stage: "issue_plan", issue:, question: "#{issue}?",
-                asked_at: Time.utc(2026, 11, 4))
+    def initialize(*issues, stage: "issue_plan", digests: issues.map { "blake3:#{_1 || stage}" })
+      @rows = issues.zip(digests).map do |issue, digest|
+        Row.new(digest:, epic: "alpha", stage:, issue:, question: "#{issue || stage}?", asked_at: Time.utc(2026, 11, 4))
       end
       @answers = []
     end
 
     def each(&block) = @rows.each(&block)
-    def approve(digest, reason: nil) = @answers << [:approve, digest, reason]
-    def deny(digest, reason: nil) = @answers << [:deny, digest, reason]
+    def approve(digest, reason: nil, answered_by: nil) = @answers << [:approve, digest, reason, answered_by]
+    def deny(digest, reason: nil, answered_by: nil) = @answers << [:deny, digest, reason, answered_by]
   end
 end
 
@@ -57,7 +56,10 @@ RSpec.describe Lain::Remote::Agenda do
   let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new)) }
   let(:gates) { described_class::Gates.new(paths:, root:) }
   # The real reply side a chat wires: the askers, and the replies `/inbox` drains.
-  let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new) }
+  let(:asked_journal) { [] }
+  let(:askers) do
+    Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new, journal: asked_journal)
+  end
   let(:asker) do
     parent = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                                .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }])
@@ -303,7 +305,7 @@ RSpec.describe Lain::Remote::Agenda do
       agenda.answer(gate.id, { "b" => Lain::Approval::Verdict::Deny.new(note: "wrong crate") })
 
       expect(gate_records.last).to include("artifact_digest" => digest_b, "issue_id" => "b", "verdict" => "deny",
-                                           "reason" => "wrong crate", "answered_by" => "human",
+                                           "reason" => "wrong crate", "answered_by" => "remote",
                                            "policy" => "signoff")
       expect(listed("GateQuestion").issues).to eq(%w[a])
     end
@@ -318,12 +320,35 @@ RSpec.describe Lain::Remote::Agenda do
         .to raise_error(ArgumentError, /not a verdict/)
     end
 
-    it "leaves a held gate parked, journaling nothing" do
+    it "refuses a hold from an older app build with a reason, journaling nothing, and the gate stays answerable" do
       defer_wave
       before = gate_records.size
+      gate = listed("GateQuestion")
+      held = { "a" => Lain::Approval::Verdict::Approve.new, "b" => Lain::Approval::Verdict::Hold.new(note: "later") }
 
-      expect(agenda.answer(listed("GateQuestion").id, Lain::Approval::Verdict::Hold.new(note: "later"))).to be(true)
+      expect { agenda.answer(gate.id, held) }.to raise_error(ArgumentError, /cannot be held/)
+      expect { agenda.answer(gate.id, Lain::Approval::Verdict::Hold.new) }
+        .to raise_error(ArgumentError, /cannot be held/)
       expect([gate_records.size, listed("GateQuestion").issues]).to eq([before, %w[a b]])
+      expect(agenda.answer(gate.id, { "b" => Lain::Approval::Verdict::Deny.new })).to be(true)
+    end
+
+    it "refuses a gate answer with no verdicts, journaling nothing, and the gate stays answerable" do
+      defer_wave
+      before = gate_records.size
+      gate = listed("GateQuestion")
+
+      expect { agenda.answer(gate.id, {}) }.to raise_error(ArgumentError, /names no issue.*a, b/)
+      expect([gate_records.size, listed("GateQuestion").issues]).to eq([before, %w[a b]])
+      expect(agenda.answer(gate.id, { "a" => Lain::Approval::Verdict::Deny.new })).to be(true)
+    end
+
+    it "journals the device that answered a gate" do
+      defer_wave
+
+      agenda.answer(listed("GateQuestion").id, { "b" => Lain::Approval::Verdict::Deny.new }, surface: "remote:pixel")
+
+      expect(gate_records.last).to include("issue_id" => "b", "answered_by" => "remote:pixel")
     end
 
     it "approves a parked call as a human on the remote surface" do
@@ -373,14 +398,81 @@ RSpec.describe Lain::Remote::Agenda do
         .to eq(approved.map { [:approve, "blake3:#{_1}"] } + denied.map { [:deny, "blake3:#{_1}"] })
     end
 
+    it "refuses a stage name as the key of a gate whose rows each name an issue" do
+      defer_wave
+
+      expect { agenda.answer(listed("GateQuestion").id, { "issue_plan" => Lain::Approval::Verdict::Deny.new }) }
+        .to raise_error(ArgumentError, /"issue_plan" is not in this gate/)
+    end
+
     it "refuses a question's answer that is not text, before it reaches the asker" do
       expect { agenda.answer(listed("Question").id, Lain::Approval::Verdict::Approve.new) }
         .to raise_error(ArgumentError, /text/)
       expect(asker.last_answer).to be_nil
     end
 
+    it "journals the device that answered a question, and \"remote\" when none was named" do
+      agenda.answer(listed("Question").id, "the parser crate", surface: "remote:pixel")
+      asker.ask("And the lexer?")
+      agenda.answer(listed("Question").id, "the same one")
+
+      expect(asked_journal.grep(Lain::Telemetry::QuestionAnswered).map(&:answered_by)).to eq(%w[remote:pixel remote])
+    end
+
     it "refuses an id it never minted" do
       expect { agenda.answer("nope", "x") }.to raise_error(ArgumentError, /nope/)
+    end
+  end
+
+  describe "a gate with no issues" do
+    def defer_research
+      Lain::Journal.open(paths:, root:) do |journal|
+        journal.record(Lain::Epic::GateDecision.new(artifact_digest: digest_a, epic_slug: "alpha", stage: "research",
+                                                    verdict: Lain::Epic::GateDecision::Deferred.new,
+                                                    answered_by: "deferred", policy: "deferred", latency: 0.0))
+      end
+    end
+
+    it "lists the stage name as the one key the app answers by" do
+      defer_research
+
+      expect(listed("GateQuestion")).to have_attributes(stage: "research", issues: %w[research])
+    end
+
+    it "approves the gate on an answer keyed by that name" do
+      recording = AgendaSpecSupport::RecordingGates.new(nil, stage: "research")
+      gated = described_class.new(queue:, gates: recording, replies:)
+
+      expect(gated.answer(listed_in(gated, "GateQuestion").id, { "research" => Lain::Approval::Verdict::Approve.new },
+                          surface: "remote:pixel")).to be(true)
+      expect(recording.answers).to eq([[:approve, "blake3:research", nil, "remote:pixel"]])
+    end
+
+    it "answers every issue-less row at the stage with the one key" do
+      recording = AgendaSpecSupport::RecordingGates.new(nil, nil, stage: "research", digests: %w[blake3:r0 blake3:r1])
+      gated = described_class.new(queue:, gates: recording, replies:)
+
+      expect(listed_in(gated, "GateQuestion").issues).to eq(%w[research])
+      gated.answer(listed_in(gated, "GateQuestion").id, { "research" => Lain::Approval::Verdict::Deny.new })
+
+      expect(recording.answers.map { _1.take(2) }).to eq([[:deny, "blake3:r0"], [:deny, "blake3:r1"]])
+    end
+
+    it "journals an answer keyed by that name as `lain epic deny` would" do
+      defer_research
+
+      agenda.answer(listed("GateQuestion").id, { "research" => Lain::Approval::Verdict::Deny.new(note: "thin") })
+
+      expect(gate_records.last).to include("artifact_digest" => digest_a, "stage" => "research", "verdict" => "deny",
+                                           "reason" => "thin", "issue_id" => nil)
+      expect(listed("GateQuestion")).to be_nil
+    end
+
+    it "refuses an empty answer with a reason, and is still listed to answer again" do
+      defer_research
+
+      expect { agenda.answer(listed("GateQuestion").id, {}) }.to raise_error(ArgumentError, /names no issue.*research/)
+      expect(listed("GateQuestion")).to have_attributes(issues: %w[research])
     end
   end
 

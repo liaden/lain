@@ -10,12 +10,14 @@ module Lain
     #   @return [String, nil] the role that asked
     # @!attribute [r] epic_slug
     #   @return [String, nil] the epic the asker works under
-    QuestionAnswered = Data.define(:question, :answer, :requester, :epic_slug) do
+    # @!attribute [r] answered_by
+    #   @return [String, nil] the surface that answered, named as a gate decision names it; nil for the desk's own
+    QuestionAnswered = Data.define(:question, :answer, :requester, :epic_slug, :answered_by) do
       include Journalable
 
-      def initialize(question:, answer:, requester: nil, epic_slug: nil)
+      def initialize(question:, answer:, requester: nil, epic_slug: nil, answered_by: nil)
         super(question: -question.to_s, answer: -answer.to_s, requester: requester&.then { -_1.to_s },
-              epic_slug: epic_slug&.then { -_1.to_s })
+              epic_slug: epic_slug&.then { -_1.to_s }, answered_by: answered_by&.then { -_1.to_s })
       end
 
       def to_journal = super.compact
