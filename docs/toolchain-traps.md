@@ -386,11 +386,6 @@ redundant) holds for `Hash#fetch` and does not hold for this one. The method was
   beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once
   the terminal is closed`. The walk-budget example that was on this list is retired below.
 
-  Added 2026-10-21, a wall-clock count red once in a full `pspec` at 12 workers on a quiet box (24 ticks
-  against 25), green alone (6 of 6) and green in the next 2 full suites, with no change to the code it
-  drives: `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread`. Its sibling
-  below is the same budget starved the same way, so this file's tick floors are now a pattern of 2.
-
   Added 2026-10-21, a thread count red once in a pre-commit suite at load 11 beside another rspec run
   (5 threads against 4), green alone (37 of 37) and green in a full suite on the base and on the change:
   `Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started`. Retired 2026-11-01 on
@@ -449,21 +444,13 @@ Unproven; counting only the example's own thread would settle it.
   stall in the fiber that owns the dead stream` (`Errno::ECONNRESET` in the streaming upstream, on a
   quiet box); and `Lain::Ext::Fuzzy#match on another thread behaves like a GVL-releasing binding
   raises the interrupt's error rather than returning a partial answer` (0.72s against a 0.32s bound,
-  load about 16 with 3 agents running specs beside the suite). `Lain::Tool::Offload keeps a sibling
-  fiber running while the work holds its thread`, from the 2026-10-21 entry, went red once more in a
-  plain `pspec` on the base commit.
+  load about 16 with 3 agents running specs beside the suite).
   `two cockpits on one machine` went red twice more the same day. All 4 examples failed once (a `you>`
   line never held in the input pane within 15s), and once `keeps one status feed per project, each
   with its own run's tokens` was STUCK and STARVED at a load of 28.5 with a game running beside the
   suite. Each time the file passed 3 of 3 with the failing seed on the base and on the card. That is
   4 recorded reds of one launch that outruns its waits under load, so it is a card, not a flake to
   budget a retry for.
-
-  Added 2026-10-18, a wall-clock count red once in a pre-commit suite (6 ticks against 15) and green
-  alone and in a full suite on the base and on the change: `Lain::Tool::Offload keeps a sibling fiber
-  running while the work never gives up the lock between threads`. Red again on 2026-10-19, 6 against
-  15 at a load of about 5, and green alone and in a full suite with the failing seed on the base and
-  on the change. Twice is a pattern: the count is a wall-clock budget the box's load can starve.
 
   Added 2026-10-09, red once (watchdog STUCK at 30s) in a pre-commit suite under a load of about
   11 on 16 cores with a reviewer's probes running beside it, and green 3 of 3 runs of its file
@@ -477,14 +464,11 @@ Unproven; counting only the example's own thread would settle it.
 
   Added 2026-09-21, from ten hook-verified landings on a box with one core pinned by an unrelated
   job. Each of these reddened at least one pre-commit suite and then passed 3 of 3 serial runs of
-  its file (a fourth, the TTY's "loses and repeats nothing typed while notes keep arriving", is
-  retired below):
+  its file (2 more, the subagent fan-out order and the TTY's "loses and repeats nothing typed while
+  notes keep arriving", are retired below):
   `Lain::Frontend::InputPane a pane with no chat to talk to says what it is waiting for without
   claiming the screen, and leaves when told to` (twice; the 2026-10-02 join did not reproduce its
-  cause, so it stays here);
-  `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn
-  gathers every result into ONE user message in tool_use order, however the children finish`
-  (twice); and `plain_chat_prompt_guards_spec.rb`'s `a plain chat's inline prompts over a real
+  cause, so it stays here); and `plain_chat_prompt_guards_spec.rb`'s `a plain chat's inline prompts over a real
   terminal Ctrl-C at human> offers stop, and s ends the ask while the session carries on`, on the
   final count run (its sibling there, "ends its line with who decided it and how", is retired below). Since 2026-10-02 that file
   waits on events (the echo, a held note, a parked marker, PTY EOF) and takes its children from a
@@ -544,10 +528,7 @@ Unproven; counting only the example's own thread would settle it.
   - Repeats of the entries above: `a project's own tests inside the workspace profile passes one spec
     file with the example count an unconfined run reports` (STARVED at its 30s watchdog at load 28.3 and
     again at 24.5, so 2 more reds; fixed 2026-11-10, see below) and the same group's `passes the fence crate's tests, none of them
-    skipped`; all 4 examples of `two cockpits on one machine` (STUCK at load 21.5); `Lain::Tool::Offload
-    keeps a sibling fiber running while the work never gives up the lock between threads` (tick gap
-    0.302 against a 0.3 bound, seed 33746) and `... while the work holds its thread` (0.312 against 0.3,
-    seed 56381).
+    skipped`; and all 4 examples of `two cockpits on one machine` (STUCK at load 21.5).
   - `cockpit_approval_spec`'s `when the human approves the call shows a fleet line above a you> line in an
     input pane at its floor height` (the hint line was showing, not the fleet line; seed 30101, 5 of 5
     alone). It is also a repeat of a sighting in an earlier plan's log, not recorded here until now.
@@ -580,6 +561,16 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-11-12: `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread` and
+    `... while the work never gives up the lock between threads` (red 2026-10-18, 10-19, 10-21 and 10-31,
+    and at tick gaps of 0.302 and 0.312 against a 0.3 bound). Both judged ticks against a wall-clock
+    share. The work now holds its thread until the sibling has ticked 5 times, so finishing proves the
+    sibling ran, and no time is compared.
+  - 2026-11-12: `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user
+    turn gathers every result into ONE user message in tool_use order, however the children finish`
+    (red twice on the 2026-09-21 list, and again in a round 29 landing suite). The provider ordered the
+    children by sleeps of 60, 40 and 20 ms, which load reorders. Each child now waits for the child
+    called after it to finish, so the reverse order holds under any load.
   - 2026-10-30: `draining one chore through a lease, a headless chat and lain land lands the chat's commit
     on the main branch` and `... marks the chore done with the landed sha and the session path` (both red
     together on 2026-10-29 at load 26 and on 2026-10-30, seed 59949, the chore marked "no drainer").
@@ -1020,6 +1011,14 @@ Unproven; counting only the example's own thread would settle it.
   with the fix. Also fixed the same day: `Lain::Shell::Pipeline a stop from outside ...` read
   `/proc/self/task/<tid>/children` after the thread exited (the 2026-11-02 entry, red again in this
   run); the spec's helper now skips a vanished task.
+
+  Added 2026-11-12, from the round 29 landing hooks. Each went red once in a landing suite, passed
+  alone in the card's tree, and passed 3 of 3 runs of its file on the base commit:
+  `Lain::CLI::EpicDriver::Run a stop by the human while an issue launches when the issue takes a
+  while to read before its lease is asked for asks for no lease after a stop that lands during the
+  read` (STUCK at 30.5 s at load 19.2 on 16 cores); and 2 examples of `Lain::CLI::TmuxSurface
+  against a real tmux server`, red together in one suite: `keeps a cleanly exiting window's pane
+  out of the way` and `holds the corpse of a window whose command exited non-zero`.
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
