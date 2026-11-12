@@ -384,6 +384,33 @@ RSpec.describe Lain::Chores::Runner, :seam do
       expect(lander).not_to have_received(:queued)
     end
 
+    # The chat is rooted where the runner hands it, so the rule chain a real chat would build is built there.
+    it "hands the chat a root its commit rule recognises as the lease, so the chore's commit is approved by rule" do
+      clone_backend = Lain::CLI::IsolationBackend.resolve("worktree", root: @main)
+      decisions = []
+      asking = lambda do |*argv, **options|
+        root = argv[argv.index("--root") + 1]
+        fresh = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+        factory = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home: File.join(@dir, "home"), cwd: root, root:, confinement: Lain::Approval::Root.new(root),
+          resolver: Lain::Shell::Executable::Resolver.new(root:, fresh:),
+          worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin", "HOME" => File.join(@dir, "home") })
+        )
+        call = Lain::Approval::Rule::Call.for(tool: Lain::Tools::Bash.new(verdict: Lain::Shell::Verdict.new),
+                                              input: { "command" => 'git commit -m "chore"', "cwd" => root })
+        decisions << Lain::Approval::Escalation::Rules.ladder(Lain::CLI::Wiring::BoardBuild.approving([], factory,
+                                                                                                      workspace: true))
+                                                      .call(call).decision
+        chat(commit: true).call(*argv, **options)
+      end
+
+      outcome = runner(spawner: asking, backend: clone_backend).to_a.sole
+
+      expect(decisions.sole).to have_attributes(verdict: :allow, rule: "lease_commit")
+      expect(outcome.status).to eq(:landed)
+    end
+
     it "fails a lease whose HEAD git cannot read at all, with no enqueue" do
       unreadable = lambda do |*argv, **options|
         chat(commit: true).call(*argv, **options).tap { FileUtils.rm_rf(File.join(options.fetch(:chdir), ".git")) }

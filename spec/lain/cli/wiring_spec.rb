@@ -884,6 +884,49 @@ RSpec.describe Lain::CLI::Wiring do
         end
       end
 
+      # A commit's hooks run files the chat may have edited, so the rule approving one is built only where
+      # the toolset built the sandbox that holds the call.
+      describe "the lease commit rule" do
+        # Under an attended ask, whose ladder holds the rules rung bare.
+        def rule_names
+          board = board_on_path("/usr/bin", workspace_wiring(approval: "ask", non_interactive: false))
+          board.ladder.to_a[1].instance_variable_get(:@rules).map(&:name)
+        end
+
+        it "is built when the sandbox wraps bash under --confine workspace", :seam do
+          offering_every_layer
+
+          expect(rule_names).to include("lease_commit")
+        end
+
+        it "is not built when the box cannot build the sandbox" do
+          allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
+            original.call(**kwargs, runner: ->(_argv) { ["", false] })
+          end
+
+          expect(rule_names).not_to include("lease_commit")
+        end
+
+        # Rooted at a real lease as a drained chore's chat is, with nothing built by hand.
+        it "approves a commit in the lease the chat is rooted at", :seam do
+          offering_every_layer
+          upstream = File.join(File.dirname(@root), "upstream")
+          FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", upstream.tap { FileUtils.mkdir_p(_1) })
+          SeedRepo.git(upstream, "branch", "-M", "main")
+          lease = Lain::CLI::IsolationBackend.resolve("worktree", root: upstream).acquire("wired")
+          @root = lease.origin.path
+
+          board = with_env("HOME" => @home, "XDG_CONFIG_HOME" => nil) do
+            outside_a_git_hook { board_on_path("/usr/bin", workspace_wiring) }
+          end
+          ruling = Sync { |task| task.with_timeout(5) { board.policy_switch.rule(bash_of("git commit -m x"), nil) } }
+
+          expect([ruling.allow?, ruling.rule]).to eq([true, "lease_commit"])
+        ensure
+          lease&.release(discard: true)
+        end
+      end
+
       def offering_every_layer
         allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
           original.call(**kwargs, runner: ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true}' : "", true] })

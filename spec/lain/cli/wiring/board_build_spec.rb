@@ -310,8 +310,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # The two vocabularies, asserted apart. A project that RESTRICTS paths and
     # grants no call shapes must come back with a live path boundary and NO
     # remembered answer -- the `[sensitivity]` table must never arrive at the
-    # deterministic rung as one. The term-approval rule is unconditional and is
-    # the whole chain here, which is what makes its absence readable.
+    # deterministic rung as one. The term-approval rule is the whole chain here,
+    # which is what makes its absence readable.
     it "keeps the sensitivity table out of the approval rung" do
       in_tree(config: "sensitivity denied: %w[*.secret]\n") do |root, home|
         board = board_for(root, home)
@@ -846,6 +846,55 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
         expect(rules.map(&:name)).to eq(%w[composed_term])
         expect(rules.last.instance_variable_get(:@sensitivity)).to be_a(described_class::Classifiers)
+      end
+    end
+
+    # A commit runs hooks that read files the chat may have edited, so the rule
+    # approving one is built only where the workspace sandbox was built to hold
+    # the call: the arm says workspace and the toolset wrapped bash in it.
+    it "builds the lease commit rule where the workspace sandbox was built, and nowhere else" do
+      in_tree do |root, home|
+        built = Lain::Approval::Judgement::Masking.new(Object.new)
+        boards = { "workspace" => built, "workspace on a degraded box" => Lain::Approval::Judgement::Unmasked,
+                   "reader" => built, "classes" => built, "off" => built }
+        names = boards.to_h do |label, masks|
+          arms = Lain::CLI::Arms.from(confine: label.split.first)
+          [label, board_over(root, home, arms:, masks:).ladder.to_a[1].instance_variable_get(:@rules).map(&:name)]
+        end
+
+        expect(names).to eq("workspace" => %w[lease_commit composed_term],
+                            "workspace on a degraded box" => %w[composed_term], "reader" => %w[composed_term],
+                            "classes" => %w[composed_term], "off" => %w[composed_term])
+      end
+    end
+
+    # The board's own child env is what the rule judges git's env by: a pass list that keeps an
+    # inherited GIT_DIR makes it abstain, and the same env without that pass list does not.
+    it "judges the lease commit by the env the board's child env gives git" do
+      in_tree do |root, home|
+        FileUtils.cp_r("#{SeedRepo.at(SeedRepo::SEED)}/.", root)
+        SeedRepo.git(root, "branch", "-M", "main")
+        lease = Lain::CLI::IsolationBackend.resolve("worktree", root:).acquire("board")
+        path = lease.origin.path
+        lent = { "PATH" => "/usr/bin", "HOME" => home.tap { FileUtils.mkdir_p(_1) },
+                 "GIT_DIR" => File.join(root, ".git") }
+        call = Lain::Approval::Rule::Call.for(tool: Lain::Tools::Bash.new(verdict: Lain::Shell::Verdict.new),
+                                              input: { "command" => "git commit -m x", "cwd" => path })
+        answers = [["GIT_DIR"], []].map do |pass|
+          board = board_over(path, home, arms: Lain::CLI::Arms.from(confine: "workspace"),
+                                         masks: Lain::Approval::Judgement::Masking.new(Object.new),
+                                         child_env: Lain::Exec::ChildEnv.new(pass:, env: lent),
+                                         resolver: Lain::Shell::Executable::Resolver.new(
+                                           root: path, fresh: Lain::Shell::Executable::Resolver::NeverFresh
+                                         ),
+                                         worker_env: Lain::WorkerEnv.new(cwd: path, env: lent))
+          rules = board.ladder.to_a[1].instance_variable_get(:@rules)
+          rules.find { _1.name == "lease_commit" }.decide(call)&.verdict
+        end
+
+        expect(answers).to eq([nil, :allow])
+      ensure
+        lease&.release(discard: true)
       end
     end
 

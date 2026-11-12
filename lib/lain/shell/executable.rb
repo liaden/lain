@@ -22,6 +22,14 @@ module Lain
     #
     # Rides on journal records and approval decisions, so it is deeply frozen.
     class Executable
+      # A user file is one this process could have swapped, so it is trusted
+      # only while this lineage left it alone.
+      #
+      # @param klass [Symbol] as {#klass} answers, for a program or a run file
+      # @param fresh [Boolean] whether this lineage changed it
+      # @return [Boolean]
+      def self.trusted_class?(klass, fresh) = klass == :system || (klass == :user && !fresh)
+
       # What each anomaly means, in words a human or a judge reads.
       ANOMALIES = {
         empty_path_entry: "PATH has an empty entry",

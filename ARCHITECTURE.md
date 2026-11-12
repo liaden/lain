@@ -760,6 +760,14 @@ reads the string itself, accepting only leading `cd`s, plain quoting, `2>&1` or 
 after a stage, and `|`, `&&` and `;` (refused after a `cd`), so such a command still reaches the
 predicates. What a bare name resolves to is a separate question, below.
 
+`Approval::LeaseCommit` is the 1 rule that approves a write with no human: `git commit -m` in the clone
+lease lain cut for the chat, built only where the workspace sandbox was built to hold the call. That
+sandbox is the boundary: it contains whatever git runs, and the upstream hooks a commit runs still run
+tracked files the chat may have edited, inside it. The rule's checks are defence in depth, refusing the
+steering this lineage is known to plant: a hook, config, filter driver or env it could have written, a
+repository other than the lease's own, and a clone holding a nested repository. The commit reaches the
+project only through the merge coordinator's verified landing.
+
 Shift+Tab (`Switchboard#cycle_approval`) flips `ask` and `auto` through `mode_switch`, from the
 chat's own prompt (only at its prompts; a key typed ahead mid-run is dropped) or the `lain input`
 pane's socket (at once, with or without a prompt open), and `:LainMode` does the same from nvim. The key is

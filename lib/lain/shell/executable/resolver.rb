@@ -67,6 +67,17 @@ module Lain
           # @return [Array<Executable>] one per stage, wrappers unwrapped to the program they run
           def call(term) = term.stages.map { |stage| unwrap(stage.argv, @env, []) }
 
+          # A file a program reads, classed as a stage's run files are.
+          #
+          # @param path [String] absolute
+          # @return [RunFiles::Entry]
+          def run_file(path)
+            paths = paths_of(links([path]), @stat.realpath(path))
+            RunFiles::Entry.new(path:, klass: klass(paths), fresh: fresh?(paths))
+          rescue SystemCallError
+            RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
+          end
+
           private
 
           def unwrap(argv, env, wrappers, files = [])
@@ -92,13 +103,6 @@ module Lain
 
           def with_run_files(executable, paths)
             Executable.new(**executable.to_h, run_files: paths.uniq.map { |path| run_file(path) })
-          end
-
-          def run_file(path)
-            paths = paths_of(links([path]), @stat.realpath(path))
-            RunFiles::Entry.new(path:, klass: klass(paths), fresh: fresh?(paths))
-          rescue SystemCallError
-            RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
           end
 
           def unresolved(name, env, wrappers, anomalies: anomalies_of(env), skipped: [])
@@ -363,6 +367,10 @@ module Lain
           # @param term [Term]
           # @return [Array<Executable>]
           def call(term) = term.stages.map { |stage| Executable.unresolved(stage.program.to_s, anomalies: @anomalies) }
+
+          # @param path [String]
+          # @return [RunFiles::Entry] unresolved, as every stage is
+          def run_file(path) = RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
         end
 
         NULL = Null.new.freeze

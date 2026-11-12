@@ -1810,12 +1810,13 @@ module Lain
       end
 
       def trusted?(stage, own = OWNS_NOTHING)
-        trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? && !user_shadowing?(stage) &&
-          stage.wrappers.all? { |wrapper| trusted?(wrapper) } && untrusted_runs(stage, own).empty?
+        Shell::Executable.trusted_class?(stage.klass, stage.fresh) && stage.anomalies.empty? &&
+          !user_shadowing?(stage) && stage.wrappers.all? { |wrapper| trusted?(wrapper) } &&
+          untrusted_runs(stage, own).empty?
       end
 
       def untrusted_runs(stage, own)
-        stage.run_files.reject { |file| trusted_class?(file.klass, file.fresh) || own.call(file) }
+        stage.run_files.reject { |file| Shell::Executable.trusted_class?(file.klass, file.fresh) || own.call(file) }
       end
 
       # Read only once the flags predicate has admitted every stage. A cargo run
@@ -1843,10 +1844,6 @@ module Lain
           stage.program == CARGO && Pinned::BUILDING_RUNS.include?(flags_for(CARGO).run(stage.argv.drop(1)))
         end
       end
-
-      # A user file is one this process could have swapped, so it is trusted
-      # only while nothing in this lineage has changed it.
-      def trusted_class?(klass, fresh) = klass == :system || (klass == :user && !fresh)
 
       # A shim planted in an earlier session is no longer fresh, so standing in
       # front of another program of the same name is what gives it away.

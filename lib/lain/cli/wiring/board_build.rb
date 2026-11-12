@@ -79,10 +79,9 @@ module Lain
           sensitivity = session_policy(project:, paths:, table:, config:)
           factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts,
                                 reads: sensitivity.read_roots, **identity)
-          classes = arms.classes?
           Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
-                          approving: ->(remembered, each) { approving(remembered, each, classes:) },
+                          approving: approving_under(arms, masks, child_env),
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, middleware:,
                           test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
@@ -173,8 +172,21 @@ module Lain
           end
         end
 
+        # The workspace sandbox counts only where the toolset built it: a box
+        # lacking a layer runs bash unconfined whatever the arm says.
+        #
+        # @param arms [Lain::CLI::Arms] the bench arms the run was started with
+        # @param masks [#on?] what {ToolsetBuild#board_inputs} says of the sandbox it built
+        # @param child_env [Lain::Exec::ChildEnv] what a bash child inherits and is lent
+        # @return [#call] `(remembered, factory) -> rules`, {.approving} as those arms build it
+        def approving_under(arms, masks, child_env)
+          classes = arms.classes?
+          workspace = arms.workspace? && masks.on?
+          ->(remembered, each) { approving(remembered, each, classes:, workspace:, child_env:) }
+        end
+
         # The deterministic rung's chain: this root's remembered answers, and
-        # then the rule that can approve a parsed term with no human.
+        # then the rules that can approve a parsed term with no human.
         #
         # APPENDED, and the order is the precedence. {Approval::Ladder}
         # settles on the first rule with an opinion, so a human's remembered
@@ -192,9 +204,15 @@ module Lain
         # @param factory [#call, #confinement, #content, #executables] the `cwd -> #classify` factory,
         #   on {Lain::Approval::ComposedTerm}'s terms
         # @param classes [Boolean] whether the composed term rules by the resolved class
+        # @param workspace [Boolean] whether the workspace sandbox holds an automatic allow, the one place a
+        #   commit's hooks, which run files the chat may have edited, are bounded; only then may a lease commit
+        #   be approved by rule
+        # @param child_env [Lain::Exec::ChildEnv] what a bash child inherits and is lent, which the lease commit
+        #   rule judges git's env by
         # @return [Array<Lain::Approval::Rule>]
-        def approving(remembered, factory, classes: false)
-          [*remembered, Lain::Approval::ComposedTerm.new(sensitivity: factory, classes:)].freeze
+        def approving(remembered, factory, classes: false, workspace: false, child_env: Lain::Exec::ChildEnv::DEFAULT)
+          [*remembered, *(Lain::Approval::LeaseCommit.new(sensitivity: factory, child_env:) if workspace),
+           Lain::Approval::ComposedTerm.new(sensitivity: factory, classes:)].freeze
         end
 
         # The session's ONE {Lain::Shell::Verdict}, over the programs this
@@ -636,6 +654,20 @@ module Lain
           # @param cwd [String, nil] as on {#call}
           # @return [Content] never nil, and never raising
           def content(cwd) = Content.new(confinement(cwd))
+
+          # Classed where the command will run, as {#executables} classes a stage's run files.
+          #
+          # @param path [String] absolute
+          # @param cwd [String, nil] as on {#call}
+          # @return [Lain::Shell::Executable::RunFiles::Entry]
+          # @raise [ArgumentError] when the cwd cannot be resolved
+          def run_file(path, cwd) = @resolver.for(@worker_env.with(cwd: @worker_env.resolve(cwd))).run_file(path)
+
+          # Read before the child env withholds anything, so a name it would
+          # withhold still counts against an approval.
+          #
+          # @return [Hash{String=>String, nil}] what the worker's commands are lent
+          def environment = @worker_env.env
 
           # Bound where the command will run, as the bash tool binds it.
           #

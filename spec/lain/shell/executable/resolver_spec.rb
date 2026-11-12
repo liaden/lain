@@ -485,7 +485,41 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     expect(stage.sole).to have_attributes(klass: :system, fresh: false)
   end
 
+  describe "#run_file" do
+    def run_file(path) = resolver.for(Lain::WorkerEnv.new(cwd: root, env: {})).run_file(path)
+
+    it "classes a file under the root :project, one the user can replace :user, and one nobody can :system" do
+      inside = File.join(root, "config").tap { File.write(_1, "") }
+      mine = File.join(home, "config").tap { File.write(_1, "") }
+
+      expect([inside, mine, "/etc/hostname"].map { run_file(_1).klass }).to eq(%i[project user system])
+    end
+
+    context "with the file written this lineage" do
+      let(:fresh_paths) { [File.join(home, "config")] }
+
+      it "says it is fresh" do
+        File.write(File.join(home, "config"), "")
+
+        expect(run_file(File.join(home, "config"))).to have_attributes(klass: :user, fresh: true)
+      end
+    end
+
+    it "classes a file that does not resolve, a dangling link among them, :unresolved" do
+      File.symlink(File.join(home, "gone"), File.join(home, "dangling"))
+
+      expect([File.join(home, "missing"), File.join(home, "dangling")].map { run_file(_1).klass })
+        .to eq(%i[unresolved unresolved])
+    end
+  end
+
   describe "NULL" do
+    it "classes every file :unresolved and not fresh" do
+      entry = described_class::NULL.for(Lain::WorkerEnv.new(cwd: root, env: {})).run_file("/etc/hostname")
+
+      expect(entry).to have_attributes(path: "/etc/hostname", klass: :unresolved, fresh: false)
+    end
+
     it "resolves every stage :unresolved, by the name written" do
       worker_env = Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin" })
 
