@@ -67,6 +67,11 @@ module Lain
       # @return [Masked] numbered after the highest placeholder already present
       def call(text) = mask(text, Regions.numbering_after(text))
 
+      # @param input [ScanInput]
+      # @param found [Array<Regions::Region>] the input's regions
+      # @return [Masked] as {#call}, over the input's checksums flag
+      def scanned(input, found) = masked(input.text, found, Regions.numbering_after(input.text))
+
       # @param ordinals [Enumerator] the placeholder numbering; shared, it numbers
       #   several streams of one command as one
       # @return [Stream] a masker for output that arrives in pieces

@@ -221,12 +221,15 @@ module Lain
         def released = found - unreleased.length
       end
 
+      # A command's scan rides the env down, so the whole spill {WithholdAutomaticOutput} scans and the head
+      # this masks are read with one checksums flag and one set of known values.
       def call(env, &app)
         effect = env.fetch(:effect)
-        carried = downstream(env, &app)
+        scan = output_scan(env, effect) if COMMAND_TOOLS.include?(effect.name)
+        carried = downstream(scan ? env.merge(output_scan: scan) : env, &app)
         return carried unless SCANNED_TOOLS.any? { _1.include?(effect.name) }
 
-        holding(guarded(carried, effect), carried)
+        holding(guarded(carried, effect, scan), carried)
       end
 
       private
@@ -235,10 +238,10 @@ module Lain
       # a stopped requester must keep unwinding. {#settle}'s `ensure` is what
       # makes that safe -- it has already recorded the mask by the time the stop
       # passes through here.
-      def guarded(carried, effect)
+      def guarded(carried, effect, scan)
         result = carried.fetch(:result)
         # A failed command can still quote what it printed.
-        return printed(carried, effect, result) if COMMAND_TOOLS.include?(effect.name)
+        return printed(carried, effect, scan.call(result.text)) if COMMAND_TOOLS.include?(effect.name)
         # A failed read carries a message, never file bytes, so there is nothing
         # here to mask and no read to record.
         return carried if result.error?
@@ -275,22 +278,37 @@ module Lain
         settle(carried, effect, withheld)
       end
 
-      def printed(carried, effect, result)
+      def printed(carried, effect, input)
         released = named_files(carried, effect).flat_map { @ledger.released(_1) }
-        masked = text_mask(carried, released:).call(result.text)
+        found = input.regions
+        masked = output_mask(input, released).scanned(input, found)
         return carried unless masked.fresh.positive? || masked.prior.positive?
 
-        record_printed(carried, masked, released) if masked.fresh.positive?
-        carried.merge(result: Tool::Result.new(content: with_trailer(masked), is_error: result.error?))
+        record_printed(effect, masked, found.reject { released.include?(_1.digest) }) if masked.fresh.positive?
+        carried.merge(result: Tool::Result.new(content: with_trailer(masked),
+                                               is_error: carried.fetch(:result).error?))
       end
 
-      def record_printed(carried, masked, released)
-        effect = carried.fetch(:effect)
+      def record_printed(effect, masked, shown)
         record(Telemetry::CommandRedacted) do
           Telemetry::CommandRedacted.new(tool_use_id: effect.tool_use_id, regions: masked.fresh, prior: masked.prior)
         end
-        shown = ::Lain::Sensitivity::Regions.detect(carried.fetch(:result).text).reject { released.include?(_1.digest) }
         record_over_masked(effect, shown)
+      end
+
+      def output_mask(input, released) = ::Lain::Sensitivity::TextMask.new(secrets: input.literals, released:)
+
+      # Built on first use and kept, so the spill and the head share one parse lookup and one read of the secrets.
+      def output_scan(env, effect)
+        input = nil
+        ->(text) { (input ||= output_input(env[:context], effect)).over(text) }
+      end
+
+      def output_input(context, effect)
+        command = Shell::Named.field_of(effect.input, Shell::Named::COMMAND)
+        parse = ParsedCommand.carried(command, context) || (Shell::Parse.new.call(command) if command.is_a?(String))
+        ::Lain::Sensitivity::ScanInput.of_bash("", parse:, named: ParsedCommand.named_in(effect, context, home: nil),
+                                                   policy: @related, secrets: @secrets.for(context))
       end
 
       # One record per shape, so the count a projection reads is how many results held one, not how many bytes.
@@ -331,8 +349,8 @@ module Lain
         end
       end
 
-      def text_mask(carried, released: [])
-        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)), released:)
+      def text_mask(carried)
+        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)))
       end
 
       # Every `bash` call passes here, so nothing is stat'd until a release could be shown.

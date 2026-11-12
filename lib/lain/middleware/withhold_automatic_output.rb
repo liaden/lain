@@ -133,6 +133,10 @@ module Lain
         def automatically_allowed? = ruling.allow? && !ruling.human?
       end
 
+      # The scan input of a stack with no read-side mask outside this layer: no lockfile, no known value.
+      # A known value alone masks in the shown result and withholds nothing, so only its regions are read here.
+      PLAIN_SCAN = ->(text) { ::Lain::Sensitivity::ScanInput.new(text:, checksums: false, literals: [].freeze) }
+
       attr_reader :bar
 
       # @param bar [Bar] the session's one bar
@@ -153,7 +157,7 @@ module Lain
 
         carried = Carried.new(env[:context] || Session::Null.instance, barred: @bar.include?(command(effect)))
         ran = downstream(env.merge(context: carried), &app).merge(context: env[:context])
-        decided(ran, effect, carried)
+        decided(ran, effect, carried, env.fetch(:output_scan, PLAIN_SCAN))
       ensure
         carried&.held&.discard
       end
@@ -166,9 +170,9 @@ module Lain
 
       def command(effect) = called(effect).input[COMMAND]
 
-      def decided(env, effect, carried)
+      def decided(env, effect, carried, scan)
         held = carried.held
-        found = carried.automatically_allowed? ? scanned(env, held) : []
+        found = carried.automatically_allowed? ? scanned(env, held, scan) : []
         return withheld(env, called(effect), 0, format(UNREADABLE, name: called(effect).name)) if found.nil?
         return withhold(env, called(effect), found) unless found.empty?
 
@@ -177,8 +181,8 @@ module Lain
 
       # The whole spill rather than the result, since the result holds only
       # its head; nil when the spill cannot be read back.
-      def scanned(env, held)
-        RedactSecretReads::Scan.new(held.whole(env)).regions
+      def scanned(env, held, scan)
+        scan.call(held.whole(env)).regions
       rescue SystemCallError, IOError
         nil
       end

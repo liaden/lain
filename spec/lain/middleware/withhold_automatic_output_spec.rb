@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "openssl"
 require "stringio"
 require "tmpdir"
 
@@ -285,6 +286,95 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       expect(env.fetch(:result)).to have_attributes(is_error: true)
       expect(env.fetch(:result).content).to include("could not be read back")
       expect(bar.include?("cat big.txt")).to be(true)
+    end
+  end
+
+  # The read side's mask runs outside this layer, as a chat's guard stack mounts them.
+  describe "under the read side's mask" do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @tmp = dir
+        example.run
+      end
+    end
+
+    let(:policy) { Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: @tmp, cwd: @tmp)) }
+    let(:environment) { {} }
+    let(:secrets) do
+      Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env: environment),
+                                             history: Lain::Sensitivity::HistoryLiterals::Null)
+    end
+    let(:redact) do
+      Lain::Middleware::RedactSecretReads.new(ledger: Lain::Sensitivity::Ledger.new, related: policy, secrets:,
+                                              queue: Lain::Middleware::RedactSecretReads::Unqueued)
+    end
+    let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @tmp, env: {})) }
+
+    def integrity(seed) = "sha512-#{[OpenSSL::Digest.digest("SHA512", seed)].pack("m0")}"
+
+    def lockfile
+      entries = %w[a b c].map { |name| %(    "node_modules/#{name}": { "integrity": "#{integrity(name)}" }) }
+      body = "{\n  \"packages\": {\n#{entries.join(",\n")}\n  }\n}\n"
+      body.tap { File.write(File.join(@tmp, "package-lock.json"), _1) }
+    end
+
+    def automatic(command, output)
+      Lain::Middleware::Stack.new([redact, guard]).call({ effect: call_of(command), context: session }) do |inner|
+        inner.fetch(:context).ruled(ruling(:automatic))
+        inner.merge(result: Lain::Tool::Result.ok("exit status: 0\n--- stdout ---\n#{output}"))
+      end.fetch(:result)
+    end
+
+    # Scenario: a lockfile printed by bash is shown
+    it "shows a lockfile's integrity lines, and leaves the command free of the bar" do
+      result = automatic("cat package-lock.json", lockfile)
+
+      expect(result).to be_ok
+      expect(result.content).to include(integrity("a"), integrity("b"), integrity("c"))
+      expect(result.content).not_to include("redacted")
+      expect(bar.include?("cat package-lock.json")).to be(false)
+    end
+
+    # Scenario: the shown result and the withholding scan agree
+    describe "a value the shown result masks only as a known literal" do
+      let(:value) { "abc123lowentropyvalue" }
+      let(:environment) { { "OLLAMA_API_KEY" => value } }
+
+      it "is masked in the output an automatically approved command shows, and bars nothing" do
+        expect(Lain::Sensitivity::Regions.detect("#{value}\n")).to be_empty
+
+        result = automatic("echo $OLLAMA_API_KEY", "#{value}\n")
+
+        expect(result).to be_ok
+        expect(result.content).to include("<redacted:1>")
+        expect(result.content).not_to include(value)
+        expect(bar.include?("echo $OLLAMA_API_KEY")).to be(false)
+      end
+    end
+
+    it "withholds the same token in a file the policy does not call checksums" do
+      token = integrity("a")
+      File.write(File.join(@tmp, "notes.txt"), "#{token}\n")
+
+      result = automatic("cat notes.txt", "#{token}\n")
+
+      expect(result).to have_attributes(is_error: true)
+      expect(bar.include?("cat notes.txt")).to be(true)
+    end
+
+    # A stage lain cannot read prints notes.txt beside the lockfile, so its hash field is no lockfile's.
+    { "a python one-liner" => %q(cat package-lock.json; python3 -c "print(open('notes.txt').read())"),
+      "a ruby one-liner" => %q(cat package-lock.json; ruby -e 'puts File.read("notes.txt")'),
+      "an exported variable" => 'cat package-lock.json "$F"' }.each do |what, command|
+      it "withholds a hash field printed beside a lockfile by #{what}, and bars the command" do
+        planted = "A1B2C3D4E5F60718" * 4
+
+        result = automatic(command, "#{lockfile}{\"hash\": \"#{planted}\"}\n")
+
+        expect(result).to have_attributes(is_error: true)
+        expect(result.content).not_to include(planted)
+        expect(bar.include?(command)).to be(true)
+      end
     end
   end
 

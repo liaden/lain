@@ -1135,6 +1135,19 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       expect(parks.size).to eq(1)
     end
 
+    # Scenario: a lockfile printed by bash is shown
+    it "shows a package-lock.json bash prints, its integrity lines unmasked" do
+      entries = %w[a b c].map { |name| %(    "node_modules/#{name}": { "integrity": "#{integrity(name)}" }) }
+      write("package-lock.json", "{\n  \"packages\": {\n#{entries.join(",\n")}\n  }\n}\n")
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_bash", name: "bash",
+                                        input: { "command" => "cat package-lock.json" })
+
+      content = Sync { dispatch(call, tool: Lain::Tools::Bash.new) }.fetch(:result).content
+
+      expect(content).to include(integrity("a"), integrity("b"), integrity("c"))
+      expect(content).not_to include("redacted")
+    end
+
     it "still masks an uppercase 64-hex value in a file the policy does not call checksums" do
       # Uppercase, because lowercase hex of a digest's width with no hint reads as a digest.
       path = write("notes.txt", "build #{hex("notes").upcase}\n")
