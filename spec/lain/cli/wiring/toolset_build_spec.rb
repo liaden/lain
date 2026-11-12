@@ -890,6 +890,50 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           expect(result).to match(/refused.*outside|outside.*refused/m)
           expect(File.exist?(outside)).to be(false)
         end
+
+        def researcher_leg(provider, ceiling, stops: [])
+          config = Lain::Config.new(epics: Lain::Config::Epics.new(home: :xdg),
+                                    budget: Lain::Budget::Table.new(rows: { "researcher" => ceiling }))
+          build_with(options, switchboard: -> { switchboard }, root: project_root, paths:, config:, provider:)
+            .build(recorder, ask_human:, stops:).fetch("subagent")
+        end
+
+        def researcher_call(tool, input)
+          Sync { tool.call(input, Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)) }
+        end
+
+        def written(*names)
+          names.map { |name| tool_response([name, "write_file", { "path" => name, "content" => "x\n" }]) }
+        end
+
+        it "resumes a restored spike researcher in the subdirectory it stopped in", :seam do
+          sub = File.join(project_root, "sub").tap { FileUtils.mkdir_p(_1) }
+          File.write(File.join(sub, "keep.txt"), "k\n")
+          SeedRepo.git(project_root, "init", "-q", "-b", "main")
+          SeedRepo.git(project_root, "add", "-A")
+          SeedRepo.git(project_root, "-c", "user.name=p", "-c", "user.email=p@p", "commit", "-qm", "seed")
+          responses = [*written("notes.md", "more.md", "third.md"), text_response("never")]
+          stopping = researcher_leg(Lain::Provider::Mock.new(responses:), 2)
+          expect { researcher_call(stopping, { "prompt" => "go", "role" => "researcher", "extends" => sub }) }
+            .to raise_error(Lain::Budget::Exceeded)
+          lines = journal.events.grep(Lain::Telemetry::ChildStopped).map { |stop| JSON.generate(stop.to_journal) }
+          stops = Lain::Tools::Subagent::Stops.from_journal(lines)
+          chat = Lain::EventLog::ChainWriter.correlation_of(parent.call)
+
+          provider = Lain::Provider::Mock.new(responses: [*written("after.md"), text_response("done")])
+          resumed = researcher_leg(provider, 5, stops: Lain::CLI::Resume::StoppedChildren.new(stops, chat:).resumable)
+          result = researcher_call(resumed, { "resume" => "researcher", "role" => "researcher", "iterations" => 3 })
+
+          worktree = stops.first.lease_path
+          expect(Dir.glob("#{worktree}/**/after.md")).to eq([File.join(worktree, "sub", "after.md")])
+          expect(File.exist?(File.join(worktree, "sub", "notes.md"))).to be(true)
+          expect(Lain::Canonical.dump(provider.requests.first.then { [_1.system, _1.messages] }))
+            .to include("Your working directory is #{File.join(worktree, "sub")}, where you worked")
+          leases = journal.events.grep(Lain::Telemetry::IsolationLease).last(2)
+          expect(leases.map { |lease| [lease.kind, lease.backend] })
+            .to eq([[:acquired, "Lain::Isolation::Spike"], [:kept, "Lain::Isolation::Spike"]])
+          expect(result.text).not_to include("files written:")
+        end
       end
 
       # The chat offers a reviewer beside the researcher: read-only, no lease,

@@ -24,7 +24,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     CapabilityDegraded: { capability: "thinking", requirer: "agent", provider: "ollama" },
     ChildProgress: { spawn: d, turns: 3, label: "l", role: "r", skill: "s", task_line: "t", worker: "w", head: d },
     ChildStopped: { spawn: d, label: "l", role: "r", head: d, lease_path: "/w/c", ceiling: 20, reason: "transport",
-                    snapshot: "abc", task: "t", parent: d, kept: true },
+                    snapshot: "abc", task: "t", parent: d, kept: true, cwd: "/w/c/sub" },
     ChildTurn: { digest: d, kind: :turn, from: "a", to: "b", render_parent: d, payload: { "role" => "user" },
                  causal_parents: [d], correlation: { "ask" => d } },
     ClaimDemoted: { strategy: "summarize", count: 2 },

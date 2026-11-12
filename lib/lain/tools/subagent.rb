@@ -261,14 +261,11 @@ module Lain
       end
 
       # Holds again the children a closed or abandoned run left stopped, so the parent can
-      # resume them. A researcher is not restored: its directory is confined by a scope only
-      # the run that leased it held.
+      # resume them.
       #
       # @param restored [Array<Telemetry::ChildStopped>] read off the run's record
       # @return [self]
       def restore(restored)
-        return self unless @kept.equal?(Unkept)
-
         @stops.restore(restored) { |stop| restored_stop(stop) }
         self
       end
@@ -544,11 +541,13 @@ module Lain
         [message, stopping.call(agent.timeline.head_digest, reason)].reject(&:empty?).join("\n\n")
       end
 
-      # The stop as the restarted run can resume it: in a fresh checkout cut from what the
-      # stopped one held, since a run that never closed may have left that one for a reaper.
+      # The stop as the restarted run can resume it: a kept directory reopened under the
+      # confinement it had, any other in a fresh checkout cut from what the stopped one held,
+      # since a run that never closed may have left that one for a reaper.
       def restored_stop(stop)
         Stopped.new(label: stop.label, spawn: stop.spawn, head: stop.head, prompt: stop.task, builder: @builder,
-                    announced: @announces_as, scope: Session::Unconfined, parent: stop.parent,
+                    announced: @announces_as, parent: stop.parent,
+                    scope: stop.kept ? @kept.reopened(stop.lease_path, cwd: stop.cwd) : Session::Unconfined,
                     lease: -> { Stops::Lending.new(leases: isolation.restoring(stop.snapshot)) })
       end
 
@@ -1213,6 +1212,17 @@ module Lain
         def self.input_model = Input
 
         def self.lease_for(_extends) = UNLEASED
+
+        # A plan-scope child's spike, kept by the scope that lent it rather than by this spawner. One
+        # gone since took the child's work with it, so the resume is refused.
+        #
+        # @param dir [String]
+        # @param cwd [String, nil] where in it the child worked; `dir` itself when nil
+        # @return [Kept::Reopened]
+        def self.reopened(dir, cwd: nil)
+          Kept::Reopened.at(dir, cwd:, reminder: format(Kept::RESUMED, dir: cwd || dir),
+                                 refusal: "its spike, #{dir}, is gone, so its work cannot be resumed")
+        end
       end
 
       # Where a researcher works: a directory of its own, KEPT after it ends,
@@ -1241,6 +1251,9 @@ module Lain
 
         SCRATCH = "Your working directory is %<dir>s, an empty scratch directory of your own that is kept after " \
                   "you finish, and a write outside it is refused. #{PROJECT}".freeze
+
+        RESUMED = "Your working directory is %<dir>s, where you worked before you stopped, kept since; a write " \
+                  "outside it is refused."
 
         SPIKE = "Your working directory is %<dir>s, in a new worktree of %<repo>s checked out on the branch " \
                 "%<branch>s, which keeps what you commit after you finish, and a write outside it is refused. " \
@@ -1282,13 +1295,43 @@ module Lain
           # @return [#call] answering this scope, its lease recorded acquired again
           # @raise [Refused] when the directory is gone
           def relet
-            unless File.directory?(root)
-              raise Refused, "the directory the stopped child worked in, #{root}, is gone, so it cannot be resumed"
-            end
+            raise Refused, Kept.refused(root) unless File.directory?(root)
 
             -> { tap { @acquired.call } }
           end
         end
+
+        # A kept directory a restarted run lends a resumed child again, confined to it as it was.
+        # Opened only when the resume asks, so a directory gone since refuses that resume alone.
+        Reopened = Data.define(:confined) do
+          # @param dir [String] the directory the stopped child was confined to
+          # @param cwd [String, nil] where in it the child worked; `dir` itself when nil
+          # @param reminder [String] what the model is told about where it is
+          # @param recorded [#call] `kind -> void`, records the lease kept or acquired
+          # @param listing [#call] the files the child wrote, as text; empty for none
+          # @param refusal [String] why a resume is refused when the directory is gone
+          # @return [Reopened]
+          def self.at(dir, reminder:, cwd: nil, recorded: ->(_kind) {}, listing: -> { "" }, refusal: Kept.refused(dir))
+            new(confined: lambda do
+              Confined.new(worker_env: WorkerEnv.new(cwd: cwd || dir, env: ENV.to_h, checkout: dir), reminder:,
+                           listing:, kept: -> { recorded.call(:kept) }, acquired: -> { recorded.call(:acquired) })
+            rescue SystemCallError
+              raise Refused, refusal
+            end)
+          end
+
+          # @return [#call] answering the directory's {Confined} scope, its lease recorded acquired again
+          # @raise [Refused] when the directory is gone
+          def relet = confined.call.relet
+        end
+
+        # @param dir [String] where a stopped child worked
+        # @return [String] why it cannot be resumed there
+        def self.gone(dir) = "its directory, #{dir}, is gone"
+
+        # @param dir [String]
+        # @return [String] the refusal of a resume in that directory
+        def self.refused(dir) = "#{gone(dir)}, so it cannot be resumed"
 
         # What the parent is told beside the handback: the files the child left.
         Written = Data.define(:report, :listing) do
@@ -1364,6 +1407,19 @@ module Lain
           -> { spiked(spike, repo) }
         end
 
+        # @param dir [String] the directory a stopped researcher was confined to, as its stop recorded it
+        # @param cwd [String, nil] where in it the researcher worked, as its stop recorded it
+        # @return [Reopened] that directory with the same working directory and confinement, its lease
+        #   journaled under the backend that first leased it
+        def reopened(dir, cwd: nil)
+          spike = spike?(dir)
+          backend = spike ? Isolation::Spike : Isolation::Scratch
+          record = Recorded.new(journal: @journal, origin: Isolation::Lease::Origin.new(path: dir),
+                                backend: backend.name)
+          Reopened.at(dir, cwd:, reminder: format("#{RESUMED} #{PROJECT}", dir: cwd || dir, root: @root),
+                           recorded: record, listing: spike ? -> { "" } : listed(dir))
+        end
+
         private
 
         def confined(lease, from, listing: -> { "" })
@@ -1371,6 +1427,19 @@ module Lain
           record.call(:acquired)
           Confined.new(worker_env: lease.worker_env, reminder: yield(lease.worker_env), listing:,
                        kept: -> { record.call(:kept) }, acquired: -> { record.call(:acquired) })
+        end
+
+        # A scratch directory names what was written in it, as {#scratched} does; a spike's commits say that.
+        def listed(dir)
+          lease = Isolation::Lease.new(worker_env: WorkerEnv.new(cwd: dir, env: {}),
+                                       origin: Isolation::Lease::Origin.new(path: dir))
+          -> { @scratch.release(lease) }
+        end
+
+        # Under either spelling of the root, since a stop records the directory by its real path.
+        def spike?(dir)
+          root = File.join(Kept.home(@paths, @root), "worktrees")
+          [root, File.directory?(root) ? File.realpath(root) : root].any? { |spelling| Landing.under?(dir, spelling) }
         end
 
         def scratched

@@ -124,10 +124,13 @@ module Lain
           Telemetry::ChildStopped.new(spawn: stopped.spawn, label:, role: @role, head:, reason:, task: stopped.prompt,
                                       lease_path: held&.path || kept_dir(stopped.scope),
                                       ceiling: stopped.builder.budget.iterations, snapshot: held&.snapshot,
-                                      parent: stopped.parent, kept: !kept_dir(stopped.scope).nil?)
+                                      parent: stopped.parent, kept: !kept_dir(stopped.scope).nil?,
+                                      cwd: kept_cwd(stopped.scope))
         end
 
         def kept_dir(scope) = scope.respond_to?(:root) ? scope.root : nil
+
+        def kept_cwd(scope) = kept_dir(scope) && scope.worker_env.cwd
       end
     end
   end

@@ -3163,25 +3163,117 @@ RSpec.describe Lain::Tools::Subagent do
         expect(File.directory?(seen.first)).to be(true)
       end
 
-      def stopped_researcher
+      def recording_kept
+        described_class::Kept.new(root: project, paths:, related: ->(_path) { false }, journal: leasing,
+                                  scratch: Lain::Isolation::Scratch.new(root: scratch_root, prefix: "research-"))
+      end
+
+      def stopped_researcher(journal: Lain::Channel::Null.instance)
         looping = mock(tool_response(["c0", "cwd", {}]), tool_response(["c1", "cwd", {}]),
                        tool_response(["c2", "cwd", {}], ["c3", "scope", {}]), text_response("done"))
-        recorded = described_class::Kept.new(root: project, paths:, related: ->(_path) { false }, journal: leasing,
-                                             scratch: Lain::Isolation::Scratch.new(root: scratch_root,
-                                                                                   prefix: "research-"))
-        kept_tool(looping, kept: recorded, budget: Lain::Budget.ceilings(iterations: 2),
-                           announces_as: "researcher").tap do |tool|
+        kept_tool(looping, kept: recording_kept, budget: Lain::Budget.ceilings(iterations: 2),
+                           announces_as: "researcher", journal:).tap do |tool|
           expect { tool.call({ "prompt" => "go" }, invocation) }.to raise_error(Lain::Budget::Exceeded, /resume/)
         end
       end
 
-      it "holds no stop a restarted run read back for a researcher, since only its own run confined its directory" do
-        stop = Lain::Telemetry::ChildStopped.new(spawn: "blake3:spawn", label: "researcher", head: parent.head_digest,
-                                                 reason: :iterations, task: "go",
-                                                 parent: Lain::EventLog::ChainWriter.correlation_of(parent))
+      def read_back(journal)
+        lines = journal.grep(Lain::Telemetry::ChildStopped).map { |stop| JSON.generate(stop.to_journal) }
+        Lain::Tools::Subagent::Stops.from_journal(lines)
+      end
 
-        expect { kept_tool.restore([stop]).call({ "resume" => "researcher", "iterations" => 2 }, invocation) }
-          .to raise_error(Lain::Tool::InvalidInput, /none is held/)
+      def restarted_researcher(journal)
+        kept_tool(mock(tool_response(["c4", "cwd", {}], ["c5", "scope", {}]), text_response("done")),
+                  kept: recording_kept, announces_as: "researcher").restore(read_back(journal))
+      end
+
+      it "resumes a researcher a restarted run read back, confined to the directory it stopped in" do
+        journal = []
+        stopped_researcher(journal:)
+        resumed = restarted_researcher(journal).call({ "resume" => "researcher", "iterations" => 2 }, invocation)
+
+        expect(resumed.text).to start_with("done")
+        expect([seen.size, seen.uniq]).to eq([3, [seen.first]])
+        expect(scopes.last).to be_a(Lain::Session::Confined).and(have_attributes(root: seen.first))
+        expect(scopes.last.reminders).to eq([
+                                              "Your working directory is #{seen.first}, where you worked before you " \
+                                              "stopped, kept since; a write outside it is refused. The project is at " \
+                                              "#{project}; read its files by absolute path."
+                                            ])
+        expect(backend.leased).to be_empty
+      end
+
+      it "journals a restored researcher's lease under the backend that first leased it" do
+        journal = []
+        stopped_researcher(journal:)
+        restarted_researcher(journal).call({ "resume" => "researcher", "iterations" => 2 }, invocation)
+
+        leases = leasing.drain.grep(Lain::Telemetry::IsolationLease)
+        expect(leases.map { |lease| [lease.kind, lease.backend] })
+          .to eq([%i[acquired kept acquired kept], ["Lain::Isolation::Scratch"] * 4].transpose)
+      end
+
+      it "names the files a restored researcher wrote, as a fresh one's result does" do
+        journal = []
+        stopped_researcher(journal:)
+        tool = writes("after.md", provider: mock(tool_response(["c4", "write", {}]), text_response("done")),
+                                  kept: recording_kept).restore(read_back(journal))
+
+        result = tool.call({ "resume" => "researcher", "iterations" => 2 }, invocation)
+
+        expect(result.text).to end_with("[files written:\n#{seen.first}/after.md]")
+      end
+
+      it "resumes a plan-scope child restored through a spawner that keeps no lease, confined to its directory" do
+        journal = []
+        stopped_researcher(journal:)
+        dir = seen.first
+        tool = kept_tool(kept: described_class::Unkept).restore(read_back(journal))
+
+        tool.call({ "resume" => "researcher", "iterations" => 2 }, invocation)
+
+        expect(scopes.last).to be_a(Lain::Session::Confined).and(have_attributes(root: dir))
+        expect(scopes.last.reminders).to eq([
+                                              "Your working directory is #{dir}, where you worked before you " \
+                                              "stopped, kept since; a write outside it is refused."
+                                            ])
+        expect(backend.leased).to be_empty
+      end
+
+      it "journals a reopened spike under the spike's backend, though the state home is reached by a link" do
+        link = File.join(leases_root, "link").tap { File.symlink(leases_root, _1) }
+        linked = Lain::Paths.new(env: { "HOME" => link })
+        spike = FileUtils.mkdir_p(File.join(described_class::Kept.home(linked, project), "worktrees", "1f2e")).first
+        kept = described_class::Kept.new(root: project, paths: linked, related: ->(_path) { false }, journal: leasing)
+
+        kept.reopened(File.realpath(spike)).relet.call
+
+        expect(leasing.drain.grep(Lain::Telemetry::IsolationLease).map(&:backend)).to eq(["Lain::Isolation::Spike"])
+      end
+
+      it "refuses to reopen a plan-scope child whose spike is gone, since its work went with it" do
+        dir = File.join(leases_root, "spike")
+
+        expect { described_class::Unkept.reopened(dir).relet }
+          .to raise_error(described_class::Kept::Refused, "its spike, #{dir}, is gone, so its work cannot be resumed")
+      end
+
+      it "tells a reopened plan-scope child the working directory it had inside its spike" do
+        dir = File.realpath(FileUtils.mkdir_p(File.join(leases_root, "spike")).first)
+        sub = FileUtils.mkdir_p(File.join(dir, "pkg")).first
+
+        expect(described_class::Unkept.reopened(dir, cwd: sub).relet.call.reminders.first)
+          .to start_with("Your working directory is #{sub}, where you worked")
+      end
+
+      it "refuses to resume a restored researcher whose directory is gone, starting no child" do
+        journal = []
+        stopped_researcher(journal:)
+        FileUtils.rm_rf(seen.first)
+
+        expect { restarted_researcher(journal).call({ "resume" => "researcher", "iterations" => 2 }, invocation) }
+          .to raise_error(Lain::Tool::InvalidInput, /#{Regexp.escape(seen.first)}.*gone/)
+        expect(seen.size).to eq(2)
       end
 
       it "resumes a stopped researcher in the directory it stopped in" do

@@ -50,11 +50,12 @@ RSpec.describe Lain::Tools::Subagent::Stops do
       expect(journal.first).to have_attributes(lease_path: nil, snapshot: nil)
     end
 
-    it "names a kept directory as where the child worked" do
-      dir = Struct.new(:root).new("/state/research/scratch/research-1")
+    it "names a kept directory as where the child worked, and the working directory it had there" do
+      worktree = "/state/research/worktrees/1f2e"
+      dir = Struct.new(:root, :worker_env).new(worktree, Lain::WorkerEnv.new(cwd: "#{worktree}/sub", env: {}))
       stops.keeping(stopped(scope: dir), ->(**) {}).call("blake3:head", :iterations)
 
-      expect(journal.first).to have_attributes(lease_path: "/state/research/scratch/research-1", kept: true)
+      expect(journal.first).to have_attributes(lease_path: worktree, kept: true, cwd: "#{worktree}/sub")
     end
 
     it "asks the lease to outlast the run only when a later run can resume the child" do
