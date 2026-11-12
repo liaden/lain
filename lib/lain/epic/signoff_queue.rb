@@ -72,9 +72,8 @@ module Lain
       # right for a caller that built the value wrong, a backtrace for a human
       # whose journal holds a damaged line.
       #
-      # {Epic::Gate.from_journal} folds the same record type and refuses it
-      # through {.for} too, so one damaged line reads the same whichever fold
-      # reaches it first.
+      # {Epic::Signoff} refuses the same record type through {.for} too, so one
+      # damaged line reads the same whichever reader reaches it first.
       class UnreadableRecord < Error
         include RefusedBeforeActing
         include JournalUnreadable
@@ -206,10 +205,9 @@ module Lain
         def initialize(artifact_digest:, epic_slug:, stage:, issue_id: nil, question: nil, evidence_digest: nil,
                        criteria_digest: nil, note: nil)
           # Stringified BEFORE the guard, and before this becomes half of the
-          # queue's key: {#drain} reconstructs that key through `to_s`, so an
-          # Item holding the raw object would park under an address drain could
-          # never rebuild -- the item unwedgeable, its partition never opening
-          # again.
+          # queue's key: a settling record names its digest as text, so an Item
+          # holding the raw object would be listed under an address no decision
+          # could ever answer.
           artifact_digest = artifact_digest.to_s
           Contracts::Item.check!(artifact_digest:)
           partition = Partition.new(epic_slug:, stage:, issue_id:)
@@ -236,18 +234,10 @@ module Lain
       end
 
       def initialize
-        # Indexed {Partition} => digest => {Item}, so a drain finds its item
-        # without a scan. A QUESTION scans the partition keys -- never the
-        # items -- because a question naming no issue must see every issue's
-        # partition. Both levels are insertion-ordered, so parking one gate
-        # twice is one sign-off and enumeration reads oldest-first -- the order
-        # a morning review wants.
-        @parked = {}
-        # Where each partition stands; it sees every park, live or folded, because
-        # whether a deny withdraws an approval depends on the order drafts parked in.
         @signoff = Signoff.unit
-        # {Partition} => digest => {Item} whose newest decision is a hold.
-        @held = {}
+        # {Partition} => digest => {Item}: what a record carries beyond its digest, for the addresses
+        # {Signoff#view} still lists. Its keys say which partitions to ask; which digests wait is the view's.
+        @details = {}
       end
 
       # Idempotent on `(artifact_digest, epic_slug, stage, issue_id)`: an
@@ -266,8 +256,8 @@ module Lain
                criteria_digest: nil)
         item = Item.new(artifact_digest:, epic_slug:, stage:, issue_id:, question:, evidence_digest:,
                         criteria_digest:)
-        @signoff = @signoff.step(deferral_of(item))
-        (@parked[item.partition] ||= {})[item.artifact_digest] = item
+        stepped(deferral_of(item), item)
+        item
       end
 
       # Whether nothing awaits sign-off where this question reaches -- the
@@ -323,31 +313,25 @@ module Lain
       # @param stage [#to_s] the stage asked about
       # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
       # @return [Array<Item>]
-      def parked(epic_slug, stage, issue_id: nil)
-        asked = Partition.new(epic_slug:, stage:, issue_id:)
-        @parked.select { |partition, _| asked.overlaps?(partition) }.flat_map { |_, items| items.values }
-      end
+      def parked(epic_slug, stage, issue_id: nil) = reached(epic_slug, stage, issue_id, &:drafts)
 
       # The addresses this question reaches whose newest decision is a hold:
       # the human asked the work to wait, so they are neither parked nor denied.
       # A hold over a standing approval or a parked sign-off of the same digest
       # is not listed, because that address is already answered or still
-      # waits in the queue. This is the one rule every reader of a hold uses.
+      # waits in the queue.
       #
       # @param epic_slug [#to_s] the epic asked about
       # @param stage [#to_s] the stage asked about
       # @param issue_id [String, nil] one issue's partition; nil asks for every issue's
       # @return [Array<Item>]
-      def held(epic_slug, stage, issue_id: nil)
-        asked = Partition.new(epic_slug:, stage:, issue_id:)
-        @held.select { |partition, _| asked.overlaps?(partition) }.flat_map { |_, items| items.values }
-      end
+      def held(epic_slug, stage, issue_id: nil) = reached(epic_slug, stage, issue_id, &:held)
 
       # Everything parked, oldest first within each partition.
       def each(&block)
         return to_enum(:each) unless block
 
-        @parked.each_value { |items| items.each_value(&block) }
+        @details.each_key { |partition| items(partition, view(partition).drafts).each(&block) }
         self
       end
 
@@ -387,43 +371,37 @@ module Lain
       def apply(decision)
         Contracts::Decision.check!(type: decision["type"], stage: decision["stage"], policy: decision["policy"])
         verdict = GateDecision.verdict_in(decision)
-        verdict.held? ? hold(decision, verdict) : fold(decision, verdict)
+        stepped(Telemetry::Untyped.new(fields: decision), Item.new(**carried(decision, verdict)), held: verdict.held?)
         self
       end
 
       private
 
-      def fold(decision, verdict)
-        unhold(decision)
-        GateDecision.deferred?(verdict) ? park(**parked_attributes(decision)) : settle(decision)
+      def view(partition) = @signoff.view(partition, current: nil)
+
+      def reached(epic_slug, stage, issue_id)
+        asked = Partition.new(epic_slug:, stage:, issue_id:)
+        @details.keys.select { asked.overlaps?(_1) }.flat_map { |partition| items(partition, yield(view(partition))) }
       end
 
-      # Drained first: it refuses a nil digest with the ArgumentError a live
-      # caller is promised, before Signoff could refuse it as unreadable.
-      def settle(decision)
-        drain(**address_attributes(decision))
-        @signoff = @signoff.step(Telemetry::Untyped.new(fields: decision))
+      def items(partition, digests) = @details.fetch(partition).values_at(*digests)
+
+      # The item is built before the step, so a damaged record refuses with the
+      # ArgumentError a live caller is promised rather than as Signoff's unreadable record.
+      def stepped(record, item, held: false)
+        @signoff = @signoff.step(record)
+        indexed(item, held ? :held : :drafts)
       end
 
-      # Remove a parked sign-off by address -- what a terminal decision does to
-      # the live view of the fold. The address is EXACT, issue included: a
-      # decision drains only the partition it was made in.
-      #
-      # @return [Item, nil] the item that was holding, or nil if none was
-      def drain(artifact_digest:, epic_slug:, stage:, issue_id: nil)
-        artifact_digest = artifact_digest.to_s
-        Contracts::Item.check!(artifact_digest:)
-
-        partition = Partition.new(epic_slug:, stage:, issue_id:)
-        # Deleting from an absent partition is a no-op, so a throwaway Hash
-        # nobody keeps is enough here.
-        items = @parked.fetch(partition, {})
-        drained = items.delete(artifact_digest)
-        # The emptied partition goes too. Every read is correct over a leftover
-        # empty one, so the only symptom would be a key space growing for the
-        # life of the process -- and an epic run spans days.
-        @parked.delete(partition) if items.empty?
-        drained
+      # An address the view no longer lists loses its details, so the index cannot grow for the life
+      # of an epic run. A hold the view does not list, over a draft still parked, leaves that draft's
+      # question and criteria in place.
+      def indexed(item, listing)
+        partition = item.partition
+        view = view(partition)
+        details = @details.fetch(partition, {}).slice(*view.drafts, *view.held)
+        details[item.artifact_digest] = item if view.public_send(listing).include?(item.artifact_digest)
+        details.empty? ? @details.delete(partition) : @details[partition] = details
       end
 
       # The record a live park stands for, so Signoff orders it among the drafts
@@ -435,39 +413,12 @@ module Lain
                                          "verdict" => GateDecision.word(GateDecision::Deferred.new) })
       end
 
-      # Dropped here, not when read: a later approval of another digest moves the
-      # partition's standing approval on, and a hold read then would resurface.
-      def hold(decision, verdict)
-        item = Item.new(**address_attributes(decision), note: verdict.note)
-        return if answered?(item.partition, item.artifact_digest)
-
-        (@held[item.partition] ||= {})[item.artifact_digest] = item
-      end
-
-      def unhold(decision)
-        return if @held.empty?
-
-        partition = Partition.new(epic_slug: decision["epic_slug"], stage: decision["stage"],
-                                  issue_id: decision["issue_id"])
-        items = @held[partition] or return
-        items.delete(decision["artifact_digest"].to_s)
-        @held.delete(partition) if items.empty?
-      end
-
-      def answered?(partition, digest)
-        @signoff.approved?(partition, digest) || @parked.fetch(partition, {}).key?(digest)
-      end
-
       # A record written before decisions named their issue has no key at all,
       # which reads as nil -- the epic-wide reading, which is what it was.
-      def address_attributes(decision)
+      def carried(decision, verdict)
         { artifact_digest: decision["artifact_digest"], epic_slug: decision["epic_slug"],
-          stage: decision["stage"], issue_id: decision["issue_id"] }
-      end
-
-      def parked_attributes(decision)
-        address_attributes(decision).merge(evidence_digest: decision["evidence_digest"],
-                                           criteria_digest: decision["criteria_digest"])
+          stage: decision["stage"], issue_id: decision["issue_id"], evidence_digest: decision["evidence_digest"],
+          criteria_digest: decision["criteria_digest"], note: (verdict.note if verdict.held?) }
       end
     end
   end

@@ -874,8 +874,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     end
   end
 
-  # THE RULE: a failed rebuild aborts. It never degrades to an empty queue, and
-  # Policy::Drained is never a fallback for a rebuild that failed. A drain
+  # THE RULE: a failed rebuild aborts. It never degrades to an empty queue. A drain
   # surface that silently shows "nothing parked" because the fold blew up is the
   # worst failure this chunk can ship.
   describe "a malformed gate_decision record" do

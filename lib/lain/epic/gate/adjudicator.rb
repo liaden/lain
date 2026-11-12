@@ -127,8 +127,7 @@ module Lain
         # `(epic_slug, stage)` is on every record, so ignoring it here is a
         # decision: one address adjudicated in `alpha/epic_plan` refuses the
         # same CONTENT in `beta/research`, permanently, with no override short
-        # of editing the journal. Chosen because it fails CLOSED and because it
-        # is the identity {Gate#approved?} already uses.
+        # of editing the journal. Chosen because it fails CLOSED.
         #
         # It stops mattering as submissions arrive pre-qualified:
         # `Submission#digest` addresses `{stage, slug, artifact}`, so the same

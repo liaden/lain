@@ -56,18 +56,12 @@ module Lain
     #   through a `#call(effect, context) -> Boolean` policy seam. It knows
     #   nothing about artifacts or digests.
     #
-    # == The registry, and content-addressed refusal
+    # == It remembers nothing
     #
-    # An approval is remembered by the artifact's digest. Because that addresses
-    # CONTENT, one edited sentence is a different digest and the prior approval
-    # does not carry -- {#ensure_approved!} refuses loudly, naming the
-    # un-approved address.
-    #
-    # The registry is each partition's standing as {Epic::Signoff} folds it, so
-    # a later denial revokes an approval, and so does approving a newer draft of
-    # the same partition. A digest is approved while any partition it was
-    # decided in stands approved at it. The registry starts empty regardless of
-    # what an earlier session journaled; {.from_journal} is the opt-in for that.
+    # A verdict is journaled and returned, never kept: where a partition stands
+    # is {Epic::Signoff}'s fold of those records, read through {Epic::GateView}.
+    # An approval is of the artifact's digest, which addresses CONTENT, so one
+    # edited sentence is a different digest the prior approval does not carry.
     #
     # == The stage boundary is NOT this class's guarantee
     #
@@ -78,7 +72,7 @@ module Lain
     # implementation-stage artifact while that epic's research sign-offs are
     # still parked. Deliberate: the boundary needs the sign-off queue, which
     # this class is not handed. Go through a Policy for the boundary. The stage
-    # must still be a pipeline stage, because {Signoff} keys the registry by it.
+    # must still be a pipeline stage, because {Signoff} keys its partitions by it.
     #
     # == The asker duck, and where attribution lives
     #
@@ -89,8 +83,6 @@ module Lain
     # human's words into one is the job of whoever put the question in those
     # words, never this class's.
     class Gate
-      include Enumerable
-
       # A name rather than a nil, so a journal reader never guards.
       TIMEOUT_SURFACE = "timeout"
 
@@ -165,8 +157,9 @@ module Lain
       # path, and other policies WRAP this call rather than switching inside it.
       DEFAULT_POLICY = "interactive"
 
-      # Names the digest, so the edited-artifact case reads as a different,
-      # un-approved address rather than a mysterious miss.
+      # A landing refused because the gate's view of a commit is not approved; the
+      # message names the commit and the remedy, so a parked or edited one never
+      # reads as a mysterious miss.
       class NotApproved < Error
         include RefusedBeforeActing
       end
@@ -272,12 +265,10 @@ module Lain
         @window = timeout.is_a?(Numeric) ? Window.bounded(timeout) : timeout
         @clock = clock
         @wall = wall
-        @signoff = Signoff.unit
-        @decided = {}
       end
 
       # Ask the artifact's own question, block on the answer with a timeout the
-      # silence rule settles, journal the verdict, and remember an approved digest.
+      # silence rule settles, and journal the verdict.
       #
       # Parking on the promise is safe inside a reactor because the answering
       # surface runs as a SIBLING fiber. PRECONDITION: this must run under an
@@ -319,13 +310,7 @@ module Lain
           end
         end
 
-        # Journal FIRST, register second, never the other way round: a journal
-        # that raises -- a full disk, or a contract refusing a nil digest --
-        # must leave NO standing approval behind, or `ensure_approved!` would
-        # open for a digest with no record of anyone approving it. Fail-closed
-        # is about this ordering as much as about the timeout.
-        #
-        # `task.defer_stop` around BOTH: a real `Journal#record` yields before
+        # `task.defer_stop` around the journal write: a real `Journal#record` yields before
         # its bytes are down (an io_uring submit, a Monitor wait), and a
         # cancellation landing in that gap -- an answer already in hand, no
         # record of it yet -- must not leave an answered question with NO
@@ -337,54 +322,6 @@ module Lain
       ensure
         withdrawn(asker, asked)
         retired(asked)
-      end
-
-      # @param digest [String] an artifact's address
-      # @return [Boolean] whether a partition that decided it stands approved at it
-      def approved?(digest) = @decided.fetch(digest, []).any? { |partition| @signoff.approved?(partition, digest) }
-
-      # An edited artifact hashes to a different digest, so a prior approval of
-      # the old text never satisfies this.
-      #
-      # @param artifact [#digest]
-      # @return [String] the approved digest
-      # @raise [NotApproved] naming the digest when it was never approved
-      def ensure_approved!(artifact)
-        digest = artifact.digest
-        raise NotApproved, "artifact #{digest} was not approved -- the gate refuses to open" unless approved?(digest)
-
-        digest
-      end
-
-      # The standing approvals, for the bench to inspect without draining.
-      def each(&block) = @decided.keys.select { |digest| approved?(digest) }.each(&block)
-
-      # Rebuild a Gate's registry from a journal, so {#approved?} answers for
-      # approvals a PRIOR process journaled, and not for one a later decision revoked.
-      #
-      # Asked by digest alone, because an irreversible caller holds the
-      # artifact and not its partition; revoked per partition, because a deny
-      # or a newer draft only speaks for the partition it was made in.
-      #
-      # Replayed entries are NOT re-journaled; the returned Gate's own FUTURE
-      # verdicts land in `journal:` like any other Gate's.
-      #
-      # `**options` rather than restating the defaults: a second copy of
-      # {#initialize}'s went stale here once -- a deleted `Gate::MONOTONIC` left
-      # a dangling `clock: MONOTONIC` raising `NameError` on every call that did
-      # not pass `clock:`. Forwarding makes that drift unrepresentable.
-      #
-      # @param entries [Enumerable<Hash, String>] journal lines or records;
-      #   foreign record types are skipped, the same contract {Journal.records}
-      #   gives every reader here
-      # @param options [Hash] forwarded verbatim to {#initialize}, which is what
-      #   keeps the defaults in one place
-      # @option options [Journal] :journal required, as for a plain `.new`
-      # @option options [Numeric] :timeout defaults to `DEFAULT_TIMEOUT`
-      # @option options [#call] :clock defaults to `RunClock::MONOTONIC`
-      # @return [Gate]
-      def self.from_journal(entries, **options)
-        new(**options).tap { |gate| gate.send(:absorb, entries) }
       end
 
       private
@@ -418,36 +355,12 @@ module Lain
         artifact.submissions.map { |submission| [submission, submission.issue_id] }
       end
 
-      # {#call}'s live rule replayed against records already on disk.
-      #
-      # PRIVATE, unlike {SignoffQueue#apply}, which is public because a LIVE
-      # session folds its own decisions through it one at a time. Nothing here
-      # has that caller, so a public one-record `#apply` would only be a new way
-      # to break {#call}'s "journal first, register second" ordering: a live
-      # Gate handed one hand-built Hash could register a standing approval with
-      # no journal record behind it at all.
-      #
-      # A damaged record is refused by {Signoff} as {SignoffQueue::UnreadableRecord},
-      # never skipped: skipping a denial would leave the approval it revoked standing.
-      #
-      # @param entries [Enumerable<Hash, String>] see {.from_journal}
-      # @return [self]
-      def absorb(entries)
-        Journal.records(entries, type: SignoffQueue::JOURNAL_TYPE).each do |decision|
-          register(Journal.payload_of(decision))
-        end
-        self
-      end
-
-      # One record per decision, each journaled before its digest registers. A
-      # wave is one question and one decision per issue, under that issue's own
-      # digest, so `ensure_approved!` and the per-issue sign-off partitions
-      # never learn that a wave asked it.
+      # One record per decision. A wave is one question and one decision per
+      # issue, under that issue's own digest, so the per-issue sign-off
+      # partitions never learn that a wave asked it.
       def settle(artifact, answer, **decided)
         result, ballots = ballot(artifact, answer)
-        ballots.each do |digest, verdict, scope|
-          register(record(verdict, artifact_digest: digest, **decided, **scope).to_journal)
-        end
+        ballots.each { |digest, verdict, scope| record(verdict, artifact_digest: digest, **decided, **scope) }
         result
       end
 
@@ -459,18 +372,6 @@ module Lain
           [submission.digest, outcome.answer(submission.issue_id),
            { issue_id: submission.issue_id, criteria_digest: submission.criteria_digest }]
         end]
-      end
-
-      # @param fields [Hash{String=>Object}] one decision as journaled
-      def register(fields)
-        @signoff = @signoff.step(Telemetry::Untyped.new(fields:))
-        digest = fields["artifact_digest"].to_s
-        @decided[digest] = [*@decided[digest], partition_of(fields)].uniq
-      end
-
-      def partition_of(fields)
-        SignoffQueue::Partition.new(epic_slug: fields["epic_slug"], stage: fields["stage"],
-                                    issue_id: fields["issue_id"])
       end
 
       # `evidence_digest`/`reason` are FORWARDED, never derived: this class

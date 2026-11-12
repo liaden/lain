@@ -59,6 +59,19 @@ module PolicySpecSupport
     def roles = @calls.map { |spawn| spawn[:role] }
   end
 
+  # Nothing parked and every partition approved, for an example about a policy rather than the boundary.
+  module OpenQueue
+    def self.drained?(_epic_slug, _stage, **) = true
+
+    def self.approved?(_epic_slug, _stage, **) = true
+
+    def self.standing?(_digest, _epic_slug, _stage, **) = true
+
+    def self.standing(_epic_slug, _stage, **) = nil
+
+    def self.parked(_epic_slug, _stage, **) = []
+  end
+
   # ONE journal handle answering BOTH directions: `#record` appends, `#each`
   # re-walks what was appended. It exists because the three ducks an
   # adjudicated gate holds -- the Gate's journal, the evidence journal, and the
@@ -82,8 +95,7 @@ end
 
 # Epic::Gate::Policy is HOW a verdict is reached, wrapped around the one
 # Gate that reaches it. Each policy answers #decide by handing Gate a surface and
-# a label, so the journal-then-register ordering Gate ships (a journal that
-# raises must leave no standing approval) survives every wrapping by
+# a label, so the one record Gate journals survives every wrapping by
 # construction rather than by three re-implementations agreeing.
 RSpec.describe Lain::Epic::Gate::Policy do
   # The whole artifact duck: a content address and its human-facing question.
@@ -98,14 +110,16 @@ RSpec.describe Lain::Epic::Gate::Policy do
   # Alpha's research and plan approved, so a gate at a later stage meets the
   # positive evidence the boundary asks for and an example is about its policy.
   let(:queue) { approved(Lain::Epic::SignoffQueue.new, "alpha") }
-  # The Null Object a policy names when there is no sign-off queue in the
-  # session at all. Named explicitly at every call site on purpose -- see the
-  # "no policy opens a boundary it never checked" group.
-  let(:drained) { described_class::Drained }
+  # An open boundary, for the examples about a policy rather than the boundary it checks.
+  let(:drained) { PolicySpecSupport::OpenQueue }
   let(:current) { PolicySpecSupport::Current.new }
 
   def decisions
     journal_records(journal_io, "gate_decision")
+  end
+
+  def phase_of(digest, stage: "epic_plan", epic_slug: "alpha", issue_id: nil)
+    gate_view_of(journal_io.string.lines, current: digest, epic_slug:, stage:, issue_id:).phase
   end
 
   def approved(signoffs, epic_slug, stages: %w[research epic_plan])
@@ -164,7 +178,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
 
       expect(decisions.first).to include("verdict" => "approve", "answered_by" => "human",
                                          "policy" => "interactive")
-      expect(gate.approved?(plan.digest)).to be(true)
+      expect(phase_of(plan.digest)).to eq(:approved)
     end
 
     it "asks the artifact's own question verbatim" do
@@ -200,10 +214,10 @@ RSpec.describe Lain::Epic::Gate::Policy do
                                          "policy" => "hands_off")
     end
 
-    it "leaves a standing approval, so ensure_approved! opens" do
+    it "leaves a standing approval of the artifact's bytes" do
       decide(policy)
 
-      expect(gate.ensure_approved!(plan)).to eq(plan.digest)
+      expect(phase_of(plan.digest)).to eq(:approved)
     end
 
     it "carries the partition keys it was decided under" do
@@ -262,7 +276,7 @@ RSpec.describe Lain::Epic::Gate::Policy do
       manual_decision
 
       expect(queue.parked("alpha", "implementation").map(&:issue_id)).to eq(["a"])
-      expect { gate.ensure_approved!(manual) }.to raise_error(Lain::Error)
+      expect(phase_of(manual.digest, stage: "implementation", issue_id: "a")).to eq(:parked)
     end
 
     it "still approves a tested implementation" do
@@ -343,11 +357,10 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect(journal_records(journal_io, "awaiting_human")).to contain_exactly(satisfy { !_1.key?("sha") })
     end
 
-    it "still refuses ensure_approved!, so an irreversible caller cannot proceed" do
+    it "approves nothing, so the partition reads parked and nothing lands" do
       decide(policy)
 
-      expect(gate.approved?(plan.digest)).to be(false)
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
+      expect(phase_of(plan.digest)).to eq(:parked)
     end
 
     it "parks once for a gate decided twice -- the address is the identity" do
@@ -366,16 +379,12 @@ RSpec.describe Lain::Epic::Gate::Policy do
     end
   end
 
-  # The ruling this card inherits: Gate journals BEFORE it registers, and a
-  # policy that wraps #call must not undo that ordering.
-  describe "the journal-then-register ordering survives the wrapping" do
+  # A policy that wraps #call must not swallow the journal's failure: the record is the only approval there is.
+  describe "a failed journal write survives the wrapping" do
     let(:journal) { Object.new.tap { |j| j.define_singleton_method(:record) { |_entry| raise IOError, "disk full" } } }
 
-    it "leaves no standing approval when the hands-off journal write raises" do
+    it "raises the hands-off journal write's error rather than approving" do
       expect { decide(described_class::HandsOff.new(queue: drained, digests: current)) }.to raise_error(IOError)
-
-      expect(gate.approved?(plan.digest)).to be(false)
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
     end
 
     it "parks nothing when the deferral's own journal write raises -- the queue is the journal's fold" do
@@ -426,7 +435,6 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect { decide(described_class::HandsOff.new(queue:, digests: current), stage: "epic_plan", epic_slug: "alpha") }
         .to raise_error(Lain::Epic::StageBlocked)
       expect(decisions).to be_empty
-      expect(gate.approved?(plan.digest)).to be(false)
     end
 
     it "lets a sibling epic through -- the partition is keyed by both members" do
@@ -469,15 +477,6 @@ RSpec.describe Lain::Epic::Gate::Policy do
 
     it "requires the queue to be named -- a policy silently built without one opens every boundary" do
       expect { described_class::HandsOff.new }.to raise_error(ArgumentError, /queue/)
-    end
-
-    it "opts out only by naming Drained, which answers every partition drained and approved" do
-      park_research
-
-      expect(drained.drained?("alpha", "research")).to be(true)
-      expect(drained.approved?("beta", "research")).to be(true)
-      expect(decide(described_class::HandsOff.new(queue: drained, digests: current), stage: "epic_plan",
-                                                                                     epic_slug: "beta")).to be(true)
     end
   end
 
@@ -569,14 +568,6 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect { described_class.new(queue, gone).ensure_open!("epic_plan", epic_slug: "alpha") }
         .to raise_error(Lain::Epic::StageBlocked, /alpha.*research's file is missing; restore it/m)
     end
-
-    it "opens everything when NAMED the Drained null object" do
-      park_research
-
-      expect(described_class.new(Lain::Epic::Gate::Policy::Drained, current).ensure_open!("epic_plan",
-                                                                                          epic_slug: "alpha"))
-        .to eq(Lain::Epic::Stage.new("epic_plan"))
-    end
   end
 
   # The overnight intent, as a policy: try to answer your own question
@@ -622,10 +613,10 @@ RSpec.describe Lain::Epic::Gate::Policy do
       expect(evidence_records.first).to include("text" => evidence_text, "digest" => evidence_digest)
     end
 
-    it "opens the gate on a bare verdict, registering the digest under the adjudicated policy" do
+    it "opens the gate on a bare verdict, journaled under the adjudicated policy" do
       expect(decide(adjudicated)).to be(true)
 
-      expect(gate.approved?(plan.digest)).to be(true)
+      expect(phase_of(plan.digest)).to eq(:approved)
       expect(decisions.first).to include("policy" => "adjudicated", "answered_by" => "gate_adjudicator",
                                          "evidence_digest" => evidence_digest)
     end

@@ -46,24 +46,23 @@ module GateDecisionFoldDiscipline
 
   READERS = {
     FOLD => "the one fold of the standing, the parked drafts and the holds; GateView reads it",
-    PARKS_AND_HOLDS => "folds the parked and held items; its standing is Signoff's",
-    "lain/epic/gate.rb" => "steps its records through Signoff and indexes which partitions decided each digest",
+    PARKS_AND_HOLDS => "keeps each parked or held item's question, criteria and note; which items wait is " \
+                       "Signoff#view's",
     "lain/epic/gate/adjudicator.rb" => "scans for a terminal adjudication by policy, which no standing records; " \
                                        "the verdict it names is Signoff's",
     "lain/frontend/neovim/planning_view.rb" => "takes the newest gate record per issue for its stage and " \
                                                "digest; the state shown is the sign-off queue's",
-    "lain/forge/local_landing.rb" => "collects the epics that decided an implementation; what lands is " \
-                                     "Signoff#view's landable digest",
     "lain/cli/epic.rb" => "collects records for the sign-off queue",
-    "lain/cli/epic_land.rb" => "collects records for landing's approvals",
+    "lain/cli/epic_land.rb" => "collects records for the Signoff fold landing reads its views from",
     "lain/cli/epic_finish.rb" => "collects records for the Signoff fold; what still waits is " \
                                  "each GateView's",
-    "lain/cli/epic_driver/factory.rb" => "collects records for landing's approvals, and folds them " \
-                                         "through Signoff#view for the gate's GateView",
+    "lain/cli/epic_driver/factory.rb" => "collects records for the Signoff fold landing reads its views " \
+                                         "from, and for the gate's GateView",
     "lain/cli/wiring/planning_build.rb" => "collects records for the planning view",
     "lain/epic/progress.rb" => "collects records for the sign-off queue",
-    "lain/cli/epic_submit.rb" => "collects records for the sign-off queue; ReadBack reads this command's own " \
-                                 "live decisions, not the journal, so it is not a second fold",
+    "lain/cli/epic_submit.rb" => "collects records for the sign-off queue; ReadBack answers this command's " \
+                                 "own latest decision, a readback of its own write and not a second fold of " \
+                                 "gate state, so a hold over a digest already parked still reads held",
     "lain/remote/agenda.rb" => "dates a parked item by its first decision's timestamp",
     "lain/bench/epic_metrics.rb" => "counts decisions per partition",
     "lain/journal/projection/waits.rb" => "closes a waiting item on a decision event, live or read back",
@@ -110,6 +109,11 @@ module GateDecisionFoldDiscipline
 
   def deferred_policy_comparers = sources.select { |_, lines| lines.any? { _1.match?(DEFERRED_POLICY_COMPARE) } }.keys
 
+  # A parked or held list kept beside the fold, which is the shape that lets 2 readers disagree.
+  OWN_LIST = /@(?:parked|held)\b/
+
+  def own_lists = sources.slice(*readers).select { |_, lines| lines.any? { _1.match?(OWN_LIST) } }.keys
+
   def verdict_field_readers = sources.select { |_, lines| lines.any? { _1.match?(VERDICT_FIELD) } }.keys.sort
 end
 
@@ -126,6 +130,10 @@ RSpec.describe "gate decision fold discipline" do
 
   it "names no file that no longer reads them, so the list stays the ruling" do
     expect(GateDecisionFoldDiscipline::READERS.keys - GateDecisionFoldDiscipline.readers).to be_empty
+  end
+
+  it "keeps no parked or held list in any reader: which items wait is Signoff#view's" do
+    expect(GateDecisionFoldDiscipline.own_lists).to be_empty
   end
 
   it "reads a verdict off a record only in Signoff and the sign-off queue's parks and holds" do

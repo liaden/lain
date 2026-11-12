@@ -160,7 +160,7 @@ RSpec.describe Lain::Epic::Progress do
 
     # The abort rule, one tier up: a failed queue rebuild NEVER degrades to an empty
     # queue, because an empty queue reads as drained and drained opens the next
-    # stage over work nobody signed off. Policy::Drained is not a fallback here.
+    # stage over work nobody signed off.
     it "aborts on a gate_decision the sign-off fold cannot read, never reading it as drained" do
       damaged = { "type" => "gate_decision", "artifact_digest" => "blake3:plan", "epic_slug" => "alpha",
                   "stage" => "research", "verdict" => "deny" }

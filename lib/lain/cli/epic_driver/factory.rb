@@ -209,7 +209,7 @@ module Lain
 
           def landing
             Lain::Forge::LocalLanding.new(
-              epic_slug: @slug, repo_root: @root, base: @base, approvals:,
+              epic_slug: @slug, repo_root: @root, base: @base, signoff:,
               plan: ->(issue) { @submit.ensure_plan_approved!(issue, @slug) },
               progress: -> { @epics.progress(@slug) },
               scribe: Lain::Epic::Scribe.new(epic_slug: @slug, journal: @journal),
@@ -224,9 +224,7 @@ module Lain
                                                     journal: @journal, isolation: @config, paths: @paths)
           end
 
-          def approvals
-            Lain::Forge::LocalLanding::Approvals.from(records(Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a)
-          end
+          def signoff = Lain::Epic::Signoff.from_journal(records(Lain::Epic::SignoffQueue::JOURNAL_TYPE).to_a)
 
           # FRESH per read, for {SessionJournals}' own reason: it caches its walk.
           def records(type) = SessionJournals.of(@paths, @project_root, types: [type])

@@ -147,7 +147,7 @@ module Lain
 
       def landing(epic_slug, journal, base, root)
         Lain::Forge::LocalLanding.new(
-          epic_slug:, repo_root: root, base:, approvals:,
+          epic_slug:, repo_root: root, base:, signoff:,
           plan: ->(issue) { submit.ensure_plan_approved!(issue, epic_slug) },
           progress: -> { @epics.progress(epic_slug) }, scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
           queue: queue(base, journal, root), layout: Config.test_layout(root: @root), landings: -> { landings.to_a },
@@ -163,7 +163,7 @@ module Lain
 
       def checkout = Lain::Isolation::Checkout.of(@root, shell_out_factory: @shell_out_factory)
 
-      def approvals = Lain::Forge::LocalLanding::Approvals.from(journals.to_a)
+      def signoff = Lain::Epic::Signoff.from_journal(journals.to_a)
 
       def submit = EpicSubmit.new(root: @root, paths: @paths, config: @config, epics: @epics)
 

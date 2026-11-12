@@ -9,8 +9,8 @@ require "tmpdir"
 # #gate_question must pass it before an irreversible action consumes that
 # digest. It asks through an ask_human-shaped duck, blocks on the promise with
 # a timeout -> deny, journals a gate_decision attributed to the answering
-# surface, and remembers the approved digest so ensure_approved! refuses
-# loudly otherwise.
+# surface, and remembers nothing: where a partition stands is Signoff's fold
+# of those records, read here through each partition's GateView.
 #
 # `policy:` is carried onto the record as a label, so the policies wrap this
 # one rather than branching inside it.
@@ -60,28 +60,28 @@ RSpec.describe Lain::Epic::Gate do
     Sync { gate.call(plan, asker:, stage:, epic_slug:, **overrides) }
   end
 
+  def view_of(digest, stage: "epic_plan", epic_slug: "lain-epics", issue_id: nil)
+    gate_view_of(journal_io.string.lines, current: digest, epic_slug:, stage:, issue_id:)
+  end
+
+  def phase_of(digest, **partition) = view_of(digest, **partition).phase
+
   describe "an unapproved digest refuses to pass" do
-    it "raises NotApproved naming the digest when the gate holds no decisions" do
-      expect { gate.ensure_approved!(plan) }
-        .to raise_error(described_class::NotApproved, /#{Regexp.escape(plan.digest)}/)
+    it "leaves a partition no gate decided open" do
+      expect(phase_of(plan.digest)).to eq(:open)
     end
 
     it "still refuses after a denial -- a denied digest is an unapproved digest" do
-      subject_gate = gate
-      expect(call(subject_gate, asker: deny_asker)).to be(false)
+      expect(call(gate, asker: deny_asker)).to be(false)
 
-      expect(subject_gate.approved?(plan.digest)).to be(false)
-      expect { subject_gate.ensure_approved!(plan) }.to raise_error(described_class::NotApproved)
+      expect(phase_of(plan.digest)).to eq(:denied)
     end
 
     it "refuses an edited artifact -- a different content address is a different gate" do
-      subject_gate = gate
-      call(subject_gate, asker: approve_asker)
-      edited = artifact(digest: "blake3:plan-v2")
+      call(gate, asker: approve_asker)
 
-      expect(subject_gate.ensure_approved!(plan)).to eq(plan.digest)
-      expect { subject_gate.ensure_approved!(edited) }
-        .to raise_error(described_class::NotApproved, /#{Regexp.escape(edited.digest)}/)
+      expect(phase_of(plan.digest)).to eq(:approved)
+      expect(phase_of("blake3:plan-v2")).to eq(:edited)
     end
   end
 
@@ -92,7 +92,7 @@ RSpec.describe Lain::Epic::Gate do
       approved = call(subject_gate, asker: silent_asker, stage: "research", epic_slug: "lain-epics")
 
       expect(approved).to be(false)
-      expect(subject_gate.approved?(plan.digest)).to be(false)
+      expect(phase_of(plan.digest, stage: "research")).to eq(:denied)
       record = decisions.first
       expect(record["artifact_digest"]).to eq(plan.digest)
       expect(record["verdict"]).to eq("deny")
@@ -198,7 +198,7 @@ RSpec.describe Lain::Epic::Gate do
       expect(record["artifact_digest"]).to eq(plan.digest)
       expect(record["verdict"]).to eq("deny")
       expect(record["answered_by"]).to eq(described_class::INTERRUPTED_SURFACE)
-      expect(subject_gate.approved?(plan.digest)).to be(false)
+      expect(phase_of(plan.digest, stage: "implementation", epic_slug: "demo")).to eq(:denied)
     end
 
     it "parks an interrupted wait whose policy parks, leaving the standing approval of that digest standing" do
@@ -217,7 +217,8 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(decisions.last.values_at("verdict", "answered_by"))
         .to eq(["deferred", described_class::INTERRUPTED_SURFACE])
-      expect(subject_gate.approved?(plan.digest)).to be(true)
+      expect(view_of(plan.digest, stage: "research", epic_slug: "demo").standing)
+        .to have_attributes(digest: plan.digest, verdict: be_approved)
     end
 
     it "still withdraws the question and leaves a real asker free" do
@@ -309,7 +310,7 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(decisions.size).to eq(1)
       expect(decisions.first["verdict"]).to eq("approve")
-      expect(subject_gate.approved?(plan.digest)).to be(true)
+      expect(phase_of(plan.digest, stage: "research", epic_slug: "demo")).to eq(:approved)
     end
 
     # The OTHER half of the same gap: a cancellation landing BEFORE the
@@ -348,7 +349,7 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(decisions.size).to eq(1)
       expect(decisions.first["verdict"]).to eq("approve")
-      expect(subject_gate.approved?(plan.digest)).to be(true)
+      expect(phase_of(plan.digest, stage: "research", epic_slug: "demo")).to eq(:approved)
     end
   end
 
@@ -787,8 +788,8 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
-  # The registry is the partition's standing as Epic::Signoff folds it, so the
-  # gate, the sign-off queue and `lain epic status` cannot disagree on a digest.
+  # Where the partition stands is Epic::Signoff's fold of what the gate journaled, so the
+  # gate's records, the sign-off queue and `lain epic status` cannot disagree on a digest.
   describe "a deny revokes" do
     def approve_then(asker, gate = self.gate(timeout: 0.02))
       Sync do
@@ -799,27 +800,20 @@ RSpec.describe Lain::Epic::Gate do
     end
 
     it "answers not approved after approve -> deny of one digest, with both decisions journaled" do
-      subject_gate = approve_then(silent_asker)
+      approve_then(silent_asker)
 
-      expect(subject_gate.approved?(plan.digest)).to be(false)
-      expect { subject_gate.ensure_approved!(plan) }.to raise_error(described_class::NotApproved)
-      expect(subject_gate.to_a).to be_empty
+      expect(phase_of(plan.digest)).to eq(:denied)
       expect(decisions.map { |record| record.values_at("verdict", "answered_by") })
         .to eq([%w[approve human], %w[deny timeout]])
-    end
-
-    it "answers not approved after the same pair is rebuilt from the journal" do
-      approve_then(deny_asker)
-
-      expect(described_class.from_journal(journal_io.string.lines, journal:).approved?(plan.digest)).to be(false)
     end
 
     it "keeps an approval a later hold of the same digest leaves standing" do
       held = scripted_asker do |promise, _q|
         promise.resolve(described_class::Answer.new(verdict: Lain::Approval::Verdict::Hold.new, surface: "human"))
       end
+      approve_then(held)
 
-      expect(approve_then(held).approved?(plan.digest)).to be(true)
+      expect(phase_of(plan.digest)).to eq(:approved)
     end
 
     it "withdraws an approval once a newer draft of the partition is approved" do
@@ -830,7 +824,7 @@ RSpec.describe Lain::Epic::Gate do
         subject_gate.call(newer, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
       end
 
-      expect(subject_gate.to_a).to eq([newer.digest])
+      expect([phase_of(plan.digest), phase_of(newer.digest)]).to eq(%i[edited approved])
     end
 
     it "agrees with the sign-off queue and the stage boundary over one journal" do
@@ -838,10 +832,9 @@ RSpec.describe Lain::Epic::Gate do
         gate.call(artifact(digest: "blake3:r1"), asker: approve_asker, stage: "research", epic_slug: "alpha")
         gate.call(artifact(digest: "blake3:r1"), asker: deny_asker, stage: "research", epic_slug: "alpha")
       end
-      lines = journal_io.string.lines
-      queue = Lain::Epic::SignoffQueue.from_journal(lines)
+      queue = Lain::Epic::SignoffQueue.from_journal(journal_io.string.lines)
 
-      expect(described_class.from_journal(lines, journal:).approved?("blake3:r1")).to be(false)
+      expect(phase_of("blake3:r1", stage: "research", epic_slug: "alpha")).to eq(:denied)
       expect(queue.standing?("blake3:r1", "alpha", "research")).to be(false)
       expect(Lain::Epic::Stage.new("epic_plan").blocked_by(queue, epic_slug: "alpha")[:unapproved].map(&:name))
         .to eq(["research"])
@@ -890,72 +883,7 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
-  describe "#each -- the standing approvals, for the bench to inspect" do
-    it "enumerates the digests that carry a standing approval" do
-      subject_gate = gate
-      call(subject_gate, asker: approve_asker)
-
-      expect(subject_gate.to_a).to eq([plan.digest])
-    end
-
-    it "omits a denied digest" do
-      subject_gate = gate(timeout: 0.02)
-      call(subject_gate, asker: silent_asker)
-
-      expect(subject_gate.to_a).to be_empty
-    end
-  end
-
-  # A day-two process rebuilds the registry from what day-one already
-  # journaled, rather than starting empty and re-litigating every digest.
-  describe ".from_journal -- approvals survive a restart" do
-    it "registers an approved digest and skips a denied one, so ensure_approved! still works" do
-      approved_artifact = artifact(digest: "blake3:d")
-      denied_artifact = artifact(digest: "blake3:e")
-
-      Sync do
-        journal_gate = gate
-        journal_gate.call(approved_artifact, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics")
-        journal_gate.call(denied_artifact, asker: deny_asker, stage: "research", epic_slug: "lain-epics")
-      end
-
-      rebuilt = described_class.from_journal(journal_io.string.lines, journal:)
-
-      expect(rebuilt.approved?(approved_artifact.digest)).to be(true)
-      expect(rebuilt.approved?(denied_artifact.digest)).to be(false)
-      expect(rebuilt.ensure_approved!(approved_artifact)).to eq(approved_artifact.digest)
-    end
-
-    it "folds without raising when foreign record types sit between gate_decisions" do
-      Sync { gate.call(plan, asker: approve_asker, stage: "epic_plan", epic_slug: "lain-epics") }
-      lines = journal_io.string.lines
-      foreign = [%({"type":"turn_usage","tokens":10}\n), %({"type":"doc_written","path":"plan.md"}\n)]
-      interleaved = [lines.first, *foreign, *lines.drop(1)]
-
-      rebuilt = nil
-      expect { rebuilt = described_class.from_journal(interleaved, journal:) }.not_to raise_error
-      expect(rebuilt.approved?(plan.digest)).to be(true)
-    end
-
-    # A damaged line is a Lain::Error naming the record in one sentence, the way
-    # the sign-off queue's own fold refuses it -- never a bare ArgumentError a
-    # human reads as a backtrace from `lain epic land`.
-    it "refuses a gate_decision whose verdict field is \"maybe\" in one line naming the record" do
-      damaged = JSON.generate(Lain::Epic::GateDecision.new(artifact_digest: "blake3:maybe", epic_slug: "demo",
-                                                           stage: "issue_plan", verdict: Lain::Approval::Verdict::Approve.new,
-                                                           answered_by: "human", policy: "interactive",
-                                                           latency: 1.0, issue_id: "a")
-                                                          .to_journal.merge("verdict" => "maybe"))
-
-      expect { described_class.from_journal([damaged], journal:) }.to raise_error(Lain::Error) { |error|
-        expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
-        expect(error.message).to include("gate_decision", "blake3:maybe", "verdict", "demo/issue_plan/a")
-        expect(error.message).not_to include("\n")
-      }
-    end
-  end
-
-  # Signoff keys the registry by stage, and every reader refuses a decision
+  # Signoff keys its partitions by stage, and every reader refuses a decision
   # journaled outside the pipeline, so the gate refuses one before anyone is asked.
   describe "a stage outside the pipeline" do
     it "refuses before asking, journaling nothing" do
@@ -1036,7 +964,8 @@ RSpec.describe Lain::Epic::Gate do
       expect(outcome).to eq(outcome_of(%w[b c d].to_h { [_1, verdict(:Approve)] }))
       expect(decisions.map { |record| record.values_at("issue_id", "artifact_digest", "verdict") })
         .to eq(%w[b c d].map { |id| [id, digest_of(id), "approve"] })
-      expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(true))
+      expect(%w[b c d].map { |id| phase_of(digest_of(id), stage: "issue_plan", epic_slug: "frugirl", issue_id: id) })
+        .to all(eq(:approved))
     end
 
     # Scenario: a wave reply resolves per issue
@@ -1196,7 +1125,8 @@ RSpec.describe Lain::Epic::Gate do
 
       expect(outcome.held).to eq(%w[b c d].to_h { [_1, "on"] })
       expect(decisions.map { |record| record.values_at("verdict", "answered_by") }).to eq([%w[hold human]] * 3)
-      expect(%w[b c d].map { |id| subject_gate.approved?(digest_of(id)) }).to all(be(false))
+      expect(%w[b c d].map { |id| phase_of(digest_of(id), stage: "issue_plan", epic_slug: "frugirl", issue_id: id) })
+        .to all(eq(:held))
     end
 
     it "denies the whole wave when the window closes under the bare silence rule" do
@@ -1217,6 +1147,96 @@ RSpec.describe Lain::Epic::Gate do
     end
   end
 
+  describe "a call that fails journals no approval" do
+    it "raises the journal's error when the journal cannot write" do
+      exploding = Object.new
+      exploding.define_singleton_method(:record) { |_| raise IOError, "disk full" }
+
+      expect { call(described_class.new(journal: exploding), asker: approve_asker, stage: "research") }
+        .to raise_error(IOError)
+    end
+
+    it "journals nothing when the stage check refuses the call" do
+      expect { call(gate, asker: approve_asker, stage: nil) }.to raise_error(Lain::Epic::UnknownStage)
+      expect(decisions).to be_empty
+    end
+
+    it "fails loudly when the artifact has no #gate_question" do
+      half = Data.define(:digest).new(digest: "blake3:x")
+
+      expect { Sync { gate.call(half, asker: approve_asker, stage: "research", epic_slug: "e") } }
+        .to raise_error(NoMethodError, /gate_question/)
+    end
+
+    it "refuses a nil digest, journaling nothing" do
+      nil_digest = Data.define(:digest, :gate_question).new(digest: nil, gate_question: "q?")
+
+      expect { Sync { gate.call(nil_digest, asker: approve_asker, stage: "research", epic_slug: "e") } }
+        .to raise_error(ArgumentError, /artifact_digest/)
+      expect(decisions).to be_empty
+    end
+
+    it "refuses a malformed Answer rather than treating it as truthy" do
+      bad = scripted_asker { |p, _q| p.resolve(described_class::Answer.new(verdict: "yes", surface: "h")) }
+
+      expect { call(gate, asker: bad, stage: "research") }.to raise_error(ArgumentError, /verdict/)
+      expect(decisions).to be_empty
+    end
+  end
+
+  describe "the newest decision stands" do
+    it "ends approved after deny then approve, with both journaled" do
+      subject_gate = gate(timeout: 0.02)
+      call(subject_gate, asker: deny_asker, stage: "research")
+      call(subject_gate, asker: approve_asker, stage: "research")
+
+      expect(phase_of(plan.digest, stage: "research")).to eq(:approved)
+      expect(decisions.length).to eq(2)
+    end
+  end
+
+  # The timeout rides Async's reactor clock; `latency` rides the injected one, so a
+  # 0.3s window must not journal whatever the injected clock says.
+  it "journals a latency consistent with the timeout window that fired" do
+    ticks = [0.0, 1000.0].each
+
+    expect(call(gate(timeout: 0.3, clock: -> { ticks.next }), asker: silent_asker, stage: "research")).to be(false)
+    expect(decisions.first["answered_by"]).to eq("timeout")
+    expect(decisions.first["latency"]).to be_within(0.2).of(0.3)
+  end
+
+  it "round-trips through the Journal with string keys and preserves types" do
+    Sync { gate.call(plan, asker: approve_asker, stage: :epic_plan, epic_slug: :"lain-epics") }
+    row = decisions.first
+
+    expect(row.values_at("type", "stage", "epic_slug", "verdict")).to eq(%w[gate_decision epic_plan lain-epics approve])
+    expect(row["latency"]).to be_a(Float)
+    expect(row).to have_key("evidence_digest")
+    expect(row.keys).to all(be_a(String))
+  end
+
+  # The property is the GATE's: a verdict resolved on one promise must not approve
+  # the other gate's artifact. The asker is a deliberately unguarded stand-in that
+  # hands out a promise per call and holds them all.
+  it "does not cross-resolve when one asker serves two gates" do
+    pendings = []
+    shared = Object.new
+    shared.define_singleton_method(:ask) { |_q| Lain::Promise.new.tap { |p| pendings << p } }
+    other = artifact(digest: "blake3:other")
+
+    results = Sync do
+      first = Async { gate(timeout: 1.0).call(plan, asker: shared, stage: "research", epic_slug: "e") }
+      second = Async { gate(timeout: 1.0).call(other, asker: shared, stage: "research", epic_slug: "e") }
+      Async do
+        Async::Task.current.sleep(0.001) until pendings.size == 2
+        pendings.last&.resolve(described_class::Answer.approve("human"))
+      end
+      [first.wait, second.wait]
+    end
+
+    expect(results.count(true)).to eq(1)
+  end
+
   describe Lain::Epic::GateDecision do
     def record(**overrides)
       described_class.new(artifact_digest: "blake3:abc", epic_slug: "lain-epics", stage: "epic_plan",
@@ -1227,6 +1247,24 @@ RSpec.describe Lain::Epic::Gate do
 
     it "is Ractor-shareable (no reachable mutable state)" do
       expect(record(artifact_digest: +"blake3:abc", answered_by: +"human")).to be_deeply_frozen
+    end
+
+    # Guarded rather than coerced: `to_f` would journal "answered instantly", a measurement nobody made.
+    [nil, "quick", -3.0].each do |latency|
+      it "refuses a latency of #{latency.inspect}" do
+        expect { record(latency:) }.to raise_error(ArgumentError, /latency/)
+      end
+    end
+
+    it "refuses a blank-to_s stage rather than journaling an empty partition key" do
+      blank = Object.new
+      blank.define_singleton_method(:to_s) { "" }
+
+      expect { record(stage: blank) }.to raise_error(ArgumentError, /stage/)
+    end
+
+    it "is deeply frozen even with mutable inputs" do
+      expect(record(epic_slug: +"e", stage: +"research", evidence_digest: +"ev")).to be_deeply_frozen
     end
 
     it "journals under the gate_decision discriminator" do

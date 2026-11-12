@@ -191,7 +191,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
 
       settle(queue)
 
-      expect(queue.instance_variable_get(:@parked).keys.map(&:epic_slug)).to eq(["beta"])
+      expect(queue.instance_variable_get(:@details).keys.map(&:epic_slug)).to eq(["beta"])
     end
 
     it "keeps a partition that still holds something" do
@@ -202,7 +202,7 @@ RSpec.describe Lain::Epic::SignoffQueue do
       settle(queue, digest: "blake3:one")
 
       expect(queue.drained?("alpha", "research")).to be(false)
-      expect(queue.instance_variable_get(:@parked).size).to eq(1)
+      expect(queue.instance_variable_get(:@details).size).to eq(1)
     end
 
     it "settles an address that was never parked without parking or raising" do
@@ -527,6 +527,28 @@ RSpec.describe Lain::Epic::SignoffQueue do
 
       expect(queue.held("alpha", "research")).to be_empty
       expect(queue.parked("alpha", "research").size).to eq(1)
+    end
+
+    it "keeps a parked sign-off's question and criteria when its digest is answered hold, listing nothing held" do
+      queue = described_class.new
+      park(queue, question: "Approve the research?", criteria_digest: "blake3:criteria")
+      queue.apply(decision(policy: "interactive", verdict: Lain::Approval::Verdict::Hold.new(note: "after lunch"))
+                    .to_journal)
+
+      expect(queue.parked("alpha", "research").map { _1.to_h.slice(:question, :criteria_digest, :note) })
+        .to eq([{ question: "Approve the research?", criteria_digest: "blake3:criteria", note: nil }])
+      expect(queue.held("alpha", "research")).to be_empty
+    end
+
+    # The journal's fold reads a deferral after a hold as parked and no longer held, so the live queue does too.
+    it "clears a hold once the same digest is parked live, as the fold of the same records does" do
+      queue = described_class.new
+      queue.apply(decision(policy: "interactive", verdict: hold).to_journal)
+      park(queue)
+      folded = described_class.from_journal(journaled(decision(policy: "interactive", verdict: hold), deferral))
+
+      expect([queue, folded].map { [_1.held("alpha", "research").size, _1.parked("alpha", "research").size] })
+        .to eq([[0, 1], [0, 1]])
     end
 
     it "keeps a hold over a standing approval unlisted after a later approval moves the partition on" do

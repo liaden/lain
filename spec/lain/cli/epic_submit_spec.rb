@@ -35,7 +35,7 @@ end
 # gate. Everything it does is assembled from objects that already carry their
 # own specs -- {Lain::Epic::Submission} addresses the artifact,
 # {Lain::Epic::Gate::Policies} chooses HOW the verdict is reached,
-# {Lain::Epic::Gate.from_journal} remembers what was already approved, and
+# {Lain::Epic::SignoffQueue} remembers what was already approved, and
 # {Lain::Epic::Scribe} is the only writer of a stage transition -- so what is
 # pinned here is the WIRING, and the three ways it must refuse.
 #
@@ -1395,11 +1395,11 @@ RSpec.describe Lain::CLI::EpicSubmit do
       end
 
       it "waits 300 seconds for a chat's answer when the project sets no approval timeout" do
-        allow(Lain::Epic::Gate).to receive(:from_journal).and_call_original
+        allow(Lain::Epic::Gate).to receive(:new).and_call_original
 
         submitted_while { |question| asker.reply("approve", question.digest) }
 
-        expect(Lain::Epic::Gate).to have_received(:from_journal).with(anything, hash_including(timeout: 300))
+        expect(Lain::Epic::Gate).to have_received(:new).with(hash_including(timeout: 300))
       end
 
       def unanswered_in_chat(approval_silence)
@@ -1533,9 +1533,8 @@ RSpec.describe Lain::CLI::EpicSubmit do
     end
   end
 
-  # Re-submitting a digest that already carries an approval. The Gate's registry
-  # is add-only, so a second decision could never revoke or strengthen the first
-  # -- it could only add a record nobody asked for.
+  # Re-submitting a digest that already carries an approval: a second decision
+  # could only add a record nobody asked for.
   describe "a re-submit of an already-approved artifact" do
     before do
       write_research

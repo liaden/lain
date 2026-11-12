@@ -149,6 +149,10 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   def decisions = journal_records(journal_io, "gate_decision")
   def evidence_records = journal_records(journal_io, "gate_evidence")
 
+  def phase_of(digest)
+    gate_view_of(journal_io.string.lines, current: digest, epic_slug: "alpha", stage: "epic_plan").phase
+  end
+
   describe "a wait stopped before the gate settles" do
     def stalled(verdict)
       described_class.new(role_spawn: spawn_stub(verdict:), gate: AdjudicatorSpecSupport::StalledGate.new(gate),
@@ -179,10 +183,10 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       expect(adjudicate).to be(true)
     end
 
-    it "leaves a standing approval, so ensure_approved! opens" do
+    it "leaves a standing approval of the artifact's bytes" do
       adjudicate
 
-      expect(gate.ensure_approved!(plan)).to eq(plan.digest)
+      expect(phase_of(plan.digest)).to eq(:approved)
     end
 
     it "journals answered_by gate_adjudicator -- a machine approval is never mistaken for a human one" do
@@ -248,7 +252,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
 
       expect(decisions.first).to include("verdict" => "deny", "answered_by" => "gate_adjudicator")
       expect(queue.to_a).to be_empty
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
+      expect(phase_of(plan.digest)).to eq(:denied)
     end
   end
 
@@ -257,7 +261,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
 
     it "does not approve" do
       expect(adjudicate(adjudicator(spawn_stub(verdict: hedged)))).to be(false)
-      expect(gate.approved?(plan.digest)).to be(false)
+      expect(phase_of(plan.digest)).to eq(:parked)
     end
 
     it "parks the item with the evidence digest attached" do
@@ -302,7 +306,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       adjudicate(adjudicator(spawn_stub(verdict: "MAYBE")))
 
       expect(queue.count).to eq(1)
-      expect(gate.approved?(plan.digest)).to be(false)
+      expect(phase_of(plan.digest)).to eq(:parked)
     end
 
     it "accepts a lone lowercase verdict -- the contract is one word, not one casing" do
@@ -317,7 +321,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       expect(adjudicate(adjudicator(spawn_stub(researcher: raiser)))).to be(false)
 
       expect(queue.parked("alpha", "epic_plan").map(&:artifact_digest)).to eq([plan.digest])
-      expect { gate.ensure_approved!(plan) }.to raise_error(Lain::Epic::Gate::NotApproved)
+      expect(phase_of(plan.digest)).to eq(:parked)
     end
 
     it "parks with an error note naming the failure" do
@@ -345,7 +349,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
       adjudicate(adjudicator(spawn))
 
       expect(spawn.roles).to eq([:evidence_researcher])
-      expect(gate.approved?(plan.digest)).to be(false)
+      expect(phase_of(plan.digest)).to eq(:parked)
       expect(queue.count).to eq(1)
     end
 
@@ -593,17 +597,13 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
     end
   end
 
-  # RULING 3, and the defect that reopened it. Gate's registry is add-only, so
-  # an APPROVE followed by a DENY over one digest leaves the journal's terminal
-  # record disagreeing with `Gate#approved?`. SignoffQueue documents drift
-  # toward REFUSAL; this drifts the other way, and this class is the first path
-  # that can re-run a gate with nobody watching.
+  # This class is the first path that can re-run a gate with nobody watching, so
+  # an APPROVE followed by a DENY over one digest must not be reachable from it.
   #
-  # The guard therefore folds the JOURNAL's own terminal adjudications, not this
-  # object's memory: the registry is add-only and so cannot answer "was this
-  # DECIDED" for a denial at all, and a per-instance ivar answers it only for
-  # the instance that made the decision -- a second Adjudicator over the same
-  # Gate would journal a deny while `Gate#approved?` still said true.
+  # The guard folds the JOURNAL's own terminal adjudications, not this object's
+  # memory: a per-instance ivar answers "was this DECIDED" only for the instance
+  # that made the decision, and a second Adjudicator over the same Gate would
+  # journal a second verdict.
   describe "one digest gets one terminal adjudication" do
     it "refuses a second run over a digest it already approved, naming the digest" do
       adj = adjudicator
@@ -727,7 +727,7 @@ RSpec.describe Lain::Epic::Gate::Adjudicator do
   end
 
   # The fold behind that guard, asked directly: it is the record's answer to
-  # "was this address SETTLED", which Gate's add-only registry cannot give.
+  # "was this address SETTLED by an adjudication".
   describe Lain::Epic::Gate::Adjudicator::Decided do
     it "refuses an address a terminal record already settled, naming the verdict" do
       expect { described_class.new([adjudicated(approved: false)]).ensure_undecided!(plan.digest) }

@@ -6,12 +6,10 @@ module Lain
       # HOW a verdict is reached, wrapped around the one {Gate} that reaches it.
       #
       # A policy is a SURFACE plus a LABEL, and {#decide} is the whole seam.
-      # Nothing here builds a {GateDecision} or touches the approval registry:
-      # Gate journals BEFORE it registers, so a failed journal write can never
-      # leave a standing approval behind, and a policy that re-implemented the
-      # record would be a second copy of that ordering waiting to disagree.
+      # Nothing here builds a {GateDecision}: Gate journals the one record, and
+      # a policy that re-implemented it would be a second copy waiting to disagree.
       #
-      # Every policy therefore inherits Gate's reactor precondition, {HandsOff}
+      # Every policy inherits Gate's reactor precondition, {HandsOff}
       # included, whose approval needs no human. One seam, one precondition, no
       # policy-shaped exception to remember.
       #
@@ -23,26 +21,6 @@ module Lain
       # verdict through {Gate::Adjudicator}, which already owns the boundary
       # check, the gate call and the park, so it overrides {#decide} outright.
       class Policy
-        # No sign-off queue in the session at all, so the boundary has nothing
-        # to read: naming this opts out of it, every partition drained and
-        # approved.
-        #
-        # NAMED, never defaulted: a policy quietly built without a queue would
-        # open every boundary it was supposed to guard, which is the check's own
-        # failure mode. Naming this is a statement; forgetting it is an
-        # ArgumentError.
-        module Drained
-          def self.drained?(_epic_slug, _stage, **) = true
-
-          def self.approved?(_epic_slug, _stage, **) = true
-
-          def self.standing?(_digest, _epic_slug, _stage, **) = true
-
-          def self.standing(_epic_slug, _stage, **) = nil
-
-          def self.parked(_epic_slug, _stage, **) = []
-        end
-
         # {Epic::Stage}'s boundary rule, bound to the queue it is asked about.
         #
         # It exists because the rule was written TWICE: here on the policy seam,
@@ -92,9 +70,7 @@ module Lain
           end
           private_constant :Current
 
-          # @param queue [#drained?, #approved?, #standing?, #standing] the sign-off queue, or
-          #   {Drained} when the session has none -- named, never defaulted, for
-          #   {Policy}'s reason
+          # @param queue [#drained?, #approved?, #standing?, #standing] the sign-off queue
           # @param digests [#digest] answers `digest(epic_slug, stage, issue_id)` with
           #   that stage's artifact digest as it stands now, or nil where it is gone
           def initialize(queue, digests)
@@ -115,7 +91,7 @@ module Lain
         end
 
         # @param queue [#drained?, #approved?, #standing?, #standing, #parked] the sign-off queue
-        #   the stage boundary is checked against, or {Drained} when the session has none
+        #   the stage boundary is checked against
         # @param digests [#digest] each earlier artifact's digest as it stands now; see {Boundary}
         def initialize(queue:, digests:)
           @queue = queue
@@ -124,7 +100,7 @@ module Lain
         end
 
         # @param artifact [#digest, #gate_question] the thing being gated
-        # @param gate [Epic::Gate] the one object that journals and registers
+        # @param gate [Epic::Gate] the one object that asks and journals
         # @param stage [#to_s] the stage this gate sits on
         # @param epic_slug [#to_s] the epic it belongs to; with `stage`, the
         #   partition key {SignoffQueue} folds decisions on
@@ -253,9 +229,8 @@ module Lain
         end
 
         # Refuse now, decide later: journaled as {GateDecision::Deferred} and
-        # parked for human sign-off. It approves nothing, so a caller holding an
-        # irreversible action still hits {Gate#ensure_approved!} and still
-        # refuses. Deferring is not a soft yes.
+        # parked for human sign-off. It approves nothing, so the partition's
+        # {Epic::GateView} reads parked and nothing lands. Deferring is not a soft yes.
         #
         # Journal first, park second. The queue is a FOLD of journaled
         # deferrals, so a park with no record behind it would vanish on restart

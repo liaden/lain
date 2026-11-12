@@ -9,7 +9,7 @@ module Lain
     #
     # Everything here is assembly: this class picks the epic, reads the artifact,
     # wires {Epic::Submission}, {Lain::Epic::Gate::Policies},
-    # {Lain::Epic::Gate.from_journal}, {Lain::Epic::Gate::Policy::Boundary} and
+    # {Lain::Epic::Gate}, {Lain::Epic::Gate::Policy::Boundary} and
     # {Epic::Scribe} together, and turns what comes back into a String. It prints
     # nothing.
     #
@@ -943,7 +943,7 @@ module Lain
         policy = policy_for(stage, queue, journal) { pending.each { ensure_open!(stage, _1, queue) } }
         asked = asked_wave(wave, pending, standing, queue, issue_ids)
         WaveVerdict.new(wave: asked, stage:, policy:, queue:, advances:, journal:, standing: already,
-                        gate: gate_for(records, journal, policy)).call
+                        gate: gate_for(journal, policy)).call
       end
 
       def asked_wave(wave, pending, standing, queue, issue_ids)
@@ -954,9 +954,8 @@ module Lain
       # Each submission is parked and journaled under its own question, so the wave's review has to ride on each.
       def reviewed(submissions, review) = submissions.map { _1.with(review:) }.freeze
 
-      def gate_for(records, journal, policy)
-        Lain::Epic::Gate.from_journal(records, journal:, timeout: gate_timeout(policy),
-                                               silence: ::Lain::Approval::Silence.from(@config))
+      def gate_for(journal, policy)
+        Lain::Epic::Gate.new(journal:, timeout: gate_timeout(policy), silence: ::Lain::Approval::Silence.from(@config))
       end
 
       def wave_advances(stage, wave, journal)
@@ -975,7 +974,7 @@ module Lain
         queue = Lain::Epic::SignoffQueue.from_journal(records)
         open = -> { ensure_open!(stage, submission, queue) }
         policy = policy_for(stage, queue, journal, &open)
-        gate = gate_for(records, journal, policy)
+        gate = gate_for(journal, policy)
         advance = Lain::Epic::Advance.new(epic_slug: submission.slug, stage:, issue_id: submission.issue_id)
         ready = advance_for(advance, journal)
         return standing(submission, ready) { open.call if advance.moves? } if standing?(queue, submission)

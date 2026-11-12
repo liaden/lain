@@ -27,8 +27,7 @@ module Lain
     # it says so on every rendering. The ergonomic response -- an empty
     # queue on failure -- is maximally fail-open: an empty queue reads as drained,
     # drained opens the next stage, and the stage opens over work nobody signed
-    # off. {Lain::Epic::Gate::Policy::Drained} legitimizes "this caller has no
-    # queue", never "this rebuild failed".
+    # off.
     #
     # This is the screen a human reads specifically to decide that nothing is
     # outstanding, so the empty rendering names the directory it read AND what it

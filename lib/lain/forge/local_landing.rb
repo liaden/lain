@@ -29,6 +29,9 @@ module Lain
       # {Telemetry::Handback}'s journal type: the record a landing writes as it merges.
       LANDED = "handback"
 
+      STAGE = "implementation"
+      private_constant :STAGE
+
       class NotInFlight < Error
         include RefusedBeforeActing
       end
@@ -55,8 +58,8 @@ module Lain
       # @param epic_slug [String] the epic the issue belongs to
       # @param repo_root [String] the parent checkout standing on `base`
       # @param base [Isolation::WorkingBranch] `epic/<slug>`
-      # @param approvals [#approved?] `approved?(address, issue_id)`, the
-      #   implementation gate's approvals scoped to their issue ({Approvals})
+      # @param signoff [Epic::Signoff] the gate decisions, folded; each issue's
+      #   implementation is read off its own partition's {Epic::GateView}
       # @param plan [#call] `call(issue_id)`, raising unless the issue's plan
       #   is approved as it stands now
       # @param progress [#call] answers the epic's {Epic::Progress}, read fresh
@@ -68,11 +71,11 @@ module Lain
       #   epic wrote; a commit already on the branch counts as this issue's
       #   landing only when one of them is this issue's merge
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(epic_slug:, repo_root:, base:, approvals:, plan:, progress:, scribe:, queue:, layout: TestLayout::None,
+      def initialize(epic_slug:, repo_root:, base:, signoff:, plan:, progress:, scribe:, queue:, layout: TestLayout::None,
                      landings: -> { [] }, shell_out_factory: Shell::Out.public_method(:new))
         @epic_slug = epic_slug
         @base = base
-        @approvals = approvals
+        @signoff = signoff
         @plan = plan
         @progress = progress
         @scribe = scribe
@@ -156,14 +159,20 @@ module Lain
       # A gate that approved the red step's commit approved no implementation.
       def approved?(issue_id, sha) = gate_approved?(issue_id, sha) && !@red.only?(sha)
 
-      def gate_approved?(issue_id, sha) = @approvals.approved?(address(issue_id, sha), issue_id)
+      def gate_approved?(issue_id, sha) = view(issue_id).landable_digest == address(issue_id, sha)
+
+      # A commit never changes under its address, so the approved one is the artifact as it stands now.
+      def view(issue_id)
+        partition = Epic::SignoffQueue::Partition.new(epic_slug: @epic_slug, stage: STAGE, issue_id:)
+        @signoff.view(partition, current: @signoff.standing(partition)&.digest)
+      end
 
       def address(issue_id, sha) = Epic::Submission.implementation(slug: @epic_slug, issue_id:, digest: sha).digest
 
       def approved!(issue_id, sha)
         raise Epic::Gate::NotApproved, "#{sha} #{failing_tests(issue_id)}" if @red.only?(sha)
         return if gate_approved?(issue_id, sha)
-        raise Epic::Gate::NotApproved, waiting(issue_id, [sha]) if @approvals.parked?(address(issue_id, sha), issue_id)
+        raise Epic::Gate::NotApproved, waiting(issue_id, [sha]) if parked?(issue_id, sha)
 
         raise Epic::Gate::NotApproved, "issue #{issue_id}'s implementation gate has not approved #{sha}, so " \
                                        "nothing landed -- #{approve(issue_id, sha)}"
@@ -255,11 +264,11 @@ module Lain
       end
 
       # A denial is not an invitation to approve the same commit again.
-      def denied?(issue_id, sha) = @approvals.denied?(address(issue_id, sha), issue_id)
+      def denied?(issue_id, sha) = view(issue_id).denied?(address(issue_id, sha))
 
-      def parked?(issue_id, sha) = @approvals.parked?(address(issue_id, sha), issue_id)
+      def parked?(issue_id, sha) = view(issue_id).drafts.include?(address(issue_id, sha))
 
-      def held?(issue_id, sha) = @approvals.held?(address(issue_id, sha), issue_id)
+      def held?(issue_id, sha) = view(issue_id).held.include?(address(issue_id, sha))
 
       def waiting(issue_id, shas)
         "issue #{issue_id}'s implementation gate parked #{shas.join(", ")}: the commit waits for sign-off, so " \
@@ -347,60 +356,6 @@ module Lain
           Journal.records(@records.call, type: LANDED)
                  .any? { |record| record["worker_key"] == worker_id(issue_id) && record["outcome"].to_s == "merged" }
         end
-      end
-
-      # The implementation gate's approvals, as issue and address together. An
-      # implementation's address composes the stage, the epic and the commit
-      # but not the issue, so the registry alone reads issue c's approval of a
-      # commit as issue b's too. The decision record names its issue, and a
-      # decision naming none approves no issue's landing.
-      #
-      # Every answer is read off the issue's {Epic::GateView}, so landing and
-      # the sign-off queue never disagree. Only the view's landable digest
-      # lands: a newer draft parked or held stops an older approval, and an
-      # older approved commit is withdrawn once a newer one is approved.
-      class Approvals
-        STAGE = "implementation"
-        private_constant :STAGE
-
-        # @param entries [Enumerable<Hash, String>] journal records or lines
-        # @raise [Epic::SignoffQueue::UnreadableRecord] naming a decision
-        #   whose verdict cannot be read
-        def self.from(entries)
-          records = Journal.records(entries, type: Epic::SignoffQueue::JOURNAL_TYPE).to_a
-          slugs = records.filter_map { |record| record["epic_slug"].to_s if record["stage"] == STAGE }.uniq
-          new(Epic::Signoff.from_journal(records), slugs:)
-        end
-
-        # @param signoff [Epic::Signoff] the decisions, folded
-        # @param slugs [Array<String>] the epics that decided an implementation
-        def initialize(signoff, slugs:)
-          @signoff = signoff
-          @slugs = slugs.freeze
-          freeze
-        end
-
-        def approved?(digest, issue_id) = views(issue_id).any? { |view| view.landable_digest == digest.to_s }
-
-        def denied?(digest, issue_id) = views(issue_id).any? { |view| view.denied?(digest) }
-
-        # Not approved, and not refused either: it waits for a human's sign-off.
-        def parked?(digest, issue_id) = views(issue_id).any? { |view| view.drafts.include?(digest.to_s) }
-
-        # The human asked the work to wait: neither approved nor refused.
-        def held?(digest, issue_id) = views(issue_id).any? { |view| view.held.include?(digest.to_s) }
-
-        private
-
-        def views(issue_id)
-          issue_id = issue_id.to_s
-          return [] if issue_id.empty?
-
-          @slugs.map { |slug| view(Epic::SignoffQueue::Partition.new(epic_slug: slug, stage: STAGE, issue_id:)) }
-        end
-
-        # A commit never changes under its address, so the approved one is the artifact as it stands now.
-        def view(partition) = @signoff.view(partition, current: @signoff.standing(partition)&.digest)
       end
 
       # A re-sync's commit, handed to the queue only when it would itself be

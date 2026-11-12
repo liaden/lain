@@ -9,10 +9,9 @@ require "stringio"
 # address. epic_plan reuses Epic::Graph#digest instead, so a
 # reformatted-but-unchanged plan keeps its standing approval.
 #
-# #digest is (stage, slug, artifact) composed together (Joel's ruling on the
-# review round-2 BLOCKER), not the artifact's content address alone --
-# Epic::Gate's registry is keyed on #digest alone, so content-address-only
-# would let epic alpha's approval silently open epic beta's identical plan,
+# #digest is (stage, slug, artifact) composed together, not the artifact's
+# content address alone -- a reader keyed on #digest alone, as landing's address
+# is, would let epic alpha's approval silently open epic beta's identical plan,
 # or a research sign-off silently open an issue_plan resubmitting the same
 # words. #content_digest stays public for the raw content address (still
 # equal to Epic::Graph#digest for an epic_plan submission).
@@ -63,15 +62,12 @@ RSpec.describe Lain::Epic::Submission do
       journal_records(journal_io, "gate_decision")
     end
 
-    # SUPERSEDED wording: the card's literal criterion says "ensure_approved!
-    # returns the graph digest". Joel's ruling on the round-2 BLOCKER makes
-    # #digest (stage, slug, artifact) composed together, so ensure_approved!
-    # now returns the SUBMISSION digest, which equals the graph digest only
-    # incidentally never structurally. Recorded on the plan doc too.
-    it "lets ensure_approved! return the submission digest once Gate#call approves it" do
+    # #digest composes (stage, slug, artifact), so what the gate approves is the
+    # SUBMISSION digest, which equals the graph digest only incidentally, never structurally.
+    it "journals the submission digest as what Gate#call approved" do
       Sync { gate.call(submission, asker: approve_asker, stage: "epic_plan", epic_slug: "demo") }
 
-      expect(gate.ensure_approved!(submission)).to eq(submission.digest)
+      expect(decisions.first.values_at("artifact_digest", "verdict")).to eq([submission.digest, "approve"])
     end
 
     it "keeps content_digest as the graph's structural address, distinct from the gate digest" do
@@ -87,12 +83,9 @@ RSpec.describe Lain::Epic::Submission do
     end
   end
 
-  # Review round 2, the HELD blocker Joel ruled on: #digest used to answer
-  # only the artifact's content address, so the Gate's digest-keyed registry
-  # (which knows nothing of stage/slug -- that is the whole point of naming
-  # them separately on GateDecision) could not tell epic alpha's plan from
-  # epic beta's identical one, or a research doc from an issue_plan
-  # resubmitting the same words. Converted from probe_t1.rb.
+  # #digest used to answer only the artifact's content address, so a reader keyed
+  # by digest alone could not tell epic alpha's plan from epic beta's identical
+  # one, or a research doc from an issue_plan resubmitting the same words.
   describe "the digest binds stage and slug, not just the artifact" do
     it "differs for the same graph submitted under two different epic slugs" do
       alpha = described_class.epic_plan(graph: three_issue_graph, slug: "alpha")
@@ -110,8 +103,12 @@ RSpec.describe Lain::Epic::Submission do
     end
 
     describe "at the Gate, where the bleed used to actually matter" do
-      let(:journal) { Lain::Journal.new(io: StringIO.new) }
-      let(:gate) { Lain::Epic::Gate.new(journal:) }
+      let(:journal_io) { StringIO.new }
+      let(:gate) { Lain::Epic::Gate.new(journal: Lain::Journal.new(io: journal_io)) }
+
+      def approved_digests
+        journal_records(journal_io, "gate_decision").select { _1["verdict"] == "approve" }.map { _1["artifact_digest"] }
+      end
 
       def approve_asker(surface: "human")
         Object.new.tap do |asker|
@@ -126,8 +123,8 @@ RSpec.describe Lain::Epic::Submission do
         beta = described_class.epic_plan(graph: three_issue_graph, slug: "beta")
         Sync { gate.call(alpha, asker: approve_asker, stage: "epic_plan", epic_slug: "alpha") }
 
-        expect(gate.approved?(beta.digest)).to be(false)
-        expect { gate.ensure_approved!(beta) }.to raise_error(Lain::Epic::Gate::NotApproved)
+        expect(approved_digests).to eq([alpha.digest])
+        expect(approved_digests).not_to include(beta.digest)
       end
 
       it "does not let approving research open an issue_plan resubmitting the same words" do
@@ -135,15 +132,15 @@ RSpec.describe Lain::Epic::Submission do
         plan = described_class.issue_plan(view: view("T1"), slug: "demo", issue_id: "T1")
         Sync { gate.call(research, asker: approve_asker, stage: "research", epic_slug: "demo") }
 
-        expect(gate.approved?(plan.digest)).to be(false)
+        expect(approved_digests).to eq([research.digest])
+        expect(approved_digests).not_to include(plan.digest)
       end
     end
   end
 
-  # Review round 3, fix 3: Gate.from_journal (landed on main while this
-  # card was in review) folds journaled gate_decision records back into
-  # @approved and compares against a FRESHLY computed artifact.digest -- so
-  # #digest is now a cross-session replay key, not merely an in-process one.
+  # The sign-off fold reads journaled gate_decision records back and compares
+  # them against a FRESHLY computed artifact digest -- so #digest is a
+  # cross-session replay key, not merely an in-process one.
   # A literal expected value here is what makes a future Canonical change
   # that silently moves the digest fail loudly, instead of quietly orphaning
   # every already-journaled approval on the next process's replay.
@@ -234,8 +231,8 @@ RSpec.describe Lain::Epic::Submission do
   end
 
   describe "research sources" do
-    let(:journal) { Lain::Journal.new(io: StringIO.new) }
-    let(:gate) { Lain::Epic::Gate.new(journal:) }
+    let(:journal_io) { StringIO.new }
+    let(:gate) { Lain::Epic::Gate.new(journal: Lain::Journal.new(io: journal_io)) }
     let(:approve) do
       Object.new.tap do |asker|
         asker.define_singleton_method(:ask) do |_question|
@@ -248,22 +245,26 @@ RSpec.describe Lain::Epic::Submission do
 
     def approve!(submission) = Sync { gate.call(submission, asker: approve, stage: "research", epic_slug: "demo") }
 
+    def phase_now(submission)
+      gate_view_of(journal_io.string.lines, current: submission.digest, epic_slug: "demo", stage: "research").phase
+    end
+
     it "no longer stands once a source is edited after the approval" do
       approve!(research("asr" => "the fact"))
 
-      expect(gate.approved?(research("asr" => "the fact, revised").digest)).to be(false)
+      expect(phase_now(research("asr" => "the fact, revised"))).to eq(:edited)
     end
 
     it "no longer stands once a source is added after the approval" do
       approve!(research("asr" => "the fact"))
 
-      expect(gate.approved?(research("asr" => "the fact", "tts" => "another").digest)).to be(false)
+      expect(phase_now(research("asr" => "the fact", "tts" => "another"))).to eq(:edited)
     end
 
     it "still stands when the same sources are submitted in another order" do
       approve!(research("asr" => "a", "tts" => "b"))
 
-      expect(gate.approved?(research("tts" => "b", "asr" => "a").digest)).to be(true)
+      expect(phase_now(research("tts" => "b", "asr" => "a"))).to eq(:approved)
     end
 
     it "keeps the digest the research text alone always had when there are no sources" do
@@ -598,10 +599,10 @@ RSpec.describe Lain::Epic::Submission do
                                               stage: "implementation",
                                               verdict: Lain::Approval::Verdict::Approve.new, answered_by: "human",
                                               policy: "hands_off", latency: 0.0, issue_id: "c")
-      gate = Lain::Epic::Gate.from_journal([approval.to_journal], journal: Lain::Channel::Null.instance)
+      theirs = described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40)
 
-      expect(gate.approved?(described_class.implementation(slug: "demo", issue_id: "b", digest: "a" * 40).digest))
-        .to be(false)
+      expect(gate_view_of([approval.to_journal], current: theirs.digest, epic_slug: "demo", stage: "implementation",
+                                                 issue_id: "b").phase).to eq(:open)
     end
 
     it "keeps the changeset address it was given, for a reader asked to look at the commit" do

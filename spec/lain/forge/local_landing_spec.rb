@@ -41,7 +41,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     Lain::Isolation::LandingQueue.candidate(root: @repo, base:, journal:, isolation:, paths:,
                                             shell_out_factory: recording)
   end
-  let(:approvals) { described_class::Approvals.from(decisions.map(&:to_journal)) }
+  let(:signoff) { Lain::Epic::Signoff.from_journal(decisions.map(&:to_journal)) }
   let(:plan) { ->(issue_id) { planned << issue_id } }
   let(:progress) { -> { instance_double(Lain::Epic::Progress, status:) } }
   let(:scribe) { Lain::Epic::Scribe.new(epic_slug: "demo", journal:) }
@@ -120,8 +120,12 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     sha
   end
 
-  def implementation_digest(issue_id, sha)
-    Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
+  # What landing makes of issue a's anchored commits: the sha it admits, or which refusal it gives.
+  def landed_or_refused(issue_id = "a")
+    landing.anchored(issue_id).worker.sha
+  rescue Lain::Epic::Gate::NotApproved => e
+    { "waits for sign-off" => :parked, "the human asked it to wait" => :held,
+      "no worker commit is anchored" => :unanchored }.find { |words, _| e.message.include?(words) }&.last || e.message
   end
 
   def anchor(id, attempt, sha)
@@ -192,47 +196,48 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     end
 
     it "does not count a digest approved and then denied as approved" do
-      approve("a", "a" * 40)
-      deny("a", "a" * 40)
-      digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "a" * 40).digest
+      sha, = worker("a", "README" => "a's work\n")
+      approve("a", sha)
+      deny("a", sha)
 
-      expect(approvals.approved?(digest, "a")).to be(false)
+      expect(landed_or_refused).to eq(:unanchored)
     end
 
     # The partition's standing is one digest, so approving a newer commit of an
     # issue withdraws the older one's approval rather than leaving 2 to land.
     it "withdraws an older commit's approval once a newer commit of the issue is approved" do
-      approve("a", "a" * 40)
-      approve("a", "b" * 40)
+      older, = worker("a", "README" => "a's work\n")
+      newer = second_attempt("a")
+      approve("a", older)
+      approve("a", newer)
 
-      expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
-      expect(approvals.approved?(implementation_digest("a", "b" * 40), "a")).to be(true)
+      expect(landed_or_refused).to eq(newer)
     end
 
     # A deferral after the approval parks the digest again for sign-off, so it is
     # not landed while it waits, however the partition stood before.
     it "does not count a digest approved and then parked again as approved" do
-      approve("a", "a" * 40)
-      park("a", "a" * 40)
+      sha, = worker("a", "README" => "a's work\n")
+      approve("a", sha)
+      park("a", sha)
 
-      expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
-      expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      expect(landed_or_refused).to eq(:parked)
     end
 
     it "reads a digest denied and then parked again as parked, not denied" do
-      deny("a", "a" * 40)
-      park("a", "a" * 40)
+      sha, = worker("a", "README" => "a's work\n")
+      deny("a", sha)
+      park("a", sha)
 
-      expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
-      expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
+      expect(landed_or_refused).to eq(:parked)
     end
 
     it "counts a digest denied and then approved as approved" do
-      deny("a", "a" * 40)
-      approve("a", "a" * 40)
-      digest = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "a" * 40).digest
+      sha, = worker("a", "README" => "a's work\n")
+      deny("a", sha)
+      approve("a", sha)
 
-      expect(approvals.approved?(digest, "a")).to be(true)
+      expect(landed_or_refused).to eq(sha)
     end
 
     # Read as "not approved", a damaged decision sent the human to approve a
@@ -242,7 +247,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       approve("a", "a" * 40)
       line = decisions.first.to_journal.merge("verdict" => "maybe")
 
-      expect { described_class::Approvals.from([line]) }.to raise_error(Lain::Error) { |error|
+      expect { Lain::Epic::Signoff.from_journal([line]) }.to raise_error(Lain::Error) { |error|
         expect(error).to be_a(Lain::Epic::SignoffQueue::UnreadableRecord)
         expect(error.message).to include("gate_decision", "demo/implementation/a", "verdict", "nothing was decided")
         expect(error.message).not_to include("\n")
@@ -456,52 +461,51 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
       end
 
       it "reads the commit held, neither approved nor denied" do
-        hold("a", "a" * 40)
+        sha, = worker("a", "README" => "a's work\n")
+        hold("a", sha)
 
-        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(true)
-        expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
-        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(landed_or_refused).to eq(:held)
       end
 
       it "reads a hold after an approval as approved, not held, as the sign-off queue does" do
-        approve("a", "a" * 40)
-        hold("a", "a" * 40)
+        sha, = worker("a", "README" => "a's work\n")
+        approve("a", sha)
+        hold("a", sha)
 
-        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(true)
-        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(landed_or_refused).to eq(sha)
       end
 
       it "reads a hold over an approval as not held once a later commit is approved, which alone stands" do
-        approve("a", "a" * 40)
-        hold("a", "a" * 40)
-        approve("a", "b" * 40)
+        older, = worker("a", "README" => "a's work\n")
+        newer = second_attempt("a")
+        approve("a", older)
+        hold("a", older)
+        approve("a", newer)
 
-        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
-        expect(approvals.approved?(implementation_digest("a", "a" * 40), "a")).to be(false)
-        expect(approvals.approved?(implementation_digest("a", "b" * 40), "a")).to be(true)
+        expect(landed_or_refused).to eq(newer)
       end
 
       it "reads a hold after a park as parked, not held, as the sign-off queue does" do
-        park("a", "a" * 40)
-        hold("a", "a" * 40)
+        sha, = worker("a", "README" => "a's work\n")
+        park("a", sha)
+        hold("a", sha)
 
-        expect(approvals.parked?(implementation_digest("a", "a" * 40), "a")).to be(true)
-        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(landed_or_refused).to eq(:parked)
       end
 
       it "reads a hold after a denial as held, not denied" do
-        deny("a", "a" * 40)
-        hold("a", "a" * 40)
+        sha, = worker("a", "README" => "a's work\n")
+        deny("a", sha)
+        hold("a", sha)
 
-        expect(approvals.held?(implementation_digest("a", "a" * 40), "a")).to be(true)
-        expect(approvals.denied?(implementation_digest("a", "a" * 40), "a")).to be(false)
+        expect(landed_or_refused).to eq(:held)
       end
 
       it "refuses a decision written before verdicts were recorded as one missing its verdict" do
         approve("a", "a" * 40)
         old = decisions.first.to_journal.except("verdict").merge("approved" => true)
 
-        expect { described_class::Approvals.from([old]) }
+        expect { Lain::Epic::Signoff.from_journal([old]) }
           .to raise_error(Lain::Epic::SignoffQueue::UnreadableRecord, /verdict must be one of/) { |error|
             expect(error.message).not_to include("rewrite")
           }
@@ -776,7 +780,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   end
 
   def wiring
-    { epic_slug: "demo", repo_root: @repo, base:, approvals:, plan:, progress:, scribe:, queue:, layout:,
+    { epic_slug: "demo", repo_root: @repo, base:, signoff:, plan:, progress:, scribe:, queue:, layout:,
       shell_out_factory: recording }
   end
 end
