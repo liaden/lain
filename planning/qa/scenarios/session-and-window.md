@@ -368,6 +368,15 @@ chat has sat idle past the provider's cache TTL, or at least 120 seconds where t
 (ollama reports none). Drive it on ollama with a history already past `--compact-bytes`
 (`rails-blog.md` §1 builds one; a low `--compact-bytes` on a short session also reaches it). Use a model whose context window is probed: a guessed window (`:guessed` provenance, e.g. a custom ollama model) withdraws the window-approach signal, so there a prepare happens only past `--compact-bytes`, silently.
 
+**The idle tick measures the keep window from the prompt you have not typed yet.** The window counts back from the next prompt, which is
+1 message the history does not hold yet, so at idle the last exchange can already be droppable where `--compact-keep` would keep it
+at the ask. Without that, an idle chat with `--compact-keep 1` never prepared anything: the whole head sat inside the keep window
+until the ask. Drive it with `--compact-schedule idle --compact-bytes 3000 --compact-keep 1` after 4 short asks whose replies
+total over 3000 bytes. After the 2 minutes of step 1 expect `compaction_prepared`, and after step 3 a `compaction_applied` with the
+same `cut_digest` and no second summarizer call. Raising `--compact-keep` to a value that holds the whole head again, or an
+idle history under the threshold, prepares nothing. A prepare whose cut leaves a pair of messages split, or drops the last
+exchange the ask would keep, is the finding: compare `compaction_prepared`'s kept turns with the `compaction_applied` of the next ask.
+
 1. Leave the chat at `you>` for 2 minutes. Type nothing.
 2. Read the journal. `compaction_prepared` appears with the cut it committed:
    `jq -c 'select(.type=="compaction_prepared")' "$JOURNAL"`. Its `cache_state` is `cold` after a turn

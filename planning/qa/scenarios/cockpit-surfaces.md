@@ -220,6 +220,13 @@ Checks:
       tmux command (`send-keys 'hello' Enter C-c`). A line the editor already accepted is not a draft, so `hello` is
       committed as the prompt and nothing is withdrawn; the same happens at the plain chat's `you>`. The control is
       `abc` typed with no Enter, which Ctrl-C still discards. A prompt that vanishes with nothing journaled is the finding. b28-1, open (round 28, forks b and f): the 1-command form loses the keys and ends the chat, in the cockpit input pane and in a plain chat alike, because the kernel's INTR flush discards the unread bytes before lain sees them. Today expect the loss; a pass needs lain to turn ISIG off or the scenario to name a different vehicle. Control: type `abc`, wait 1 s, Ctrl-C clears the draft and the chat lives.
+    - **A draft survives a park answered in nvim.** Type `abc` at `you>` (or at `command>`, with a call already parked) without
+      pressing Enter, then answer a call that parks in the same moment in `lain://approval` (`:LainApprove`). The read the park
+      withdrew keeps its words: the next prompt (`you>`, or `command>` for the next park) opens with `abc` already on the input
+      row and the cursor after it, in the input pane and in a plain `--no-nvim` chat alike. A draft spanning lines comes back as
+      one pasted block. Ctrl-C still clears it, restored text included: after the restore, Ctrl-C over `abc` leaves an empty row,
+      and the next prompt is empty too. A `[y/N]` keeps nothing: type `y`, or `yes` and Enter, and the following prompt is
+      empty. Text that vanishes after an nvim answer, or comes back after a Ctrl-C, is the finding.
     - **Tab goes into the draft** as a tab character; it does not trigger completion or move focus.
     - **Ctrl-Z** in a cockpit input pane does not stop the process (it is exec'd with no shell, so there is no `fg`);
       check only that the pane keeps working.
@@ -234,6 +241,18 @@ Checks:
       notice.
     Read the journal for the sent lines, not the screen. A character typed in this state that is echoed by the
     terminal instead of drawn by the pane (the draft shows twice), or a draft lost on a redraw, is the finding.
+17. **`/clear` and `/resume` keep the input pane.** In a `lain up` cockpit with the input pane open, type `/clear`, then (after the
+    chat pane respawns on a new session) type a line at the input pane. The pane stays on screen through the restart, shows the new
+    chat's prompt and HUD, and its next line reaches the new chat: read the journal of the new session file for it. Repeat with
+    `/resume <session file name>` (`repl-commands.md` §11c). The pane used to read the restart as the end of the session and close.
+    `/quit` is the control: the pane receives `closed` and exits, as before. A closed input pane after
+    `/clear`, or a pane left open after `/quit`, is the finding. Automated by `spec/lain/seams/cockpit_restart_spec.rb`.
+18. **A cockpit's tmux session is found by its exact name.** Start a cockpit named `lain-old` (`lain up <project> --session lain-old`),
+    detach, then start another with the session name `lain` in the same tmux server. tmux treats a bare `-t lain` as a prefix match, so
+    the second `lain up` used to attach to `lain-old` and set its options. Now `tmux -L "$QA_SOCK" list-sessions` shows both, the
+    `lain` cockpit is a new session with its own 2 or 3 panes, and `show-options -t =lain:` and `show-options -t =lain-old:` carry
+    different `@lain_*` pane ids. The kill-session hint `lain up` prints still reads a plain `-t lain` so it pastes into zsh. A second
+    session whose name is the first's prefix that attaches to the first is the finding. Automated by `spec/lain/cli/up_spec.rb`.
 
 **Three round-22 behaviours of the input pane, each a quick look.** The pane redraws its header only where
 it is: after an answered `[y/N]` nothing is written over the echoed answer, and the next prompt draws the

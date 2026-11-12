@@ -607,7 +607,7 @@ a25-4, fixed). A command's output has no release: nothing parks asking for one.
    printing it comes back masked. Since round 28 typing the value into the command (`echo abc123lowentropyvalue`) is refused at egress before anything runs, so print it from a file instead (`cat notes/k1.txt`). A secret-named variable whose value is under 8 bytes (`1`, `true`) is not a mask.
 3. **Clean output is untouched**: `echo hello` has no `<redacted:N>` and no trailer.
 4. Under `auto` or a rule-allowed call, the same print is withheld instead of masked (`bash output withheld: it held ...`), and the
-   command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1. Round 28: a `cat` of a file holding a `ghp_` token is not rule-allowed (rules abstain) and `auto` defers, so reach the withheld path under `bypass`.
+   command is barred from automatic approval: the retry goes to a human, and a human-approved retry is masked as in 1. If that retry reads a file holding a secret, its parked row now says so and a plain `y` runs it contained, without network; only the answer `network` runs it traced, and the result is masked either way (`shell-term-approval.md` §11b). Round 28: a `cat` of a file holding a `ghp_` token is not rule-allowed (rules abstain) and `auto` defers, so reach the withheld path under `bypass`.
 Round 26 confirmed the live display showed what the masker hid, for 7 shapes, under `ask` too: the chat pane and `lain://journal`. The record (journal, WAL, requests) held 0. Ruled and fixed (T27, T28): the display is masked as it streams, so re-drive the 7 shapes and expect `<redacted:N>` in the pane and `lain://journal` too. The live and recorded copies are each fully masked, but their placeholder numbers can differ when stdout and stderr both carry secrets (round 27).
 
 *Wrong looks like:* the raw token in the tool result, the journal or the display; a prompt offering to release it.
@@ -1133,7 +1133,7 @@ the rest of the project still readable. The control prints `TOKEN=planted-not-a-
 first result means anything. A masked file that still prints is the defect. Whether the real
 `MaskList` finds the right files in a real project is not driven here.
 
-A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
+A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). A human `y` on a call that reads secrets no longer runs traced: it runs contained, so the sandbox hides the masked paths from it too (`shell-term-approval.md` §11b); only the answer `network` runs it traced. Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
 
 ## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress oracle` or `all` *(a chat with a model; a hosted one shows the endpoint best)*
 

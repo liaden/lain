@@ -180,17 +180,19 @@ To drive salvage with no spend, cut a completed cloud session's journal after it
 
 An HTTP 404 from `/api/chat` used to be journaled `run_interrupted reason: torn` (j26-2); it is now `reason: rejected` with the status (T64), and an ordinary refusal, a cut-off reply and a malformed reply journal their own reasons instead of nothing (T65). The retired `LAIN_OLLAMA_CLOUD_CONCURRENCY` was ignored without a word (j26-5); the cloud arm now says `LAIN_OLLAMA_CLOUD_CONCURRENCY was retired and is ignored; use LAIN_PROVIDER_CONCURRENCY.` (T71), and the local arm prints nothing.
 
-## 5b. The summarizer tier a cloud chat gets by default (x28-1, open)
+## 5b. The summarizer tier a cloud chat gets by default *(was x28-1; predictions read off the code, not yet driven)*
 
-No quota spent if you stop at the journal. A cloud chat's eager summarizer does not follow the chat's provider: `DEFAULT_SUMMARIZER_PROVIDER = "ollama"` (`cli/backend.rb:77`), and the tier's model is the chat's only when the summarizer's provider IS the chat's (`:835`), else `Provider::Ollama::DEFAULT_MODEL`, `qwen3:4b`. Library probe, no model: `ollama-cloud` with `glm-5.3` gives `ollama/qwen3:4b`, `ollama-cloud` with the default model the same, `ollama` with `qwen3-coder:30b` gives `ollama/qwen3-coder:30b`, `anthropic` gives `ollama/qwen3:4b`.
+No quota spent if you stop at the journal. An unflagged summarizer now follows the chat's own provider, and its model follows the chat's live model through one `Backend::Tier`: the tier's model is the chat's when the summarizer's provider IS the chat's, so `/model` moves it, and the chat's runner options ride along on the same arm. Only `--summarizer-model` pins it, and `--summarizer-provider ollama` keeps eager summaries local and free beside a cloud chat. A summarizer on another arm than the chat's takes that arm's own default model and options, never the chat's. Library probe, no model: `ollama-cloud` with `glm-5.3` gives `ollama-cloud/glm-5.3`; `ollama` with `qwen3-coder:30b` gives `ollama/qwen3-coder:30b`; `anthropic` gives `anthropic` on the chat's model; `--summarizer-provider ollama` beside any of them gives `ollama/qwen3:4b`.
 
-Live (costs 1 completion): `lain chat --provider ollama-cloud --model glm-5.3`, ask for a `list_files` of a directory with about 1000 entries so the result is eagerly summarized. Today expect:
+Live (costs 1 completion): `lain chat --provider ollama-cloud --model glm-5.3`, ask for a `list_files` of a directory with about 1000 entries so the result is eagerly summarized. Expect:
 
-- an `oracle_answer` whose model is `qwen3:4b` and a `POST /api/chat` in the LOCAL ollama's log at the same moment (round 28: 12.1 s, and the local runner swapped to `qwen3:4b` then back, evicting whatever the GPU served; twice in fork k);
-- no startup notice that a cloud chat will dial `localhost:11434`, and no summarizer field in the session header (only the `oracle_answer` names the model);
-- on a box with no local ollama (`unshare -rn`, `ip link set lo up`, the TLS stub as the cloud): the summarizer request fails with `Faraday::ConnectionFailed`, one `provider_retry` is journaled, nothing is drawn, and the chat goes on with the raw result. The one-shot exits about 20 ms later, so whether a long session journals an `oracle_failed` is unknown.
+- the session header's `summarizer` field names provider `ollama-cloud` and model `glm-5.3`, and no startup notice about summaries, because the tier matches the chat;
+- an `oracle_answer` whose model is `glm-5.3`, a `request_sent` of the summarizer on the cloud endpoint, and no `POST /api/chat` in the LOCAL ollama's log at that moment (it used to swap the local runner to `qwen3:4b` and evict what the GPU served);
+- after `/model` to another cloud model, the next summary's request names the new model: the tier follows the switch;
+- the summarizer's answer is paid once into the run's budget: a `turn_usage` record with `requester` `summarizer` names its model, and a priced model's dollars count toward `--max-cost` and the HUD. Where the model is unpriced, expect the unpriced wording, not `$0.00`;
+- with `--summarizer-provider ollama` the header names `ollama` and `qwen3:4b`, and the launch prints `summaries run on ollama (qwen3:4b), not the ollama-cloud chat's glm-5.3`.
 
-The design comment says local on purpose (frontier tokens cost more than a resend); the open question is the missing notice and header field.
+The design comment says a frontier chat may want its summaries local on purpose (eager summaries fire once per large result), which is why the flag exists; a cloud chat that dials `localhost:11434` without having been told to is the finding.
 
 ## 6. Width, the launch notice and the 429 *(§6a costs nothing; §6b costs real quota or needs a stub)*
 

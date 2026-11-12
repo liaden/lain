@@ -195,6 +195,14 @@ the chat was stopped at its timeout), and `git -C $QA/repo show main:notes/early
 exits nonzero with nothing committed is still `[!] ... chat exited <n> <session>`, with no sha and no landing. A
 landing that then fails says both: `[!] ... not landed; chat exited <n> <sha> <session>`.
 
+**The budget counts the judge and the summarizers too.** `--max-cost` is a ceiling on the whole run's dollars, not only the main
+agent's turns. The judge's answers and the summaries a chat asks for are each paid once into the same budget, each journaled as a
+`turn_usage` with `requester` `judge` or `summarizer` and the dollars alone (no tokens, so the window figure does not move), and
+the chat's next step refuses on the dollar ceiling once they cross it. With a priced model, run a drain whose items make the
+judge answer several times and compare the `--max-cost` refusal's total with the sum of every `turn_usage` dollar figure,
+secondary ones included: a refusal whose total leaves out the judge's dollars is the finding. A local model is unpriced, so
+this check needs a priced arm and spends money; say which was used.
+
 ## 4: A chore that is a question
 
 `lain todos add '[research] what does lain todos status print'`, written exactly so, with the tag after the box. The

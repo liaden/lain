@@ -128,7 +128,7 @@ Stub, `via :env` (a plain herdr pane), `herdr.holder` absent. In 1 chat:
    settles `... --state idle --seq N2`. herdr 0.9.5 has no `done`, so a finished agent is reported `idle` and herdr shows it as
    done until the pane is focused. `N2 > N1`, and both are nanosecond-epoch numbers, so a restart of lain still beats the last
    one herdr kept.
-3. The resume command rides each report, after a bare `--`: `-- lain chat --resume <absolute path of the session file>`.
+3. The resume command rides each report, after a bare `--`: `-- lain chat --root <project root> --cwd <cwd> <the flags you typed> --resume <session file name>`. The file is named by its basename, which `--resume` resolves under the pinned root, so the command works from any directory: run the stored words from another directory with the stub's `HERDR_*` unset and expect the same session to resume. A flag you typed (a `--model`, an `--approval ask`) is in the command; `--resume`, `--fork` and `--prompt` from the live run are not.
 4. `/mode ask`, ask for a `bash` call, and leave it parked. Expect `--state blocked --message <the wait's summary>`. Approve it:
    a `working` report follows, with no `--message`, and the idle one at the end.
 5. Ask the same question again. Expect no report for a change that does not change `(state, message)`: a call count that
@@ -136,10 +136,16 @@ Stub, `via :env` (a plain herdr pane), `herdr.holder` absent. In 1 chat:
 6. `/quit`. Expect exactly 1 `pane release-agent w1:p1 --source lain --agent lain --seq N` and nothing after it.
 
 **The cockpit's resume command is different.** Stub, `via :cockpit` (`lain up` launched with the 3 `HERDR_*`, TMUX empty). In the
-cockpit's chat pane expect the report to end `-- lain up <project root> --session <the tmux session name> -- --resume <session
-file>`, so a herdr restart puts the whole cockpit back, not a bare chat. The input pane, the nvim pane, a `/fork` window and a
+cockpit's chat pane expect the report to end `-- lain up <cwd> --session <the tmux session name> [--socket <name>] [--no-nvim or
+--nvim-socket=<path>] -- <the chat's own arguments> --resume <session file name>`, so a herdr restart puts the whole cockpit back,
+not a bare chat, on the same tmux socket, with the same nvim choice and the same flags. Launch the cockpit with a non-default
+`--socket`, `--no-nvim` and `-- --approval ask` to see all three ride along. `lain up` stores those words once, when it creates
+the session, in the tmux session option `@lain_up_command` (JSON; read it as in §3), and a reattach with other flags does not
+change it. The input pane, the nvim pane, a `/fork` window and a
 fleet window of that cockpit make no herdr call (their `TMUX_PANE` is not the chat pane): check by running a `/fork` and
 reading the log.
+
+Automated by `spec/lain/seams/herdr_resume_spec.rb`, which feeds the stored words through the resume selector for both a cockpit and a plain chat, and `spec/lain/herdr/reporter_spec.rb` for the refusals.
 
 **Unhappy path 1, a pane another agent holds.** `echo claude > $QA/herdr.holder`, then start the chat. Expect 1 `agent get`, 1
 note on the warning line, `herdr: pane w1:p1 belongs to claude; lain will not report there`, and NO `report-agent`,
@@ -147,9 +153,17 @@ note on the warning line, `herdr: pane w1:p1 belongs to claude; lain will not re
 and start again: a name starting `lain-` is lain's own, so reporting works. Then a holder `agent get` answers with no name:
 the note reads `belongs to an agent herdr does not name`.
 
-**Unhappy path 2, the apostrophe.** Launch from a project root whose path holds an apostrophe (`mkdir "$QA/it's"`). Expect the
-state reports to go and no `-- ...` resume command on any of them: herdr refuses an apostrophe in a resume word, and a refused
-report would lose the state too.
+**Unhappy path 2, a resume lain will not store.** herdr keeps the command in a file and types it into the restored pane's shell, so a
+secret in it would outlive the chat. Each of these sends the state reports with no `-- ...` resume command on any of them, and
+1 note on the warning line, `herdr: no resume command is stored for this chat (<reason>); herdr cannot restart it`, however many
+reports follow (a refused report would lose the state too, so the state still goes):
+
+- a project root or flag word holding an apostrophe (`mkdir "$QA/it's"`): `a word of its command holds an apostrophe`;
+- a flag word carrying URL credentials (`--base-url http://user:pw@127.0.0.1:11434`): `a word of its command carries a URL credential`;
+- more than 64 words or 8 KiB of command: `its command is over 64 words` or `over 8192 bytes`;
+- a cockpit whose stored command is missing or not JSON (`tmux set-option -t <session> @lain_up_command garbage`): `the cockpit stored no command to restart it with`.
+
+Check the stored command's words for the credential and confirm 0 hits of `pw` in `$QA/herdr.calls`.
 
 **Unhappy path 3, herdr fails.** One at a time: a stub `report-agent` that exits 1; one that sleeps 5; then the chat with the
 stub removed mid-chat. Expect the asks to complete at normal speed (the reporter works on its own thread, with a 2 second
@@ -191,6 +205,10 @@ a JSON object with `bin`, `pane` and `socket`.
 - **Unhappy path, a stale record.** Set the option by hand to a pane that herdr says another agent holds (stub holder `claude`):
   the chat reports nothing and notes it once. The record is a hint, and the ownership probe is the check.
 - **Unhappy path, a recorded value that is not JSON.** `tmux set-option -t <session> @lain_herdr garbage`: no report, no crash.
+- **The command that rebuilds the cockpit.** The session also holds `@lain_up_command`, a JSON array of the words after `lain` that
+  `lain up` was started with (`up <cwd> --session <S>`, then `--socket`, `--no-nvim` or `--nvim-socket=` where given, then `--` and the
+  chat's own arguments). Read it with `show-options -v @lain_up_command`. It is written when the session is created and not on a
+  reattach.
 
 ## 4: A herdr restart brings lain back (isolated real herdr only)
 
@@ -199,7 +217,7 @@ on (its default). The plan expects herdr to rerun the resume command it stored f
 
 - **Happy path.** Stop the isolated herdr server by the stop verb `herdr-iso --help` lists (never any other herdr: kill by the
   server that owns `$QA/xdg/...`'s socket), then start it again with `herdr-iso`. Expect the layout back with fresh shells and
-  lain's pane running `lain up <project root> --session <S> -- --resume <session file>`. Record the pane's process list.
+  lain's pane running `lain up <cwd> --session <S> <the socket and nvim flags the cockpit was built with> -- <its chat arguments> --resume <session file name>`. Record the pane's process list, and compare the flags with what you launched (a non-default `--socket` and `--no-nvim` must survive).
 - **Which `lain`.** herdr runs the first word through ITS own `PATH`. Record which `lain` that is (`type -a lain` from a shell
   started the way the herdr pane starts), because the cockpit's own panes use the launcher path from `$PROGRAM_NAME` and herdr
   uses the bare name. A different install, or none (`command not found` in the pane), is a finding for the plan's integration
@@ -210,8 +228,8 @@ on (its default). The plan expects herdr to rerun the resume command it stored f
   session.
 - **After the restart lain reports again.** A new `working` report with a `--seq` above the old pane's last (nanosecond clock),
   or herdr drops it as stale: the round states which.
-- **Unhappy path, the apostrophe root.** With the project under a root holding an apostrophe (§2), no resume command was ever
-  sent, so the pane returns as a plain shell. Record it; it is the documented cost of herdr's argv rule.
+- **Unhappy path, a command herdr must not store.** With the project under a root holding an apostrophe, or a flag word carrying URL
+  credentials (§2), no resume command was ever sent, so the pane returns as a plain shell. Record it; it is the documented cost of herdr's argv rule.
 - **Unhappy path, a closed session.** `/quit` the chat, then restart herdr. The agent was released, so herdr has nothing to
   resume: the pane returns plain, and no `lain` starts by itself.
 - **Detached tmux.** Do this once more after `tmux detach-client`: see §10.

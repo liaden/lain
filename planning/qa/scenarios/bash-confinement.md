@@ -181,6 +181,22 @@ Narrowing them is incremental work, driven by what the QA rounds measure:
 - run `lain bench approval-replay --tripwire --labels FILE SESSIONS...` over them;
 - report the false-trip rate per shape, and any `STOPPING` signal above 1 in 100 sessions.
 
+## 3c: A command lain cannot read withdraws the next build grant
+
+Under the workspace sandbox, a lone `cargo build --locked` (or `cargo fetch`, `bundle install`, `git fetch`) from a trusted toolchain gets the network ports its tool needs, but only while nothing under the project root has changed during the session's lineage (this session and the sessions it resumed from). A write lain can name is journaled as a `file_written` record and judged path by path. A bash command lain cannot parse into named writes has no such record, so what it wrote could be anywhere. Such a call now journals a `writes_unread` record (its `tool_use_id` and `cwd`), and once the lineage holds one, every root counts as changed and the grant is withdrawn.
+
+Drive it in a scratch cargo workspace with a committed `Cargo.lock` and a dependency not yet in `CARGO_HOME` (the sandbox's `XDG_*` and a fresh `CARGO_HOME` do that), under `--approval ask`, approving each call by hand:
+
+1. Ask for `cargo build --locked`, as its own call, before anything else. Expect the dependency to download and the build to pass, and `jr writes_unread` to print nothing.
+2. In a new session, first ask for one call lain cannot read, for example `eval "touch generated.txt"`, and approve it. Expect exactly 1 `writes_unread` record naming that call's `tool_use_id` and the project directory, written even though the call also wrote a file.
+3. Ask for `cargo build --locked` again in that session. Expect no network grant: the download fails the way an offline build does.
+4. Resume the session and ask for the same build once more. The mark lives in the journal, so the grant is still withdrawn after the resume.
+5. A call killed by the bash timeout is marked too: run an unreadable command that sleeps past the timeout and check `jr writes_unread` shows its record, since a killed command may already have written.
+
+Control: in a new session whose only earlier write is a readable `cat > notes.txt` inside the project, `cargo build --locked` is refused its network by the old per-path rule (a changed file under the root). A readable write outside the project, such as `cat > $QA/elsewhere.txt`, leaves the grant in place, and no `writes_unread` record is written for it. A `writes_unread` record from a readable command is the defect.
+
+Automated by `spec/lain/shell/executable/fresh_spec.rb`, `spec/lain/tools/bash_spec.rb` and `spec/lain/telemetry/writes_unread_spec.rb`. Not driven by a human yet.
+
 ## 4: A refused exec ends with the wording, and is journaled as a refusal
 
 No model call. A `ComposedTerm`-approved call can only exec the programs it resolved, so a refusal needs a

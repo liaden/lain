@@ -547,9 +547,26 @@ checkout. Drive it with a researcher given `iterations` 2 over a task that needs
 3. **The work is pinned upstream.** In the project's repository expect `refs/lain/stopped/<commit>` for the snapshot. End the
    chat, delete the stopped checkout, and `lain chat --resume <session>`: the startup notice reads `N stopped child can be
    resumed: <label> (<role>)`, and resuming it restores the work into a fresh clone from the pin.
-4. **The ones it cannot resume are named.** Resume a session whose stopped child belonged to another chain, or worked in a
-   directory a confined run held: the notice reads `N stopped child cannot be resumed: <label>, as the child it stopped under has
-   ended` or `... as its directory was confined by the run that leased it`.
+4. **The ones it cannot resume are named.** Resume a session whose stopped child belonged to another chain, whose kept directory
+   has since been deleted, or whose lease took no snapshot: the notice reads `N stopped child cannot be resumed: <label>, as the
+   child it stopped under has ended`, `... as its directory, <dir>, is gone` or `... as it kept no snapshot`. A child whose
+   directory is still there is listed as resumable even with no snapshot, and a stop that leased no checkout at all has nothing to
+   put back and resumes fresh. `... as its directory was confined by the run that leased it` is gone: a researcher is no longer
+   refused for that.
+4b. **A stopped researcher resumes in the directory it kept.** Stop a researcher (`iterations` 2 over a task that needs more) that
+   has written `notes.txt` in its scratch directory (§2c item 1), then end the chat and `lain chat --resume <session>`. The
+   startup notice lists it as resumable. Call `subagent` with `resume` its label and `iterations` 5. Expect the child in the same
+   scratch directory with `notes.txt` present, its first message telling it `Your working directory is <dir>, where you worked
+   before you stopped, kept since; a write outside it is refused`, naming the project's path for reads, and listing the files it
+   has written. A `write_file` of an absolute path inside the project is refused naming the lease, as in §2c item 4, and the
+   journal holds the lease `acquired` again. The child used to come back unconfined, in a fresh lease, and could write the
+   project.
+4c. **A spike resumes in its subdirectory.** Repeat under `plan` scope with a researcher lent the session's spike (§2c item 5) that
+   worked in a subdirectory (`mkdir spike` then wrote `spike/main.rs`). After the restart it resumes with the same working
+   directory, `spike/` inside the worktree, and its reminder names that directory. Delete the spike worktree first and the resume
+   is refused with `its spike, <dir>, is gone, so its work cannot be resumed`, and only that resume, not the others held. The
+   `child_stopped` record carries the `cwd` it worked in. Automated by `spec/lain/tools/subagent_spec.rb` and
+   `spec/lain/cli/resume/stopped_children_spec.rb`. Not driven by a human yet.
 5. **A clean exit gives the leases back.** End a chat holding a stopped child's lease: the lease is surrendered, and the pin is
    dropped unless a later run can resume it. **Wrong looks like:** a checkout reaped under a child that could still resume, a lease
    held forever by a chat that exited, or an unpinned snapshot.

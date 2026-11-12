@@ -90,8 +90,8 @@ notice (§5) carries none of it.
 Answers, each with the device named in the journal (`surface=remote:qa-phone`, authority human):
 
 1. approve the parked call: it runs, and the item leaves every surface, the desk's `[y/N]` included;
-2. answer the question: the model gets the text, and the question leaves `lain://inbox`;
-3. answer the gate: the verdict is journaled as a `gate_decision` from the phone;
+2. answer the question: the model gets the text, the question leaves `lain://inbox`, and the journal's `question_answered` record names the device (`"answered_by":"remote:qa-phone"`), as a desk answer leaves it nil;
+3. answer the gate: the verdict is journaled as a `gate_decision` from the phone, with `answered_by` reading `remote:qa-phone` (it used to read as the desk's human);
 4. answer the same item at the desk first, then from the phone: expect a `remote_answer_lost` record with the device, and no
    second decision.
 
@@ -99,6 +99,12 @@ Answers, each with the device named in the journal (`surface=remote:qa-phone`, a
 `your last answer was refused: ...` at the head of its text, and the surface lives on. A gate whose journal cannot be read is
 shown as `a gate journal cannot be read ... fix it at the desk` and every answer to it is refused with `this item can only be
 fixed at the desk`.
+
+**A gate offers only Approve and Deny, and a bad answer cannot strand it.** The gate item lists 2 replies; Hold is not among them (a deferred gate already waits, so a hold answered nothing while the phone showed it landed). Check each way an answer can fail to decide a gate, from a client or by hand against the relay:
+
+- a gate answer carrying no verdicts, and an answer that holds the gate (an older app build still offers it): each comes back as text at the head of the item, `a gate answer names no issue; answer <keys>` or `a gate cannot be held: it already waits for an answer, so approve or deny it`, the item is offered again under the same id, and the journal holds no `gate_decision` for it. The old defect was an item the agenda called answered while the journal had no decision, so no surface could answer it. Answer it again and expect the decision to land.
+- a gate with no issues (an epic-wide stage such as a research gate) lists the stage's own name as its key. An answer keyed by that name approves or denies it, and an unknown key is refused with `issue "<key>" is not in this gate (<keys>)`.
+
 
 ## 4: Revoke, strangers and a dead relay *(cheap)*
 
@@ -154,7 +160,7 @@ LAIN_REMOTE_CONFIG="$QA/remote-settings" target/debug/lain-remote
    address. The token must not appear in the window, on the terminal or in the app's stderr.
 3. **The 3 items of §3, answered from the app.** The agenda lists them newest first with kind, requester and age. Approve the parked
    call, pick an option on the question, and deny the gate with a note. Expect what §3 expects from each, with `remote:qa-desktop`
-   in the journal. Then answer an item at the desk while it is open in the app: expect `That item is no longer waiting.`.
+   in the journal. The gate's buttons are Approve and Deny only, with no Hold. Then answer an item at the desk while it is open in the app: expect `That item is no longer waiting.`.
 4. **A blank text answer is not sent.** Pick Text on a question with nothing typed: expect no answer to leave the app. A Deny
    with an empty note is sent, carrying no note.
 5. **Revoke and restart.** `lain remote revoke qa-desktop` while the app is connected: expect `reconnecting: ` within about a

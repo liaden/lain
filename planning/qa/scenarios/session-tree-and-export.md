@@ -132,6 +132,20 @@ only the head's chain. Compare it with the tree's `[abandoned]` lines. A compact
 turns elided]` (rails-blog's recipe makes one cheaply; skip it here and say so). Labels are not in the page; record that
 as the shape, and file it only if a card says otherwise.
 
+**A resumed session exports every turn the model saw.** Resume the §0 session once (`lain chat --resume <file>`, ask 1 question,
+`/quit`) so the second file's header links to the first, then `lain export <the second file> > $QA/r.html`. The page holds the
+turns from before the resume and the turns after it, in order: count the `<section class="turn">` elements, and expect the sum of
+the two files' turns. The footer's masked and released counts also read the whole chain, so a read released in the first file
+refuses the export of the second as it refuses the first (below), and a region masked there is counted in the footer. `lain
+export <second file> --jsonl` still prints only that one file, byte for byte, because the JSONL is the record `lain verify`
+checks and the chain is a view over several. Delete the first file and export the second as html: it refuses `an earlier file of
+the resume chain is missing (<path>), so the released count cannot be read across the chain; nothing was exported or shared`
+and writes nothing, and the `--jsonl` export still works. A page with only the second file's turns is the defect.
+
+**A session with no turns exports nothing.** Start `lain chat`, `/quit` before asking anything, and `lain export` that file as
+html: it refuses `this session has no turns; nothing was exported or shared`, exits 1 and writes no file, with `--out` too. A page
+of headers over no turns is the defect.
+
 **Paths.** `grep -c "$HOME" $QA/s.html` prints 0, the home appearing as `~`; the project root appears as `<project>`.
 The rewrite is at word boundaries, so a path inside a longer one (`$HOME-backup`) stays. `lain export $S --jsonl | grep
 -c "$HOME"` is greater than 0: the JSONL keeps the system prompt, absolute paths and approval records, which is why it
@@ -191,6 +205,8 @@ server between modes.
 | `/share` over the §0 session | 2 lines: `shared the model's masked view of <file> as a secret gist` and `https://gist.example/abc123 (N regions masked)`; `gh.log` holds `argv: gist create --public=false --filename <basename>.html -`; `gist-body.html` equals `lain export` of the same file, byte for byte |
 | the journal afterwards | one `session_shared` record with `url`, `format html` and the same `masked` count |
 | after the `read_released` of §5 | refuses `1 region was released to the model and sit in the transcript in clear, so nothing was shared; `lain export` writes a local copy`; `gh.log` unchanged (the sentence's grammar is the code's; copy what prints) |
+| `/share` over a session with no turns (a fresh chat) | refuses `this session has no turns; nothing was exported or shared`; `gh.log` has no new line and no `session_shared` record |
+| `/share` over a resumed session | the gist body holds the turns of the whole chain, as `lain export` of the same file does |
 | `GH_MODE=fail` | `gh gist create failed: gh: not logged in`; no `session_shared` record |
 | `GH_MODE=empty` | `gh answered no gist url, so nothing was recorded` |
 | no `gh` on `PATH` | `gh is needed to share a session; `lain export` writes a local copy` |
