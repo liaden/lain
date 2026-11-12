@@ -8,9 +8,27 @@ module Lain
     #
     # An interrupt is not silence: a cancelled wait denies whatever the rule.
     module Silence
+      # A model told to issue a held call again later re-asks, sleeps and scripts
+      # around a human who is not at the desk, so it is told to stop instead.
+      WAITS = "the call waits for a human, so do not send it again: " \
+              "do other work, or tell the user you are waiting for their answer"
+
+      # The one sentence a model reads of a call that waits for a human: a
+      # postpone, the clock's postpone, and a silence deny alike.
+      module Told
+        # @param pending [Parked::Queue::Pending] a call postponed, or settled by the clock
+        # @return [String]
+        def told(pending)
+          settled = pending.timed_out? ? pending.lapse : "postponed by the human#{pending.reason&.then { ": #{_1}" }}"
+          "#{settled}; #{WAITS}"
+        end
+      end
+
       # A gate stays held and listed for the human; a parked call is postponed,
       # leaving the queue until the agent issues it again.
       class Hold
+        include Told
+
         # @param seconds [Numeric] the window that closed
         # @return [Verdict::Hold]
         def verdict(seconds) = Verdict::Hold.new(note: "no answer within #{Silence.face(seconds)}s")
@@ -24,6 +42,8 @@ module Lain
 
       # For a project that wants an unattended run to fail closed rather than wait.
       class Deny
+        include Told
+
         # @param _seconds [Numeric] the window that closed
         # @return [Verdict::Deny]
         def verdict(_seconds) = Verdict::Deny.new(note: "timeout")

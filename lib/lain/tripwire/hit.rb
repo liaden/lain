@@ -36,12 +36,14 @@ module Lain
       end
 
       JUDGE_DENY = { name: "judge_deny", weight: :weak }.freeze
+      REMEMBERED_REASK = { name: "remembered_reask", weight: :medium }.freeze
 
       # The rungs' own refusals: a protected path is final whatever anyone
-      # says, a remembered deny is a re-ask after a human's no, and the judge's
-      # deny is weak because no session has yet shown one. A judge deny handed
-      # to a human under `escalate_only` is the same deny, so the evidence does
-      # not change with the arm.
+      # says, a remembered deny is a re-ask after a human's no (the clock's asked
+      # nobody, and a record naming no authority counts, so a missing field errs
+      # toward the alarm), and the judge's deny is weak because no session has
+      # yet shown one. A judge deny handed to a human under `escalate_only` is
+      # the same deny, so the evidence does not change with the arm.
       #
       # @param record [Hash{String=>Object}] an `escalation` record
       # @return [Array<Hit>]
@@ -59,7 +61,7 @@ module Lain
         case record["rung"]
         when Approval::Escalation::Triage::NAME
           { name: "protected_path_deny", weight: :medium } if record["final"] && protected?(reason)
-        when Middleware::RememberedDenials::RUNG then { name: "remembered_reask", weight: :medium }
+        when Middleware::RememberedDenials::RUNG then REMEMBERED_REASK unless record["authority"] == "automatic"
         when Approval::Judged::NAME then JUDGE_DENY if reason == Approval::Judged::DENIED
         end
       end

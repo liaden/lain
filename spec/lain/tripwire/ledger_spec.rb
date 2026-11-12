@@ -16,10 +16,11 @@ RSpec.describe Lain::Tripwire::Ledger do
 
   def tripwires = journal_records(io).select { _1["type"] == "tripwire" }
 
-  def escalation(rung:, verdict: "deny", id: "tu_1", requester: "agent", final: false, reason: "")
+  def escalation(rung:, verdict: "deny", id: "tu_1", requester: "agent", final: false, reason: "",
+                 authority: "automatic")
     { "type" => "escalation", "tool" => "bash", "tool_use_id" => id, "requester" => requester,
       "verdict" => verdict, "rung" => rung, "reason" => reason, "faulted" => false,
-      "authority" => "automatic", "final" => final }
+      "authority" => authority, "final" => final }
   end
 
   def program(name, path, klass: :system, fresh: false, run_files: [], wrappers: [], realpath: path, chain: [],
@@ -368,9 +369,22 @@ RSpec.describe Lain::Tripwire::Ledger do
     end
 
     it "counts a re-ask the remembered denials refused" do
-      write(escalation(rung: "remembered"))
+      write(escalation(rung: "remembered", authority: "human"))
 
       expect(tripwires.sole).to include("signal" => "remembered_reask", "weight" => "medium")
+    end
+
+    it "counts a re-ask whose record names no authority, so a missing field errs toward the alarm" do
+      write(escalation(rung: "remembered").except("authority"))
+
+      expect(tripwires.sole).to include("signal" => "remembered_reask")
+    end
+
+    # A resend of a call the silence rule denied asked a human nothing, so it is no re-ask after a no.
+    it "counts nothing for a refusal from memory of a call nobody answered" do
+      write(escalation(rung: "remembered", authority: "automatic"))
+
+      expect(tripwires).to be_empty
     end
 
     it "does not count a triage final deny that names no protected path" do
@@ -532,7 +546,7 @@ RSpec.describe Lain::Tripwire::Ledger do
     before { ledger }
 
     it "journals would_stop with the evidence chain once a requester passes the hard stop, and stops nothing" do
-      write(escalation(rung: "remembered", id: "tu_1"))
+      write(escalation(rung: "remembered", id: "tu_1", authority: "human"))
       approved(id: "tu_2")
       write(exec_record(id: "tu_2", refusals: [refused(planted)]))
 
@@ -605,7 +619,7 @@ RSpec.describe Lain::Tripwire::Ledger do
       let(:rules) { Lain::Tripwire::Rules.new(points: { strong: 10, medium: 3, weak: 1 }, hard_stop: 13) }
 
       it "counts only seeded signals toward a stop" do
-        write(escalation(rung: "remembered", id: "tu_0", requester: "researcher"))
+        write(escalation(rung: "remembered", id: "tu_0", requester: "researcher", authority: "human"))
         refused_exec_by("researcher")
 
         expect(tripwires.last).to include("stop" => "would_stop", "score" => 13)

@@ -745,7 +745,7 @@ abstains the whole sequence), and a redirect to `/dev/null` is understood. Accou
 are a `Sensitivity` rule anchored at the filesystem root (`Rule.absolute`), denied for every agent
 and level, and a child's reads of `/etc/passwd` and `/etc/group` are refused in
 `Sensitivity::Policy::Confined`. `Middleware::RememberedDenials` refuses a requester the paths a
-human denied it, for the session. `Approval::ComposedTerm` approves a bare allowlisted reader (`cat`, `grep`, `ls`,
+human denied it, and the exact calls a human or the silence rule denied, for the session; the next line the human types lifts the silence rule's. `Approval::ComposedTerm` approves a bare allowlisted reader (`cat`, `grep`, `ls`,
 `wc`, `pwd` and the like) over ordinary words, a named program's `--version`, and lain's own `epic status`
 and `epic show`, with no human or model; `lain watch` still asks, and an interpreter is never one of those.
 Three more readers are admitted by a table of the options each knows, and any option outside it

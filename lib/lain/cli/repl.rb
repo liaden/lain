@@ -62,7 +62,7 @@ module Lain
         @attended = attended
         @echo_input = echo_input
         @mode_switch = mode_switch
-        name_lifetimes(replies:, supervisor:, idle:, notices:, approvals:, secret_surface:, tty:, conductor:, remote:)
+        name_seams(replies:, supervisor:, idle:, notices:, approvals:, secret_surface:, tty:, conductor:, remote:)
       end
 
       # What this conversation was worth as a process exit status, for the one
@@ -116,6 +116,7 @@ module Lain
         # rendering a row gesture resolves through, and the rail its writes are
         # answered on.
         @replies.bind_review_editor(frontend)
+        @replies.bind_lapses(@lapses)
         @prompt = composed_prompt(frontend)
         pumping = Lain::Frontend::StdinPump::Idle
         Sync do |task|
@@ -132,8 +133,10 @@ module Lain
 
       # The conversation's lifetime, named by the object that owns it -- so
       # which fiber belongs to it, and who stops it, is read off a name rather
-      # than off an ensure.
-      def name_lifetimes(replies:, supervisor:, idle:, notices:, **approval_seams)
+      # than off an ensure -- and the queue a human's line lifts the silence
+      # rule's denials on.
+      def name_seams(replies:, supervisor:, idle:, notices:, **approval_seams)
+        @lapses = approval_seams[:approvals] || HumanReplies::NoLapses
         @surfaces = ApprovalSurfaces.new(**approval_seams)
         @conversation = ConversationScope.new(supervisor:, replies:, surfaces: @surfaces, idle:, notices:)
       end
@@ -180,7 +183,13 @@ module Lain
       # The cockpit's input pane shows the human their line only in its own
       # pane; echoing here puts it in the transcript.
       def read_line
-        prompt.read.tap { |text| @tty.render_prompt_echo(text) if @echo_input && text }
+        lifting_lapsed(prompt.read.tap { |text| @tty.render_prompt_echo(text) if @echo_input && text })
+      end
+
+      # A line the human typed answers what the silence rule denied while nobody was there.
+      def lifting_lapsed(line)
+        @lapses.forget_lapsed if line
+        line
       end
 
       def restarting? = @restarting == true
@@ -228,7 +237,7 @@ module Lain
       # reads typeahead as the line it is and lets the human still edit it.
       def held_line
         @conductor.gather_typed_ahead if @goal_driver.active?
-        echoed(@replies.take_held)
+        lifting_lapsed(echoed(@replies.take_held))
       end
 
       def echoed(line)

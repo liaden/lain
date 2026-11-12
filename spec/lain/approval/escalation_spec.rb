@@ -397,6 +397,10 @@ RSpec.describe Lain::Approval::Escalation do
   # Scenario: a hold postpones the call
   describe "a call the human postpones" do
     let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1) }
+    let(:waits) do
+      "the call waits for a human, so do not send it again: " \
+        "do other work, or tell the user you are waiting for their answer"
+    end
 
     def held(note)
       Sync do |task|
@@ -407,16 +411,16 @@ RSpec.describe Lain::Approval::Escalation do
       end
     end
 
-    it "is a final deny a human can still lift, telling the model the human's words and to ask again later" do
+    # Scenario: a postponed call does not invite a retry
+    it "is a final deny a human can still lift, telling the model the human's words and that it waits for them" do
       ruling = held("after lunch")
 
       expect(ruling).to have_attributes(verdict: :deny, final: true, liftable: true, authority: :human)
-      expect(ruling.told).to include("postponed by the human", "after lunch", "issue it again later",
-                                     "park for an answer")
+      expect(ruling.told).to eq("postponed by the human: after lunch; #{waits}")
     end
 
     it "tells the model it was postponed when the human gave no words" do
-      expect(held(nil).told).to start_with("postponed by the human; issue it again later")
+      expect(held(nil).told).to eq("postponed by the human; #{waits}")
     end
 
     it "tells the model a call nobody answered was postponed for want of an answer, not by the human" do
@@ -426,8 +430,29 @@ RSpec.describe Lain::Approval::Escalation do
       ruling = Sync { described_class::Surfaces.new(silent).call(effect, nil) }
 
       expect(ruling).to have_attributes(verdict: :deny, final: true, liftable: true)
-      expect(ruling.told)
-        .to eq("postponed: no answer within 0.01s; issue it again later, when it will park for an answer")
+      expect(ruling.told).to eq("postponed after 0:01 with no answer; #{waits}")
+    end
+
+    context "when the project's silence rule denies" do
+      let(:silent) { Lain::Approval::Parked::Queue.new(journal:, timeout: 0.01, silence: Lain::Approval::Silence::DENY) }
+
+      # Scenario: a timed-out deny is final and liftable
+      it "is a final deny a human can still lift, told in the same words as a postpone" do
+        ruling = Sync { described_class::Surfaces.new(silent).call(effect, nil) }
+
+        expect(ruling).to have_attributes(verdict: :deny, final: true, liftable: true, authority: :automatic,
+                                          reason: include("silence rule denied"))
+        expect(ruling.told).to eq("denied after 0:01 with no answer; #{waits}")
+      end
+
+      # Scenario: a repeat is not parked again
+      it "is remembered, so the same call is refused from memory in those words rather than parked again" do
+        Sync { described_class::Surfaces.new(silent).call(effect, nil) }
+
+        expect(silent.denied_call(requester: Lain::Approval::Parked::Queue::REQUESTER.name, tool: effect.name,
+                                  input: effect.input, cwd: Lain::Session.cwd_of(nil)))
+          .to have_attributes(reason: "denied after 0:01 with no answer; #{waits}", authority: :automatic)
+      end
     end
   end
 
@@ -1677,10 +1702,14 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.first["reason"]).to include("shell verdict allow", described_class::Triage::PROTECTED)
     end
 
-    it "does not mark a surface's refusal final, since a human or a closed window can answer otherwise next time" do
-      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 0.01)
+    it "does not mark a surface's refusal final, since a human can answer otherwise next time" do
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1)
 
-      ruling = Sync { ladder(described_class::Surfaces.new(queue)).rule(effect, nil) }
+      ruling = Sync do |task|
+        ruled = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, nil) }
+        task.with_timeout(1) { queue.dequeue }.deny(surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
 
       expect(ruling).to be_deny
       expect(ruling).not_to be_final

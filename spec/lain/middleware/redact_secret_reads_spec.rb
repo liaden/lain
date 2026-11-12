@@ -916,16 +916,17 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       )
     end
 
-    # A hold means ask again later, here as at every other prompt.
-    it "says a held release was postponed, and asks about the file again on the next read" do
+    # Scenario: a postponed call does not invite a retry
+    it "says a held release was postponed and waits for a human, and asks about the file again on the next read" do
       path = write("notes.txt", one_secret)
       hold = Lain::Approval::Verdict::Hold.new(note: "after lunch")
 
       content = read(path) { |q| q.dequeue.decide(hold, surface: "spec", authority: :human) }.fetch(:result).content
       read(path, tool_use_id: "tu_2") { |q| q.dequeue.deny(surface: "spec") }
 
-      expect(content).to include("1 region is masked as <redacted:1>", "postponed")
-      expect(content).not_to include("declined")
+      expect(content).to include("1 region is masked as <redacted:1>", "postponed", "the release waits for a human",
+                                 "Tell the user which file you need unmasked.")
+      expect(content).not_to include("declined", "asks again", "do not send it again")
       expect(decisions.length).to eq(2)
     end
 
@@ -942,8 +943,9 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
 
       content = read(path).fetch(:result).content
 
-      expect(content).to include("the release timed out", "a human may still release")
-      expect(content).not_to include("declined")
+      expect(content).to include("the release timed out", "a human may still release", "the release waits for a human",
+                                 "Tell the user which file you need unmasked.")
+      expect(content).not_to include("declined", "do not send it again")
     end
 
     it "keeps saying so on a later read, which is not asked again" do

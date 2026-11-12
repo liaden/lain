@@ -449,11 +449,12 @@ RSpec.describe Lain::Middleware::Gate do
     end
 
     # Scenario: a hold postpones the call
-    it "tells the agent a hold postponed the call, in the human's words, and to issue it again later" do
+    it "tells the agent a hold postponed the call, in the human's words, and that it waits for a human" do
       result, reached = answered("hold after lunch")
 
       expect(result).to eq(Lain::Tool::Result.error('refused tool "dangerous": postponed by the human: after lunch; ' \
-                                                    "issue it again later, when it will park for an answer"))
+                                                    "the call waits for a human, so do not send it again: " \
+                                                    "do other work, or tell the user you are waiting for their answer"))
       expect([result.ends_turn, reached]).to eq([false, []])
     end
 

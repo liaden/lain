@@ -119,6 +119,11 @@ module Lain
         def self.ask(_anchor_id, _question) = Nothing
       end
 
+      # A run with no approval queue, so the silence rule denied nothing to lift.
+      module NoLapses
+        def self.forget_lapsed = nil
+      end
+
       # `ask_human:` is whatever answers `#reply(answer, digest, answered_by:)`
       # for the set a digest names, the keyword naming the surface or nil: the
       # run's {Tools::AskHuman::Directory} in production, a lone
@@ -137,6 +142,7 @@ module Lain
         # second copy of which Null each surface holds -- the copy that drifted
         # when a fourth arrived, which is what the approval list's did.
         bind_editor(nil)
+        bind_lapses(nil)
         @changeset_review = NoReview
         @reviews = Reviews.new
         @inbox = Pending.new(live: ->(digest) { ask_human.awaiting?(digest) })
@@ -165,6 +171,12 @@ module Lain
         @views = views || NoViews
         @approvals = approvals || NoApprovals
       end
+
+      # The run's approval queue, whose silence-rule denials an answer lifts:
+      # whoever answers a question is a human at the chat.
+      #
+      # @param lapses [#forget_lapsed, nil] the queue, or nil for a run without one
+      def bind_lapses(lapses) = @lapses = lapses || NoLapses
 
       # The `you>` command registry, so a registered `/word` typed at `human> `
       # RUNS instead of being recorded as the answer to the parked set. A bare
@@ -409,6 +421,7 @@ module Lain
       # can strand it: an answer handed on settles them, and one that was not,
       # a refusal or an unwind, answered nothing and lets them go.
       def deliver(answer, digest, answered_by: nil)
+        @lapses.forget_lapsed
         open = @reads.on(digest).each(&:claim)
         queued = @queued.on(digest)
         delivered = handed_on(answer, digest, answered_by)

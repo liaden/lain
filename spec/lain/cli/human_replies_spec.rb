@@ -637,6 +637,14 @@ RSpec.describe Lain::CLI::HumanReplies do
       end
     end
 
+    it "lifts the clock's denials when the human answers, since the human is present" do
+      lapses = instance_double(Lain::Approval::Parked::Queue, forget_lapsed: nil)
+      replies.bind_lapses(lapses)
+      Sync { replies.answer("go ahead", announced(ask_human, "q1?").digest) }
+
+      expect(lapses).to have_received(:forget_lapsed).once
+    end
+
     it "answers false for a set already answered" do
       Sync do
         item = announced(ask_human, "q1?")

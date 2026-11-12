@@ -962,7 +962,8 @@ the displayed figure is `5:00`.) Park `cargo build` and read each surface:
 
 **Under the default `silence: :hold`** the same three surfaces read `postpones in 0:30`, `0:30 left, postpones at HH:MM:SS`
 and `... ; postpones in 0:30`, and a lapse says `postponed after 0:30 with no answer`. The model's tool result then says
-the call was postponed and to issue it again later, when it will park for an answer; it is not an `approval denied` error.
+`postponed after 0:30 with no answer; the call waits for a human, so do not send it again: do other work, or tell the user
+you are waiting for their answer`; it is not an `approval denied` error.
 The postponed call leaves the queue and the nvim buffer. A Ctrl-C or `/stop` over the parked call still denies whatever the
 rule says. **Wrong looks like:** a postponed call that stays listed, or `denied` under `:hold`.
 
@@ -973,9 +974,11 @@ rule says. **Wrong looks like:** a postponed call that stays listed, or `denied`
    `HH:MM:SS ... denied after 0:30 with no answer` (the cockpit form also names the call: `! agent asks to
    run bash(...)  -- denied after 0:30 with no answer`), the nvim buffer gets one `! agent  bash(...)  --
    denied after ...` line after its rows in the one rendering that drops the call, and the model's tool
-   result is an error carrying the same sentence: `approval denied for tool "bash": denied after 0:30 with no
-   answer` (**round 23 B23-2, fixed**; the bare `approval denied for tool "bash"` is a human's `n`, so a lapse that
-   reads that way has lost its sentence). In a `--no-nvim` chat the timeout line is led by the call and starts with `HH:MM:SS`:
+   result is an error carrying the same sentence: `refused tool "bash": denied after 0:30 with no answer; the call
+   waits for a human, so do not send it again: ...` (**round 23 B23-2, fixed**; the bare `approval denied for tool
+   "bash"` is a human's `n`, so a lapse that reads that way has lost its sentence). Sending the same call again is
+   refused at once from memory, with no new park, until the human types a line in that chat (at `you>` or as
+   an answer at `human>`, from nvim or from the phone); after that the resend parks again. A human's `n` stays remembered whatever they type. In a `--no-nvim` chat the timeout line is led by the call and starts with `HH:MM:SS`:
    `HH:MM:SS -- agent asks to run bash(...): denied after 0:30 with no answer` (round 25, b25-5, fixed), so with 2 parked calls it says which
    lapsed. A call closed because its requester was stopped (`/stop` over a parked call) reads `closed: its requester was stopped`, never
    `decided by abandoned`. **Wrong looks like:** the lapse said twice, said

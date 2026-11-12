@@ -797,6 +797,61 @@ RSpec.describe Lain::Approval::Parked::Queue do
                                cwd: Lain::Session.cwd_of(nil))).to be_nil
     end
 
+    describe "a call the silence rule denied" do
+      def lapsed(effect, silence:)
+        silent = described_class.new(journal:, timeout: 0.01, silence:)
+        Sync { silent.adjudicate(effect, in_dir("/srv/p")) }
+        silent
+      end
+
+      def repeat_of(queue, effect)
+        queue.denied_call(requester: "agent", tool: effect.name, input: effect.input, cwd: "/srv/p")
+      end
+
+      # Scenario: a repeat is not parked again
+      it "remembers the exact call, in the words the model was told" do
+        effect = tool_call("bash", { "command" => "cat .env" })
+
+        expect(repeat_of(lapsed(effect, silence: Lain::Approval::Silence::DENY), effect))
+          .to have_attributes(reason: start_with("denied after 0:01 with no answer; the call waits for a human"),
+                              authority: :automatic)
+      end
+
+      it "holds nothing against its path, since nobody judged the path" do
+        queue = lapsed(lists("/home"), silence: Lain::Approval::Silence::DENY)
+
+        expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+      end
+
+      it "remembers nothing when the silence rule postponed it" do
+        effect = tool_call("bash", { "command" => "cat .env" })
+
+        expect(repeat_of(lapsed(effect, silence: Lain::Approval::Silence::HOLD), effect)).to be_nil
+      end
+
+      it "is forgotten once a human speaks, so the resend parks again for a real answer" do
+        effect = tool_call("bash", { "command" => "cat .env" })
+        queue = lapsed(effect, silence: Lain::Approval::Silence::DENY)
+
+        queue.forget_lapsed
+        parked = Sync do |task|
+          run = task.async { queue.adjudicate(effect, in_dir("/srv/p")) }
+          task.with_timeout(1) { queue.dequeue }.tap { _1.approve(surface: "spec", authority: :human) && run.wait }
+        end
+
+        expect([repeat_of(queue, effect), parked.input]).to eq([nil, effect.input])
+      end
+
+      it "keeps a human's denial when a human speaks" do
+        denied_by_human(tool_call("bash", { "command" => "make deploy" }), in_dir("/srv/p"))
+
+        queue.forget_lapsed
+
+        expect(repeat_of(queue, tool_call("bash", { "command" => "make deploy" })))
+          .to have_attributes(reason: "not your business", authority: :human)
+      end
+    end
+
     it "remembers nothing for a call that names no path" do
       denied_by_human(tool_call)
 
@@ -1037,7 +1092,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
       before { denied_by_human(runs("make deploy"), in_dir("/srv/p")) }
 
       it "answers the human's reason for the same call from the same requester in the same directory" do
-        expect(repeat_of("make deploy")).to eq("not your business")
+        expect(repeat_of("make deploy")).to have_attributes(reason: "not your business", authority: :human)
       end
 
       it "answers nothing for a different call, another requester, or another directory" do
@@ -1411,7 +1466,8 @@ RSpec.describe Lain::Approval::Parked::Queue do
     it "tells the model the call lapsed, in the window's own words" do
       result = Sync { gate_over([]).call(tool_call("dangerous")) }
 
-      expect(result.content).to eq('approval denied for tool "dangerous": denied after 0:01 with no answer')
+      expect(result.content).to eq('refused tool "dangerous": denied after 0:01 with no answer; ' \
+                                   "#{Lain::Approval::Silence::WAITS}")
     end
   end
 
@@ -1437,12 +1493,12 @@ RSpec.describe Lain::Approval::Parked::Queue do
       )
     end
 
-    it "tells the agent the call is postponed and to issue it again, and its turn goes on" do
+    it "tells the agent the call is postponed and waits for a human, and its turn goes on" do
       runs = []
       result = Sync { gate_over(runs).call(tool_call("dangerous")) }
 
-      expect(result.content).to eq('refused tool "dangerous": postponed: no answer within 0.01s; ' \
-                                   "issue it again later, when it will park for an answer")
+      expect(result.content).to eq('refused tool "dangerous": postponed after 0:01 with no answer; ' \
+                                   "#{Lain::Approval::Silence::WAITS}")
       expect([result.ends_turn, runs]).to eq([false, []])
     end
 

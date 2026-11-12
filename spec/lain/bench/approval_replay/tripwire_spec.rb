@@ -23,11 +23,12 @@ RSpec.describe Lain::Bench::ApprovalReplay::Tripwire do
   def reask(id, requester)
     { "type" => "escalation", "tool" => "bash", "tool_use_id" => id, "requester" => requester, "verdict" => "deny",
       "rung" => Lain::Middleware::RememberedDenials::RUNG, "reason" => "again", "faulted" => false,
-      "authority" => "automatic", "final" => false }.compact
+      "authority" => "human", "final" => false }.compact
   end
 
   def judge_deny(id, requester)
-    reask(id, requester).merge("rung" => Lain::Approval::Judged::NAME, "reason" => Lain::Approval::Judged::DENIED)
+    reask(id, requester).merge("rung" => Lain::Approval::Judged::NAME, "reason" => Lain::Approval::Judged::DENIED,
+                               "authority" => "automatic")
   end
 
   def refused_exec(id)

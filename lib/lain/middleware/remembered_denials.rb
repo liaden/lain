@@ -5,8 +5,8 @@ require "active_support/core_ext/object/blank"
 module Lain
   module Middleware
     # Refuses a call on a path a human already denied the same requester, or on
-    # anything under it, or an exact repeat of a call they denied, rather than
-    # parking it to ask again. The memory is the queue's own
+    # anything under it, or an exact repeat of a call they or the silence rule
+    # denied, rather than parking it to ask again. The memory is the queue's own
     # ({Approval::Parked::Queue#denied} and {Approval::Parked::Queue#denied_call}), so a run
     # with no queue remembers nothing.
     #
@@ -17,9 +17,9 @@ module Lain
     # never reaches the ladder and a rung could not tell it apart from one
     # under the denied path.
     #
-    # The refusal is the gate's non-final one, in the human's words: the human
-    # could still change their mind, and the model should hear the same answer
-    # it got the first time.
+    # The refusal is the gate's non-final one, in the words the model got the
+    # first time: the human's reason, or the silence rule's sentence for a
+    # call nobody answered, journaled under whichever authority gave it.
     class RememberedDenials < Base
       # A run nobody attends: nothing was denied, so nothing is remembered.
       module Unattended
@@ -33,7 +33,8 @@ module Lain
 
       PATH_DENIED = "a human denied this path earlier"
       CALL_DENIED = "a human denied this call earlier"
-      private_constant :PATH_DENIED, :CALL_DENIED
+      CALL_LAPSED = "the window closed with no answer earlier"
+      private_constant :PATH_DENIED, :CALL_DENIED, :CALL_LAPSED
 
       # @param queue [#denied, #denied_call] the run's approval queue, or {Unattended}
       # @param sensitivity [#gates?, #denial, #judge, #home] the same path policy
@@ -54,10 +55,10 @@ module Lain
 
       def call(env, &app)
         effect = ::Lain::Sensitivity::Policy.unwrapped(env.fetch(:effect))
-        reason, because = effect.tool_call? && remembered(effect, env[:context], env[:named])
+        reason, because, authority = effect.tool_call? && remembered(effect, env[:context], env[:named])
         return downstream(env, &app) unless reason
 
-        record(effect, reason, because, Telemetry::Escalation.requester_of(env[:context], @requester))
+        record(effect, reason, because, authority, Telemetry::Escalation.requester_of(env[:context], @requester))
         said = reason.presence || "#{because} this session"
         env.merge(result: Tool::Result.error("#{format(@denial, name: effect.name.inspect)}: #{said}"))
       end
@@ -68,12 +69,12 @@ module Lain
         cwd = Session.cwd_of(context)
         refused = !@sensitivity.denial(effect, cwd:, named: parsed).nil?
         on_path = remembered_on_path(effect, context, cwd, parsed, refused)
-        return [on_path, PATH_DENIED] if on_path
+        return [on_path, PATH_DENIED, :human] if on_path
         return if refused
 
         repeated = @queue.denied_call(requester: Telemetry::Escalation.requester_of(context, @requester),
                                       tool: effect.name, input: effect.input, cwd:)
-        [repeated, CALL_DENIED] if repeated
+        repeated && [repeated.reason, repeated.authority == :human ? CALL_DENIED : CALL_LAPSED, repeated.authority]
       end
 
       def remembered_on_path(effect, context, cwd, parsed, refused)
@@ -116,8 +117,8 @@ module Lain
         !verdict.ordinary? && (!verdict.denied? || !path.word.match?(Approval::Escalation::Triage::PATHLIKE))
       end
 
-      def record(effect, reason, because, requester)
-        ruling = Approval::Escalation::Ruling.deny(rung: RUNG, because:, authority: :human, said: reason)
+      def record(effect, reason, because, authority, requester)
+        ruling = Approval::Escalation::Ruling.deny(rung: RUNG, because:, authority:, said: reason)
         Telemetry::Escalation.write(@journal, ruling, effect, nil, requester:)
       end
     end

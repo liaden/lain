@@ -959,6 +959,34 @@ RSpec.describe Lain::CLI::Repl do
       expect(tty).not_to have_received(:render_prompt_echo)
     end
 
+    describe "lifting the clock's denials" do
+      let(:lapses) { instance_double(Lain::Approval::Parked::Queue, forget_lapsed: nil) }
+
+      it "lifts them for a held line the human typed ahead" do
+        allow(replies).to receive(:take_held).and_return("held one", nil)
+
+        repl(reading, approvals: lapses).converse(first_prompt: "seed")
+
+        expect(lapses).to have_received(:forget_lapsed).once
+      end
+
+      it "leaves them for a first prompt seeded on the command line" do
+        repl(reading, approvals: lapses).converse(first_prompt: "seed")
+
+        expect(lapses).not_to have_received(:forget_lapsed)
+      end
+
+      it "leaves them for a prompt the goal driver wrote" do
+        driver = instance_double(Lain::CLI::GoalDriver, active?: false, settle_pin: nil)
+        allow(driver).to receive(:poll).and_return("keep going", nil)
+
+        repl(reading, approvals: lapses, goal_driver: driver).converse(first_prompt: "seed")
+
+        expect(dispatched).to eq(["seed", "keep going"])
+        expect(lapses).not_to have_received(:forget_lapsed)
+      end
+    end
+
     it "does not echo a goal-driven prompt" do
       driver = instance_double(Lain::CLI::GoalDriver, active?: false, settle_pin: nil)
       allow(driver).to receive(:poll).and_return("keep going", nil)
@@ -1994,6 +2022,54 @@ RSpec.describe Lain::CLI::Repl do
 
       expect(answers.answered).to contain_exactly(["an answer", "digest-of-which-file"])
       expect(output.string).to include("which file", "human> ")
+    end
+
+    # The clock's denial asked nobody, so a human's line is the answer it lacked;
+    # a human's own denial is not lifted by anything they type afterwards.
+    it "forgets a call the silence rule denied once the human types a line, and keeps a human's denial" do
+      silent = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 0.01,
+                                                 silence: Lain::Approval::Silence::DENY)
+      lapsed, refused = ["cat .env", "make deploy"].map do |command|
+        Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command })
+      end
+      Sync do |task|
+        silent.adjudicate(lapsed, nil)
+        run = task.async { silent.adjudicate(refused, nil) }
+        task.with_timeout(1) { silent.dequeue }.deny(surface: "spec", authority: :human, reason: "no")
+        run.wait
+      end
+      remembered = lambda do |effect|
+        silent.denied_call(requester: Lain::Approval::Parked::Queue::REQUESTER.name, tool: "bash",
+                           input: effect.input, cwd: Lain::Session.cwd_of(nil))
+      end
+      lines = ["go ahead", "quit"]
+
+      converse_over(commands_that { |_text| "ok" }, approvals: silent) { lines.shift }
+
+      expect([remembered.call(lapsed), remembered.call(refused)&.authority]).to eq([nil, :human])
+    end
+
+    # A seeded first prompt lifts nothing, so only the answer typed at `human>`
+    # is left to lift the denial the clock gave before the chat began.
+    it "forgets a call the silence rule denied once the human answers at human>" do
+      silent = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 0.01,
+                                                 silence: Lain::Approval::Silence::DENY)
+      lapsed = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cat .env" })
+      Sync { silent.adjudicate(lapsed, nil) }
+      commands = commands_that do |_text|
+        questions.enqueue(item)
+        wait_until(reason: "the question raised mid-dispatch was answered") { answers.answered.any? }
+        "the command answered"
+      end
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+      allow(conductor).to receive(:read_reply, &reply_reader(:typed))
+
+      Timeout.timeout(10) do
+        repl_over(commands, silent).run(forks: no_forks, nvim: nil, store: nil, session: nil, first_prompt: "ask me")
+      end
+
+      expect(silent.denied_call(requester: Lain::Approval::Parked::Queue::REQUESTER.name, tool: "bash",
+                                input: lapsed.input, cwd: Lain::Session.cwd_of(nil))).to be_nil
     end
 
     # A fleet actor's question while the human sits at `you>`: nothing is

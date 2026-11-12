@@ -24,6 +24,8 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     [env.fetch(:result), reached]
   end
 
+  def by_human(reason) = Lain::Approval::Parked::Queue::Remembered.new(reason:, authority: :human)
+
   def remembering(requester, path, reason = "not your business")
     allow(queue).to receive(:denied).with(requester:, path:).and_return(reason)
   end
@@ -59,7 +61,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
     end
 
     it "says a human denied the call earlier this session for a repeated call" do
-      allow(queue).to receive(:denied_call).and_return("")
+      allow(queue).to receive(:denied_call).and_return(by_human(""))
 
       expect(through(lists("/home/joel/x")).first.content)
         .to eq('approval denied for tool "list_files": a human denied this call earlier this session')
@@ -206,7 +208,7 @@ RSpec.describe Lain::Middleware::RememberedDenials do
 
     def remembering_call(requester, command, reason = "not now")
       allow(queue).to receive(:denied_call)
-        .with(requester:, tool: "bash", input: { "command" => command }, cwd: project).and_return(reason)
+        .with(requester:, tool: "bash", input: { "command" => command }, cwd: project).and_return(by_human(reason))
     end
 
     before { remembering_call("agent", "make deploy") }
@@ -224,13 +226,14 @@ RSpec.describe Lain::Middleware::RememberedDenials do
       through(runs("make deploy"), via: described_class.new(queue:, sensitivity: policy, denial:, journal:))
 
       expect(journal).to contain_exactly(a_hash_including("rung" => "remembered", "verdict" => "deny",
+                                                          "authority" => "human",
                                                           "reason" => "a human denied this call earlier"))
     end
 
     it "passes a repeat the session now refuses outright on to that refusal" do
       reads = call("read_file", { "path" => "#{home}/.ssh/id_ed25519" })
       allow(queue).to receive(:denied_call)
-        .with(requester: "agent", tool: "read_file", input: reads.input, cwd: project).and_return("not now")
+        .with(requester: "agent", tool: "read_file", input: reads.input, cwd: project).and_return(by_human("not now"))
 
       expect(through(reads).last).to eq([reads])
     end
@@ -281,6 +284,22 @@ RSpec.describe Lain::Middleware::RememberedDenials do
 
       expect([through(call("read_file", { "path" => "cfglink" })).first,
               through(call("bash", { "command" => "cat cfglink" })).first]).to all(have_attributes(is_error: true))
+    end
+
+    # Scenario: a repeat is not parked again
+    it "refuses a repeat of a call the silence rule denied in the words the model was told, journaled as the clock's" do
+      silent = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 0.01,
+                                                 silence: Lain::Approval::Silence::DENY)
+      Sync { silent.adjudicate(call("bash", { "command" => "make deploy" }), in_project) }
+      journal = []
+
+      result, reached = through(call("bash", { "command" => "make deploy" }),
+                                via: described_class.new(queue: silent, sensitivity: policy, denial:, journal:))
+
+      expect([result.content, reached])
+        .to match([include("denied after 0:01 with no answer", "the call waits for a human"), []])
+      expect(journal).to contain_exactly(a_hash_including("rung" => "remembered", "authority" => "automatic",
+                                                          "reason" => "the window closed with no answer earlier"))
     end
 
     it "refuses a command through a 2nd link to the file a denied link landed on" do

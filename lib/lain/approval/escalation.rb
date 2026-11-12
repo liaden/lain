@@ -903,8 +903,7 @@ module Lain
         APPROVED = "a surface approved this call"
         REFUSED = "a surface refused this call, or the window closed and the fail-closed doctrine did"
         POSTPONED = "a human postponed this call"
-        LAPSED = "the window closed with no answer, and the silence rule postponed this call"
-        POSTPONED_TOLD = "postponed%<by>s%<said>s; issue it again later, when it will park for an answer"
+        LAPSED = "the window closed with no answer, and the silence rule %<did>s this call"
         UNCONTAINED = "a surface approved this call, but lain cannot contain it here"
         UNCONTAINED_TOLD = "not run: it was approved, but it reads secrets and lain cannot run it contained " \
                            "here (%<because>s); it runs only if the human answers network, which runs it " \
@@ -935,9 +934,9 @@ module Lain
           surface = pending.surface
           return approved(pending) if pending.approved?
           return postponed(pending) if pending.postponed?
+          return waiting(pending) if pending.timed_out?
 
-          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:,
-                      said: pending.timed_out? ? pending.lapse : pending.reason)
+          Ruling.deny(rung: NAME, because: "#{REFUSED} (#{surface})", authority:, said: pending.reason)
         end
 
         private
@@ -957,17 +956,17 @@ module Lain
                       told: format(UNCONTAINED_TOLD, because:))
         end
 
-        # Final so the model is not told a retry now could help, and liftable
-        # because the next issue of the call parks for the human again.
-        #
-        # Only a person's hold is said to be the human's: the clock's comes from the silence rule.
         def postponed(pending)
           @denials.denied(pending.requester)
-          lapsed = pending.timed_out?
-          Ruling.deny(rung: NAME, because: "#{lapsed ? LAPSED : POSTPONED} (#{pending.surface})",
-                      authority: pending.authority, final: true, liftable: true,
-                      told: format(POSTPONED_TOLD, by: lapsed ? "" : " by the human",
-                                                   said: pending.reason&.then { ": #{_1}" }))
+          waiting(pending)
+        end
+
+        # Final so the model is not told a retry now could help, and liftable
+        # because only a human can settle the call.
+        def waiting(pending)
+          because = pending.timed_out? ? format(LAPSED, did: pending.verdict_face) : POSTPONED
+          Ruling.deny(rung: NAME, because: "#{because} (#{pending.surface})", authority: pending.authority,
+                      final: true, liftable: true, told: pending.told)
         end
       end
     end

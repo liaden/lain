@@ -685,8 +685,8 @@ module Lain
         ASK = "Tell the user which file you need unmasked."
         REASONS = {
           declined: "the release was declined. #{ASK}",
-          timed_out: "the release timed out, and a human may still release it. #{ASK}",
-          postponed: "the human postponed the release, and the next read asks again. #{ASK}",
+          timed_out: "the release timed out; the release waits for a human, and a human may still release it. #{ASK}",
+          postponed: "the human postponed the release; the release waits for a human. #{ASK}",
           related: "the file lies under a related directory, so its regions are never released.",
           unattended: "no human is attached to this run to release it."
         }.freeze

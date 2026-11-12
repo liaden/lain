@@ -34,6 +34,11 @@ module Lain
         # by the cancellation itself.
         ABANDONED_SURFACE = "abandoned"
 
+        # What the queue holds against an exact repeat: the words the model is
+        # told, and whose no it was, so a refusal from memory journals the clock's
+        # no as the clock's.
+        Remembered = Data.define(:reason, :authority)
+
         # Who stood behind an answer. Declared by the surface that gave it, never
         # read off the surface's name, so a surface nobody classified is a machine.
         AUTHORITIES = %i[automatic human].freeze
@@ -385,6 +390,9 @@ module Lain
           # surfaces word it, and two copies are how they come to disagree.
           def lapse = "#{@silence.past} after #{window_face} with no answer"
 
+          # @return [String] what the model reads of this call while it waits for a human
+          def told = @silence.told(self)
+
           # @return [String] what the window's close will do, as a prompt warns of it
           def silence_face = "#{@silence.warning} in #{window_face}"
 
@@ -665,15 +673,24 @@ module Lain
                                  .first&.last
         end
 
-        # The reason a human gave when they denied this requester this exact
-        # call, run from the same directory; "" when they gave none.
+        # The denial of this requester's exact call, run from the same
+        # directory: a human's, in their words ("" when they gave none), or the
+        # silence rule's, in the words the model was told.
         #
         # @param requester [String] as {.identity_for} names it
         # @param tool [String] as the call named it
         # @param input [Object] the call's input, compared whole
         # @param cwd [String] absolute; the session's directory for the call
-        # @return [String, nil] nil when no such denial was given
+        # @return [Remembered, nil] nil when no such denial was given
         def denied_call(requester:, tool:, input:, cwd:) = @calls.fetch(requester, {})[[tool, input, cwd]]
+
+        # A human's line is the answer the silence rule's denials lacked, so
+        # each of them parks again when resent. A human's own denial stays.
+        #
+        # @return [void]
+        def forget_lapsed
+          @calls.each_value { |calls| calls.delete_if { |_call, remembered| remembered.authority == :automatic } }
+        end
 
         # Async::Queue is buffered, so a pending enqueued before any surface
         # watched is delivered, never missed. Already-decided arrivals -- an
@@ -761,12 +778,24 @@ module Lain
         # sit in {#settle}'s `ensure` without opening a gap between fibers; a
         # realpath is a plain syscall, not a scheduler hook. A declined release
         # is a no about a file's regions, not about its path.
+        #
+        # A silence deny holds only the exact call, in the words the model was
+        # told: nobody judged its paths, but resending it would only wait again.
         def remember(pending)
-          return unless human_denial?(pending) && pending.outstanding.none?
+          return unless pending.outstanding.none?
 
-          reason = pending.reason.to_s
-          denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = reason }
-          (@calls[pending.requester] ||= {})[[pending.tool, pending.input, pending.cwd]] = reason
+          if human_denial?(pending)
+            reason = pending.reason.to_s
+            denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = reason }
+            remember_call(pending, reason)
+          elsif silence_denial?(pending)
+            remember_call(pending, pending.told)
+          end
+        end
+
+        def remember_call(pending, reason)
+          (@calls[pending.requester] ||= {})[[pending.tool, pending.input, pending.cwd]] =
+            Remembered.new(reason:, authority: pending.authority)
         end
 
         # A command's file word that is a link to a directory names a file to
@@ -808,8 +837,10 @@ module Lain
 
         # A machine's no, the clock's, or one a fault forced, is not a person's
         # judgement about a path, and a hold is a person's "not yet", so none of
-        # these is held against later calls.
+        # these is held against a later call's paths.
         def human_denial?(pending) = pending.tool_call? && pending.human? && pending.decision == :deny
+
+        def silence_denial?(pending) = pending.tool_call? && pending.timed_out? && pending.decision == :deny
 
         def below(path) = path.end_with?("/") ? path : "#{path}/"
 
