@@ -792,6 +792,11 @@ module Lain
         TESTS_STOPPED = "the run stopped while the suite was testing this issue's commit, so it was left " \
                         "ungated and unlanded"
 
+        LAUNCH_STOPPED = "stopped by the human while it launched, so no actor ran on it: any checkout it held " \
+                         "was released, and failing tests its red step already committed stay on its branch"
+
+        QA_STOPPED = "stopped by the human during its QA audit, so it holds everything it blocks until QA runs again"
+
         UNPLANNED = "it is still pending, so its issue_plan has not been approved yet -- approve the plan and " \
                     "the issue moves itself into flight"
 
@@ -919,7 +924,21 @@ module Lain
             task = Async::Task.current?
             return yield if task.nil?
 
-            awaited(task.async(&work))
+            @watched = task.async(&work)
+            awaited(@watched)
+          ensure
+            @watched = nil
+          end
+
+          # Ends the watched work at once rather than at the next poll, so a
+          # model call it was about to make is never made. Sent ONCE: Async
+          # cancels at once on a second stop, which would cut a write the work
+          # deferred the first one around.
+          def stop
+            return if @watched.nil? || @stopping
+
+            @stopping = true
+            @watched.stop
           end
 
           private
@@ -929,16 +948,21 @@ module Lain
           # re-raises here, where the caller turns it into that issue's report.
           def awaited(asking)
             loop do
-              return asking.wait if asking.finished?
+              return answered(asking) if asking.finished?
               return stopped(asking) if @interrupt.call
 
               sleep(@poll)
             end
           end
 
+          def answered(asking) = asking.cancelled? ? STOPPED : asking.wait
+
+          # A stop the work deferred around a write ends once the write is done,
+          # and the answer it then hands back says what was written.
           def stopped(asking)
-            asking.stop
-            STOPPED
+            stop
+            asking.wait
+            answered(asking)
           end
         end
 
@@ -960,8 +984,12 @@ module Lain
         # What a human's stop did to a run: whether it halted one, and the
         # issues it ended. A run halted while it carried no issue names none,
         # yet it did stop, which an empty list alone could not say.
-        Halt = Data.define(:halted, :issues) do
-          def initialize(halted:, issues:) = super(halted:, issues: issues.map { |id| -id.to_s }.freeze)
+        # `launching` names the one issue stopped while it launched, nil when
+        # the stop found none.
+        Halt = Data.define(:halted, :issues, :launching) do
+          def initialize(halted:, issues:, launching: nil)
+            super(halted:, issues: issues.map { |id| -id.to_s }.freeze, launching: launching&.then { |id| -id.to_s })
+          end
 
           # @return [Halt] a stop that found no run to halt
           def self.none = new(halted: false, issues: [])
@@ -1114,6 +1142,10 @@ module Lain
 
         # Each actor is stopped by hand, never through `Supervisor#stop`, which
         # would release the leases before retirement anchors what they committed.
+        # A launch the supervisor lists is the one live row left once the
+        # carried actors are stopped, and its stop ends the red step inside it
+        # once any lease it is cutting is whole. A launch still reading its
+        # issue has no row yet, so the task it runs on is stopped instead.
         #
         # @return [Halt] the issues it stopped; {Halt.none} on a second call
         def stop
@@ -1121,8 +1153,12 @@ module Lain
 
           @halted = true
           stopping = carried
+          launching = @launching
           stopping.each { |entry| entry.launch.actor.stop }
-          Halt.new(halted: true, issues: [*stopping.map(&:issue_id), *@launching])
+          listed = @supervisor.live.each { |row| row.actor.stop }
+          @launch_task&.stop if listed.empty?
+          @asking.stop
+          Halt.new(halted: true, issues: stopping.map(&:issue_id), launching:)
         end
 
         private
@@ -1226,7 +1262,7 @@ module Lain
         # files issues and journals a transition. The caller reads the answer it
         # hands back -- whether the graph moved, and so whether to fold again.
         def run_checkpoints(folded)
-          checkpoints(folded).map { |checkpoint| audit(checkpoint, folded.graph) }
+          checkpoints(folded).filter_map { |checkpoint| audit(checkpoint, folded.graph) unless @halted }
         end
 
         # A CHECKPOINT IS NEVER LAUNCHED, whatever status it carries: its work is
@@ -1245,12 +1281,19 @@ module Lain
         # run that has already landed work, and the claim this message makes -- QA
         # could not run, so the checkpoint holds -- is true of both.
         def audit(checkpoint, graph)
-          record(checkpoint, @qa_gate.call(checkpoint, graph))
+          verdict = @asking.watching { @qa_gate.call(checkpoint, graph) }
+          return halted_audit(checkpoint) if verdict == Asking::STOPPED
+
+          record(checkpoint, verdict)
         rescue JournalUnreadable
           raise
         rescue StandardError, ScriptError => e
           record(checkpoint, QaGate::Verdict.new(issue_id: checkpoint.id, passed: false,
                                                  line: format(QA_UNRUN, why: "#{e.class}: #{e.message}")))
+        end
+
+        def halted_audit(checkpoint)
+          QaGate::Verdict.new(issue_id: checkpoint.id, passed: false, line: QA_STOPPED).tap { |held| kept(held) }
         end
 
         # KEYED OFF THE CHECKPOINT, never off the verdict's own id. {#untouched?}
@@ -1293,9 +1336,9 @@ module Lain
         # run, rather than being reported once per issue.
         def launch(issue)
           @launching = issue.id
-          subject = @plans.call(issue.id)
-          launched = @actors.call(issue.id, subject: subject.subject, level: subject.level,
-                                            acceptance: subject.acceptance, attempt: @attempts.call(issue.id))
+          launched = launched(issue, @plans.call(issue.id))
+          return @reported << Reported.new(issue_id: issue.id, reason: LAUNCH_STOPPED) if launched.nil?
+
           @live << Live.new(issue_id: issue.id, launch: launched)
           launched.actor.stop if @halted
         rescue JournalUnreadable
@@ -1304,6 +1347,35 @@ module Lain
           @reported << Reported.new(issue_id: issue.id, reason: e.message)
         ensure
           @launching = nil
+        end
+
+        # On a task of its own, so a stop can end the reads that come before
+        # the supervisor lists the launch. nil once a stop has ended it. A
+        # refusal is carried out of the task rather than failing it: a task
+        # that fails before anyone waits on it logs to stderr, into the chat pane.
+        def launched(issue, subject)
+          return if @halted
+
+          task = Async::Task.current?
+          return launch_actor(issue, subject) if task.nil?
+
+          refusal = nil
+          @launch_task = task.async do
+            launch_actor(issue, subject)
+          rescue StandardError => e
+            refusal = e
+            nil
+          end
+          @launch_task.wait.tap { raise refusal unless refusal.nil? }
+        ensure
+          @launch_task = nil
+        end
+
+        def launch_actor(issue, subject)
+          @actors.call(issue.id, subject: subject.subject, level: subject.level, acceptance: subject.acceptance,
+                                 attempt: @attempts.call(issue.id))
+        rescue Lain::Supervisor::LaunchStopped
+          raise unless @halted
         end
 
         # Await the oldest live actor, retire it, and put what it anchored

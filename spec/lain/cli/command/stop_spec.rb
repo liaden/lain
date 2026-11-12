@@ -197,8 +197,8 @@ RSpec.describe Lain::CLI::Command::Stop do
   # An /implement-epic run carries its issues on a supervisor of its own, so
   # the chat's fleet never names them: the epic driver is asked separately.
   describe "with an epic run in flight" do
-    def driver(stopped, halted: true)
-      halt = Lain::CLI::EpicDriver::Run::Halt.new(halted:, issues: stopped)
+    def driver(stopped, halted: true, launching: nil)
+      halt = Lain::CLI::EpicDriver::Run::Halt.new(halted:, issues: stopped, launching:)
       instance_double(Lain::CLI::EpicDriver::Factory, stop: halt)
     end
 
@@ -211,6 +211,19 @@ RSpec.describe Lain::CLI::Command::Stop do
       expect(answer.lines.grep(/cargo-workspace/).size).to eq(1)
       expect(answer.lines.grep(/lockfile-scan/).size).to eq(1)
       expect(answer.lines.size).to eq(2)
+    end
+
+    it "says an issue stopped while it launched was stopped while it launched" do
+      answer = command.call("", env(epic_driver: driver(%w[lockfile-scan], launching: "cargo-workspace")))
+
+      expect(answer.lines.map(&:chomp))
+        .to eq(["stopped epic issue lockfile-scan", "stopped epic issue cargo-workspace while it launched"])
+    end
+
+    it "names an issue stopped while it launched when it is the only one the run carried" do
+      answer = command.call("", env(epic_driver: driver([], launching: "cargo-workspace")))
+
+      expect(answer).to eq("stopped epic issue cargo-workspace while it launched")
     end
 
     it "never says nothing was running when only epic issues were" do

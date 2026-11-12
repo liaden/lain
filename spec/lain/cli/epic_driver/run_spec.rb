@@ -32,6 +32,9 @@ class RunSpecSupervisor
 
   def find(&block) = @rows.find(&block)
 
+  # Nothing launching: every row is an issue the loop carries and stops by hand.
+  def live = []
+
   def retire(row)
     @retired << row.actor.id
     # Shared with the grading seam's own log, so "graded BEFORE retired" is an
@@ -758,6 +761,33 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
     end
   end
 
+  # A gate or QA pass that already answered keeps its answer, whatever the
+  # stop does after: the answer may already be journaled.
+  describe described_class::Asking do
+    it "keeps an answer that finished before the interrupt was looked at" do
+      asking = described_class.new(gate: RunSpecGate.new, interrupt: -> { true })
+
+      expect(Sync { asking.watching { :answered } }).to eq(:answered)
+    end
+
+    it "answers stopped for watched work its stop ended" do
+      asking = described_class.new(gate: RunSpecGate.new, interrupt: -> { false })
+
+      answer = Sync do |task|
+        task.async do
+          sleep 0.02
+          asking.stop
+        end
+        asking.watching do
+          sleep 5
+          :late
+        end
+      end
+
+      expect(answer).to eq(described_class::STOPPED)
+    end
+  end
+
   describe "the interrupt" do
     it "stops between issues when the interrupt says the run is over" do
       statuses = { "a" => "in_flight", "b" => "in_flight" }
@@ -1061,20 +1091,136 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(reason_for(result, "a")).to include("stopped by the human")
     end
 
-    it "stops an issue still launching once its launch returns, names it, and launches no other" do
-      reports = %w[a b].to_h { |id| [id, anchored("sha-#{id}")] }
-      run, actors, _landing, supervisor = mid_turn_run(%w[a b], reports:, width: 2)
-      named = nil
-      allow(actors).to receive(:call).and_wrap_original do |original, *args, **options|
-        original.call(*args, **options).tap { named = run.stop }
+    # The launch block holds the whole red step, so a stop that waited for it
+    # to return would let the test engineer run on in a leased checkout.
+    describe "while an issue launches" do
+      let(:acquire_delay) { 0 }
+      let(:read_delay) { 0 }
+
+      # Every acquire and release by worker id, over the real lease; an acquire
+      # can take a while, as `git worktree add` does.
+      let(:isolation) do
+        Class.new do
+          attr_reader :released, :acquiring
+
+          def initialize(delay)
+            @delay = delay
+            @released = []
+            @acquiring = false
+          end
+
+          def acquire(worker_id)
+            @acquiring = true
+            sleep @delay
+            Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default, on_release: -> { @released << worker_id })
+          end
+        end.new(acquire_delay)
       end
 
-      result = Sync { run.call }
+      # Reads the issue for a while, as the launch's git reads do, then
+      # launches through the real supervisor, whose block is a test engineer
+      # taking a turn every tick until something ends it.
+      def launching_actors(supervisor, stopped)
+        lambda do |issue_id, attempt: 1, **|
+          stopped[:reading] = true
+          sleep read_delay
+          stopped[:launched] << issue_id
+          supervisor.adopt(role: Lain::CLI::EpicDriver::IssueActor::ROLE,
+                           worker_id: "issue.demo.#{issue_id}.#{attempt}") { red_step(issue_id, stopped) }
+        end
+      end
 
-      expect(named).to eq(described_class::Halt.new(halted: true, issues: ["a"]))
-      expect(actors.launched.map(&:first)).to eq(["a"])
-      expect(actor_of(supervisor, "a")).to be_stopped
-      expect(reason_for(result, "a")).to include("stopped by the human")
+      def red_step(issue_id, stopped)
+        loop do
+          stopped[:turns] << issue_id
+          sleep 0.01
+        end
+      end
+
+      def launching_run(supervisor, stopped, ids)
+        statuses = ids.to_h { |id| [id, "in_flight"] }
+        described_class.new(slug: "demo", progress: progress_over(ids.map { |id| issue(id) }, statuses), plans:,
+                            actors: launching_actors(supervisor, stopped), supervisor:,
+                            gate: RunSpecGate.new, landing: RunSpecLanding.new(statuses), width: 1,
+                            red_only: described_class::Identical)
+      end
+
+      def stopped_while_launching(ready, ids: %w[a])
+        stopped = { turns: [], launched: [], supervisor: Lain::Supervisor.new(isolation:) }
+        stopped[:result] = Sync do |task|
+          stopped[:supervisor].run(task)
+          run = launching_run(stopped[:supervisor], stopped, ids)
+          task.async { stop_once(run, stopped, ready) }
+          run.call.tap { sleep 0.05 }
+        ensure
+          stopped[:supervisor].stop
+        end
+        stopped
+      end
+
+      def stop_once(run, stopped, ready)
+        500.times { sleep 0.005 unless ready.call(stopped) }
+        stopped[:named] = run.stop
+        stopped[:taken] = stopped[:turns].size
+      end
+
+      def turning = ->(stopped) { stopped[:turns].any? }
+
+      it "ends the test engineer at the stop, and releases the issue's lease" do
+        stopped = stopped_while_launching(turning)
+
+        expect(stopped[:turns].size).to eq(stopped[:taken])
+        expect(isolation.released).to eq(["issue.demo.a.1"])
+        expect(stopped[:supervisor].to_a).to be_empty
+      end
+
+      it "names the issue as stopped while it launched, and launches no other" do
+        stopped = stopped_while_launching(turning, ids: %w[a b])
+
+        expect(stopped[:named]).to eq(described_class::Halt.new(halted: true, issues: [], launching: "a"))
+        expect(stopped[:launched]).to eq(["a"])
+        expect(reason_for(stopped[:result], "a")).to eq(described_class::LAUNCH_STOPPED)
+      end
+
+      context "when the lease takes a while to acquire" do
+        let(:acquire_delay) { 0.2 }
+
+        it "runs no red step after a stop that lands during the acquire, and releases the lease" do
+          stopped = stopped_while_launching(->(_) { isolation.acquiring })
+
+          expect(stopped[:turns]).to be_empty
+          expect(isolation.released).to eq(["issue.demo.a.1"])
+          expect(reason_for(stopped[:result], "a")).to eq(described_class::LAUNCH_STOPPED)
+        end
+      end
+
+      context "when the issue takes a while to read before its lease is asked for" do
+        let(:read_delay) { 0.2 }
+
+        it "asks for no lease after a stop that lands during the read" do
+          stopped = stopped_while_launching(->(stopped) { stopped[:reading] })
+
+          expect(stopped[:launched]).to be_empty
+          expect(isolation.acquiring).to be(false)
+          expect(reason_for(stopped[:result], "a")).to eq(described_class::LAUNCH_STOPPED)
+        end
+      end
+    end
+
+    it "launches nothing for an issue whose plan was being read when the stop landed" do
+      run = nil
+      named = nil
+      subjects = lambda do |id|
+        named = run.stop
+        plans.call(id)
+      end
+      run, actors = mid_turn_run(%w[a], reports: {}, subjects:)
+
+      result = run.call
+
+      expect(named).to eq(described_class::Halt.new(halted: true, issues: [], launching: "a"))
+      expect(actors.launched).to be_empty
+      expect(reason_for(result, "a")).to eq(described_class::LAUNCH_STOPPED)
     end
 
     it "names nothing on a second stop while the first is still being settled" do
@@ -1215,6 +1361,90 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
         Lain::CLI::EpicDriver::QaGate::Verdict.new(issue_id: checkpoint.id, passed: passes,
                                                    line: passes ? "passed QA" : "QA held it")
       end
+    end
+
+    # A ladder that makes a model call every tick until something ends it.
+    def endless_ladder(calls)
+      lambda do |checkpoint, _graph|
+        loop do
+          calls << checkpoint.id
+          sleep 0.01
+        end
+      end
+    end
+
+    def stopped_mid_audit(run, calls)
+      stopped = {}
+      stopped[:result] = Sync do |task|
+        task.async do
+          500.times { sleep 0.01 if calls.empty? }
+          stopped[:named] = run.stop
+          stopped[:taken] = calls.size
+        end
+        run.call.tap { sleep 0.05 }
+      end
+      stopped
+    end
+
+    def reason_of(result, id) = result.reported.find { |entry| entry.issue_id == id }&.reason
+
+    it "ends a QA audit at the stop: the ladder makes no further model call" do
+      calls = []
+      landed = statuses.merge("a" => "done", "b" => "done")
+      run, actors = run_over(issues: cluster, statuses: landed, reports:, qa_gate: endless_ladder(calls))
+
+      stopped = stopped_mid_audit(run, calls)
+
+      expect(calls.size).to eq(stopped[:taken])
+      expect(stopped[:named]).to eq(described_class::Halt.new(halted: true, issues: []))
+      expect(actors.launched).to be_empty
+      expect(stopped[:result].audited).to be_empty
+      expect(reason_of(stopped[:result], "qa-gate-1")).to eq(described_class::QA_STOPPED)
+      expect(stopped[:result].stopped).to include("stopped by the human")
+    end
+
+    # The run's own poll looks up while a filing is still being written, and a
+    # second stop would cut the write the first one waits for.
+    it "lets a QA filing a stop lands in finish, and reports the fixes it filed" do
+      findings = %w[major blocker].map do |severity|
+        Lain::QA::Finding.new(severity:, criterion: "a/s", summary: "off by one", evidence: "printed 2",
+                              reproduction: "bin/total", tier: "t2")
+      end
+      report = Lain::QA::Report.new(subject: "qa-gate-1", findings:, tiers_run: ["t2"], unsettled: [])
+      started = []
+      filed = []
+      filing = lambda do |fix|
+        started << fix.id
+        sleep 0.15
+        filed << fix.id
+      end
+      qa_gate = Lain::CLI::EpicDriver::QaGate.new(check: ->(*) { report }, scribe: Object.new, filing:)
+      landed = statuses.merge("a" => "done", "b" => "done")
+      run, = run_over(issues: cluster, statuses: landed, reports:, qa_gate:)
+
+      result = Sync do |task|
+        task.async do
+          sleep 0.001 until started.any?
+          run.stop
+        end
+        run.call
+      end
+
+      expect(filed).to eq(started).and eq(%w[qa-fix-1-1 qa-fix-1-2])
+      expect(reason_of(result, "qa-gate-1")).to include("qa-fix-1-1, qa-fix-1-2")
+    end
+
+    it "audits no second ready checkpoint once a stop has ended the first" do
+      calls = []
+      two = [issue("a", blocks: ["qa-gate-1"]), issue("qa-gate-1"), issue("b", blocks: ["qa-gate-2"]),
+             issue("qa-gate-2")]
+      ready = { "a" => "done", "qa-gate-1" => "pending", "b" => "done", "qa-gate-2" => "pending" }
+      run, = run_over(issues: two, statuses: ready, reports:, qa_gate: endless_ladder(calls))
+
+      result = stopped_mid_audit(run, calls)[:result]
+
+      expect(calls.uniq.size).to eq(1)
+      expect(result.reported.map(&:issue_id)).to eq([calls.first])
     end
 
     it "runs QA once the whole cluster has landed, and only then starts the cluster it held" do

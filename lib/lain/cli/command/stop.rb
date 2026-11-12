@@ -62,9 +62,13 @@ module Lain
 
         def epic(halt)
           return [] unless halt.halted
-          return [EPIC_HALTED] if halt.issues.empty?
+          return [EPIC_HALTED] if halt.issues.empty? && halt.launching.nil?
 
-          halt.issues.map { |issue| "stopped epic issue #{sanitized(issue)}" }
+          [*halt.issues.map { |issue| "stopped epic issue #{sanitized(issue)}" }, *launched(halt.launching)]
+        end
+
+        def launched(issue)
+          issue.nil? ? [] : ["stopped epic issue #{sanitized(issue)} while it launched"]
         end
 
         def names(live) = live.map { |worker| label(worker) }.join(", ")

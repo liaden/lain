@@ -2,6 +2,7 @@
 
 require "tmpdir"
 require "fileutils"
+require "delegate"
 
 # A Checkout that runs a hook once, right after a chosen git invocation: how
 # a sibling's move lands in the one window a race can use.
@@ -36,6 +37,11 @@ class WorkingBranchSpecRacingRegistry < Lain::Isolation::Worktree::Registry
       fire&.call
     end
   end
+end
+
+# A git command after which a stop lands, the moment it has run.
+class WorkingBranchSpecStoppedAfter < SimpleDelegator
+  def run_command = __getobj__.run_command.tap { Async::Task.current.stop }
 end
 
 # What a process killed mid-delete looks like from outside: a git invocation
@@ -242,6 +248,25 @@ RSpec.describe Lain::Isolation::WorkingBranch, :seam do
 
       expect([branch.name, branch.tip]).to eq([name, base])
       expect(sha("refs/lain/owned/heads/#{name}")).to eq(base)
+    end
+
+    # An unmarked branch reads as a human's, which the next run refuses to
+    # claim, so a stop that lands between the branch and its marker waits.
+    it "marks the branch it created even when a stop lands as the branch is written" do
+      real = Lain::Shell::Out.public_method(:new)
+      stopping = lambda do |*args, **kwargs|
+        shell = real.call(*args, **kwargs)
+        branch_write = args.include?("update-ref") && args.include?("refs/heads/#{name}")
+        branch_write ? WorkingBranchSpecStoppedAfter.new(shell) : shell
+      end
+
+      from = sha("main")
+      Sync do |task|
+        task.async { described_class.owned(name, repo_root: @repo_root, from:, shell_out_factory: stopping) }.wait
+      end
+
+      expect(ref?("refs/heads/#{name}")).to be(true)
+      expect(ref?("refs/lain/owned/heads/#{name}")).to be(true)
     end
 
     it "reuses a branch lain owns where it stands, moving nothing and re-marking nothing" do

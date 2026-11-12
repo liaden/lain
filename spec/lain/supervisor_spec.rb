@@ -571,9 +571,9 @@ RSpec.describe Lain::Supervisor do
             acquired.enqueue(:go)    # the lease is provably acquired; we are now IN launch
             Async::Queue.new.dequeue # park forever -- only cancellation ends this
           end
-        rescue Async::Stop
-          # the adopted task was cancelled mid-launch; adopt's own await re-raises
-          # it here, and this task exits cleanly so adopter.wait does not re-raise.
+        rescue described_class::LaunchStopped
+          # the adopted task was cancelled mid-launch, so adopt has no actor to
+          # answer and says why; this task exits cleanly so adopter.wait does not re-raise.
         end
         acquired.dequeue             # provably past the acquire, inside the launch
         supervisor.stop              # cancels the in-flight adopted task mid-launch
@@ -582,6 +582,100 @@ RSpec.describe Lain::Supervisor do
         expect(backend.acquired.size).to eq(1)
         expect(backend.released.size).to eq(1) # reclaimed on cancellation, not stranded
         expect(supervisor.to_a).to be_empty # nothing registered
+      end
+    end
+
+    describe "a launch still in flight" do
+      # Parks inside the launch until cancelled, the shape of a red step's
+      # test engineer still taking turns.
+      def launching(supervisor, task, entered, turns = [])
+        task.async do
+          supervisor.adopt(role: "issue_orchestrator", worker_id: "issue.demo.a.1") do |_worker_env|
+            entered.enqueue(:go)
+            loop do
+              turns << :child_turn
+              sleep 0.01
+            end
+          end
+        rescue described_class::LaunchStopped => e
+          e
+        end
+      end
+
+      it "is listed as running under its role and worker id, where /stop, /undo and /keep look" do
+        supervised(described_class.new(isolation: RecordingIsolation.new(leased_env))) do |supervisor, task|
+          entered = Async::Queue.new
+          adopter = launching(supervisor, task, entered)
+          entered.dequeue
+
+          expect(supervisor.live.map { |row| [row.role, row.worker_id] })
+            .to eq([%w[issue_orchestrator issue.demo.a.1]])
+          expect(supervisor.select { |row| row.state == :running }.map(&:role)).to eq(["issue_orchestrator"])
+          supervisor.live.each { |row| row.actor.stop }
+          adopter.wait
+        end
+      end
+
+      it "is ended by a stop through its row: no further turn, its lease released, its row gone" do
+        backend = RecordingIsolation.new(leased_env)
+        turns = []
+        refused = nil
+        supervised(described_class.new(isolation: backend)) do |supervisor, task|
+          entered = Async::Queue.new
+          adopter = launching(supervisor, task, entered, turns)
+          entered.dequeue
+
+          supervisor.live.each { |row| row.actor.stop }
+          taken = turns.size
+          sleep 0.05
+          refused = adopter.wait
+
+          expect(turns.size).to eq(taken)
+          expect(backend.released).to eq(["issue.demo.a.1"])
+          expect(supervisor.to_a).to be_empty
+        end
+        expect(refused).to be_a(described_class::LaunchStopped)
+        expect(refused.message).to include("issue_orchestrator")
+      end
+
+      it "is replaced by the actor its launch returns" do
+        supervised do |supervisor|
+          actor = supervisor.adopt(role: "worker") do
+            actor_tool(text_response("ok")).launch_actor("go", worker_env: Lain::WorkerEnv.default)
+          end
+          actor.settle
+
+          expect(supervisor.map(&:actor)).to eq([actor])
+        end
+      end
+
+      # A worktree acquire runs git for a while; a stop that lands in it must
+      # still keep the launch from ever running.
+      it "is listed while its lease is acquired, and a stop then runs no launch and releases the lease" do
+        backend = Class.new(RecordingIsolation) do
+          attr_reader :acquiring
+
+          def acquire(worker_id)
+            @acquiring = true
+            sleep 0.1
+            super
+          end
+        end.new(leased_env)
+        turns = []
+        refused = nil
+        supervised(described_class.new(isolation: backend)) do |supervisor, task|
+          adopter = launching(supervisor, task, Async::Queue.new, turns)
+          sleep 0.005 until backend.acquiring
+
+          expect(supervisor.live.map(&:worker_id)).to eq(["issue.demo.a.1"])
+          supervisor.live.each { |row| row.actor.stop }
+          refused = adopter.wait
+
+          expect(supervisor.to_a).to be_empty
+        end
+        expect(turns).to be_empty
+        expect(backend.released).to eq(["issue.demo.a.1"])
+        expect(refused).to be_a(described_class::LaunchStopped)
       end
     end
 

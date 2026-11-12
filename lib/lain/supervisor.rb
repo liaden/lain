@@ -29,6 +29,9 @@ module Lain
     # rows into the second.
     class AlreadyRunning < Error; end
 
+    # A launch ended by a stop through its row, before it returned an actor.
+    class LaunchStopped < Error; end
+
     # @param journal [#<<] where a bounded {Drain}'s timeout record and every
     #   reap's {WorkerReaped} land; the Null channel by default. A chat hands it
     #   the session record itself, never its display Channel, which renders
@@ -122,15 +125,16 @@ module Lain
     # @yieldparam worker_env [WorkerEnv] the leased cwd/env the child runs under
     # @yieldreturn [Tools::Subagent::Actor] the launched actor
     # @return [Tools::Subagent::Actor]
+    # @raise [LaunchStopped] when a stop through the launching row ended the
+    #   launch before it returned
     def adopt(role:, worker_id: nil, &launch)
       raise NotRunning, "no reactor task is running; #run this supervisor under an orchestration reactor first" unless
         running?
 
       named = Isolation::WorkerId.checked(worker_id) unless worker_id.nil?
-      @task.async do
-        reap_crashed
-        register(role, named || next_worker_id(role), launch)
-      end.wait
+      worker = named || next_worker_id(role)
+      adopted = @task.async { register(role, worker, launch) }.wait
+      adopted || raise(LaunchStopped, "the launch of #{role} (#{worker}) was stopped before it returned an actor")
     end
 
     # A one-shot the fleet can stop: a task some other object started, that
@@ -372,16 +376,41 @@ module Lain
     # #stop) -- releases the lease on the way out. `ensure` is the only exit that
     # runs on cancellation too; `&.` covers the acquire itself raising, which
     # provisioned nothing to reclaim.
+    #
+    # A launch can run for minutes (an epic issue's whole red step), so it is
+    # listed from its first instant: its row's stop cancels this task, and the
+    # `ensure` is what that stop reaches. The reap and the acquire defer a first
+    # stop, so it never leaves a half-surrendered checkout or a lease nothing
+    # holds; a second one, as session close sends, still cuts them short.
     def register(role, worker_id, launch)
       registered = false
-      lease = @isolation.acquire(worker_id)
+      row = listed(role, worker_id)
+      lease = nil
+      Async::Task.current.defer_stop { lease = leased(worker_id) }
+      row = relisted(row, row.with(lease:))
       actor = launch.call(@retirement.editorless(lease.worker_env))
       confine(actor, lease)
-      @registry << Registration.new(role:, actor:, lease:, worker_id:)
+      relisted(row, row.with(actor:))
       registered = true
       actor
     ensure
+      @registry.delete(row) unless registered
       lease&.release unless registered
+    end
+
+    # Until its lease is cut the row holds a Null one, whose release is a no-op.
+    def listed(role, worker_id)
+      Registration.new(role:, actor: OneShot.new(Async::Task.current), lease: Isolation::Null.new.acquire,
+                       worker_id:).tap { |row| @registry << row }
+    end
+
+    def leased(worker_id)
+      reap_crashed
+      @isolation.acquire(worker_id)
+    end
+
+    def relisted(row, now)
+      @registry[@registry.index(row)] = now
     end
 
     # A lease that cut a checkout is where its actor's tools must run.

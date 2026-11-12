@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module CLI
     module EpicDriver
@@ -166,13 +168,34 @@ module Lain
         # @return [Verdict]
         def call(checkpoint, graph)
           report = @check.call(checkpoint, graph)
+          written { settled(checkpoint, report, graph) }
+        end
+
+        private
+
+        def settled(checkpoint, report, graph)
           return released(checkpoint, report) if report.clean?
           return held(checkpoint, report, graph) unless report.holding.empty?
 
           owing(checkpoint, report)
         end
 
-        private
+        # A first stop that lands mid-write would leave fixes or a move to done in
+        # the epic that no verdict names, so it waits for the writes and the pass
+        # then ends with the verdict that says what reached the epic; a second
+        # one, as session close sends, still cuts the write short.
+        def written
+          task = Async::Task.current?
+          return yield if task.nil?
+
+          verdict = nil
+          task.defer_stop { verdict = yield }
+          verdict
+        rescue Async::Stop
+          raise if verdict.nil?
+
+          verdict
+        end
 
         def released(checkpoint, report)
           @scribe.issue_moved(checkpoint.id, from: checkpoint.status, to: Lain::Epic::DONE)

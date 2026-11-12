@@ -204,6 +204,54 @@ RSpec.describe Lain::CLI::EpicDriver::QaGate do
     end
   end
 
+  # A write a stop interrupts halfway leaves the epic in a state nothing
+  # reports, so a stop that lands in one waits for it and the pass answers
+  # what reached the epic.
+  describe "a stop that lands while the verdict is being written" do
+    # From outside the pass, as the run's /stop arrives, never from inside it.
+    def stopped_mid_write(gated, writing)
+      Sync do |task|
+        pass = task.async { gated.call(checkpoint, graph) }
+        task.async do
+          sleep 0.001 until writing.any?
+          pass.stop
+        end
+        pass.wait
+      end
+    end
+
+    it "files every fix and answers the verdict that names them" do
+      report = report_of(finding("major"), finding("blocker"))
+      slow_filing = lambda do |issue|
+        filed << issue
+        sleep 0.01
+      end
+      gated = described_class.new(check: ->(*) { report }, scribe:, filing: slow_filing)
+
+      verdict = stopped_mid_write(gated, filed)
+
+      expect(filed.map(&:id)).to eq(%w[qa-fix-1-2 qa-fix-1-3])
+      expect(verdict.line).to include("qa-fix-1-2, qa-fix-1-3")
+    end
+
+    it "finishes moving a released checkpoint to done and answers the pass" do
+      slow_scribe = Class.new(QaGateSpecScribe) do
+        def issue_moved(id, from:, to:)
+          moved << :started
+          sleep 0.01
+          moved << [id, from, to]
+        end
+      end.new
+      report = report_of(finding("minor"))
+      gated = described_class.new(check: ->(*) { report }, scribe: slow_scribe, filing: ->(issue) { filed << issue })
+
+      verdict = stopped_mid_write(gated, slow_scribe.moved)
+
+      expect(slow_scribe.moved.last).to eq(%w[qa-gate-1 pending done])
+      expect(verdict.passed).to be(true)
+    end
+  end
+
   describe Lain::CLI::EpicDriver::QaGate::Unaudited do
     it "holds a checkpoint, because in an epic QA is not optional" do
       verdict = described_class.call(Lain::Epic::Issue.new(id: "qa-gate-1", title: "QA"), :any_graph)

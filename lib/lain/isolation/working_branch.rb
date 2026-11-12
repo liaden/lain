@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module Isolation
     # The named branch workers are cut from and handed back to: the branch a
@@ -495,15 +497,26 @@ module Lain
       # and this resolve answers the branch as it found it.
       def create(from)
         base = based(from)
-        made = @git.update_ref(ref, base, "", reason: CREATED)
-        if Shell::Out.ok?(made)
-          mark(base)
-          return true
-        end
+        made = whole { created(base) }
+        return true if Shell::Out.ok?(made)
         return false if exists?
 
         raise Refused, "#{ref} could not be created at #{from}, and lain never force-moves a " \
                        "working branch: #{said(made)}"
+      end
+
+      def created(base)
+        made = @git.update_ref(ref, base, "", reason: CREATED)
+        mark(base) if Shell::Out.ok?(made)
+        made
+      end
+
+      # A first stop that lands between the branch and its marker waits for the
+      # marker, so it never leaves the unmarked branch a crash would; a second
+      # one, as session close sends, still cuts in at once.
+      def whole(&block)
+        task = Async::Task.current?
+        task.nil? ? yield : task.defer_stop(&block)
       end
 
       # git's stderr arrives as ASCII-8BIT, so interpolating it raw into a
