@@ -1,26 +1,30 @@
 # frozen_string_literal: true
 
 require "async"
+require "async/variable"
 
-# A child provider whose latency is scripted by the order it is CALLED, so the
-# children finish in the reverse of the order they were spawned. The delay is
-# taken (with no yield point) before the sleep, so the shift order equals the
-# task-creation order == tool_use order; the answer is derived from the child's
-# own prompt, so a raced return would name the wrong child's text.
+# A child provider that holds each answer until the child called after it has
+# finished, so the children finish in the reverse of the order they were
+# spawned whatever the load. The turn is taken (with no yield point) before the
+# wait, so the call order equals the task-creation order == tool_use order; the
+# answer is derived from the child's own prompt, so a raced return would name
+# the wrong child's text.
 class ReverseOrderProvider < Lain::Provider
   attr_reader :completed
 
-  def initialize(delays:)
+  def initialize(children:)
     super()
-    @delays = delays.dup
+    @turns = (0...children).to_a
+    @finished = Array.new(children) { Async::Variable.new }
     @completed = []
   end
 
   def complete(request)
-    delay = @delays.shift
+    turn = @turns.shift
     prompt = prompt_of(request)
-    sleep(delay)
+    @finished[turn + 1]&.wait
     @completed << prompt
+    @finished[turn].resolve(true)
     Lain::Response.new(content: [{ "type" => "text", "text" => "answer-#{prompt}" }],
                        stop_reason: :end_turn)
   end
@@ -99,7 +103,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
   describe "out-of-order completion lands in one ordered user turn" do
     it "gathers every result into ONE user message in tool_use order, however the children finish" do
       prompts = %w[go-1 go-2 go-3]
-      child_provider = ReverseOrderProvider.new(delays: [0.06, 0.04, 0.02])
+      child_provider = ReverseOrderProvider.new(children: 3)
       parent_agent, = fanout_parent(child_provider:, prompts:)
 
       parent_agent.ask("please spawn")
@@ -226,7 +230,7 @@ RSpec.describe "Lain::Tools::Subagent async fan-out" do
 
     it "pairs every :message's result with its OWN child's final turn, no torn writes" do
       prompts = %w[go-1 go-2 go-3]
-      child_provider = ReverseOrderProvider.new(delays: [0.06, 0.04, 0.02])
+      child_provider = ReverseOrderProvider.new(children: 3)
       parent_agent, = fanout_parent(child_provider:, prompts:)
 
       parent_agent.ask("please spawn")
