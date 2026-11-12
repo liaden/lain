@@ -6,34 +6,27 @@ require "tmpdir"
 RSpec.describe Lain::Tool::Offload do
   def monotonic = Process.clock_gettime(Process::CLOCK_MONOTONIC)
 
-  # Filesystem calls no scheduler hook offloads, for as long as asked: the shape
-  # of a walk that would hold the reactor if it ran on the reactor's thread.
-  def walk_for(seconds, dir)
-    deadline = monotonic + seconds
-    Dir.glob(File.join(dir, "**", "*")) while monotonic < deadline
-  end
-
   def rescued
     yield
   rescue ArgumentError
     nil
   end
 
-  # Held, the one gap is nearly the whole call (share near 1.0); released, under 0.1 even on a loaded box.
-  def longest_tick_gap_share
-    stamps = []
+  # The work cannot finish until the sibling has ticked, so finishing proves the
+  # sibling ran; the deadline only turns a held reactor into a failure, not a hang.
+  def sibling_ticks_during(needed: 5, patience: 10)
+    ticks = Thread::Queue.new
     Sync do |task|
       ticker = task.async do
         loop do
-          stamps << monotonic
+          ticks << true
           task.sleep(0.01)
         end
       end
-      yield task
-      stamps << monotonic
+      outcome = described_class.call { yield(-> { ticks.size >= needed }, monotonic + patience) }
       ticker.stop
+      outcome
     end
-    stamps.each_cons(2).map { |a, b| b - a }.max / (stamps.last - stamps.first)
   end
 
   it "answers what the work returns" do
@@ -53,16 +46,24 @@ RSpec.describe Lain::Tool::Offload do
     Dir.mktmpdir("lain-offload") do |dir|
       File.write(File.join(dir, "a.txt"), "a")
 
-      expect(longest_tick_gap_share { described_class.call { walk_for(0.5, dir) } }).to be < 0.3
+      ran = sibling_ticks_during do |ticked, deadline|
+        Dir.glob(File.join(dir, "**", "*")) until ticked.call || monotonic > deadline
+        ticked.call
+      end
+
+      expect(ran).to be(true)
     end
   end
 
   # Matching lines is Ruby holding the lock between threads, which a thread
   # hands over only at the end of its time slice.
   it "keeps a sibling fiber running while the work never gives up the lock between threads" do
-    spin = -> { (deadline = monotonic + 0.5) && (nil while monotonic < deadline) }
+    ran = sibling_ticks_during do |ticked, deadline|
+      nil until ticked.call || monotonic > deadline
+      ticked.call
+    end
 
-    expect(longest_tick_gap_share { described_class.call(&spin) }).to be < 0.3
+    expect(ran).to be(true)
   end
 
   it "kills the work's thread when the task waiting on it is stopped" do
