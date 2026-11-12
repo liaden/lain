@@ -1785,6 +1785,77 @@ Spec file: `spec/lain/sensitivity/history_literals_spec.rb`, plus a ratchet spec
 - A lain feature needs a lazy fetch to work: name it.
 - git spawns are spread across more than about 5 sites with no shared helper: report the list before adding a helper.
 
+### F4: The out-of-order fan-out example orders its children by gate, not by sleep          [risk: low]
+
+**Depends on:** none
+**Files:** `spec/lain/tools/subagent_concurrency_spec.rb`, `docs/toolchain-traps.md`
+**Reuse:** `ReverseOrderProvider` in the same spec
+**Shared-file wiring:** none
+**Reachable from:** spec only
+
+A repeat flake: `Lain::Tools::Subagent async fan-out out-of-order completion lands in one ordered user turn gathers every result into ONE user message in tool_use order, however the children finish` went red in the T18 landing suite with the children completing go-2, go-3, go-1, green alone and 3 of 3 on base. It was already on the known list twice. The provider orders completion by sleeps of 60, 40 and 20 ms, which load reorders.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the children finish in reverse order under any load
+  Given 3 children whose provider releases each answer only after the later child has finished
+  When the parent fans out
+  Then the children complete go-3, go-2, go-1, and the results land in one user turn in tool_use order
+```
+Spec file: `spec/lain/tools/subagent_concurrency_spec.rb`
+
+Move the `toolchain-traps.md` entry to the retired list, naming this fix.
+
+**Stop and report if:**
+- A gate between children deadlocks because the fan-out starts them one at a time: say so with the spawn order you saw.
+
+### F8: The Offload sibling-fiber examples assert that the sibling ran, not a tick share          [risk: low]
+
+**Depends on:** none
+**Files:** `spec/lain/tool/offload_spec.rb`, `docs/toolchain-traps.md`
+**Reuse:** `longest_tick_gap_share` in the same spec, if it can count ticks rather than time them
+**Shared-file wiring:** none
+**Reachable from:** spec only
+
+A repeat flake: `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread` went red in the T33 landing suite (seed 29174) and was green alone; it was on the known list since 2026-10-21. Both sibling-fiber examples assert a longest tick gap under 30% of the work's wall time, a wall-clock threshold the no-wall-clock ruling forbids in specs.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a sibling fiber runs while the work holds its thread
+  Given work that holds its thread until a sibling fiber has ticked a set number of times
+  When the work is offloaded
+  Then the work finishes, which it can only do if the sibling ran
+
+Scenario: no wall-clock share is asserted
+  When the spec file is read
+  Then neither sibling-fiber example compares a time to a threshold
+```
+Spec file: `spec/lain/tool/offload_spec.rb`
+
+If the timing is still worth watching, it moves to `bin/hot-path-bench`, not the spec. Move both `toolchain-traps.md` entries to the retired list, naming this fix.
+
+**Stop and report if:**
+- The work cannot wait on the sibling without the sibling needing the same thread: report what blocks it.
+
+## Follow-up cards
+
+Found during this run and not planned here. Each needs its own plan or a user ruling before it runs.
+
+- **F3:** `hash -p` and `enable -f` let a later pipeline stage run a program the shell reader does not see (T3 review, predates).
+- **F5:** name a command's untrusted run files (hooks) on the approval row; carry the resolver on the context (T9 review).
+- **F6:** route Stage and Reopen through `GateView#phase` (T19 review).
+- **F7:** the improver and the clerk run their tool phase on `ToolGuard.detached`, with no path policy, so a read there returns history literals unmasked; hand them the board's policy (T12 review).
+- **F9:** widen the "cannot read" set to script files, `make`, `patch`, `git apply` and `&` stages.
+- **F10:** a withdrawn build grant parks the build (user ruling 2026-11-11).
+- **F11:** reap kept research directories and spike branches.
+- **F12:** the status header is drawn twice after a cockpit Ctrl-C (predates T35).
+- **F13:** under `--confine reader`, automatic allows of secret-bearing calls (judge, rule, remembered, bypass) run traced with network. Needs a user ruling.
+- **F14:** LeaseCommit follow-ups: the include regex in `RunFiles#hooks_directory`, `cd .git && git commit`, and `Guard` reading the default Paths. Defence in depth only; the sandbox is the boundary.
+- **F15:** `Clone::Guard.container` reads the default Paths, not the injected `paths:`, so a clone under a custom state home is not recognised (T41 review).
+- **F16:** a drained research item cannot run as the researcher: `lain chat` has no role option, and a `@researcher/research` line runs in a subagent confined to its own scratch directory, so its report never reaches the lease. Needs a user ruling among a `--role` option, a role spawn in the parent's checkout, or a parent turn after a role-bound line (T41 stop).
+
 ## Integration checks
 
 1. **After T16 lands, before the user's next epic command:**
@@ -1876,3 +1947,260 @@ Spec file: `spec/lain/sensitivity/history_literals_spec.rb`, plus a ratchet spec
 - 14:45 T16 landed 8e62213a
 - 14:45 T16 landed 8e62213a (runtime log 1338; deleted 1 spec, added 1)
 - Follow-ups from the T13 review, not cards yet: a key-width hex segment in a slashed token flags only when the whole token clears 4.2 bits (predates); dotted huggingface repo names (`Qwen2.5-7B`, `Llama-3.1-8B`) still flag; docker `containers/`, `layerdb/sha256/`, `overlay2/l/` and huggingface `blobs/` paths still flag. From T16: an interrupted park under the deferred policy journals no deferred `awaiting_human`, so the queue question reads "not recoverable".
+- 14:47 plan log committed da872d7d (F1 added). F1 (sonnet), T17 (opus), T8 (opus) started at da872d7d; T13 second review started; IC1 rewrite dry-run agent started (copy only)
+- 14:48 F1 done (9.10s -> 1.05s CPU), review started. T17 stopped (epic plan address = Graph#digest); ruled: widen to submission.rb + submission_spec; plan reviews bind structural; holds into Ledger in scope. Resumed.
+- 14:49 T28 done (Backend::Attachment extracted, 3 nvim views skip non-agent turn_usage; 9508 ex 0 fail); wiring applied (566, 665, 924), lint clean; review started (opus, high)
+- 14:50 IC1 dry run on a copy: 6 files, 40 gate records rewritten (29 approve, 11 deny), 0 deferred; second run no-op; all readable after. 1 file held open by pid 1812006 (8 days, /home/tara/w/ir). Asked the user.
+- 14:53 F1 landed fcd4e6d9
+- 14:53 F1 landed fcd4e6d9
+- 14:53 T3 (opus) and T5 (opus) started at fcd4e6d9
+- 14:55 T13 review 2: APPROVE-WITH-FIXES (mechanical: move 2 dead regions rows to predictable?, pin the live 16 cap, delete dead -init, cheaper addressed_at?)
+- 14:59 T8 done (366/0 card, 5912/0 wide; stop at escalation_spec:278 cleared with evidence; file_digests deleted, verbatim in hand-back for T9); review started
+- 15:26 T28 review: REQUEST-CHANGES. BLOCKER: JournalMemoryRoot pairs tier turn_usage with memory_root on a request digest -> MemoryReplay Corrupt on resume. + 3 should-fix, nits. Ruling: child tier spend charged run-wide (state it). Follow-up: HUD vs Tier pricing time at off-peak boundary. Fix round sent. T5 done, review held for T13 landing.
+- 15:34 T13 landing 1: wait-quiet timed out after 1800s with 1 matching process at load 0.11 (likely the T28 reviewer's stuck probe, since killed); main untouched; relanding
+- 15:37 T13 landed d8ae6d8a
+- 15:37 T13 landed d8ae6d8a
+- 15:37 T5 review started (opus, high, live confine reader drive); T7 started (sonnet) at d8ae6d8a
+- 15:38 T17 built (GateView, Signoff#view, holds in Ledger, structural_digest; 3718/0 wide); stopped on boundary fix needing 3 specs; ruled: apply FRESH = research + epic_plan, widen to policy_spec, epic_submit_spec, epic_queue_spec
+- 15:45 T28 fix round done (blocker fixed with resume spec; 10051 ex 0 fail); second review started. T17 widened to epic_queue.rb (Advances before ensure_open! keeps MissingEpicDocument)
+- 15:46 T8 review APPROVE (no leak; real drive: HEAD sent both secrets raw, T8 masks; 1 parse). Nits sent. For T9: 2 deleted specs (scan reads at most cap+1 bytes; non-UTF-8 file neither raises nor releases) belong with its Disclosure. Follow-up: live pane masks a read_file-released value the model sees raw, placeholder numbers differ (predates). land-wrap pattern anchored to the executable.
+- 15:47 T17 done (epic_queue swap; 3739/0 wide); ARCHITECTURE wiring applied; review started
+- 15:49 T3 done (246/9 red, 4767/0 wide; safe-assignment allowlist; quoted heredoc only alone on its line); review started
+- 15:49 T8 nits done (857/0); QA line applied; landing
+- 15:55 T8 landed 27f42581
+- 15:55 T8 landed 27f42581
+- 15:55 T9 started (opus) at 27f42581
+- 15:57 T5 review REQUEST-CHANGES: BLOCKER partial-clone lazy fetch (uploadpack) runs under ownership; fix round sent (refuse partialclone/promisor/uploadpack/receivepack/vcs + protocol/url; own only non-fresh). Scenario 3 row-naming handed to T9. NEW F2: lain's own launch git rev-list lazily fetches -> runs repo-named program with no approval, live on main in every confine mode; card added.
+- 16:00 T7 partial (3 of 4 scenarios; '1 error outside examples' untraced); ruled: trace the error first; target nil vs raise with callers converted (handback update_ref keeps create-only); landed_flags + drain_spec double; reaching reads 129 as none; + local_branch_spec
+- 16:01 T28 review 2 APPROVE (blocker fixed; real binary judged call then resume ok); landing. Follow-up: HUD vs ceiling pricing moment at off-peak edge.
+- 16:01 T3 review REQUEST-CHANGES: BLOCKER heredoc end-line mismatch hides commands (6 variants); BLOCKER safe prefix makes export/declare/unset... plain; + tilde in assignment, Result defaults, scenario 3 spec. Fix round sent. Real data: 1,084 of 26,325 commands become readable, 0 regress. Follow-up: leading redirect becomes argv[0] (predates).
+- 16:06 T28 landing 1 red: summarizer_spec:63 expects [RequestSent, OracleAnswer], now has TurnUsage between (card-caused, deterministic). Sent back to implementer.
+- 16:06 T17 review REQUEST-CHANGES: BLOCKER superseded parked drafts block an approved newer attempt (real land: HEAD lands, worktree refuses with dead-end remedy); + held-attempt remedy, false graph comment, QA 14d, denied? fold. Combine law held over 18,000 random sessions. Fix round sent. Follow-up: planning_view and cli/epic precedence (their own cards).
+- 16:07 T5 fix round done (3288/0; lazy fetch refused, fresh run file not owned); second review started
+- 16:11 T28 summarizer_spec updated (8118 ex 0 fail over 199 files); relanding
+- 16:12 T5 review 2 APPROVE-WITH-FIXES: all 13 config vectors refused, no marker; nit only. Follow-up: freshness gate covers hooks too, so pre-commit install sends every git read to the judge for the lineage (loosening deferred). T17 fix round done (3741/0; probe B lands); second review after T28 lands.
+- 16:16 T28 landed 643be0df
+- 16:16 T28 landed 643be0df
+- 16:17 T17 and T3 second reviews started; F2 cut at 643be0df
+- 16:17 T9 stopped (3): ruled: rung's sealed-content check stays separate, 'scanned once' = 1 Disclosure per call; widen to tool_guard.rb + approval_replay_spec + fixture (no live disk in replay); keep Approval::Disclosure, qualify names in deletability_spec; measure ParsedCommand cost since bench skips the middleware
+- 16:18 T5 nit done (818/0); landing
+- 16:25 T5 landed 83502666
+- 16:25 T5 landed 83502666
+- 16:25 T32 started (sonnet) at 83502666
+- 16:26 T7 done (8787/0 over 212 files; target nil vs raise, ~20 callers; reaching reads 129; failed-diff spec has no red); review started
+- 16:28 T3 review 2 APPROVE-WITH-FIXES (lone-backslash heredoc case unpinned; comment). 328-case brute force: 0 smuggles. NEW F3 (predates): hash -p and enable -f let a later stage run a program the reader does not see. Follow-up: leading redirect becomes argv[0]; BASH_ENV in journal/grant (nit).
+- 16:28 T17 review 2 APPROVE-WITH-FIXES (superseded survives a deny; 2 nits). Real land A-E right; combine law over 20,000 sessions.
+- 16:30 T3 final fixes done (1159/0); landing
+- 16:35 T9 done under rulings (6786/0); cost: cat 1 MiB adds up to 259 ms (detector, worst content). Ruled: lazy memoized disclosure, so rule-approved calls pay nothing; cap stays 1 MiB. T32 done (exact =lain: targets); review after T3 lands.
+- 16:36 T3 landed e69906e3
+- 16:36 T3 landed e69906e3
+- 16:37 T17 final fix done (3747/0); landing
+- 16:42 T17 landed aa38c532
+- 16:42 T17 landed aa38c532
+- 16:42 T32 review started; T18, T22 started at aa38c532
+- 16:43 F2 done (11 spawn sites, NO_LAZY_FETCH in the shared scrub + 3 own-env sites; history scan --missing=allow-any; 64/0 after fix); review started
+- 16:43 T32 review APPROVE (nits: duplicated target helper; FleetWindows session target plain, out of scope); landing
+- 16:44 T7 review REQUEST-CHANGES: BLOCKER remarked(nil) NoMethodError crashes the driver delete batch; + update_ref nil guard tested at 1 of 4 sites (ruled: structural guard in update_ref), exit 129 not specific (ruled: cat-file -e first), 4 untested rescues, 7 unchecked stdout reads, discarded rescue. Fix round sent.
+- 16:50 T32 landed 98051ce8
+- 16:51 T32 landed 98051ce8. T22 done (1076/0); review next.
+- 16:51 T22 review and T33 started at 98051ce8
+- 16:52 T9 lazy disclosure done (6788/0; rule-approved 1 MiB cat 0.12-0.14 ms, parked 33-256 ms); review started
+- 16:53 T22 review REQUEST-CHANGES: BLOCKER inbound Blocked-by change missed (Issue equality); + merge/related/inbound/denied specs. Fix round sent. held_gate stays for T19.
+- 16:55 T18 done (110/0 card, 834/0 wide; held read through Signoff#view); review started
+- 16:55 T22 fix round done (IssueView#digest compare; 1080/0); second review started
+- 16:56 T18 review APPROVE-WITH-FIXES (dead view filter -> read held from view alone; shared reader; headline spec; QA :585). Follow-up: phone Hold journals nothing, so a phone-held gate is asked again on the phone.
+- 16:57 T33 built (2145/0) but unwired; sent back to wire through Wiring/Surface itself (ClassLength guard), chat_flags [] ruled (forks keep today's no --nvim/--windows/--input; open UX question), + /fork --root and /clear no --prompt specs
+- 16:57 F2 review REQUEST-CHANGES: BLOCKER lazy-fetch stop fired (blobless clone: epic lease from fetched main and git diff feat main now exit 128) -> asked user. Fix round part 1 sent (git-only constant, wider ratchet, Checkout example, comment, version floor 2.44 doc). KEYS already on main via T5.
+- 16:57 T22 review 2 APPROVE; landing
+- 17:01 T22 landed 3305f9e6
+- 17:01 T22 landed 3305f9e6
+- 17:01 T19 started at 3305f9e6
+- 17:01 T18 final fixes done (2356/0); landing
+- 17:02 T19 stopped (held_gate precedence); ruled: split/merge refuses on phase parked, held, approved; edited/gone no longer refused (approval already stale); current: from before-graph IssueView digest
+- 17:13 T18 landing 1 red: subagent_concurrency_spec:100 'gathers every result into ONE user message...' completion order go-2,go-3,go-1; alone green, base 3/3 green seed 58434; REPEAT (traps list, twice) -> F4 card. Relanding. T33 wiring done; T7 fix round done.
+- 17:17 T18 landed 9a6ee436
+- 17:17 T18 landed 9a6ee436
+- 17:18 T7 second review, T33 review, T21 started at 9a6ee436
+- 17:19 T21 stopped (Reopen.stale? vs phase disagree when a draft waits); ruled (b): GateView#stale? named reader used by :edited and Reopen; read via Signoff#view, not SignoffQueue; journaled.rb calls reopened after an epic write
+- 17:19 T19 done except planning view (1324/0); deviations accepted (artifact_digest current; real digests); sent back to wire status_view and add a plan row (scenario needs it)
+- 17:20 F2 fix round 1 done (9664/0; GIT_SPAWN_ENV git-only; ratchet drives all 11 sites; README floor), held for user ruling. T12 started (opus) at 9a6ee436
+- 17:20 T9 review APPROVE-WITH-FIXES (substantive: bulk reads not secret-bearing; scan 3.1 s worst). Real drive: row names .env 1 region + 127.0.0.1. Fix round sent (NUL deny, cwd naming, unscanned reads unnameable, cap 256 KiB + region ceiling, cap spec, git URL token strip, etc.). NEW card F5: name untrusted run files (hooks) on the approval row (30-50 lines, carry the resolver on the context).
+- 17:23 T19 done incl. planning view (51/0 card; wide re-run owed after 1 fixture fix); review started
+17:24 T21 review started
+17:25 T7 second review APPROVE-WITH-FIXES (3 mechanical: factory dirty uses out, Anchors#judge rescue example, factory earlier failure example); fix round 2 sent, lands with no re-review
+17:25 T33 review APPROVE-WITH-FIXES: btw example, WATCH_ARGV ref, unclosed-hint example (mechanical); api_base userinfo (ruled: argv keeps as typed, printed hints mask userinfo; substantive, second review)
+17:28 T19 review REQUEST-CHANGES: implementation-stage digest raises in Roadmap::Checked (blocker); fix round sent, second review follows. Follow-up card F6: route Stage and Reopen through GateView#phase
+17:28 T33 fix round 1 done (printable masks userinfo; 3 fixes without red); second review started. T7 fix round 2 done (881/0; Anchors rescue example no red, main session backs it out). T12 stop: consolidate_spec:567 added to card, per-occurrence slot numbering kept
+17:29 T7 Anchors rescue backed out by main: gc_spec 70/1 red. T7 landing started
+17:30 T21 review REQUEST-CHANGES: status-only rewrite reopens (Issue#digest hashes status; HELD for user), epic-write failure_note nil crash, N folds per write, partial reopen lost, no e2e example. Fix round sent for items 2-7
+- 17:37 T7 landed 4ccd9ef7
+17:49 T7 landed 4ccd9ef7. T19 fix round done -> second review. T12 done -> review (high). T33 review 2 APPROVE-WITH-FIXES (mechanical) -> fix round 2, lands after. T9 fix round done -> second review. T21 items 2-7 done; user ruled item 1: status out of plan gate digest + one-shot rekey script
+17:53 T19 review 2 APPROVE-WITH-FIXES (mechanical: rename current->digest_now, graph-only gates_of, private artifact_digest, pin gate order, spec fake); fix round 2 sent, lands after
+17:53 T21 item 1 done (plan_digest, rekey script) -> second review. T24 and T40 cut at 4ccd9ef7, started
+17:56 T19 fix round 2 done; main backed out gate order: epic_spec 134/1 red. Landing
+- 18:02 T19 landed 3c00012a
+18:02 T19 landed 3c00012a. T33 fix round 2 done; main backed out LiveViews default: 25/1 red. T9 review 2 APPROVE (heads-up for T10: ls lib, find src, git push now secret-bearing, a y runs contained with no network; PEM straddle over-counts). Landing T33 then T9
+18:06 T12 review REQUEST-CHANGES: secrets_of ignores the project sensitivity table (blocker); fix round sent; follow-up card F7: detached ToolGuard in improve/consolidate tool phase carries env values only
+18:06 T21 review 2 REQUEST-CHANGES: rekey script resurrects a denied approval (blocker); lib APPROVE-WITH-FIXES. Ruled: rekey matches old-form at every status value. Fix round 3 sent; third review follows
+18:08 T33 landing red (hook): herdr_surface_spec:256 builds FleetWindows without the now-required child_argv (card-caused, 34790 ex, 1 failure); main restored. Fix sent; landing T9
+- 18:12 T9 landed e7305417
+18:12 T9 landed e7305417 (runtime log 1341, +1 new spec file). Worktrees T7 T19 T9 removed
+18:12 T4 and T35 cut at e7305417, started. T11 waits for T12 (shares text_mask.rb)
+18:13 T33 fix round 3 done (herdr_surface_spec passes ChildArgv.bare). Relanding
+18:14 T21 fix round 3 done -> third review (high, script-focused)
+18:18 T33 reland red (hook-2): offload_spec 'keeps a sibling fiber running while the work holds its thread' (34854 ex, 1 failure, seed 29174). Already on toolchain-traps known list -> repeat -> card F8; running alone, then landing proceeds
+18:21 offload flake green alone (seed 29174, 1/0): confirmed repeat -> F8. Relanding T33. T40 done (wiring applied by main: 4 member lists + 1 comment). T24 done
+- 18:27 T33 landed ebea2fb1
+18:28 T33 landed ebea2fb1
+18:28 T21 review 3, T24 review, T40 review started. T34 cut at ebea2fb1, started
+18:29 T4 done (writes_unread); ARCHITECTURE.md line applied by main
+18:29 T4 review started. T12 fix round 1 done (BoardBuild policy, Untrusted raises, from_options specs, TextMask.transcript, Union) -> second review
+18:33 T12 review 2 APPROVE-WITH-FIXES (mechanical: Regions.spellings public, Union calls it + tying spec; UTF-16 Union spec). Fix round 2 sent, lands after
+18:36 T35 done (draft carried across a stopped read) -> review (high, real terminal)
+18:38 T34 done; wiring applied (herdr_binding_spec drops root:, 14/0) -> review
+18:39 T12 fix round 2 done (reds shown). Landing T12
+18:39 T40 review REQUEST-CHANGES: .git gitdir file redirects the commit upstream (blocker). Ruled: LeaseCommit only under confine :workspace (the default). Fix round sent; second review follows
+- 18:42 T12 landed 13d7e641
+18:42 T12 landed 13d7e641
+18:42 T34 review started. T11 cut at 13d7e641, started
+18:46 T21 review 3: lib approved (1 mechanical spec fix, reopen_spec approve b); rekey script REQUEST-CHANGES (fold order by ts across files, failed-chain restore, lock all). Lib lands after spec fix; script gets 4th review before IC
+18:48 INCIDENT T4 review: live model under bypass ran rm/sudo; sandbox blocked; verified unchanged. rbrief now forbids live-model drives; running reviewers warned
+18:48 T4 review APPROVE-WITH-FIXES (mechanical round sent, lands after). New card F9: widen 'cannot read' (script files, build runners, patch/git apply, dir writes, & stages). Question to user: ruling 5 'asks' = notice or park? (code withdraws network silently)
+18:49 User ruled: withdrawn build grant parks the build (F10). New cards F7-F10 drafted in new-cards.md
+18:51 T4 fix round done (1088/0). Landing
+18:52 T40 fix round 1 done (gitdir real dir, workspace-only, user git config, mutants). Second review queued after T4 lands
+18:54 T21 round 4 done: lib spec fix red-proven; rekey script rebuilt (13 checks, 7 mutants). Landing T21 lib queued behind T4; script 4th review after
+- 18:57 T4 landed 74e0d6c5
+18:57 T4 landed 74e0d6c5
+- 18:59 T21 landed 9c17416e
+18:59 T21 landed 9c17416e (lib). T21 worktree kept for the script review
+19:00 T21 script review 4 and T40 review 2 started. T37 cut at 9c17416e, started
+19:01 T11 done -> review (high)
+19:02 T24 review REQUEST-CHANGES: stop before the registry row lets the red step run (blocker); QA filing cancelled mid-write; cut unmarked branch. Fix round sent; second review follows
+19:03 T37 done (no red for final design) -> review
+19:03 T35 review REQUEST-CHANGES: plain-chat Ctrl-C keeps the draft (existing seam red; implementer never ran it). Real cockpit shows kept text (no UX defect). Fix round sent
+19:05 T34 review REQUEST-CHANGES: watch.rb still passes root: (lain watch raises); typed api_base userinfo reaches herdr session.json, screen and bash_history. Fix round sent
+19:08 T37 review APPROVE-WITH-FIXES (substantive: missing chain file crashes export; rewound-empty page publishes). Fix round sent; second review follows
+19:10 T37 fix round done (38/5 red, then green) -> second review
+19:11 T34 fix round done (2043/0; userinfo leaves resume out with a note) -> second review
+19:12 T35 fix round done (Intake#interrupt discards; extra files intake.rb, input_socket.rb) -> second review
+19:12 T24 fix round done (defer_stop on QA filing and cut; qa_gate.rb, working_branch.rb added) -> second review
+19:13 T37 review 2 APPROVE (nit: errno regex, skipped). Landing
+19:15 T40 review 2 REQUEST-CHANGES: sub/.git gitdir pointer still redirects upstream (blocker); user config includes; degraded sandbox. Ruled: gate on sandbox actually built; abstain on stray GIT_* env. Fix round 2 sent; third review follows (standing ruling)
+- 19:18 T37 landed 03d221a4
+19:18 T37 landed 03d221a4
+19:19 T11 review REQUEST-CHANGES (all mechanical): opaque stage gets the lockfile exemption (leak of checksum-shaped values); 3 guard mutants; renames; ScanInput to own file. Fix round sent, lands after main back-out
+19:22 Rekey script review 4 APPROVE-WITH-FIXES (substantive: all-or-nothing across files). Fix round 5 sent; reviewer re-checks
+19:22 T36 cut at 03d221a4, started
+19:22 T34 review 2 APPROVE (17 mutants red; herdr drives clean). Landing
+19:23 T36 stop: settled record cannot reach the TTY from the card's files. Ruled B (TTY public offer method; tty.rb added to card)
+19:25 T24 second reviewer looped on a refused hand-back; stopped by TaskStop. Fresh second reviewer spawned
+- 19:26 T34 landed 65ff105c
+19:26 T34 landed 65ff105c
+19:29 Rekey script round 5 done (all-or-nothing, 22 checks) -> reviewer re-check
+19:30 T35 second reviewer looped on a refused hand-back; stopped. Fresh second reviewer spawned
+19:32 Rekey re-check REQUEST-CHANGES: INT/TERM skip rollback; no recovery path after SIGKILL. Round 6 sent (rollback on any exception, --restore mode)
+19:32 T11 fix round done (opaque/env stages lose the exemption; reds shown). Landing
+19:32 T40 fix round 2 done (5039/0) -> third review after T11 lands. T11 landing
+- 19:37 T11 landed 4dcb85c5
+19:37 T11 landed 4dcb85c5. T40 third review started
+19:38 T10 and T42 cut at 4dcb85c5, started. T36 sent back: failed asks must announce; 2 seam doubles
+19:40 T42 stop (scratch lease not git; spike cut by Kept). Card's remedy applied: keep the directory, resume through Kept; ChildStopped/Kept may join the card
+19:41 T10 stop: needs toolset_build, board_build, switchboard, exec/sandboxed, telemetry/sandbox. Approved; board_build overlaps T40 (merge by patch, separate methods)
+19:46 Rekey round 6 done (35 checks; rollback on any exception; --restore) -> fresh fifth review
+19:47 T42 done (1363/0; restored researcher reopens through Kept) -> review. New card F11: nothing reaps kept research dirs or spike branches
+19:47 T36 done (4310/0; failed asks ring, human stop silent) -> review
+19:50 T24 review 2 REQUEST-CHANGES: Asking's poll sends a second stop, cutting QA filing (5 of 20). Fix round 2 sent; third review follows
+19:53 T24 fix round 2 done (Asking stops once; probe 0 of 40) -> fresh third review
+19:55 T40 review 3 APPROVE-WITH-FIXES (no blocker). Ruled: GIT_* judged on the child env (ChildEnv applied), lain's editorless pair admitted; includes via git config --show-origin; .git internal links abstain. Fix round 3 sent; a focused fourth review of the substantive items follows
+19:56 T36 review REQUEST-CHANGES: settled line races the reply (lands above it). Fix round sent (announce after render_response; failed notice wording); second review follows
+19:56 T35 review 2 APPROVE-WITH-FIXES (mechanical; Reline state pollution reds suite at random, double carry). Fix round 2 sent; main re-checks order/seeds before landing. New card F12: status header duplicated after a cockpit Ctrl-C (predates T35; stray blank row from the withdrawn command> read)
+20:00 Rekey review 5 REQUEST-CHANGES (partial backup on interrupt; --restore drops later records). Ruled: simplify: backups in a separate --backup-dir verified before staging; delete --restore; manual recovery commands printed. Round 7 sent
+20:01 T42 review APPROVE-WITH-FIXES (substantive: restored spike loses its subdir cwd; restored child reports no written files). Confinement drive held. Fix round sent; second review follows
+20:04 T36 fix round done (announce after render_response; failed notice) -> fresh second review
+20:06 T35 fix round 2 done; main re-ran 3 spec files defined + 3 fresh seeds: 273/0 each. Landing
+20:14 T35 landing red: its new input_pane_spec:1401 IO::TimeoutError under suite load (seed 22404), green alone. Card-owned; sent back (no wall-clock wait). T10 done (9059/0); main applied commands.md paragraph and slow_files entry
+20:14 T42 fix round done -> fresh second review. T40 round 3 done -> focused fourth review; ARCHITECTURE line applied by main. T10 -> review
+20:21 T35 pane example fixed (wait on the cursor move; watchdog the only bound; not reproduced, 909/0 under load). Relanding
+20:21 T24 review 3 APPROVE (0 of 40 cut, 0 of 20 real mismatches). 3 mechanical nits sent, lands after
+20:21 T40 review 4 REQUEST-CHANGES (partial; classifier cut it short): commit -a runs a nested gitlink repo's config program. Ruled: keep -a, abstain on any nested repository. Fix round 4 sent
+- 20:24 T35 landed 2afa5d13
+20:24 T35 landed 2afa5d13
+20:24 T39 cut at 2afa5d13, started
+20:25 T39 stop: 5 shipped skills declare no holes. Ruled: cleared; an empty known set refuses any hole file; specs move to real holes or a fixture skill
+20:27 Rekey round 7 done (separate backup dir, no --restore, 41 checks, 16 single-line mutants). Implementer ran pkill -f once (says it hit only its own shell). Fresh sixth review
+20:27 T39 stop 2: project skills declare holes in the catalog. Ruled: add skill/library.rb; declared_holes from the catalog
+20:29 T24 nits done (869/0). Landing
+20:29 T42 review 2 APPROVE-WITH-FIXES (mechanical; ruled: gone spike stays refused, with a reason). Fix round sent, lands after
+- 20:33 T24 landed 04a7319c
+20:33 T24 landed 04a7319c
+20:33 T20 cut at 04a7319c, started
+20:34 T36 review 2 APPROVE-WITH-FIXES (order 200/200 fixed; stale settled record; mutants). Fix round 2 sent, lands after main re-runs probes. Wording 'failed: main (max_tokens)' kept, flagged to user
+20:34 T40 round 4 done (nested repos refuse; allowlist configs) -> fresh fifth and last review. T36 reviewer stopped after its report (lingering background work)
+20:34 T39 done (3697/0) -> review
+20:36 T42 fix round 2 done (1946/0). Landing
+- 20:43 T42 landed d8eede7d
+20:43 T42 landed d8eede7d. T36 probes re-run by main: 3/0
+20:43 Landing T36
+20:43 Rekey review 6 REQUEST-CHANGES (all mechanical: kill mid-backup leaves a short copy; other digest-bearing records). Round 8 sent; main verifies and dry-runs on a copy after
+- 20:46 T36 landed 6f04934a
+20:46 T36 landed 6f04934a
+20:47 T38 and T25 cut at 6f04934a, started
+20:48 T39 review APPROVE-WITH-FIXES (top-level slot files ignored; message pointers; QA scenario stale, main applies). Fix round sent, lands after
+20:49 T20 done (1617/0; Gate#call returns GateView) -> review
+20:50 T38 code done; chat wiring (attention.rb, surface.rb, exe/lain, notifier_spec) sent back as required, not optional
+20:52 T39 fix round done (3701/0); main applied the QA scenario lines. Landing
+20:54 T10 review REQUEST-CHANGES: secret-oracle automatic approval runs traced with network (blocker); unable-box prompt contradicts itself. Fix round sent. New card F13: under --confine reader, automatic allows (judge, rule, remembered, bypass) of secret-bearing calls run traced with network while a human y is contained (predates T10; user call)
+20:55 T40 review 5 REQUEST-CHANGES: .gitattributes-selected filter driver resolved on PATH runs lineage-planted code on an allow (sandbox confines). User's ~/.gitconfig defines filter.lfs.process with git-lfs not installed. Escalating to user: 5 reviews, each a new git vector, all sandbox-bounded
+07:13 T39 landing red: project_dir_spec ratchet (skill_slots composes .lain/skills by hand), card-caused; sent back
+07:14 T40 final round sent (user: sandbox is the boundary; abstain on any filter driver; no 6th review). T20 fix round sent. T25 sent back for device on question answers. T10 second review and T38 review started
+- 07:20 T39 fix round 2 done (ProjectDir#skills); relanding, no re-review (mechanical)
+- 07:20 T20 fix round 1 done; wiring: epic_finish.rb added to gate_decision_fold_discipline READERS; second review after T39 lands
+- 07:22 T38 review r1 REQUEST-CHANGES (1 blocker: feed failure repeats per notice; 6 unpinned wiring lines); fix round 1 sent to a fresh implementer; findings in review-T38-r1.md
+- 07:24 T39 landed 71eb2059
+- 07:24 T39 landed 71eb2059
+- 07:24 T20 second review started (high)
+- 07:25 T40 final round done; landing with no 6th review (ruling); leftovers drafted as F14
+- 07:36 T40 landed 094fa8da
+- 07:37 T40 landed 094fa8da (runtime log 1347, +1 new spec file)
+- 07:37 T41 cut at 094fa8da, started
+- 07:39 T25 done (question answers carry answered_by); review started (high)
+- 07:40 T38 fix round 1 done (once-latch, path in message, 7 wiring pins); second review started (medium)
+- 07:41 T41 round 1 done; sent back: research brief must say commit (brief_spec widened), real-landing example for the report
+- 07:42 T20 review 2 APPROVE-WITH-FIXES (finish digest_now on dropped issue; denied phase vs commit); mechanical fix round sent, lands without re-review
+- 07:45 T41 round 2 done; review started (medium)
+- 07:46 T20 fix round 2 done; factory.rb reason line applied; landing
+- 07:47 T10 review 2 APPROVE-WITH-FIXES (grant wording, liftable pin, confine help); mechanical fix round to a fresh implementer
+- 07:51 T20 landed 114bce87
+- 07:51 T20 landed 114bce87 (runtime log 1347)
+- 07:51 T23 cut at 114bce87, started
+- 07:51 T38 review 2 APPROVE-WITH-FIXES (e2e pin for exe/lain sink; binstub-only skip so a distro /usr/bin feed is found; notes: required); fix round sent. Low risk: main verifies the e2e mutant and the bindir probe instead of a 3rd review
+- 07:53 T23 stopped (from_journal live caller; 5 specs off-card; 3 design gaps). Ruled: Gate.new at gate_for, 5 specs in scope, ReadBack kept (own readback), SignoffQueue keeps a details index with membership from Signoff#view
+- 07:56 T41 review APPROVE-WITH-FIXES; fix round sent incl substantive: drained research must run as researcher (skill guard). T38 round 2: binstub skip by marker done; item 1 via Todos.start spec
+- 07:56 T38 round 2 done; main verified (bindir probe prints Feed, 26 examples green); landing
+- 07:57 T25 review APPROVE-WITH-FIXES (repl_spec fake reply blocker; agenda shared key untested; ** keywords; doc); mechanical fix round sent, lands without re-review. Nit 5 (desk answered_by) declined
+- 08:01 T38 landed 01b39c56
+- 08:01 T38 landed 01b39c56 (runtime log 1347)
+- 08:04 T41 round 3 done (items 1-3); item 4 stopped (no role on drain chat) -> F16; landing
+- 08:11 T41 landed 097c426f
+- 08:11 T41 landed 097c426f
+- 08:12 T10 fix round: items 1,2,3,5,6 done; sent back for prompt-time 'without network' wording under a grant, and item 4 (approval_surfaces.rb now in scope)
+- 08:13 T25 fixes done (item 3 kept ** per Lint/UnusedMethodArgument precedent); landing
+- 08:20 T25 landing red: 35107 examples, 1 failure: 'Lain::CLI::EpicDriver::Run a stop by the human while an issue launches when the issue takes a while to read before its lease is asked for asks for no lease after a stop that lands during the read' STUCK 30.5s at load 19.2/16. Green alone in T25 tree; green 3/3 on base (file, 121 examples). Card does not touch epic_driver. Not reproduced: record by name in toolchain-traps at close-out; relanding
+- 08:20 T23 done (3611 examples green); Progress type check kept; 2 stale comments applied by main; review after T25 lands
+- 08:23 T25 landed 1d1e145a
+- 08:24 T25 landed 1d1e145a
+- 08:37 T10 fix round done (prompt predicts grant ports; cockpit note); third review started (narrow, medium)
+- 08:45 T23 review APPROVE-WITH-FIXES (pin hold-over-parked and park-clears-hold; landing spec tests Signoff not landing; NotApproved home); fix round sent; land after main checks. Asked reviewer for source of its 'real session' data
+- 08:49 T23 review fixes done (3613 green); landing without re-review (test-only rework, mutants reported)
+- 08:50 T10 review 3 APPROVE-WITH-FIXES (docs/help exception for build fetch ports; widest pin; carried; comments); fix round sent; main removed slow_files entry
+- 08:53 T23 landing red: 2 failures in 'Lain::CLI::TmuxSurface against a real tmux server' (keeps a cleanly exiting window's pane out of the way; holds the corpse of a window whose command exited non-zero). Green alone in T23 tree (40), green 3/3 on base. Not reproduced: record by name at close-out; relanding
+- 08:56 T23 landed 84ee13da
+- 08:57 T23 landed 84ee13da (runtime log 1345, -2 deleted spec files). Worktree kept until the reviewer answers the data-source question
+- 09:04 T10 review 3 fixes done (9090 green); landing
+- 09:07 T10 landed f6db4dca
+- 09:07 T10 landed f6db4dca
+- 09:07 T15 cut at f6db4dca, started
+- 09:08 T23 reviewer data checked from its transcript: QA sandbox copies under ~/tmp (lain-qa-2026-11-11-e) and tmp/ trees, find excluded */.local/state/*; no live state read. T23 worktree removed
+- 09:22 T15 done (627 card examples, 6010 wider green); sent back to fix remembered silence-deny journaling as human (remembered_denials.rb widened in)
+- 09:28 T15 follow-up done (remembered silence deny journals automatic); review started (medium)
