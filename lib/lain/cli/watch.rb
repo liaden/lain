@@ -56,7 +56,7 @@ module Lain
         @sleeper = sleeper
         @probe = probe
         @writer = Liveness::Writer::UNRECORDED
-        @reporting = Reporting.for(env:, root: project.root, notes: Notes.new(method(:say)))
+        @reporting = Reporting.for(env:, notes: Notes.new(method(:say)))
         @filter = LineageFilter.new(selector:, on_shadowed: ->(digest) { shadowed(digest) })
       end
 
@@ -220,13 +220,12 @@ module Lain
         end
 
         # @return [Reporting, Off]
-        def self.for(env:, root:, notes:)
-          env["HERDR_ENV"] == "1" && env["TMUX"].to_s.empty? ? new(env:, root:, notes:) : Off.new
+        def self.for(env:, notes:)
+          env["HERDR_ENV"] == "1" && env["TMUX"].to_s.empty? ? new(env:, notes:) : Off.new
         end
 
-        def initialize(env:, root:, notes:)
+        def initialize(env:, notes:)
           @env = env
-          @root = root
           @notes = notes
           @tracker = Lain::AgentStates::Tracker.new(clock: RunClock.new)
           @reporter = nil
@@ -257,7 +256,7 @@ module Lain
           return if @reporter
 
           resolver = Herdr::Target::Resolver.new(env: @env, interactive: true, notes: @notes)
-          @reporter = Herdr::Reporter.new(resolver:, session: NO_SESSION, root: @root, agent: agent_for(record),
+          @reporter = Herdr::Reporter.new(resolver:, session: NO_SESSION, agent: agent_for(record),
                                           resume: false, notes: @notes)
           @tracker.on_change { |change| tell(change, record.digest) }
         end

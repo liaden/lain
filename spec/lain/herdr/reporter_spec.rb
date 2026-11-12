@@ -94,8 +94,8 @@ RSpec.describe Lain::Herdr::Reporter do
 
   def journal(path) = instance_double(Lain::CLI::Chronicle, journal_path: path)
 
-  def reporter(resolver:, session: journal(File.join(dir, "s.ndjson")), root: dir, **)
-    described_class.new(resolver:, session:, root:, notes:, **)
+  def reporter(resolver:, session: journal(File.join(dir, "s.ndjson")), **)
+    described_class.new(resolver:, session:, notes:, **)
   end
 
   def run(subject, records)
@@ -193,18 +193,27 @@ RSpec.describe Lain::Herdr::Reporter do
   end
 
   describe "the resume command" do
-    it "restarts a cockpit chat through lain up on its tmux session" do
-      run(reporter(resolver: fixed(target(via: :cockpit)), session: journal("rel/s.ndjson"),
-                   up_session: "S"), [request])
+    it "restarts a cockpit chat on the command lain up stored, naming the session by its file" do
+      stored = ["up", dir, "--session", "S", "--socket", "sock", "--no-nvim", "--", "--approval", "ask"]
+      run(reporter(resolver: fixed(target(via: :cockpit)), session: journal("rel/s.ndjson"), up_command: stored),
+          [request])
 
-      expect(resume_of(reports.first))
-        .to eq(["lain", "up", dir, "--session", "S", "--", "--resume", File.expand_path("rel/s.ndjson")])
+      expect(resume_of(reports.first)).to eq(["lain", *stored, "--resume", "s.ndjson"])
     end
 
-    it "restarts a chat in a plain herdr pane through lain chat" do
-      run(reporter(resolver: fixed(target)), [request])
+    it "restarts a chat in a plain herdr pane on the root and directory it runs in" do
+      argv = Lain::CLI::ChildArgv.new(root: dir, cwd: File.join(dir, "sub"), journal_path: -> {}, typed: {},
+                                      chat_flags: [])
+      run(reporter(resolver: fixed(target), child_argv: argv), [request])
 
-      expect(resume_of(reports.first)).to eq(["lain", "chat", "--resume", File.join(dir, "s.ndjson")])
+      expect(resume_of(reports.first))
+        .to eq(["lain", "chat", "--root", dir, "--cwd", File.join(dir, "sub"), "--resume", "s.ndjson"])
+    end
+
+    it "is left out for a cockpit that stored no command" do
+      run(reporter(resolver: fixed(target(via: :cockpit))), [request])
+
+      expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
     end
 
     it "is left out when the chat asks for none" do
@@ -214,7 +223,7 @@ RSpec.describe Lain::Herdr::Reporter do
     end
 
     it "is left out past the 8 KiB herdr accepts" do
-      run(reporter(resolver: fixed(target(via: :cockpit)), root: "/#{"a" * 9000}", up_session: "S"), [request])
+      run(reporter(resolver: fixed(target(via: :cockpit)), up_command: ["up", "/#{"a" * 9000}", "--"]), [request])
 
       expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
     end
@@ -224,11 +233,53 @@ RSpec.describe Lain::Herdr::Reporter do
       allow(moving).to receive(:journal_path).and_return(File.join(dir, "aside.ndjson"), File.join(dir, "kept.ndjson"))
       run(reporter(resolver: fixed(target), session: moving), [request, wait_of.call("call_1", nil, "bash")])
 
-      expect(reports.map { resume_of(_1).last }).to eq([File.join(dir, "aside.ndjson"), File.join(dir, "kept.ndjson")])
+      expect(reports.map { resume_of(_1).last }).to eq(%w[aside.ndjson kept.ndjson])
+    end
+
+    it "sends 64 words and leaves out 65, whole, while the state still goes" do
+      at_cap = ["up", *Array.new(59) { "w#{_1}" }, "--"]
+      run(reporter(resolver: fixed(target(via: :cockpit)), up_command: at_cap), [request])
+      expect(resume_of(reports.first).size).to eq(64)
+
+      FileUtils.rm_f(calls_path)
+      run(reporter(resolver: fixed(target(via: :cockpit)), up_command: [*at_cap, "extra"]), [request])
+      expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
+    end
+
+    it "is left out for a word carrying URL credentials, and says why without printing them" do
+      credential = "https://user:fake-pw@host.test/v1"
+      argv = Lain::CLI::ChildArgv.new(root: dir, cwd: dir, journal_path: -> {}, typed: { api_base: credential },
+                                      chat_flags: [])
+      run(reporter(resolver: fixed(target), child_argv: argv), [request])
+
+      expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
+      expect(notes.string).to match(/resume.*credential/)
+      expect(notes.string).not_to include("fake-pw")
+    end
+
+    it "is left out for a cockpit's stored credential word too" do
+      run(reporter(resolver: fixed(target(via: :cockpit)), up_command: ["up", dir, "--", "--api-base",
+                                                                        "https://u:fake-pw@h.test"]), [request])
+
+      expect(reports.map { resume_of(_1) }).to eq([nil])
+    end
+
+    it "tells the human once, whatever the number of reports, when a resume is left out" do
+      run(reporter(resolver: fixed(target(via: :cockpit))), blocks_then_done)
+
+      expect(reports.size).to eq(3)
+      expect(notes.string.lines.grep(/resume/).size).to eq(1)
+    end
+
+    it "says nothing when the chat asked for no resume command" do
+      run(reporter(resolver: fixed(target), resume: false), blocks_then_done)
+
+      expect(notes.string).to be_empty
     end
 
     it "is left out for a root herdr would refuse, and the state still goes" do
-      run(reporter(resolver: fixed(target(via: :cockpit)), root: File.join(dir, "it's"), up_session: "S"), [request])
+      run(reporter(resolver: fixed(target(via: :cockpit)), up_command: ["up", File.join(dir, "it's"), "--"]),
+          [request])
 
       expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
     end
@@ -323,20 +374,27 @@ RSpec.describe Lain::Herdr::Reporter do
       end
     end
 
-    it "names the tmux session of the chat's pane" do
+    it "reads the command lain up stored on the session" do
       asked = []
       env = { "TMUX" => "/tmp/tmux-1/default,1,0", "TMUX_PANE" => "%3" }
+      stored = JSON.generate(["up", "/p", "--", "--approval", "ask"])
 
-      expect(described_class.new(env:, shell_out: answering("S\n", asked:)).to_s).to eq("S")
-      expect(asked).to eq([[%w[tmux display-message -p -t %3] + ["\#{session_name}"],
-                            { "TMUX" => "/tmp/tmux-1/default,1,0" }]])
+      expect(described_class.new(env:, shell_out: answering("#{stored}\n", asked:)).to_a)
+        .to eq(["up", "/p", "--", "--approval", "ask"])
+      expect(asked.first.first.last).to eq("\#{#{described_class::OPTION}}")
     end
 
-    it "is empty outside tmux or when tmux fails" do
-      failing = answering("", status: 1)
+    it "has no command outside tmux, when tmux fails, or when the stored text is not a word list" do
+      garbled = answering("not json")
 
-      expect([described_class.new(env: {}, shell_out: failing).to_s,
-              described_class.new(env: { "TMUX_PANE" => "%3" }, shell_out: failing).to_s]).to eq(["", ""])
+      shapes = ['{"a":1}', '"x"', '["up",1]'].map do |text|
+        described_class.new(env: { "TMUX_PANE" => "%3" }, shell_out: answering(text)).to_a
+      end
+
+      expect(shapes).to eq([[], [], []])
+      expect([described_class.new(env: {}, shell_out: garbled).to_a,
+              described_class.new(env: { "TMUX_PANE" => "%3" }, shell_out: answering("", status: 1)).to_a,
+              described_class.new(env: { "TMUX_PANE" => "%3" }, shell_out: garbled).to_a]).to eq([[], [], []])
     end
   end
 
@@ -379,15 +437,34 @@ RSpec.describe Lain::Herdr::Reporter do
       end
     end
 
-    def launch_in_herdr(options, records)
+    def launch_in_herdr(options, records, extra_env: {}, path: ENV.fetch("PATH"))
       env = { "HERDR_ENV" => "1", "HERDR_PANE_ID" => "w1:p7", "HERDR_BIN_PATH" => stub_herdr,
-              "HERDR_SOCKET_PATH" => socket }
+              "HERDR_SOCKET_PATH" => socket }.merge(extra_env)
       project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag)
       factories = { env:, wiring_factory: journaling_wiring(records), project_factory: -> { project },
                     gc_schedule_factory: ->(root:) { -> { root } } }
       launch = ChatLaunchProbe::Launch.new(ChatLaunchProbe::LAUNCH_DEFAULTS.merge(options), **factories)
-      with_env("XDG_STATE_HOME" => File.join(dir, "state")) { launch.call { |_notice| nil } }
+      with_env("XDG_STATE_HOME" => File.join(dir, "state"), "PATH" => path) { launch.call { |_notice| nil } }
       launch
+    end
+
+    # A tmux that answers as a cockpit's would: the chat pane, the herdr pane `lain up` recorded, and the
+    # command it stored on the session.
+    def stub_tmux(stored)
+      bin = File.join(dir, "bin").tap { FileUtils.mkdir_p(_1) }
+      option = Lain::Herdr::Target.new(bin: File.join(dir, "herdr"), pane: "w1:p7", socket:, via: nil).to_option
+      File.write(File.join(bin, "tmux"), <<~SH, perm: 0o755)
+        #!/bin/sh
+        case "$1" in
+          show-options)
+            case "$5" in
+              @lain_chat_pane) echo %3 ;;
+              @lain_herdr) printf '%s\\n' #{option.shellescape} ;;
+            esac ;;
+          display-message) printf '%s\\n' #{JSON.generate(stored).shellescape} ;;
+        esac
+      SH
+      bin
     end
 
     # Kept only once the first report is out, since the worker reads the path when it reports.
@@ -401,12 +478,23 @@ RSpec.describe Lain::Herdr::Reporter do
     it "follows an aside's record to where keeping it moved the file" do
       launch = launch_in_herdr({ journal: true, btw: true },
                                [request, promote_after_a_report, wait_of.call("call_1", nil, "bash")])
-      kept = File.expand_path(launch.chronicle.journal_path)
+      kept = File.basename(launch.chronicle.journal_path)
 
       paths = reports.map { resume_of(_1).last }
       expect(paths.size).to eq(2)
       expect(paths.first).not_to eq(kept)
       expect(paths.last).to eq(kept)
+    end
+
+    it "reports a cockpit chat's resume from the command lain up stored on its tmux session" do
+      stub_herdr
+      stored = ["up", dir, "--session", "work", "--no-nvim", "--"]
+      launch_in_herdr({ journal: true }, [request],
+                      extra_env: { "TMUX" => "x,1,0", "TMUX_PANE" => "%3" },
+                      path: "#{stub_tmux(stored)}:#{ENV.fetch("PATH")}")
+
+      expect(resume_of(reports.first)).to eq(["lain", *stored, "--resume", resume_of(reports.first).last])
+      expect(resume_of(reports.first).last).to end_with(".ndjson")
     end
 
     it "reports nothing for a non-interactive chat, whatever HERDR_* says" do
@@ -462,7 +550,8 @@ RSpec.describe Lain::Herdr::Reporter do
       expect(status).to be_success, output
       expect(File.exist?(File.join(dir, "made"))).to be(true), output
       expect(reports.map { flag(_1, "--state") }).to eq(%w[working idle working blocked working idle]), output
-      expect(resume_of(reports.last)).to eq(["lain", "chat", "--resume", File.read(File.join(dir, "journal_path"))])
+      expect(resume_of(reports.last)).to eq(["lain", "chat", "--root", dir, "--cwd", dir, "--provider", "ollama",
+                                             "--resume", File.basename(File.read(File.join(dir, "journal_path")))])
       expect(calls.count { _1.first(2) == %w[pane release-agent] }).to eq(1)
       expect(calls.map { _1.first(2) }.uniq).to contain_exactly(%w[agent get], %w[pane report-agent],
                                                                 %w[pane release-agent])

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "json"
 require "shellwords"
 require "ipaddr"
 require "socket"
@@ -261,6 +262,9 @@ module Lain
           @socket = socket
           @shell_out_factory = shell_out_factory
         end
+
+        # @return [Array<String>] the flag that puts a later `lain up` on this socket
+        def socket_words = @socket ? ["--socket", @socket] : []
 
         # Composed but not run: {Up#attach_command} hands this to `Kernel.exec`,
         # which has to replace the process rather than spawn a child.
@@ -914,6 +918,13 @@ module Lain
 
         def requested? = !@option.nil?
 
+        # @return [Array<String>] the `up` flags that rebuild this cockpit, as asked and not as nvim resolved
+        def up_words
+          return ["--no-nvim"] if @option.nil?
+
+          @option.is_a?(String) && !@option.empty? ? ["--nvim-socket=#{@option}"] : []
+        end
+
         # The whole of the layout wiring: `:LainStart` builds the session tab
         # over whatever lain has rendered, and every later render fills in the
         # views the sibling pane's `chat --nvim` primes after it. The rtp injection through `--cmd` is
@@ -1511,8 +1522,16 @@ module Lain
                           "-x", DETACHED_WIDTH.to_s, "-y", DETACHED_HEIGHT.to_s,
                           "-P", "-F", PANE_ID).stdout.strip
         keep_failed_pane
+        record_resume_command
         @warnings.concat(missing_key_warnings)
         build_panes(cockpit, first)
+      end
+
+      # Stored only at creation: a reattach carries its own flags, not the ones the cockpit was built with.
+      def record_resume_command
+        words = ["up", @cwd, "--session", @session, *@tmux.socket_words, *@cockpit.up_words, "--",
+                 *ChildArgv.fresh(@chat_args)]
+        @tmux.act("set-option", "-t", target, Herdr::Reporter::CockpitSession::OPTION, JSON.generate(words))
       end
 
       # Checked after `new-session` because a server lain just started takes

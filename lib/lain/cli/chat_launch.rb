@@ -220,8 +220,9 @@ module Lain
 
       def herdr_reporter
         @herdr_reporter ||= Herdr::Reporter.new(resolver: herdr_resolver, session: chronicle,
-                                                root: project.root,
-                                                up_session: Herdr::Reporter::CockpitSession.new(env: @env),
+                                                up_command: Herdr::Reporter::CockpitSession.new(env: @env),
+                                                child_argv: ChildArgv.for(root: project.root, cwd: project.cwd,
+                                                                          chronicle:, profile:),
                                                 notes: herdr_notes)
       end
 

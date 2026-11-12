@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "json"
+
 module Lain
   module Herdr
     # Tells herdr the chat's state and how to resume it, the way herdr's own Claude Code integration
@@ -16,9 +18,10 @@ module Lain
       # herdr 0.9.5 has no done; its idle shows as done until the human focuses the pane.
       STATES = { blocked: "blocked", working: "working", done: "idle", idle: "idle" }.freeze
 
-      # herdr refuses a resume command past this, or with an apostrophe in any word. Its 64-word cap
-      # cannot be reached: lain's longest resume command is 8 words.
+      # herdr refuses a resume command past these, or with an apostrophe in any word.
       RESUME_BYTES = 8 * 1024
+
+      RESUME_WORDS = 64
 
       # Used until the chat's terminal hands over its own mask ({#mask_with}): it knows detected regions
       # and the process's secret-named environment values, but not a committed .env or a passed
@@ -37,9 +40,11 @@ module Lain
         def release = nil
       end
 
-      # The tmux session of the cockpit pane this chat runs in, asked only when a report needs it.
+      # What `lain up` recorded on the tmux session of the cockpit pane this chat runs in, asked only when
+      # a report needs it.
       class CockpitSession
-        FORMAT = "\#{session_name}"
+        # The words after `lain` that bring this cockpit back, as JSON; set by `lain up` when it creates the session.
+        OPTION = "@lain_up_command"
 
         # @param env [#[]] the chat's environment
         # @param shell_out [#call] `Shell::Out.new`'s shape
@@ -48,16 +53,24 @@ module Lain
           @shell_out = shell_out
         end
 
-        # @return [String] the session name, empty when tmux does not answer
-        def to_s = @to_s ||= ask
+        # @return [Array<String>] `lain up`'s own words up to and including `--`, empty when tmux does not
+        #   answer or the session holds no usable command
+        def to_a = @to_a ||= words
 
         private
+
+        def words
+          parsed = JSON.parse(ask)
+          parsed.is_a?(Array) && parsed.all?(String) ? parsed : []
+        rescue JSON::ParserError
+          []
+        end
 
         def ask
           pane = @env["TMUX_PANE"].to_s
           return "" if pane.empty?
 
-          answer = @shell_out.call("tmux", "display-message", "-p", "-t", pane, FORMAT,
+          answer = @shell_out.call("tmux", "display-message", "-p", "-t", pane, "\#{#{OPTION}}",
                                    environment: { "TMUX" => @env["TMUX"] }, timeout: TIMEOUT).tap(&:run_command)
           Shell::Out.ok?(answer) ? answer.stdout.strip : ""
         rescue SystemCallError, Shell::Out::Timeout
@@ -68,21 +81,22 @@ module Lain
       # @param resolver [#current] answers the {Target} lain may report to, or nil
       # @param session [#journal_path] the chat's record, read at each report since a promoted aside
       #   moves its file; a nil path leaves out the resume command
-      # @param root [String] the project root, which `lain up` reopens
-      # @param up_session [#to_s] the cockpit's tmux session; empty leaves out a cockpit's resume command
+      # @param up_command [#to_a] the words after `lain` that reopen this chat's cockpit; empty leaves out
+      #   a cockpit's resume command
+      # @param child_argv [CLI::ChildArgv] builds a plain chat's resume command from the live run
       # @param agent [String] the agent name herdr shows
       # @param resume [Boolean] false never sends a resume command
       # @param shell_out_factory [#call] `Shell::Out.new`'s shape
       # @param notes [#puts] told once each time reporting starts failing
       # @param mask [#call] takes a wait's summary and answers it with secrets masked; see {#mask_with}
       # @param background [#call] starts the worker off the caller's stack
-      def initialize(resolver:, session:, root:, up_session: nil, agent: AGENT, resume: true,
+      def initialize(resolver:, session:, up_command: [], child_argv: CLI::ChildArgv.bare, agent: AGENT, resume: true,
                      shell_out_factory: Shell::Out.public_method(:new), notes: Sink::Null.new, mask: MASK,
                      background: Thread.public_method(:new))
         @resolver = resolver
         @session = session
-        @root = root.to_s
-        @up_session = up_session
+        @up_command = up_command
+        @child_argv = child_argv
         @agent = agent
         @resume = resume
         @shell_out_factory = shell_out_factory
@@ -138,6 +152,13 @@ module Lain
         worker.kill unless worker.join((TIMEOUT * 3) + 1)
         nil
       end
+
+      # The file is named by its basename, which `--resume` resolves under the project the command pins,
+      # so the command works from any directory.
+      #
+      # @param target [Target] the pane the words are for
+      # @return [Array<String>] a command line that resumes this chat, empty when there is none to give
+      def resume_words(target) = words_for(target, @session.journal_path)
 
       private
 
@@ -213,23 +234,41 @@ module Lain
       def plain(text) = Frontend::TTY::Notifier.plain(text, mask: @mask)
 
       def resume_command(target)
-        words = resume_words(target)
-        accepted?(words) ? ["--", *words] : []
-      end
-
-      def resume_words(target)
         path = @session.journal_path
         return [] unless @resume && path
 
-        file = File.expand_path(path)
-        return ["lain", "chat", "--resume", file] if target.via == :env
-
-        session = @up_session.to_s
-        session.empty? ? [] : ["lain", "up", @root, "--session", session, "--", "--resume", file]
+        words = words_for(target, path)
+        reason = refusal(words)
+        reason ? left_out(reason) : ["--", *words]
       end
 
-      def accepted?(words)
-        !words.empty? && words.sum(&:bytesize) <= RESUME_BYTES && words.none? { _1.include?("'") }
+      def words_for(target, path)
+        return [] unless @resume && path
+
+        name = File.basename(path)
+        return ["lain", *@child_argv.chat("--resume", name)] if target.via == :env
+
+        stored = @up_command.to_a
+        stored.empty? ? [] : ["lain", *stored, "--resume", name]
+      end
+
+      # A word is checked whole rather than masked: herdr keeps the command in a file and types it into
+      # the restored pane's shell, so a credential in it would outlive the chat.
+      def refusal(words)
+        if words.empty? then "the cockpit stored no command to restart it with"
+        elsif words.size > RESUME_WORDS then "its command is over #{RESUME_WORDS} words"
+        elsif words.sum(&:bytesize) > RESUME_BYTES then "its command is over #{RESUME_BYTES} bytes"
+        elsif words.any? { _1.include?("'") } then "a word of its command holds an apostrophe"
+        elsif words.any? { CLI::ChildArgv.mask(_1) != _1 } then "a word of its command carries a URL credential"
+        end
+      end
+
+      def left_out(reason)
+        unless @told
+          @notes.puts("herdr: no resume command is stored for this chat (#{reason}); herdr cannot restart it")
+        end
+        @told = true
+        []
       end
 
       def herdr(target, *argv)

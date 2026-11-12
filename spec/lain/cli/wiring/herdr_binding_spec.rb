@@ -31,7 +31,7 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
     target = Lain::Herdr::Target.new(bin:, pane: "w1:p7", socket: File.join(root, "s.sock"), via: :env)
     resolver = Object.new.tap { |answer| answer.define_singleton_method(:current) { target } }
     session = instance_double(Lain::CLI::Chronicle, journal_path: File.join(root, "s.ndjson"))
-    Lain::Herdr::Reporter.new(resolver:, session:, root:, notes:)
+    Lain::Herdr::Reporter.new(resolver:, session:, notes:)
   end
 
   def commit_env(value)
