@@ -4,7 +4,7 @@ require "tmpdir"
 
 # `/park text` leaves a re-entry note in the session record. Zero model turns.
 RSpec.describe Lain::CLI::Command::Park do
-  subject(:command) { described_class.new(root: "/work/proj", feed:) }
+  subject(:command) { described_class.new(root: "/work/proj", notes: Lain::Sink::Null.new, feed:) }
 
   let(:feed) { ->(*note) { fed << note } }
   let(:fed) { [] }
@@ -75,12 +75,23 @@ RSpec.describe Lain::CLI::Command::Park do
     expect([tokens, fed]).to eq([[["lain_parked", nil]], []])
   end
 
+  it "names a failing notify-feed on the notes it is given" do
+    Dir.mktmpdir("park-feed") do |dir|
+      File.write(File.join(dir, "notify-feed"), "#!/bin/sh\nexit 1\n", perm: 0o755)
+      notes = StringIO.new
+
+      described_class.new(root: "/work/proj", env: { "PATH" => dir }, notes:).call("waiting on CI", env)
+
+      expect(notes.string).to eq("#{File.join(dir, "notify-feed")} exited 1\n")
+    end
+  end
+
   it "runs the machine's notify-feed when no feed is handed in" do
     Dir.mktmpdir("park-feed") do |dir|
       out = File.join(dir, "out")
       File.write(File.join(dir, "notify-feed"), "#!/bin/sh\n{ printf '%s|' \"$@\"; cat; } > #{out}\n", perm: 0o755)
 
-      described_class.new(root: "/work/proj", env: { "PATH" => dir }).call("waiting on CI", env)
+      described_class.new(root: "/work/proj", env: { "PATH" => dir }, notes: StringIO.new).call("waiting on CI", env)
 
       expect(File.read(out)).to eq("lain|proj|parked: waiting on CI")
     end

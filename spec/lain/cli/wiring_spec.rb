@@ -4125,8 +4125,8 @@ RSpec.describe Lain::CLI::Wiring do
       reporter = Lain::Herdr::Reporter::Null.new
       wiring = Dir.mktmpdir do |dir|
         focus = Lain::Frontend::Focus.tmux(env: {})
-        herdr = Struct.new(:tty_factory, :focus, :reporter, :window_surface)
-                      .new(tty_factory(dir), focus, reporter, Lain::CLI::TmuxSurface.new)
+        herdr = Struct.new(:tty_factory, :focus, :reporter, :window_surface, :notes)
+                      .new(tty_factory(dir), focus, reporter, Lain::CLI::TmuxSurface.new, Lain::Sink::Null.new)
         new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"), herdr:,
                    conductor_opener:).tap do |built|
           built.run(backend:, resumed: nil, nvim: nil)
@@ -4216,8 +4216,8 @@ RSpec.describe Lain::CLI::Wiring do
       it "asks the herdr binding's focus when a notice falls due" do
         allow(Lain::Config).to receive(:attention).and_return(Lain::Config::Attention.new(delay: 0))
         window = Struct.new(:asked) { def focused? = (self.asked = true) && false }.new
-        herdr = Struct.new(:tty_factory, :focus, :reporter, :window_surface).new(nil, window, Lain::Herdr::Reporter::Null.new,
-                                                                                 Lain::CLI::TmuxSurface.new)
+        herdr = Struct.new(:tty_factory, :focus, :reporter, :window_surface, :notes)
+                      .new(nil, window, Lain::Herdr::Reporter::Null.new, Lain::CLI::TmuxSurface.new, Lain::Sink::Null.new)
         notices = nil
         Dir.mktmpdir do |dir|
           herdr.tty_factory = screen_factory(dir)

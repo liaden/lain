@@ -124,16 +124,16 @@ RSpec.describe Lain::Frontend::TTY::Notifier do
 
   describe ".for_chat" do
     it "defers the sequence and the feed entry when asked" do
-      allow(Lain::Notices).to receive(:for).with(env: {}).and_return(feed)
-      described_class.for_chat([], "/work/demo", env: {}, output:, deferred: true).call("hi")
+      allow(Lain::Notices).to receive(:for).with(env: {}, notes: anything).and_return(feed)
+      described_class.for_chat([], "/work/demo", env: {}, output:, deferred: true, notes: Lain::Sink::Null.new).call("hi")
 
       expect([output.string, fed]).to eq(["", []])
     end
 
     it "masks with the secrets the thunk answers at each note, and feeds the project's notify-feed" do
-      allow(Lain::Notices).to receive(:for).with(env: {}).and_return(feed)
+      allow(Lain::Notices).to receive(:for).with(env: {}, notes: anything).and_return(feed)
       secrets = ["alpha-secret-1"]
-      session = described_class.for_chat(secrets, "/work/demo", env: {}, output:)
+      session = described_class.for_chat(secrets, "/work/demo", env: {}, output:, notes: Lain::Sink::Null.new)
 
       session.call("a alpha-secret-1 bravo-secret-2")
       secrets << "bravo-secret-2"

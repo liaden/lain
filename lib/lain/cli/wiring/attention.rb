@@ -9,13 +9,14 @@ module Lain
       class Attention
         # The chat no tracker feeds: the notifier sends everything at once and no notice runs.
         class Immediate
-          def initialize(secrets:, root:, env:)
+          def initialize(secrets:, root:, env:, notes:)
             @secrets = secrets
             @root = root
             @env = env
+            @notes = notes
           end
 
-          def notifier = @notifier ||= Frontend::TTY::Notifier.for_chat(@secrets, @root, env: @env)
+          def notifier = @notifier ||= Frontend::TTY::Notifier.for_chat(@secrets, @root, env: @env, notes: @notes)
 
           def notices = AgentStates::Notices::Never
         end
@@ -25,18 +26,20 @@ module Lain
         # @param root [#to_s] the project's root, whose basename titles the feed entry
         # @param paths [Paths] where the user's `attention` table is read from
         # @param env [#[]] the chat process's environment
-        # @param focus [#focused?] whether the human is at the chat's window
+        # @param herdr [#focus, #notes] answers whether the human is at the chat's window, and the chat's own
+        #   notes line, where a failing notify-feed is named
         # @param clock [#now] the notices' clock; a spec hands in its own
         # @return [Attention, Immediate]
-        def self.for(agent_states, switchboard, root:, paths:, focus:, env: ENV, clock: Time)
+        def self.for(agent_states, switchboard, root:, paths:, herdr:, env: ENV, clock: Time)
           secrets = switchboard.guard_inputs.secrets
-          return Immediate.new(secrets:, root:, env:) unless agent_states
+          return Immediate.new(secrets:, root:, env:, notes: herdr.notes) unless agent_states
 
-          new(agent_states:, secrets:, root:, delay: Config.attention(paths:).delay, env:, focus:, clock:,
+          new(agent_states:, secrets:, root:, delay: Config.attention(paths:).delay, env:, focus: herdr.focus, clock:,
+              notes: herdr.notes,
               layers: switchboard.mode_switch.method(:layers))
         end
 
-        def initialize(agent_states:, secrets:, root:, delay:, layers:, env:, focus:, clock:)
+        def initialize(agent_states:, secrets:, root:, delay:, layers:, env:, focus:, clock:, notes:)
           @agent_states = agent_states
           @secrets = secrets
           @root = root
@@ -45,9 +48,12 @@ module Lain
           @env = env
           @focus = focus
           @clock = clock
+          @notes = notes
         end
 
-        def notifier = @notifier ||= Frontend::TTY::Notifier.for_chat(@secrets, @root, env: @env, deferred: true)
+        def notifier
+          @notifier ||= Frontend::TTY::Notifier.for_chat(@secrets, @root, env: @env, deferred: true, notes: @notes)
+        end
 
         def notices
           @notices ||= AgentStates::Notices.new(tracker: @agent_states, notifier:, focus: @focus, delay: @delay,

@@ -68,6 +68,31 @@ RSpec.describe Lain::CLI::Todos do
     end
   end
 
+  describe ".runner" do
+    it "builds its notices over the sink it is given", :seam do
+      system(SeedRepo::SCRUB, "git", "-C", @dir, "init", "-q", exception: true)
+      allow(Lain::Notices).to receive(:for).and_call_original
+
+      described_class.runner(project:, paths:, lain: "exe/lain", max_cost: 1, sink:)
+
+      expect(Lain::Notices).to have_received(:for).with(env: ENV, notes: sink)
+    end
+  end
+
+  describe "lain todos drain" do
+    it "builds its runner over the command's stdout", :seam do
+      system(SeedRepo::SCRUB, "git", "-C", @dir, "init", "-q", exception: true)
+      File.write(file, "# Chores\n")
+      allow(described_class).to receive(:runner).and_call_original
+
+      with_env("XDG_STATE_HOME" => File.join(@dir, "state")) do
+        Dir.chdir(@dir) { expect { LainCLI::Todos.start(["drain"], debug: true) }.to raise_error(SystemExit) }
+      end
+
+      expect(described_class).to have_received(:runner).with(hash_including(sink: $stdout))
+    end
+  end
+
   describe "#status" do
     let(:body) { "- [ ] open one\n- [x] done one\n- [!] failed one\n- [ ] claimed one\n" }
 

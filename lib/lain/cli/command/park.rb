@@ -10,9 +10,10 @@ module Lain
         TOKEN = "lain_parked"
 
         # @param root [String] the project root, whose basename titles the feed entry
+        # @param notes [#puts] where a failing feed is named
         # @param env [#[]] searched for `notify-feed` when no feed is handed in
         # @param feed [#call] takes source, title and body ({Notices::Feed})
-        def initialize(root:, env: ENV, feed: Notices.for(env:))
+        def initialize(root:, notes:, env: ENV, feed: Notices.for(env:, notes:))
           @title = File.basename(root.to_s)
           @feed = feed
           freeze

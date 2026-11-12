@@ -45,12 +45,14 @@ module Lain
         #
         # @param secrets [#to_a] answers the secret values known right now
         # @param project [#to_s] the project's root, whose basename is the feed title
+        # @param notes [#puts] where a failing feed is named
         # @param env [#[]] the chat process's environment
         # @param output [#print, #flush] where the sequence is written
         # @param deferred [Boolean] see {.for}
-        def self.for_chat(secrets, project, env: ENV, output: $stdout, deferred: false)
+        def self.for_chat(secrets, project, notes:, env: ENV, output: $stdout, deferred: false)
           mask = ->(text) { Sensitivity::TextMask.text(text, secrets:) }
-          self.for(env:, feed: Notices.for(env:), project: File.basename(project.to_s), mask:, output:, deferred:)
+          feed = Notices.for(env:, notes:)
+          self.for(env:, feed:, project: File.basename(project.to_s), mask:, output:, deferred:)
         end
 
         def self.sequence_for(env)

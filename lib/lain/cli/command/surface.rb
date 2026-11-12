@@ -57,8 +57,7 @@ module Lain
           @configured = middleware
           @window = window
           @goal_driver = goal_driver
-          @root = root
-          @cwd = cwd
+          seat(root:, cwd:, herdr:)
           @rail = rail
           @library = library
           @ledger = ledger
@@ -74,6 +73,13 @@ module Lain
         end
 
         attr_reader :env, :goal_driver
+
+        def seat(root:, cwd:, herdr:)
+          @root = root
+          @cwd = cwd
+          @notes = herdr.notes
+        end
+        private :seat
 
         # The run's ONE open changeset review: `/review` puts the round it opened
         # in, `/review-submit` takes it out and posts it. Memoized because two
@@ -215,8 +221,8 @@ module Lain
         # sibling opened at its head (`/fork`), and the turns compaction must
         # keep (`/pin`, `/unpin`, `/keep`).
         def history_commands
-          [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new, Park.new(root: @root),
-           ResumeSession.new(dir: Paths.new.filing_dir(root: @root))]
+          [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new,
+           Park.new(root: @root, notes: @notes), ResumeSession.new(dir: Paths.new.filing_dir(root: @root))]
         end
 
         # The commands of one review: `/review` and `/survey` each open a round

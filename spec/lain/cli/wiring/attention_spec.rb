@@ -30,9 +30,11 @@ RSpec.describe Lain::CLI::Wiring::Attention do
      telemetry::AskSettled.new(head: "blake3:#{"f" * 64}", stop_reason: "end_turn", turns: 1, seconds: 1.0)]
   end
 
+  let(:herdr) { Struct.new(:focus, :notes).new(window, Lain::Sink::Null.new) }
+
   def attention(agent_states)
     allow(Lain::Notices).to receive(:for).and_return(->(*args) { fed << args })
-    described_class.for(agent_states, switchboard, root: "/work/demo", paths:, env: {}, focus: window, clock:)
+    described_class.for(agent_states, switchboard, root: "/work/demo", paths:, env: {}, herdr:, clock:)
   end
 
   context "with no tracker" do
@@ -52,6 +54,12 @@ RSpec.describe Lain::CLI::Wiring::Attention do
       expect([fed, output.string]).to eq([[], ""])
     end
 
+    it "names a failing feed on the herdr binding's notes" do
+      attention(tracker).notifier
+
+      expect(Lain::Notices).to have_received(:for).with(env: {}, notes: herdr.notes)
+    end
+
     it "builds one notifier, shared with the notices" do
       subject = attention(tracker)
 
@@ -67,6 +75,25 @@ RSpec.describe Lain::CLI::Wiring::Attention do
       notices.tick
 
       expect([window.asked, fed]).to eq([true, [["lain", "demo", "done: main"]]])
+    end
+  end
+
+  context "when the machine's notify-feed fails", :seam do
+    it "says so once on the chat's own notes line" do
+      bin = Dir.mktmpdir("lain-attention-bin")
+      File.write(File.join(bin, "notify-feed"), "#!/bin/sh\nexit 1\n")
+      File.chmod(0o755, File.join(bin, "notify-feed"))
+      lines = []
+      notes = Lain::Herdr::HeldNotes.new.bind(lines.method(:push))
+
+      herdr = Struct.new(:focus, :notes).new(window, notes)
+      notifier = described_class.for(nil, switchboard, root: "/work/demo", paths:, env: { "PATH" => bin }, herdr:)
+                                .notifier.bound_to(output)
+      2.times { notifier.call("hello") }
+
+      expect(lines).to eq(["#{File.join(bin, "notify-feed")} exited 1"])
+    ensure
+      FileUtils.remove_entry(bin)
     end
   end
 end

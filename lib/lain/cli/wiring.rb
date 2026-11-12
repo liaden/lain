@@ -374,7 +374,7 @@ module Lain
           **Frontend::Theme.on_stdout(paths: @paths).terminal }
       end
 
-      def attention = @attention ||= Attention.for(@agent_states, @switchboard, root:, paths:, focus: @herdr.focus)
+      def attention = @attention ||= Attention.for(@agent_states, @switchboard, root:, paths:, herdr: @herdr)
 
       # An Enumerator, so the names are read when completion is first asked, after the command surface exists.
       def typed_names = Enumerator.new { |names| command_names.each { |name| names << name } }

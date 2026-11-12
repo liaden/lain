@@ -50,12 +50,22 @@ RSpec.describe Lain::CLI::Command::Surface do
   it "hands the herdr binding's reporter and window surface to the env its commands read" do
     reporter = Object.new
     window_surface = Object.new
-    herdr = Struct.new(:reporter, :window_surface).new(reporter, window_surface)
+    herdr = Struct.new(:reporter, :window_surface, :notes).new(reporter, window_surface, Lain::Sink::Null.new)
 
     env = build_surface(Dir.pwd, herdr:).env
 
     expect(env.reporter).to be(reporter)
     expect(env.tmux_surface).to be(window_surface)
+  end
+
+  it "gives /park the herdr binding's notes, where a failing feed is named" do
+    notes = Lain::Herdr::HeldNotes.new
+    herdr = Struct.new(:reporter, :window_surface, :notes).new(Object.new, Object.new, notes)
+    allow(Lain::Notices).to receive(:for).and_call_original
+
+    build_surface(Dir.pwd, herdr:).commands
+
+    expect(Lain::Notices).to have_received(:for).with(env: ENV, notes:)
   end
 
   it "gets tmux windows and no reporting when built without a launch" do

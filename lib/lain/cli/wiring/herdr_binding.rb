@@ -28,10 +28,16 @@ module Lain
 
           # @return [Herdr::Reporter::Null]
           def reporter = Herdr::Reporter::Null.new
+
+          # @return [Sink::Null]
+          def notes = Sink::Null.new
         end
 
         # @return [Herdr::Reporter]
         attr_reader :reporter
+
+        # @return [HeldNotes] the chat's own notes line, shown on the terminal's warning line once it is built
+        attr_reader :notes
 
         # @param notes [HeldNotes] the sink the resolver and the reporter write to
         # @param reporter [Herdr::Reporter]

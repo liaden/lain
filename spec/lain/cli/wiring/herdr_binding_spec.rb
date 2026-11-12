@@ -53,7 +53,7 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
 
   def build_terminal(binding, secrets)
     built = binding.tty_factory(->(**) { tty })
-    built.call(tmux: Lain::Frontend::TTY::Notifier.for_chat(secrets, root, env: {}, output: StringIO.new))
+    built.call(tmux: Lain::Frontend::TTY::Notifier.for_chat(secrets, root, env: {}, output: StringIO.new, notes:))
   end
 
   def report(subject, summary)
@@ -97,6 +97,14 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
 
     expect(described_class.new(notes:, reporter: subject, resolver: nobody).reporter).to be(subject)
     expect(described_class::Null.new.reporter).to eq(Lain::Herdr::Reporter::Null.new)
+  end
+
+  it "hands back the notes it was built with, which a terminal it builds then says" do
+    binding = described_class.new(notes:, reporter: reporter(stub_herdr), resolver: nobody)
+    build_terminal(binding, [])
+    binding.notes.puts("notify-feed exited 1")
+
+    expect(screen).to eq(["notify-feed exited 1"])
   end
 
   describe "#focus" do

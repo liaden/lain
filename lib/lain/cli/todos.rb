@@ -13,12 +13,13 @@ module Lain
       # @param paths [Paths]
       # @param lain [String] the `exe/lain` each chore's chat runs from
       # @param max_cost [Numeric] each chat's --max-cost, in dollars
+      # @param sink [#puts] where a failing notify-feed is named
       # @return [Chores::Runner] confined in a clone lease per item, landing through the project's merge coordinator
-      def self.runner(project:, paths:, lain:, max_cost:)
+      def self.runner(project:, paths:, lain:, max_cost:, sink:)
         ::Lain::Chores::Runner.new(
           queue: queue_for(project, paths),
           backend: IsolationBackend.resolve("worktree", root: project.root, paths:), lain:, max_cost:, paths:,
-          land: ->(lease) { Land.new(cwd: lease, paths:) }, notices: ::Lain::Notices.for
+          land: ->(lease) { Land.new(cwd: lease, paths:) }, notices: ::Lain::Notices.for(env: ENV, notes: sink)
         )
       end
 
