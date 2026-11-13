@@ -93,6 +93,17 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
     expect(described_class.new(root:, policy:).to_a).to include("correct horse battery")
   end
 
+  # The files on disk are listed as the mask list lists them, over a tree a sandboxed call wrote.
+  it "runs no fsmonitor the checkout's config names while it lists the files on disk" do
+    seed_deleted("ADMIN_PIN=48291377\n")
+    marker = File.join(@base, "fsmonitor-ran")
+    git("config", "core.fsmonitor", "touch #{marker}; false")
+    File.write(File.join(root, ".env.local"), "GREETING=correct horse battery\n")
+
+    expect(described_class.new(root:, policy:).to_a).to include("correct horse battery")
+    expect(File.exist?(marker)).to be(false)
+  end
+
   # A commondir a call plants after the reader was built names refs the clone does not hold; only the clone's
   # own git dir decides which history is read.
   it "reads only a clone's own refs, never those a planted commondir names" do

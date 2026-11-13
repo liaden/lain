@@ -228,12 +228,12 @@ RSpec.describe Lain::Approval::Judgement, :seam do
       expect(judged("grep -Rn needle tree", masks: masking).reason).to eq(:protected_target)
     end
 
-    it "does not weigh it when the mask list's listing failed, so it masks nothing" do
+    it "weighs it when the mask list's listing failed, since a walk masks it" do
       File.write(File.join(tree, ".env"), "TOKEN=1\n")
       failing = Lain::Confine::MaskList.new(root:, policy: -> { policy }, shell_out: ->(*, **) { raise Errno::ENOENT })
 
-      expect(judged("grep -rn needle tree", masks: described_class::Masking.new(failing)).reason)
-        .to eq(:protected_target)
+      expect(judged("grep -rn needle tree", masks: described_class::Masking.new(failing)))
+        .to be_a(described_class::Weighable)
     end
 
     # The sandbox hides the file on disk, never the index or an object a rev-path reads.
@@ -252,24 +252,41 @@ RSpec.describe Lain::Approval::Judgement, :seam do
     end
   end
 
-  it "does not weigh a grep over a secret in a project that is not a repository, which the mask cannot list" do
-    plain = File.join(@base, "plain")
-    FileUtils.mkdir_p(File.join(plain, "tree"))
-    File.write(File.join(plain, "tree", ".env"), "TOKEN=1\n")
-    unlisted = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: plain, root: plain),
-                                             home:, root: plain)
-    within = Data.define(:worker_env).new(worker_env: Lain::WorkerEnv.new(cwd: plain, env: {}))
-    effect = bash("grep -rn needle tree")
+  describe "a grep over a secret in a project that is not a repository" do
+    let(:plain) { File.join(@base, "plain") }
+    let(:unlisted) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: plain, root: plain),
+                                    home:, root: plain)
+    end
+    let(:plain_list) { Lain::Confine::MaskList.new(root: plain, policy: -> { unlisted }) }
 
-    judgement = described_class.of(
-      effect, bounds: Lain::Sensitivity::Policy.confined_at(unlisted, within),
-              named: Lain::Shell::Named.for_call(effect, within, home:),
-              facts: -> { Lain::Approval::Judge::Facts::NONE },
-              masks: described_class::Masking.new(Lain::Confine::MaskList.new(root: plain, policy: -> { unlisted })),
-              verdict: ->(path) { unlisted.judge(path, cwd: plain) }
-    )
+    before do
+      FileUtils.mkdir_p(File.join(plain, "tree"))
+      File.write(File.join(plain, "tree", ".env"), "TOKEN=1\n")
+    end
 
-    expect(judgement.reason).to eq(:protected_target)
+    def judged_in_plain
+      within = Data.define(:worker_env).new(worker_env: Lain::WorkerEnv.new(cwd: plain, env: {}))
+      effect = bash("grep -rn needle tree")
+      described_class.of(
+        effect, bounds: Lain::Sensitivity::Policy.confined_at(unlisted, within),
+                named: Lain::Shell::Named.for_call(effect, within, home:),
+                facts: -> { Lain::Approval::Judge::Facts::NONE },
+                masks: described_class::Masking.new(plain_list),
+                verdict: ->(path) { unlisted.judge(path, cwd: plain) }
+      )
+    end
+
+    it "is weighed, since a walk masks the secret" do
+      expect(judged_in_plain).to be_a(described_class::Weighable)
+    end
+
+    it "is not weighed when the walk fails too, so nothing is masked" do
+      allow(Dir).to receive(:children).and_call_original
+      allow(Dir).to receive(:children).with(plain).and_raise(Errno::EACCES)
+
+      expect(judged_in_plain.reason).to eq(:protected_target)
+    end
   end
 
   it "does not weigh a walk past its bound, and asks for no facts" do

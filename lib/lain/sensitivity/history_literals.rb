@@ -63,7 +63,8 @@ module Lain
         # Bytes, as git lists a name, so a name and the root always join.
         @root = root.b
         @policy = policy
-        @git = Isolation::Checkout.of(root, shell_out_factory: ->(*argv, **opts) { shell.call(*argv, clock:, **opts) })
+        @shell_out = ->(*argv, **opts) { shell.call(*argv, clock:, **opts) }
+        @git = Isolation::Checkout.of(root, shell_out_factory: @shell_out)
         @lock = Mutex.new
         @fingerprint = nil
         @sensitive = {}
@@ -169,8 +170,8 @@ module Lain
       end
 
       def on_disk
-        listed = run("ls-files", "-z", "-co", "--", ".", *Confine::MaskList::EXCLUDES)
-        listed && listed.split("\0").map { File.join(@root, _1) }.select { sensitive?(_1) }.uniq.freeze
+        listed = Confine::MaskList::Listing.of(@root, @shell_out)
+        listed && listed.map { File.join(@root, _1) }.select { sensitive?(_1) }.uniq.freeze
       end
 
       def values_of(repository, objects)

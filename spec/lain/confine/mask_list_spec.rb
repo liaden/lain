@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "timeout"
 require "tmpdir"
 
@@ -87,11 +88,63 @@ RSpec.describe Lain::Confine::MaskList, :seam do
     expect(paths).to be_empty
   end
 
-  it "reads nothing from a directory that is not a repository" do
-    write(".env")
-    list = described_class.new(root: @base, policy: -> { policy })
+  describe "a project whose listing does not answer" do
+    let(:plain) { File.join(@base, "plain").tap { FileUtils.mkdir_p(File.join(_1, "config")) } }
+    let(:plain_policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: File.join(@base, "home"), cwd: plain))
+    end
 
-    expect(list.masks).to be_empty
+    let(:gitless) do
+      lambda do |*argv, **opts|
+        Lain::Shell::Out.new(*(argv.first == "git" ? ["/nonexistent/git", *argv.drop(1)] : argv), **opts)
+      end
+    end
+
+    def plant(dir)
+      FileUtils.mkdir_p(File.join(dir, "config"))
+      %w[.env config/master.key README.md].each { File.write(File.join(dir, _1), "x\n") }
+    end
+
+    it "masks the secrets of a directory that is not a repository" do
+      plant(plain)
+
+      masks = described_class.new(root: plain, policy: -> { plain_policy }).masks.map(&:path)
+
+      expect(masks).to contain_exactly(File.join(plain, ".env"), File.join(plain, "config", "master.key"))
+    end
+
+    it "masks every path the policy gates when git is missing from PATH" do
+      write(".gitignore", ".env\nconfig/master.key\n")
+      plant(root)
+      expected = paths
+
+      masks = described_class.new(root:, policy: -> { policy }, shell_out: gitless).masks.map(&:path)
+
+      expect([masks, expected]).to match([match_array(expected), include(File.join(root, ".env"))])
+    end
+
+    # git's own excludes skip them, so the walk standing in for git skips them too; the policy
+    # drops a mask inside .git, so only the names it is asked about show the .git walk.
+    it "walks neither the top-level .git nor a top-level .venv when git is missing from PATH" do
+      %w[.git .venv].each { FileUtils.mkdir_p(File.join(root, _1)) }
+      %w[.env .git/.env .venv/.env].each { write(_1) }
+
+      masks = described_class.new(root:, policy: -> { recording }, shell_out: gitless).masks.map(&:path)
+
+      expect([masks, asked.flatten.grep(/\A\.(git|venv)/)]).to eq([[File.join(root, ".env")], []])
+    end
+
+    it "keeps the masks it has when the walk cannot read the root either" do
+      plant(plain)
+      FileUtils.mkdir_p(File.join(plain, "deep", "a"))
+      File.write(File.join(plain, "deep", "a", ".env"), "x\n")
+      walked = described_class.new(root: plain, policy: -> { plain_policy })
+      before = walked.masks.map(&:path)
+      allow(Dir).to receive(:children).and_call_original
+      allow(Dir).to receive(:children).with(plain).and_raise(Errno::EACCES)
+
+      expect([walked.masks.map(&:path), before]).to match([before, include(File.join(plain, "deep", "a", ".env"))])
+    end
   end
 
   it "masks a new secret from the next ask on" do
@@ -295,8 +348,10 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       expect(flaky.masks.map(&:path)).to eq([File.join(root, ".env")])
     end
 
-    it "unlists every related directory when the project's own listing fails" do
+    it "keeps a related repository readable when the project's own listing fails, since a walk masks the project" do
       SeedRepo.git(sibling, "init", "-q")
+      hidden = secret(sibling)
+      write(".env")
       failing = false
       shell_out = lambda do |*argv, **opts|
         failing && argv.include?(root) ? raise(Lain::Shell::Out::Timeout) : Lain::Shell::Out.new(*argv, **opts)
@@ -306,7 +361,8 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
       failing = true
 
-      expect(related_after_masks(flaky).roots).to eq([])
+      expect(related_after_masks(flaky)).to have_attributes(roots: [sibling], masks: [having_attributes(path: hidden)])
+      expect(flaky.masks.map(&:path)).to eq([File.join(root, ".env")])
     end
 
     it "masks each directory below a pruned one whole, since the listing does not look inside it" do
@@ -1037,6 +1093,58 @@ RSpec.describe Lain::Confine::MaskList, :seam do
           expect(coarse.masks.map(&:path)).to eq([secret])
         end
       end
+    end
+  end
+
+  describe "a workspace call over a project that is not a git repository" do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+      skip("bwrap cannot make a user namespace on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+    end
+
+    # Under $HOME, as the workspace profile refuses a TMPDIR that holds home.
+    around do |example|
+      Dir.mktmpdir("lain-unlisted", Dir.tmpdir.start_with?("#{Dir.home}/") ? Dir.tmpdir : Dir.home) do |dir|
+        @plain = File.realpath(dir)
+        FileUtils.mkdir_p([File.join(@plain, "p", "config"), File.join(@plain, "t")])
+        example.run
+      end
+    end
+
+    def project = File.join(@plain, "p")
+
+    def listed_masks
+      plain_policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: Dir.home, cwd: project))
+      described_class.new(root: project, policy: -> { plain_policy }).masks.map(&:path)
+    end
+
+    def confined(*argv)
+      masks = listed_masks
+      profile = Lain::Confine::Profile.workspace(root: project, home: Dir.home, tmpdir: File.join(@plain, "t"), masks:)
+      wrapped = Lain::Confine::Bwrap.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3)
+      run(wrapped.stages.first.argv)
+    end
+
+    def run(argv)
+      reader, writer = IO.pipe
+      out, err, status = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: project, 3 => writer)
+      [out, err, status.success?]
+    ensure
+      writer&.close
+      reader&.close
+    end
+
+    it "keeps the child from reading .env, and lets it read an ordinary file" do
+      File.write(File.join(project, ".env"), "SECRET=1\n")
+      File.write(File.join(project, "config", "master.key"), "KEY\n")
+      File.write(File.join(project, "README.md"), "the readme\n")
+
+      expect([confined("cat", ".env"), confined("cat", "README.md")])
+        .to match([["", /No such file|Permission denied/, false], ["the readme\n", "", true]])
     end
   end
 end

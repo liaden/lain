@@ -5,7 +5,8 @@ require "find"
 module Lain
   module Confine
     # The files or directories a sandbox hides from a command, kept current for a session whose
-    # tree changes under it. Listing is one `git ls-files` per ask; classifying
+    # tree changes under it. Listing is one `git ls-files` per ask, or where git
+    # does not answer, the project's own entries with a walk beneath each; classifying
     # is the slow part, so only a name that is new, or whose file changed
     # identity since it was classified, is classified. A swap keeps the name,
     # so the listing alone cannot see a plain file become a link to a secret.
@@ -15,8 +16,9 @@ module Lain
     # leave its mtime and ctime unchanged, as NFS and overlayfs may, is not covered.
     #
     # Not covered: anything in or under a `.venv`, `venv`, `__pycache__`, `.tox`,
-    # `.mypy_cache` or `.pytest_cache` directory at any depth, the directory
-    # itself included. Nor files below the top level of a tmp, vendor, target or
+    # `.mypy_cache` or `.pytest_cache` directory, the directory itself included:
+    # at any depth where git lists, but only at the top level where the walk
+    # stands in, so a deeper one is walked and masked. Nor files below the top level of a tmp, vendor, target or
     # node_modules directory at any depth, whether reached by name or through
     # a link, and a nested repo there included. Their own top-level files are
     # listed. Nor what lies beneath a link out of the root. A 2,000-level tree
@@ -45,6 +47,28 @@ module Lain
 
       Related = Data.define(:roots, :masks, :reads, :execs)
 
+      # A project's names as git lists them, for every reader of a project's files, over a tree a sandboxed call
+      # wrote. No `--exclude-standard`: the secrets a mask exists for are usually the ignored ones.
+      module Listing
+        # @param root [String] absolute
+        # @param shell_out [#call] `(*argv, **opts) -> Shell::Out`
+        # @return [Array<String>, nil] binary names relative to the root; nil when git did not answer
+        def self.of(root, shell_out)
+          shell = git(root, shell_out, "ls-files", "-z", "-co", "--", ".", *EXCLUDES)
+          Shell::Out.ok?(shell) ? shell.stdout.b.split("\0").uniq : nil
+        rescue Shell::Out::Timeout, SystemCallError
+          nil
+        end
+
+        # No fsmonitor a checkout's config names runs, and a clone lain cut is read only through its own git dir.
+        #
+        # @return [Shell::Out, Isolation::Checkout::Done]
+        def self.git(root, shell_out, *argv)
+          Isolation::Checkout.of(root, shell_out_factory: shell_out)
+                             .run(*argv, timeout: TIMEOUT, pins: Isolation::Checkout::FSMONITOR_OFF)
+        end
+      end
+
       # What a call may read beyond the project, answered as 1 value so no
       # refresh can fall between a root and its masks. `reads` are the
       # session's read roots: no listing stands behind them, because a call
@@ -65,7 +89,7 @@ module Lain
         @policy = policy
         @shell_out = shell_out
         @stat = stat
-        @project = Tree.new(root, shell_out, stat:)
+        @project = Tree.new(root, shell_out, stat:, walks_unlisted: true)
         @priming = nil
         @related = {}
       end
@@ -468,17 +492,21 @@ module Lain
       # One root's listing and the masks judged from it. A failed listing keeps
       # the last masks, since an empty set would unmask everything, and says
       # it was not listed, which is what keeps a related directory unread.
+      # The project's own tree walks instead, as its root is read whatever its
+      # listing says, so a project git cannot list is masked rather than bared.
       class Tree
         # @param root [String] absolute
         # @param shell_out [#call]
         # @param stat [#call] how a directory read for names is stamped
         # @param whole_pruned [Boolean] whether each directory the prune skips is masked whole
-        def initialize(root, shell_out, stat:, whole_pruned: false)
+        # @param walks_unlisted [Boolean] whether the root's entries stand in for a listing git did not answer
+        def initialize(root, shell_out, stat:, whole_pruned: false, walks_unlisted: false)
           # Bytes, as git lists a name and Linux holds one, so a name and the root always join.
           @root = root.b
           @shell_out = shell_out
           @stat = stat
           @whole_pruned = whole_pruned
+          @walks_unlisted = walks_unlisted
           @state = State.new(identities: {}, masks: {}, stamps: Stamps.new(Time.at(0), {}), leaves: {})
           @pruned = []
           @listed = false
@@ -567,11 +595,12 @@ module Lain
           end
         end
 
-        # No `--exclude-standard`: the secrets a mask exists for are usually the ignored ones.
-        def listing
-          shell = git("ls-files", "-z", "-co", "--", ".", *EXCLUDES)
-          Shell::Out.ok?(shell) ? shell.stdout.b.split("\0").uniq : nil
-        rescue Shell::Out::Timeout, SystemCallError
+        def listing = Listing.of(@root, @shell_out) || (entries if @walks_unlisted)
+
+        # {Beneath} walks each directory among them, as it walks a nested repo git lists as 1 leaf.
+        def entries
+          Dir.children(@root).reject { _1 == Beneath::GIT_DIR || PRUNED_WHOLE.include?(_1) }.sort.map(&:b)
+        rescue SystemCallError
           nil
         end
 
@@ -603,12 +632,7 @@ module Lain
           nil
         end
 
-        # Run before every call, outside the sandbox, in a tree the last call wrote: no fsmonitor its config
-        # names runs, and a clone lain cut is read only through its own git dir.
-        def git(*, **)
-          Isolation::Checkout.of(@root, shell_out_factory: @shell_out)
-                             .run(*, timeout: TIMEOUT, pins: Isolation::Checkout::FSMONITOR_OFF, **)
-        end
+        def git(*) = Listing.git(@root, @shell_out, *)
       end
       private_constant :Tree
     end

@@ -40,7 +40,8 @@ module Lain
 
       # The workspace profile's sandbox around a call, read off the session's
       # mask list: what it hides is what the list masks when asked, as the
-      # sandbox asks it, so a project the list cannot list hides nothing.
+      # sandbox asks it. A project git cannot list is walked instead; one the
+      # walk cannot read either hides only what an earlier ask masked.
       class Masking
         # @param list [#masks] the session's {Confine::MaskList}
         def initialize(list)
