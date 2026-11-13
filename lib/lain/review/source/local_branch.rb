@@ -96,6 +96,7 @@ module Lain
         # @return [Array<Commit>] oldest-first, each carrying its own numstat.
         #   One subprocess for the whole walk: at the 810-file changeset §3.7
         #   measured, a `git show` per commit would be the dominant cost.
+        # @raise [Isolation::Checkout::Failed] as {#diff} does
         def commits = @commits ||= parse_log(log_output).freeze
 
         # One file, as one revision holds it -- the only port message that

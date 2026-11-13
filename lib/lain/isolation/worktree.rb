@@ -82,6 +82,18 @@ module Lain
         "GIT_CONFIG_PARAMETERS" => nil, "GIT_CONFIG_COUNT" => nil
       }.freeze
 
+      # In a partial clone a read that meets a missing object fetches it through
+      # the program the repository's own `remote.<name>.uploadpack` names, so a
+      # cloned repository could run code through lain's reads; with this set the
+      # read fails instead. Only lain's own git gets it: a project's checks and
+      # suite run under the bare scrub, and may fetch as their author's do.
+      NO_LAZY_FETCH = { "GIT_NO_LAZY_FETCH" => "1" }.freeze
+
+      # The env every git lain spawns runs under, but for 4 sites that merge only {NO_LAZY_FETCH}: an approval
+      # asks git what a model's command would see (ComposedTerm::Repository, Judgement, LeaseCommit), and the
+      # shadow repository keeps the user's global config, so each scrubs to its own rule rather than this one.
+      GIT_SPAWN_ENV = GIT_CONTEXT_SCRUB.merge(NO_LAZY_FETCH).freeze
+
       # Where leftovers are moved aside, under the worktree root so the reaper
       # finds them with everything else it owns.
       RETAINED = "retained"

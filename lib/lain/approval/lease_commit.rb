@@ -136,7 +136,7 @@ module Lain
       # A gitlink needs no repository beneath it to be one `commit -a` stages.
       def no_gitlink?(clone, git, env)
         options = { chdir: clone, unsetenv_others: true, err: File::NULL }
-        out, status = Open3.capture2(env, git.resolved, *INDEX_ASKS, **options)
+        out, status = Open3.capture2(asking(env), git.resolved, *INDEX_ASKS, **options)
         status.success? && out.split("\0").none? { _1.start_with?(GITLINK) }
       rescue SystemCallError
         false
@@ -164,6 +164,9 @@ module Lain
         @child_env.environment.merge(@child_env.call(lent)).compact
       end
 
+      # Set only on lain's own asks, after the env lent to the commit was judged free of `GIT_*`.
+      def asking(env) = env.merge(Isolation::Worktree::NO_LAZY_FETCH)
+
       def git_env_free?(env)
         env.none? do |name, value|
           name.match?(GIT_ENV) && !USER_CONFIG_ENV.include?(name) && Isolation::SelfSync::EDITORLESS[name] != value
@@ -184,7 +187,7 @@ module Lain
       # A driver runs over every file an attribute selects, and attributes are tracked files the chat can write.
       def no_filter?(git, env, landing)
         options = { chdir: landing, unsetenv_others: true, err: File::NULL }
-        _out, status = Open3.capture2(env, git.resolved, *FILTER_ASKS, **options)
+        _out, status = Open3.capture2(asking(env), git.resolved, *FILTER_ASKS, **options)
         status.exitstatus == NO_MATCH
       rescue SystemCallError
         false
@@ -212,7 +215,7 @@ module Lain
         return true if configs.none? { File.exist?(_1) }
 
         options = { chdir: landing, unsetenv_others: true, err: File::NULL }
-        out, status = Open3.capture2(env, git.resolved, *CONFIG_ASKS, **options)
+        out, status = Open3.capture2(asking(env), git.resolved, *CONFIG_ASKS, **options)
         status.success? && origins(out, landing).all? { configs.include?(_1) }
       rescue SystemCallError
         false

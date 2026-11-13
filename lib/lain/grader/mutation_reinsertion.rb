@@ -52,8 +52,8 @@ module Lain
       # The runs behind the seal, kept private because only the grader above builds them.
       class Runs
         # No GIT_DIR or index from a hook, no user or system config; `git apply` needs no repository.
-        GIT_ENV = Isolation::Worktree::GIT_CONTEXT_SCRUB.merge("GIT_CONFIG_GLOBAL" => File::NULL,
-                                                               "GIT_CONFIG_NOSYSTEM" => "1").freeze
+        GIT_ENV = Isolation::Worktree::GIT_SPAWN_ENV.merge("GIT_CONFIG_GLOBAL" => File::NULL,
+                                                           "GIT_CONFIG_NOSYSTEM" => "1").freeze
         APPLY_TIMEOUT = 30
         DEFAULT_PATTERN = "**/*_spec.rb"
         PATTERN_FLAGS = %w[--pattern -P].freeze

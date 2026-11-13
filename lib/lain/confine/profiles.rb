@@ -535,7 +535,7 @@ module Lain
         def read_configs(root)
           return [] unless Isolation::Clone::Guard.refusal(root).empty?
 
-          out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *CONFIG_ASKS,
+          out, status = Open3.capture2(Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, *CONFIG_ASKS,
                                        err: File::NULL)
           status.success? ? out.split("\0").each_slice(2).to_a : []
         rescue SystemCallError

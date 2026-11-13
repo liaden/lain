@@ -613,6 +613,27 @@ RSpec.describe Lain::Review::Source::LocalBranch, :seam do
     end
   end
 
+  # lain's git refuses the lazy fetch, so a partial clone that never fetched the changeset's files cannot diff it.
+  describe "a partial clone that never fetched the changeset's files" do
+    subject(:partial) { described_class.new(base: "origin/base", head: "origin/feature", repo_root: clone) }
+
+    let(:clone) { File.join(@root, "clone") }
+    let(:names_the_fix) { /partial clone.*git fetch --refetch.*full clone/m }
+
+    before do
+      run_git("config", "uploadpack.allowFilter", "true")
+      SeedRepo.git(@root, "clone", "-q", "--no-checkout", "--filter=blob:none", "file://#{@repo}", clone)
+    end
+
+    it "refuses the diff naming the partial clone and how to make it whole, rather than reviewing nothing" do
+      expect { partial.diff }.to raise_error(Lain::Error, names_the_fix)
+    end
+
+    it "refuses the commit walk the same way" do
+      expect { partial.commits }.to raise_error(Lain::Error, names_the_fix)
+    end
+  end
+
   describe "a binary file in the walk" do
     before { add_binary }
 

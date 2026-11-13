@@ -383,6 +383,22 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
     end
   end
 
+  # lain's git refuses the lazy fetch, so a lease whose tip's files were never fetched cannot be cut.
+  describe "a lease from a partial clone that never fetched the tip's files" do
+    it "is refused naming the partial clone and how to make it whole" do
+      Dir.mktmpdir("lain-partial") do |dir|
+        clone = File.join(File.realpath(dir), "clone")
+        SeedRepo.git(@repo_root, "config", "uploadpack.allowFilter", "true")
+        SeedRepo.git(dir, "clone", "-q", "--no-checkout", "--filter=blob:none", "file://#{@repo_root}", clone)
+        partial = described_class.new(repo_root: clone, root: @root,
+                                      base: Lain::Isolation::WorkingBranch.checked_out(repo_root: clone))
+
+        expect { partial.acquire("worker-1") }
+          .to raise_error(described_class::Refused, /partial clone.*git fetch --refetch.*full clone/m)
+      end
+    end
+  end
+
   describe "GIT_CONTEXT_SCRUB" do
     let(:repository_locating) do
       %w[GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_PREFIX GIT_COMMON_DIR GIT_OBJECT_DIRECTORY

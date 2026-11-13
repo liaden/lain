@@ -64,7 +64,7 @@ module Lain
 
         def self.environment
           dropped = ENV.keys.grep(GIT_ENV).reject { KEPT_ENV.include?(_1) }
-          dropped.to_h { [_1, nil] }.merge("GIT_OPTIONAL_LOCKS" => "0")
+          dropped.to_h { [_1, nil] }.merge("GIT_OPTIONAL_LOCKS" => "0", **Isolation::Worktree::NO_LAZY_FETCH)
         end
 
         # @param directory [String] absolute, where the git stage runs

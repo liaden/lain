@@ -171,7 +171,7 @@ module Lain
         raise Refused, NO_COMMIT if head_of(@repo_root).empty?
 
         Dir.mktmpdir("lain-plan-index") do |tmp|
-          env = Worktree::GIT_CONTEXT_SCRUB.merge(IDENTITY, "GIT_INDEX_FILE" => File.join(tmp, "index"))
+          env = IDENTITY.merge("GIT_INDEX_FILE" => File.join(tmp, "index"))
           git(env, "read-tree", "HEAD")
           git(env, "add", "--update")
           tree = git(env, "write-tree")

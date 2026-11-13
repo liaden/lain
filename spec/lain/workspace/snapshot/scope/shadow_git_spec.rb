@@ -40,7 +40,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # so the specs read as the scenarios do.
   def bash(script)
     shell = Lain::Shell::Out.new("bash", "-c", script,
-                                 cwd: project, environment: described_class::GIT_CONTEXT_SCRUB)
+                                 cwd: project, environment: described_class::GIT_SPAWN_ENV)
     shell.run_command
     raise "bash -c #{script.inspect} failed: #{shell.stderr}" unless shell.exitstatus.zero?
   end
@@ -52,7 +52,7 @@ RSpec.describe Lain::Workspace::Snapshot::Scope::ShadowGit, :seam do
   # names rather than in this repository.
   def attempt_git(*argv)
     Lain::Shell::Out.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
-                         cwd: project, environment: described_class::GIT_CONTEXT_SCRUB).tap(&:run_command)
+                         cwd: project, environment: described_class::GIT_SPAWN_ENV).tap(&:run_command)
   end
 
   def git(*argv)

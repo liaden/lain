@@ -92,7 +92,7 @@ module Lain
 
       # The workspace row's root is a repository, so its call pays the git seals a chat's call in one pays.
       def git_init(dir)
-        _, status = Open3.capture2e(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "init", "-q", dir)
+        _, status = Open3.capture2e(Isolation::Worktree::GIT_SPAWN_ENV, "git", "init", "-q", dir)
         raise Error, "git init failed in #{dir}" unless status.success?
       end
 
@@ -214,7 +214,7 @@ module Lain
         #
         # @return [Confine::MaskList]
         def mask_list(root)
-          Open3.capture2e(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "init", "-q", root).last.success? or
+          Open3.capture2e(Isolation::Worktree::GIT_SPAWN_ENV, "git", "init", "-q", root).last.success? or
             raise Error, "git init failed in #{root}"
           File.write(File.join(root, ".gitignore"), ".env\n")
           100.times do |i|

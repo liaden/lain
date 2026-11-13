@@ -26,7 +26,7 @@ module Lain
         # commit they make between turns moves the baseline, and the paths the
         # agent touched stop being reported at all.
         #
-        # Every invocation SCRUBS the inherited git context ({GIT_CONTEXT_SCRUB})
+        # Every invocation SCRUBS the inherited git context ({GIT_SPAWN_ENV})
         # before setting its own. A lain launched from a git hook inherits
         # `GIT_INDEX_FILE`, `GIT_OBJECT_DIRECTORY` and friends, and each one
         # would redirect a write back into the repository being hooked: the scrub
@@ -92,11 +92,12 @@ module Lain
           # `core.bare` under us. `GIT_CONFIG_GLOBAL`/`GIT_CONFIG_SYSTEM`
           # deliberately DO NOT -- honouring the user's real global config is
           # what makes their `core.excludesFile` apply to what we capture.
-          GIT_CONTEXT_SCRUB = {
+          GIT_SPAWN_ENV = {
             "GIT_DIR" => nil, "GIT_INDEX_FILE" => nil, "GIT_WORK_TREE" => nil,
             "GIT_PREFIX" => nil, "GIT_COMMON_DIR" => nil, "GIT_NAMESPACE" => nil,
             "GIT_OBJECT_DIRECTORY" => nil, "GIT_ALTERNATE_OBJECT_DIRECTORIES" => nil,
-            "GIT_CONFIG_COUNT" => nil, "GIT_CONFIG_PARAMETERS" => nil
+            "GIT_CONFIG_COUNT" => nil, "GIT_CONFIG_PARAMETERS" => nil,
+            **Isolation::Worktree::NO_LAZY_FETCH
           }.freeze
 
           def self.for(paths:, session:) = new(paths:, session:)

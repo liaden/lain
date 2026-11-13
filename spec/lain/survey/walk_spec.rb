@@ -548,7 +548,7 @@ RSpec.describe Lain::Survey::Walk do
       described_class.new(root:, sensitivity:, shell_out_factory: factory)
 
       expect(spawned.size).to eq(1)
-      expect(spawned.first.last).to eq(environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB,
+      expect(spawned.first.last).to eq(environment: Lain::Isolation::Worktree::GIT_SPAWN_ENV,
                                        timeout: described_class::GIT_TIMEOUT)
       expect(spawned.first.first.first(3)).to eq(["git", "-C", root])
     end

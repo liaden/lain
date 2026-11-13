@@ -164,7 +164,7 @@ RSpec.describe Lain::Forge::Promotion, :seam do
 
       expect(calls).not_to be_empty
       expect(calls.map { |call| call[:kwargs][:environment] })
-        .to all(eq(Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB))
+        .to all(eq(Lain::Isolation::Worktree::GIT_SPAWN_ENV))
     end
   end
 

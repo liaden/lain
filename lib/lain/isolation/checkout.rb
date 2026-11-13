@@ -20,6 +20,15 @@ module Lain
       # pins it off.
       FSMONITOR_OFF = ["core.fsmonitor=false"].freeze
 
+      # The exit of a git that died, which is how a read meeting an object a partial clone never fetched ends.
+      FATAL = 128
+
+      # Asked of git's config rather than read off its stderr, which is translated. Older git names the
+      # promisor remote in `extensions.partialclone`; newer git marks the remote itself.
+      PROMISOR_KEYS = '^(extensions\.partialclone|remote\..*\.promisor)$'
+      PROMISOR = /\A(?:extensions\.partialclone (?<remote>.+)|remote\.(?<remote>.+)\.promisor (?:true|yes|on|1))\z/i
+      private_constant :FATAL, :PROMISOR_KEYS, :PROMISOR
+
       # What a step that is not a git command answers, read as a shell is.
       Done = Data.define(:exitstatus, :stdout, :stderr) do
         def self.ok = new(exitstatus: 0, stdout: "", stderr: "")
@@ -63,13 +72,10 @@ module Lain
       # @param timeout [Numeric, nil] seconds, passed on only when given
       # @param input [String, nil] the child's stdin, passed on only when given
       # @param pins [Array<String>] `key=value` config, each spelled `-c key=value`
-      # @return [Shell::Out] the finished command; its status is the caller's to read
+      # @return [Shell::Out, Done] the finished command; its status is the caller's to read. A failure in a
+      #   partial clone answers a {Done} whose stderr says how to make the clone whole.
       def run(*, env: {}, timeout: nil, input: nil, pins: [])
-        options = { environment: Worktree::GIT_CONTEXT_SCRUB.merge(@env, env), timeout:, input: }.compact
-        shell = @shell_out_factory.call("git", "-C", @dir, *[*@pins, *pins].flat_map { |pin| ["-c", pin] }, *,
-                                        **options)
-        shell.run_command
-        shell
+        explained(spawned(*, env:, timeout:, input:, pins:))
       end
 
       # {#run} for the caller that cannot go on without the answer.
@@ -231,6 +237,34 @@ module Lain
       def configured_default
         shell = run("config", "--get", "init.defaultBranch")
         Shell::Out.ok?(shell) ? shell.stdout.strip : ""
+      end
+
+      def spawned(*, env: {}, timeout: nil, input: nil, pins: [])
+        options = { environment: Worktree::GIT_SPAWN_ENV.merge(@env, env), timeout:, input: }.compact
+        shell = @shell_out_factory.call("git", "-C", @dir, *[*@pins, *pins].flat_map { |pin| ["-c", pin] }, *,
+                                        **options)
+        shell.run_command
+        shell
+      end
+
+      def explained(shell)
+        remote = shell.exitstatus == FATAL ? promisor : nil
+        return shell if remote.nil?
+
+        stderr = "#{shell.stderr}#{partial_clone(remote)}\n"
+        Done.new(exitstatus: shell.exitstatus, stdout: shell.stdout, stderr:)
+      end
+
+      # @return [String, nil] the remote a partial clone fetches missing objects from, or nil for a full clone
+      def promisor
+        listed = spawned("config", "--get-regexp", PROMISOR_KEYS)
+        listed.stdout.to_s.each_line(chomp: true).filter_map { PROMISOR.match(_1)&.[](:remote) }.first
+      end
+
+      def partial_clone(remote)
+        "#{@dir} is a partial clone, and lain's git does not fetch objects it is missing: if git could not " \
+          "read an object above, run `git config --unset remote.#{remote}.partialclonefilter`, then " \
+          "`git fetch --refetch #{remote}` there, or use a full clone"
       end
 
       def failure(args, shell)

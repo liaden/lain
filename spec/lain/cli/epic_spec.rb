@@ -1346,7 +1346,7 @@ RSpec.describe Lain::CLI::Epic do
     # (no repository here). All three are pinned -- 128 is the one a comment
     # used to claim and no example checked.
     def shell(exitstatus:, stdout: "")
-      instance_double(Lain::Shell::Out, run_command: nil, exitstatus:, stdout:)
+      instance_double(Lain::Shell::Out, run_command: nil, exitstatus:, stdout:, stderr: "")
     end
 
     def reason_from(runner, path: "/x")
@@ -1365,7 +1365,7 @@ RSpec.describe Lain::CLI::Epic do
 
       expect(rule).to eq(".gitignore:5:/.lain/")
       expect(seen).to eq([["git", "-C", root, "check-ignore", "-v", "--", "/x"],
-                          { environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }])
+                          { environment: Lain::Isolation::Worktree::GIT_SPAWN_ENV }])
     end
 
     it "asks git through Shell::Out when no factory is injected", :seam do
@@ -1373,7 +1373,7 @@ RSpec.describe Lain::CLI::Epic do
 
       expect(described_class.new(root).reason("/x")).to be_a(String)
       expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", root, "check-ignore", "-v", "--", "/x",
-                                                           environment: Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB)
+                                                           environment: Lain::Isolation::Worktree::GIT_SPAWN_ENV)
     end
 
     it "hands the source field on verbatim, so a pattern holding a colon survives" do

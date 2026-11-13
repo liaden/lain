@@ -129,7 +129,7 @@ module Lain
             # argument is the only thing that may decide where the store lands.
             def init(tries = INIT_TRIES)
               ensure_state_home(File.dirname(@dir))
-              attempt("init") { run("init", "--bare", "--quiet", @dir, environment: GIT_CONTEXT_SCRUB) }
+              attempt("init") { run("init", "--bare", "--quiet", @dir, environment: GIT_SPAWN_ENV) }
             rescue Failed
               raise if tries <= 1
 
@@ -156,8 +156,8 @@ module Lain
             end
 
             def git(*)
-              run("-C", @root, *, environment: GIT_CONTEXT_SCRUB.merge("GIT_DIR" => @dir, "GIT_WORK_TREE" => @root,
-                                                                       "GIT_INDEX_FILE" => @index))
+              run("-C", @root, *, environment: GIT_SPAWN_ENV.merge("GIT_DIR" => @dir, "GIT_WORK_TREE" => @root,
+                                                                   "GIT_INDEX_FILE" => @index))
             end
 
             def run(*, environment:)

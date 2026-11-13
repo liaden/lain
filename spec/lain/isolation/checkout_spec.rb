@@ -212,33 +212,89 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
     end
   end
 
+  # A missing object is fetched through the program the clone's own config names.
+  describe "#run in a partial clone, reading a blob it never fetched" do
+    let(:marker) { File.join(@dir, "MARKER") }
+    let(:clone) { File.join(@dir, "clone") }
+
+    def missing_blob
+      source = File.join(@dir, "source")
+      SeedRepo.derived("checkout partial-clone source", into: source) do |dir|
+        File.write(File.join(dir, "old.txt"), "only in the first commit\n")
+        SeedRepo.git(dir, "add", "old.txt")
+        SeedRepo.git(dir, "commit", "-q", "-m", "add old")
+        SeedRepo.git(dir, "rm", "-q", "old.txt")
+        SeedRepo.git(dir, "commit", "-q", "-m", "drop old")
+      end
+      blobless_clone(source)
+      SeedRepo.git(source, "rev-parse", "HEAD~1:old.txt").stdout.strip
+    end
+
+    def blobless_clone(source)
+      SeedRepo.git(source, "config", "uploadpack.allowFilter", "true")
+      Lain::Shell::Out.new("git", "clone", "-q", "--filter=blob:none", "file://#{source}", clone,
+                           environment: SeedRepo::SCRUB).run_command
+      upload_pack = File.join(@dir, "upload-pack")
+      File.write(upload_pack, "#!/bin/sh\ntouch '#{marker}'\nexec git upload-pack \"$@\"\n")
+      File.chmod(0o755, upload_pack)
+      SeedRepo.git(clone, "config", "remote.origin.uploadpack", upload_pack)
+    end
+
+    it "fails rather than running a program the repository names" do
+      shell = described_class.new(clone).run("show", missing_blob)
+
+      expect([File.exist?(marker), Lain::Shell::Out.ok?(shell)]).to eq([false, false])
+    end
+
+    it "says the repository is a partial clone and how to make it whole, where git says only what it missed" do
+      missing_blob
+      shell = described_class.new(clone).run("diff", "HEAD~1", "HEAD")
+
+      expect(shell.stderr).to match(names_the_fix)
+    end
+
+    # LANGUAGE needs a locale that is not C, and en_US.utf8 is the one this box is sure to have.
+    it "says so whatever language git speaks, naming the clone's own remote" do
+      missing_blob
+      german = described_class.new(clone, env: { "LC_ALL" => "en_US.utf8", "LANGUAGE" => "de" })
+      stderr = german.run("diff", "HEAD~1", "HEAD").stderr
+
+      expect([stderr, stderr]).to match([/Promisor-Remote/, names_the_fix])
+    end
+
+    def names_the_fix
+      unset = "`git config --unset remote.origin.partialclonefilter`"
+      /#{Regexp.escape(clone)} is a partial clone.*does not fetch.*#{unset}.*`git fetch --refetch origin`.*full clone/m
+    end
+  end
+
   describe "#run options" do
     let(:calls) { [] }
     let(:factory) do
       lambda do |*argv, **options|
         calls << [argv, options]
-        instance_double(Lain::Shell::Out, run_command: nil)
+        instance_double(Lain::Shell::Out, run_command: nil, exitstatus: 0)
       end
     end
     let(:recorded) { described_class.new("/repo", shell_out_factory: factory) }
-    let(:scrub) { Lain::Isolation::Worktree::GIT_CONTEXT_SCRUB }
+    let(:spawn_env) { Lain::Isolation::Worktree::GIT_SPAWN_ENV }
 
-    it "sends only the scrub when no option is given" do
+    it "sends only the git env when no option is given" do
       recorded.run("status")
 
-      expect(calls).to eq([[%w[git -C /repo status], { environment: scrub }]])
+      expect(calls).to eq([[%w[git -C /repo status], { environment: spawn_env }]])
     end
 
-    it "merges env over the scrub" do
+    it "merges env over the git env" do
       recorded.run("status", env: { "GIT_INDEX_FILE" => "/x" })
 
-      expect(calls.first.last).to eq(environment: scrub.merge("GIT_INDEX_FILE" => "/x"))
+      expect(calls.first.last).to eq(environment: spawn_env.merge("GIT_INDEX_FILE" => "/x"))
     end
 
     it "forwards timeout and input only when given" do
       recorded.run("update-ref", "--stdin", timeout: 5, input: "x\n")
 
-      expect(calls.first.last).to eq(environment: scrub, timeout: 5, input: "x\n")
+      expect(calls.first.last).to eq(environment: spawn_env, timeout: 5, input: "x\n")
     end
 
     it "spells each pin as -c before the subcommand" do

@@ -140,7 +140,7 @@ module Lain
         def readable_digest(full) = File.readable?(full) ? Digest::SHA256.file(full).hexdigest : "unreadable"
 
         def run(git, gem_root, *)
-          out = git.new("git", "-C", gem_root, *, environment: Isolation::Worktree::GIT_CONTEXT_SCRUB,
+          out = git.new("git", "-C", gem_root, *, environment: Isolation::Worktree::GIT_SPAWN_ENV,
                                                   timeout: GIT_TIMEOUT).run_command
           Shell::Out.ok?(out) ? out : nil
         end

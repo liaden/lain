@@ -287,6 +287,17 @@ RSpec.describe Lain::Isolation::WorkerChecks, :seam do
     end
   end
 
+  # The project's own suite may read a partial clone the way its author does; only lain's git is refused.
+  describe "a project check's environment" do
+    let(:check) { runner("rspec", 'echo "lazy=[$GIT_NO_LAZY_FETCH]"; exit 1') }
+
+    it "is left the lazy fetch lain's own git refuses" do
+      break_foo
+
+      expect(run_checks(Lain::Isolation::SelfSync::Unaskable).detail).to include("lazy=[]")
+    end
+  end
+
   describe "a long failure" do
     let(:retries) { 0 }
 

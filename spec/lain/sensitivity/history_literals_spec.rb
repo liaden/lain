@@ -578,6 +578,40 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
     end
   end
 
+  # A missing object is fetched through the program the clone's own config names, so reading history
+  # in a cloned repository would run that program before any prompt.
+  describe "a partial clone whose history holds a blob it never fetched" do
+    let(:marker) { File.join(@base, "MARKER") }
+
+    before do
+      source = File.join(@base, "source")
+      SeedRepo.derived("history-literals partial-clone source", into: source) do |dir|
+        File.write(File.join(dir, ".env"), "ADMIN_PIN=48291377\n")
+        SeedRepo.git(dir, "add", ".env")
+        SeedRepo.git(dir, "commit", "-q", "-m", "add env")
+        SeedRepo.git(dir, "rm", "-q", ".env")
+        SeedRepo.git(dir, "commit", "-q", "-m", "drop env")
+      end
+      SeedRepo.git(source, "config", "uploadpack.allowFilter", "true")
+      SeedRepo.git(@base, "clone", "-q", "--filter=blob:none", "file://#{source}", root)
+      git("config", "user.name", "spec")
+      git("config", "user.email", "spec@example.com")
+      commit(".env.local", "LOCAL_PIN=55501234\n")
+      git("rm", "-q", ".env.local")
+      git("commit", "-q", "-m", "drop local env")
+      upload_pack = File.join(@base, "upload-pack")
+      File.write(upload_pack, "#!/bin/sh\ntouch '#{marker}'\nexec git upload-pack \"$@\"\n")
+      File.chmod(0o755, upload_pack)
+      git("config", "remote.origin.uploadpack", upload_pack)
+    end
+
+    it "runs no program the repository names, and still lists the history it holds" do
+      values = described_class.new(root:, policy:).to_a
+
+      expect([File.exist?(marker), values]).to match([false, include("55501234")])
+    end
+  end
+
   describe "a root that is not a git repository" do
     before { FileUtils.mkdir_p(root) }
 

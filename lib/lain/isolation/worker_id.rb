@@ -70,7 +70,7 @@ module Lain
       # @raise [Refused]
       def self.checked(name, shell_out_factory: ::Lain::Shell::Out.public_method(:new))
         ref = "#{Worktree::Handback::Naming::REF_NAMESPACE}/#{name}"
-        shell = shell_out_factory.call("git", "check-ref-format", ref, environment: Worktree::GIT_CONTEXT_SCRUB)
+        shell = shell_out_factory.call("git", "check-ref-format", ref, environment: Worktree::GIT_SPAWN_ENV)
         shell.run_command
         raise Refused, "#{name.to_s.inspect} cannot name a ref: #{ref} is not a legal refname" unless
           Shell::Out.ok?(shell)

@@ -1328,6 +1328,19 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
     end
   end
 
+  # lain's git refuses the lazy fetch, so a partial clone's epic branch cannot be checked out to land on.
+  describe "LandingCheckout in a partial clone that never fetched the branch's files" do
+    it "refuses naming the partial clone and how to make it whole" do
+      clone = File.join(@root, "clone")
+      git(repo, "config", "uploadpack.allowFilter", "true")
+      SeedRepo.git(@root, "clone", "-q", "--no-checkout", "--filter=blob:none", "file://#{repo}", clone)
+      branch = Lain::Isolation::WorkingBranch.epic("demo", repo_root: clone)
+      landing = described_class::LandingCheckout.new(repo_root: clone, path: File.join(@root, "landing"), branch:)
+
+      expect { landing.cut }.to raise_error(Lain::Error, /partial clone.*git fetch --refetch.*full clone/m)
+    end
+  end
+
   # A human's /stop reaches the run in flight on the epic's own supervisor,
   # which the chat's fleet never names.
   describe "a stop by the human mid-issue" do

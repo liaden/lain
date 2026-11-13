@@ -101,7 +101,7 @@ RSpec.describe Lain::CLI::Command::Undo do
   def user_git(*argv)
     Lain::Shell::Out.new("git", "-c", "user.email=spec@lain.test", "-c", "user.name=lain spec", *argv,
                          cwd: root,
-                         environment: Lain::Workspace::Snapshot::Scope::ShadowGit::GIT_CONTEXT_SCRUB)
+                         environment: Lain::Workspace::Snapshot::Scope::ShadowGit::GIT_SPAWN_ENV)
                     .tap(&:run_command).stdout
   end
 

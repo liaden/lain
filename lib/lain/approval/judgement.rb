@@ -197,7 +197,8 @@ module Lain
 
         # This process's own git variables are dropped, so the answer is the call's.
         def config_env
-          ENV.keys.grep(GIT_ENV).to_h { [_1, nil] }.merge(CONFIG_ENV.to_h { [_1, @env[_1]] })
+          ENV.keys.grep(GIT_ENV).to_h { [_1, nil] }.merge(CONFIG_ENV.to_h { [_1, @env[_1]] },
+                                                          Isolation::Worktree::NO_LAZY_FETCH)
         end
 
         def own?(directory)

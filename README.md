@@ -38,6 +38,8 @@ medical literature.
 Required:
 
 - Ruby `>= 3.2.0`.
+- git `>= 2.44`. Older git ignores the `GIT_NO_LAZY_FETCH` that lain's own git runs under, so a
+  partial clone's lazy fetch could still run the program its remote config names.
 - `ANTHROPIC_API_KEY` for anything that talks to the Claude API.
 
 ```bash

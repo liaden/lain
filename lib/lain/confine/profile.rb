@@ -822,7 +822,7 @@ module Lain
           laid_out = Isolation::Clone::Guard.git_dirs(root)
           return laid_out if laid_out
 
-          out, status = Open3.capture2(Isolation::Worktree::GIT_CONTEXT_SCRUB, "git", "-C", root, *GIT_ASKS,
+          out, status = Open3.capture2(Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, *GIT_ASKS,
                                        err: File::NULL)
           hooks, *dirs = out.lines(chomp: true)
           status.success? && dirs.size == 2 ? [*dirs, spelled_under(root, hooks)] : []

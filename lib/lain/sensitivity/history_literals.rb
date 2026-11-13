@@ -161,9 +161,10 @@ module Lain
         end.to_set.freeze
       end
 
-      # `--reflog`, so a commit amended away still answers for what it held.
+      # `--reflog`, so a commit amended away still answers for what it held. A partial clone's unfetched
+      # blob is skipped rather than failing the listing, since no git lain runs may fetch it.
       def history(repository)
-        objects = run("rev-list", "--objects", "--all", "--reflog")
+        objects = run("rev-list", "--objects", "--all", "--reflog", "--missing=allow-any")
         objects && values_of(repository, objects).freeze
       end
 
