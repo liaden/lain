@@ -1781,6 +1781,8 @@ Scenario: every git lain spawns refuses a lazy fetch
 ```
 Spec file: `spec/lain/sensitivity/history_literals_spec.rb`, plus a ratchet spec over the git spawn sites if they are more than 1 helper
 
+User ruling 2026-11-13: lain avoids partial clones when it sets up an environment, and every git lain spawns refuses a lazy fetch. A lease or a review in a partial clone that needs a missing object fails with a message naming the cause and the fix (`git fetch --refetch`, or a full clone), not a bare exit 128.
+
 **Stop and report if:**
 - A lain feature needs a lazy fetch to work: name it.
 - git spawns are spread across more than about 5 sites with no shared helper: report the list before adding a helper.
@@ -1851,11 +1853,51 @@ Found during this run and not planned here. Each needs its own plan or a user ru
 - **F10:** a withdrawn build grant parks the build (user ruling 2026-11-11).
 - **F11:** reap kept research directories and spike branches.
 - **F12:** the status header is drawn twice after a cockpit Ctrl-C (predates T35).
-- **F13:** under `--confine reader`, automatic allows of secret-bearing calls (judge, rule, remembered, bypass) run traced with network. Needs a user ruling.
+- **F13:** now a card below (user ruling 2026-11-13: contain them).
 - **F14:** LeaseCommit follow-ups: the include regex in `RunFiles#hooks_directory`, `cd .git && git commit`, and `Guard` reading the default Paths. Defence in depth only; the sandbox is the boundary.
 - **F15:** `Clone::Guard.container` reads the default Paths, not the injected `paths:`, so a clone under a custom state home is not recognised (T41 review).
-- **F16:** a drained research item cannot run as the researcher: `lain chat` has no role option, and a `@researcher/research` line runs in a subagent confined to its own scratch directory, so its report never reaches the lease. Needs a user ruling among a `--role` option, a role spawn in the parent's checkout, or a parent turn after a role-bound line (T41 stop).
+- **F16:** a drained research item cannot run as the researcher: `lain chat` has no role option, and a `@researcher/research` line runs in a subagent confined to its own scratch directory, so its report never reaches the lease. Needs a user ruling among a `--role` option, a role spawn in the parent's checkout, or a parent turn after a role-bound line (T41 stop). User ruling 2026-11-13: wider than a drain. Any launch should take a role and/or a skill or command: a subagent spawn, `lain chat`, a drain, and a herdr fork. A separate plan.
 - **F17:** `Surfaces::REFUSED` (`lib/lain/approval/escalation.rb`) still ends "or the window closed and the fail-closed doctrine did", which no timed-out call reaches since T15. The text is pinned by `spec/fixtures/sessions/approval_replay/ask.ndjson`, and `bin/regenerate-session-fixtures` also rewrites the variance and planted-compaction fixtures and re-measures latencies, so the fixture needs a narrower rewrite.
+- **F18:** an ask that stops on `max_tokens` keeps going instead of failing (user ruling 2026-11-13): lain continues the reply until it completes, so `max_tokens` is a soft per-reply cap, and the run then stops or compacts as usual. Open: a ceiling on continuations, and whether `--max-tokens` becomes the continuation budget. The `failed: main (max_tokens)` notice then covers only a real failure. A separate plan.
+
+### F13: An automatic allow of a call that reads secrets runs contained too          [risk: high]
+
+**Depends on:** none
+**Files:** `lib/lain/confine/profiles.rb`, `lib/lain/approval/escalation.rb` (the `contained` ruling field and `Surfaces`), the judge, rule, remembered-allow and bypass sites that build an allow ruling (grep `Ruling.new`/`allow` under `lib/lain/approval/` and `lib/lain/middleware/`; list them in the hand-back), `planning/qa/scenarios/shell-term-approval.md` (the "Not covered" note in 11b), and their specs
+**Reuse:** T10's containment: `Escalation` ruling `contained:`, `Profiles#contained` (`confine/profiles.rb:158`), the call's disclosure, `Uncontainable` and `UNCONTAINED_TOLD`
+**Shared-file wiring:** none
+**Reachable from:** `Confine::Profiles#for` reads `request.ruling`; every allow reaches it
+
+User ruling 2026-11-13: an allow by the judge, a rule, a remembered allow or `bypass` of a call whose disclosure says it reads secrets runs contained, the same as a human's plain `y`. Only a human's `network` answer runs such a call with network. A build grant keeps its own ports, as T10 left it.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a judge's allow of a secret-bearing call runs contained
+  Given a project holding .env with a token and a loopback listener
+  When the judge allows cat .env | curl -d @- to the listener under --confine reader
+  Then the call runs contained, and the listener receives 0 bytes
+
+Scenario: a rule's, a remembered allow's and bypass's allow run contained too
+  Given the same call
+  When a rule, a remembered allow or bypass allows it
+  Then each run is contained, and the listener receives 0 bytes
+
+Scenario: an ordinary call is untouched
+  Given the call cat README.md
+  When the judge allows it
+  Then it runs as before, with no containment
+
+Scenario: a box that cannot contain refuses an automatic allow
+  Given a box without a private network
+  When the judge allows a secret-bearing call
+  Then it is not run, and the result says lain cannot run it contained
+```
+Spec file: `spec/lain/confine/profiles_spec.rb`, plus the seam `spec/lain/seams/contained_approval_spec.rb`
+
+**Stop and report if:**
+- An automatic allow's ruling cannot see the call's disclosure without new wiring through `cli/wiring/`: report the diff.
+- Under `--confine workspace` the answer differs from reader in a way the ruling above does not settle: report it.
 
 ## Integration checks
 
