@@ -1,6 +1,6 @@
 # Round 29 fixes: one owner per decision
 
-status: in-progress
+status: done
 commit-mode: orchestrator-commits
 language: ruby (T25 also touches Rust in `apps/lain-remote`)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); the algebra seats (Edward Kmett, Philip Wadler, Conal Elliott) join for T1, T12, T17, T28; Rust (Raph Levien, Andrew Gallant, Ashley Williams) for T25
@@ -1859,6 +1859,12 @@ Found during this run and not planned here. Each needs its own plan or a user ru
 - **F16:** a drained research item cannot run as the researcher: `lain chat` has no role option, and a `@researcher/research` line runs in a subagent confined to its own scratch directory, so its report never reaches the lease. Needs a user ruling among a `--role` option, a role spawn in the parent's checkout, or a parent turn after a role-bound line (T41 stop). User ruling 2026-11-13: wider than a drain. Any launch should take a role and/or a skill or command: a subagent spawn, `lain chat`, a drain, and a herdr fork. A separate plan.
 - **F17:** `Surfaces::REFUSED` (`lib/lain/approval/escalation.rb`) still ends "or the window closed and the fail-closed doctrine did", which no timed-out call reaches since T15. The text is pinned by `spec/fixtures/sessions/approval_replay/ask.ndjson`, and `bin/regenerate-session-fixtures` also rewrites the variance and planted-compaction fixtures and re-measures latencies, so the fixture needs a narrower rewrite.
 - **F18:** an ask that stops on `max_tokens` keeps going instead of failing (user ruling 2026-11-13): lain continues the reply until it completes, so `max_tokens` is a soft per-reply cap, and the run then stops or compacts as usual. Open: a ceiling on continuations, and whether `--max-tokens` becomes the continuation budget. The `failed: main (max_tokens)` notice then covers only a real failure. A separate plan.
+- **F19:** scan a git pathspec that names a regular file, so an automatic `git add` of an unmasked file holding a token, then a push, runs contained under the 2026-11-13 ruling (F13 review).
+- **F20 (soon, a real escape):** a directory nobody can list unmasks its secrets. A confined `chmod 311 sub` exits 0, and the next mask refresh drops the masks under `sub`, because `Find.find` ignores `EACCES` and `git ls-files` exits 0 on a directory it cannot open; `cat sub/.env` then prints the secret, through `bin/workspace-run` in a plain directory and in a git repo (T6 review). Predates T6 on the git path. Count a directory the lister or the walk could not read as a failure: mask it whole, as `pruned_mask` does, or keep its last masks.
+- **F21:** a project root that was never listed refuses the workspace grant. A root of mode 0311 on the first refresh is masked with nothing, and bwrap lets `cat .env` through; the judge already fails closed. `MaskList` says "never listed", and `Confine::Profiles` refuses the grant (T6 review, predates T6).
+- **F22:** `MaskList::Tree`'s `whole_pruned:` and `walks_unlisted:` are always opposite: inject the fallback lister instead. `Listing.git` is a general git runner, and `HistoryLiterals` holds both `@git` and `@shell_out` and builds a `Checkout` per refresh (T6 review).
+- **F23:** wire the containment probe lazily again. T10 made `ToolsetBuild#board_inputs` call `Sandbox#containment` at wiring, which probes the box (lain-fence, then `bwrap --unshare-net`) on every chat launch; before, that ran on the first bash call. `bin/hot-path-bench`'s `wire_ready` went from 18.6 to 19.3 ms to 23.1 ms at `f6db4dca`, and to 24.4 to 24.8 ms at `bdd602d8`, against a 17.1 ms ceiling. Hand the board a containment that probes when first asked; account for the further 1.5 ms after `f6db4dca` too.
+- **F24:** a lain chat started from an old `~/w/ir` checkout ignored SIGTERM and SIGINT while idle and needed SIGKILL (pid 1812006, 2026-11-13; its journal was intact). Check whether current lain does the same, with a scripted provider and a private tmux socket.
 
 ### F13: An automatic allow of a call that reads secrets runs contained too          [risk: high]
 
@@ -2261,3 +2267,39 @@ Spec file: `spec/lain/confine/profiles_spec.rb`, plus the seam `spec/lain/seams/
 - 11:05 T15 review 3 APPROVE; nits 2,3 applied by main; nit 1 (describe nesting) and 4 (NoLapses ownership) declined; landing
 - 11:08 T15 landed 6de1bfb5
 - 11:09 T15 landed 6de1bfb5 (hook suite passed, runtime log 1346)
+- 11:10 QA scenario gaps found (T4, T9, T10, T25, T31, T32, T34, T35, T42); r29-QA cut, docs agent started
+- 11:16 QA landed 08b0a034
+- 11:16 QA scenarios landed 08b0a034 (12 files; port 9 listener moved to 8919 by main). T29 has no scenario home (read starvation, Worth floor)
+- 12:41 User rulings: F2 keep refused + clear error; nyotes trust (already trusted live; trusted in copy home); F13 contain -> card, cut; F16 wider launch-with-role/skill -> separate plan; max_tokens continue -> F18 separate plan. Rekey copy dry run refuses: 37 awaiting_human records keep old plan digest
+- 12:49 IC1 copy run green: verdict rewrite 5 files (40 gate: 29 approve, 11 deny); rekey dry 34 decisions + 36 waits; real 3 files, chains intact; rerun 0. Probe: 0 open waits, 25 approved, 1 edited (contract-types-ports, plan really changed). Live run awaits user go + pid 1812006 closed
+- 12:54 F13 stop: rule allows now scan (parsed_command_spec). Ruling: exempt ComposedTerm (already reader-masked, no sink); uncontainable box: park if attended, refuse if not; no contained:true under --confine off. Round 2 sent
+- 12:58 F2 round 2 done (partial-clone error names unset filter + refetch; review diff raises; no lib creates partial clones). Moved to r29-F2b at c976bb00 by patch: 2 conflicts (spike.rb, local_branch.rb) sent back to implementer with new-site sweep
+- 13:02 F13 round 2: ComposedTerm exempt (never secret-bearing by construction: path gate and content predicate park first). Items 2,3 stopped on switchboard.rb wiring; widened into scope, round 3 sent
+- 13:07 F2b round 3 done (conflicts resolved to main; lease_commit.rb new site; 7949/0). Second review (high) started
+- 13:11 F13 round 3 done (containment+asking into every ladder; 6745/0). Review (high) started
+- 13:20 F2 review 2 APPROVE-WITH-FIXES (locale-dependent explanation substantive; 2 survivors). Round 4 sent; review 3 after
+- 13:27 F13 review 1 APPROVE-WITH-FIXES (wiring survivors, missing rung record, false exemption reason). Round 4 sent incl ruling: unattended refusal names no human, final not liftable. Review 2 after
+- 13:37 F13 round 4 done (11 fixes; Uncontained null object; 6746/0). Review 2 (same reviewer, medium) started
+- 13:44 F2 round 4 done (locale-free partial-clone check via promisor/partialclone keys; ratchet exempts by constant; 7956/0). Review 3 (same reviewer, medium) started
+- 13:47 F13 review 2 APPROVE-WITH-FIXES, 4 mechanical (bypass park example, double re-send, HELD neutral, top-level spec module). Round 5 sent; lands after hot-path-bench --check, no re-review
+- 13:50 F2 review 3 APPROVE-WITH-FIXES: conditional partial-clone advice and comment applied by main (284/0). F13 round 5 done. Landing F2b
+- 13:54 F2b landed d7aaf58c
+- 13:54 F2 landed d7aaf58c (hook passed, runtime log 1347 = +1 ratchet spec)
+- 13:54 F13 hot-path-bench (3 records + check) started in F13 tree
+- 14:04 F13 bench: fails bash_true_reader, request_guarded_1000000, wire_ready; base c976bb00 fails the same rows (+ bash_true_workspace), reader base 12.63 vs F13 12.39: not F13. wire_ready ~23 vs ceiling 17.1 on base -> close-out item. Landing F13
+- 14:09 F13 landing red: todos_drain e2e cassette stale (3 examples): the drain's auto-allowed 'git add && git commit' now runs contained + note, since secret_bearing? counts unnameable/unscanned reads. Not a flake. Asking user whether unknown reads count for automatic allows. T6 cut at d7aaf58c, started
+- 14:18 User ruling F13: automatic allows contained only for known secret holdings; unnameable/unscanned not; human y unchanged. Round 6 sent; review after (substantive)
+- 14:18 T6 done (Listing shared, fallback walk, 141/0; walk 0.57s on 5003 files); stopped on judgement_spec 2 fail-open pins -> widened in, flip + fail-closed pin. Round 2 sent
+- 14:22 T6 round 2 done (2405/0). Review (high) started
+- 14:24 F13 round 6 done (holds_secrets? for automatic allows; drain e2e green on old cassette; 6799/0). Review 3 (same reviewer) started
+- 14:31 pid 1812006 closed at user's request: TERM and INT ignored (idle, io_cqring_wait), KILL; its journal ends on a newline, 3516 lines as copied
+- 14:32 F13 review 3 APPROVE-WITH-FIXES (unnameable arm unpinned; comment). Probe: 0 token copies across curl/wget/nc send shapes. Gap noted: git add <unmasked file holding a token> is unscanned pathspec -> automatic allow uncontained (pre-existing; F19 follow-up). Round 7 (mechanical) sent; lands after, no re-review
+- 14:33 F13 round 7 done (581/0). Landing F13 again
+- 14:37 F13 landed 8b48d882
+- F13 landed 8b48d882 14:38 (landing 2 green; profiles.rb patched cleanly from main)
+- IC1 live old-records rewrite 14:39, user approved: verdicts 5 files 40 gates (29 approve, 11 deny); rekey 34 decisions + 36 waits in 3 files, chains intact; rerun 0; probe 0 open waits, 25 approved, 1 edited (contract-types-ports). Backup ~/tmp/lain/r29-live-backup-20261113T143909 (743M); .pre-verdict.bak files left beside each journal. Log $S/ic-live.log
+- T6 review 1 14:40: APPROVE-WITH-FIXES; fix round 1 started (item 1, NITs 4 5 6); follow-ups F20 (chmod escape), F21 (never-listed root), F22 (listing seams)
+- 14:50 T6 landed bdd602d8
+- T6 landed bdd602d8 14:50; r29-T21 worktree removed after the live rewrite
+- close-out pspec 15:02: 35236 examples, 5 failures, all in qa_sandbox_pane_resolution_spec; fails alone on main (5/7), green at HEAD in a clean worktree (7/7): caused by the user's uncommitted qa-sandbox.sh edit (TMUX_TMPDIR, herdr unset), which the commit hooks stash. Not a card.
+- 15:05 close-out: rubocop 2693 files clean; yard-lint lib exit 0 (1 convention note, selection.rb:44, not this run's); core:build ok; lain-remote fmt, clippy, 30 tests ok; zeitwerk-census 0 on every tier; secret-boundary §8b added for T6. hot-path-bench --check said ok but read logs from 2026-11-10; a bisect found wire_ready 18.6-19.3 ms up to 84ee13da, 23.1 ms at f6db4dca (T10: wiring now probes containment eagerly, spawning lain-fence and bwrap --unshare-net per launch), 24.4-24.8 ms at bdd602d8 (report: $S/wr/report.md). Filed F23. Old-session SIGTERM question filed as F24. Status done.

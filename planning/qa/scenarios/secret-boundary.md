@@ -1119,7 +1119,7 @@ parser read wrongly: under `--confine reader`, `Confine::MaskList` asks the sess
 for the paths a name-and-shape pass marks, and bwrap binds `/dev/null` over each before the call runs. It
 covers only calls the reader profile runs (a `ComposedTerm`-approved call), which already refuse a sensitive
 word at the ladder, so this is the layer behind that one. The mask list lists the project with
-`git ls-files`, so a file outside a git tree is not on it; the harness hands the masks in by name instead,
+`git ls-files`, or walks it where git does not answer (§8b); the harness hands the masks in by name instead,
 which tests the bind and not the listing.
 
 ```bash
@@ -1134,6 +1134,22 @@ first result means anything. A masked file that still prints is the defect. Whet
 `MaskList` finds the right files in a real project is not driven here.
 
 A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). A human `y` on a call that reads secrets no longer runs traced: it runs contained, so the sandbox hides the masked paths from it too (`shell-term-approval.md` §11b); only the answer `network` runs it traced. Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
+
+### 8b: A project git cannot list is still masked *(no model; `bin/workspace-run` in a private tmux server)*
+
+Where `git ls-files` does not answer for the project, because the directory is no repo, git is missing or HEAD is broken, the mask list walks the project's own entries instead, skipping the top-level `.git` and the pruned build directories (`.venv` and its kin only at the top level). A walk that fails keeps the last masks rather than dropping them.
+
+```bash
+mkdir -p $QA/plain/config && cd $QA/plain
+echo "TOKEN=planted-not-a-real-secret" > .env; echo "planted" > config/master.key; echo "hello readme" > README.md
+for f in .env config/master.key README.md; do ( cd <checkout> && bundle exec ruby bin/workspace-run --root $QA/plain -- cat $f ); echo "exit=$?"; done
+git init -q $QA/repo && echo "TOKEN=planted" > $QA/repo/.env && printf 'garbage\n' > $QA/repo/.git/HEAD
+( cd <checkout> && bundle exec ruby bin/workspace-run --root $QA/repo -- cat .env ); echo "exit=$?"
+```
+
+Predicted, from the T6 review drive 2026-11-13: `.env` and `config/master.key` are refused in the plain directory and `README.md` prints; `.env` is refused in the repo whose `git ls-files` fails. A secret that prints is the defect.
+
+Known open (not this section's defect, follow-ups F20 and F21): a confined `chmod 311 <dir>` makes the next refresh drop the masks under that directory, in a git repo and a plain one alike; and a project root that is searchable but not listable on the first refresh is masked with nothing.
 
 ## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress oracle` or `all` *(a chat with a model; a hosted one shows the endpoint best)*
 
