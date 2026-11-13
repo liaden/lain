@@ -5,9 +5,10 @@ require "socket"
 require "stringio"
 require "tmpdir"
 
-# A human's plain approval of a call that reads a secret runs it contained: the real sandbox, the real gate and
-# queue, and the terminal surface answering. Only the human's keystroke is scripted.
-RSpec.describe "A human's approval of a call that reads secrets", :seam do
+# A plain approval of a call that reads a secret runs it contained, whoever gave it: the real sandbox, the real
+# gate, and the real queue or automatic rung answering. Only the human's keystroke and the judge's verdict are
+# scripted.
+RSpec.describe "An approval of a call that reads secrets", :seam do
   around do |example|
     Dir.mktmpdir("c") do |dir|
       @root = File.realpath(dir)
@@ -38,7 +39,7 @@ RSpec.describe "A human's approval of a call that reads secrets", :seam do
 
   after { listener.close }
 
-  def sandbox(workspace:, lineage: fresh)
+  def sandbox(workspace:, lineage: fresh, probe: self.probe)
     masks = Lain::Confine::MaskList.new(root: @root, policy: -> { policy })
     Lain::Confine::Sandbox.new(root: @root, home: Dir.home, masks:, probe:, fence:, journal:, workspace:,
                                tmpdir: File.join(@root, "tmp"), fresh: lineage)
@@ -69,8 +70,10 @@ RSpec.describe "A human's approval of a call that reads secrets", :seam do
   end
 
   # The members a chat's guard stack puts around a gated bash call: the parse, the withhold layer, the gate.
-  def layers_over(queue)
-    ladder = Lain::Approval::Escalation.new([Lain::Approval::Escalation::Surfaces.new(queue)], journal:)
+  def layers_over(queue) = layers_ruled_by(Lain::Approval::Escalation::Surfaces.new(queue))
+
+  def layers_ruled_by(rung, **ladder)
+    ladder = Lain::Approval::Escalation.new([rung], journal:, **ladder)
     [Lain::Middleware::ParsedCommand.new(home: Dir.home, scan: Lain::Approval::Disclosure::Scanner.over(policy)),
      Lain::Middleware::WithholdAutomaticOutput.new(bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new),
      Lain::Middleware::Gate.new(policy: ladder)]
@@ -92,6 +95,8 @@ RSpec.describe "A human's approval of a call that reads secrets", :seam do
   end
 
   def sandbox_records = journal.events.grep(Lain::Telemetry::Sandbox)
+
+  def escalations = journal.events.select { _1.is_a?(Hash) && _1["type"] == "escalation" }
 
   def decision = journal_records(decisions, "approval_decision").sole
 
@@ -200,5 +205,150 @@ RSpec.describe "A human's approval of a call that reads secrets", :seam do
     prompt, = answered("n\n", exec: Lain::Exec::Local.new, containment: Lain::Confine::Sandbox::Containment::OFF)
 
     expect(prompt).to include("it will run unconfined, with network, because confinement is off")
+  end
+
+  describe "an automatic allow" do
+    let(:judged) do
+      Lain::Approval::Judged.new(judge: ->(**) { :approve }, policy:, asking: Lain::Approval::Judged::Unattended.new,
+                                 journal:)
+    end
+    let(:allowing) do
+      Class.new(Lain::Approval::Rule) do
+        def self.rule_name = "spec_allows"
+        def decide(call) = allow(call, because: "the spec allows it")
+      end.new
+    end
+
+    def rules_rung(rule)
+      Lain::Approval::Escalation::Rules.new(rules: [rule], tools: Lain::Toolset.new([bash_over(Lain::Exec::Local.new)]),
+                                            faults: Lain::Approval::Escalation::Faults.new(journal))
+    end
+
+    def remembered(command)
+      rules_rung(Lain::Approval::Remembered.new(allow: [{ "tool" => "bash", "input" => { "command" => command } }]))
+    end
+
+    def allowed_by(rung, exec:, command: send_deploy)
+      Sync do
+        dispatch_call("bash", { "command" => command }, toolset: Lain::Toolset.new([bash_over(exec)]),
+                                                        layers: layers_ruled_by(rung),
+                                                        context: Lain::Session.new(worker_env:))
+      end
+    end
+
+    it "runs a judge's allow contained under --confine reader, so nothing is sent" do
+      _, exec = contained_where_possible(workspace: false)
+      sent = received
+
+      result = allowed_by(judged, exec:)
+
+      expect(sandbox_records.first).to have_attributes(profile: :reader, network: false)
+      expect(result.content).to start_with("exit status: 7").and include(Lain::Exec::Sandboxed::CONTAINED)
+      listener.close
+      expect(sent.value).to eq("")
+    end
+
+    it "runs a rule's, a remembered allow's and bypass's allow contained too, so nothing is sent" do
+      _, exec = contained_where_possible(workspace: false)
+      sent = received
+
+      results = [rules_rung(allowing), remembered(send_deploy), Lain::Approval::Escalation::Bypass.new]
+                .map { allowed_by(_1, exec:) }
+
+      expect(sandbox_records.map(&:profile)).to eq(%i[reader reader reader])
+      expect(results.map(&:content)).to all(start_with("exit status: 7"))
+      listener.close
+      expect(sent.value).to eq("")
+    end
+
+    # Only a file holding a region contains an automatic allow; a read lain could not name or scan whole does not.
+    it "leaves a judge's allow of a commit, whose reads lain does not scan whole, as it was" do
+      File.write(File.join(@root, "f"), "plain\n")
+      _, exec = contained_where_possible(workspace: false)
+
+      result = allowed_by(judged, exec:, command: "git add f && git commit -q -m x")
+
+      expect(sandbox_records.first).to have_attributes(profile: :traced)
+      expect(result.content).not_to include(Lain::Exec::Sandboxed::CONTAINED)
+      expect(escalations.map(&:keys).flatten).not_to include("contained")
+    end
+
+    it "leaves bypass's allow of a command lain cannot name the files of, and that holds no secret, as it was" do
+      _, exec = contained_where_possible(workspace: false)
+
+      result = allowed_by(Lain::Approval::Escalation::Bypass.new, exec:, command: 'eval "echo hi"')
+
+      expect(sandbox_records.first).to have_attributes(profile: :traced)
+      expect(result.content).to include("hi")
+      expect(result.content).not_to include(Lain::Exec::Sandboxed::CONTAINED)
+      expect(escalations.map(&:keys).flatten).not_to include("contained")
+    end
+
+    it "leaves a judge's allow of a listing, which lain does not scan whole, as it was" do
+      _, exec = contained_where_possible(workspace: false)
+
+      result = allowed_by(judged, exec:, command: "ls tmp")
+
+      expect(sandbox_records.first).to have_attributes(profile: :traced)
+      expect(result.content).not_to include(Lain::Exec::Sandboxed::CONTAINED)
+      expect(escalations.map(&:keys).flatten).not_to include("contained")
+    end
+
+    it "leaves a judge's allow of an ordinary call as it was, traced and unconfined" do
+      File.write(File.join(@root, "README.md"), "hello from the readme\n")
+      _, exec = contained_where_possible(workspace: false)
+
+      result = allowed_by(judged, exec:, command: "cat README.md")
+
+      expect(sandbox_records.first).to have_attributes(profile: :traced)
+      expect(result.content).to include("hello from the readme")
+      expect(result.content).not_to include(Lain::Exec::Sandboxed::CONTAINED)
+    end
+
+    it "refuses a judge's allow where the box cannot give the call a private network, saying why" do
+      netless = SimpleDelegator.new(probe)
+      netless.define_singleton_method(:supports?) { |layer| layer != :private_net && __getobj__.supports?(layer) }
+      box = sandbox(workspace: false, probe: netless)
+      skip("the box lacks a sandbox layer") unless Lain::Confine::Sandbox.lacking(netless).empty?
+      exec = box.wrap(Lain::Exec::Local.new, requirer: "spec")
+      box.prime
+      sent = received
+
+      result = allowed_by(judged, exec:)
+
+      expect(result.content).to include(Lain::Exec::Sandboxed::UNCONTAINABLE)
+      listener.close
+      expect(sent.value).to eq("")
+    end
+
+    it "parks a judge's allow for the human on a box with no private network, where a plain y runs nothing" do
+      netless = SimpleDelegator.new(probe)
+      netless.define_singleton_method(:supports?) { |layer| layer != :private_net && __getobj__.supports?(layer) }
+      box = sandbox(workspace: false, probe: netless)
+      skip("the box lacks a sandbox layer") unless Lain::Confine::Sandbox.lacking(netless).empty?
+      exec = box.wrap(Lain::Exec::Local.new, requirer: "spec")
+      box.prime
+      containment = box.containment
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: decisions), timeout: 30, containment:)
+      seen = []
+      human = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new, reader: ->(prompt) { (seen << prompt) && "y\n" })
+      sent = received
+
+      result = Sync do |task|
+        watching = task.async { human.watch(queue) }
+        dispatch_call("bash", { "command" => send_deploy }, toolset: Lain::Toolset.new([bash_over(exec)]),
+                                                            layers: layers_ruled_by(judged, containment:,
+                                                                                            asking: Lain::Approval::Escalation::Surfaces.new(queue)),
+                                                            context: Lain::Session.new(worker_env:))
+      ensure
+        watching&.stop
+      end
+
+      expect(seen.sole.to_s).to include(containment.note)
+      expect(result.content).to include("it runs only if the human answers network")
+      expect(sandbox_records).to be_empty
+      listener.close
+      expect(sent.value).to eq("")
+    end
   end
 end

@@ -85,6 +85,10 @@ module Lain
       ABANDONED = "the requester was stopped during this rung, so nobody answered"
       UNDECIDED = "the rung's own ladder decided nothing"
       TYPE = "escalation"
+      UNCONTAINED = "an automatic allow of a call that reads secrets was refused, as lain cannot contain it here"
+      HELD = "%<who>s allowed this call, but it reads secrets and lain cannot run it contained here, so it is " \
+             "not run automatically"
+      UNSTATED = ::Lain::Confine::Sandbox::Containment::NONE
 
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
@@ -151,8 +155,9 @@ module Lain
         # `builds` carries a rule's word that its allow runs a build, which the sandbox reads to choose a
         # profile that can write.
         #
-        # `contained` is a surface's plain allow of a call that reads secrets, which the sandbox runs confined
-        # with no network beyond a build tool's granted ports; `network` is a human's choice to run it unconfined.
+        # `contained` is a plain allow of a call that reads secrets, a surface's or an automatic rung's, which the
+        # sandbox runs confined with no network beyond a build tool's granted ports; `network` is a human's choice
+        # to run it unconfined.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
                        said: nil, rule: nil, note: nil, liftable: false, builds: false, contained: false,
                        network: false)
@@ -223,14 +228,16 @@ module Lain
       #
       # This is `ask` approval's ladder: what the deterministic rungs leave
       # open parks on the queue.
-      def self.for(queue:, tools:, journal:, rules: [], triage: Triage.new)
-        over(Surfaces.new(queue), label: "ask", tools:, journal:, rules:, triage:)
+      def self.for(queue:, tools:, journal:, rules: [], triage: Triage.new, containment: UNSTATED)
+        asking = Surfaces.new(queue)
+        over(asking, label: "ask", tools:, journal:, rules:, triage:, containment:, asking:)
       end
 
       # `bypass` approval's ladder: the same deterministic rungs, so a triage deny
       # or a rule deny still decides, and {Bypass} where the queue would be.
-      def self.bypass(tools:, journal:, rules: [], triage: Triage.new)
-        over(Bypass.new, label: "bypass", tools:, journal:, rules:, triage:)
+      def self.bypass(tools:, journal:, rules: [], triage: Triage.new, containment: UNSTATED,
+                      asking: Uncontained.new(containment))
+        over(Bypass.new, label: "bypass", tools:, journal:, rules:, triage:, containment:, asking:)
       end
 
       # Whether the context a call is judged in bars it from automatic approval.
@@ -238,8 +245,9 @@ module Lain
         context.respond_to?(:automatic_approval_barred?) && context.automatic_approval_barred?
       end
 
-      def self.over(bottom, label:, tools:, journal:, rules:, triage:)
-        new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), bottom], journal:, label:)
+      def self.over(bottom, label:, tools:, journal:, rules:, triage:, containment:, asking:)
+        new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), bottom], journal:, label:, containment:,
+                                                                                      asking:)
       end
       private_class_method :over
 
@@ -253,8 +261,14 @@ module Lain
       # @param rungs [Enumerable<#call, #name>] consulted in order
       # @param journal [#<<, #record] where every ruling lands as evidence; {Faults} still calls `record`
       # @param label [String] the name a policy flip journals this ladder under
-      def initialize(rungs = [], journal:, label: TYPE)
+      # @param containment [Confine::Sandbox::Containment] whether the session can run a call that reads secrets
+      #   contained; unstated leaves the sandbox to refuse one it cannot
+      # @param asking [#call] where an automatic allow the session cannot contain goes: the human's queue
+      #   where one is attended, else {Uncontained}, which refuses it
+      def initialize(rungs = [], journal:, label: TYPE, containment: UNSTATED, asking: Uncontained.new(containment))
         @label = -label.to_s
+        @containment = containment
+        @asking = asking
         @rungs = rungs.to_a.freeze
         # Every rung names itself HERE, while the ladder is BUILT, and the
         # answer is KEPT: asking a rung for its name inside the rescue clause,
@@ -325,7 +339,7 @@ module Lain
 
       def ask(rung, name, effect, context)
         ruling = rung.call(effect, context)
-        return barred(ruling, context) if ruling.is_a?(Ruling)
+        return contained(barred(ruling, context), effect, context) if ruling.is_a?(Ruling)
         return undecided(ruling, name) if ruling.is_a?(Ladder::Outcome)
 
         # Raised INSIDE the consult, so a rung answering a non-Ruling becomes a
@@ -342,6 +356,38 @@ module Lain
         return ruling unless ruling.allow? && !ruling.human? && Escalation.barred?(context)
 
         Ruling.abstain(rung: ruling.rung, because: "#{BARRED}: #{ruling.reason}", rule: ruling.rule)
+      end
+
+      # An automatic allow of a call that reads a file holding a region runs as a human's plain approval does,
+      # since only a human's network answer may send what it read. A read lain cannot name or scan whole does
+      # not count here, though it does for a human's approval: most of a build or a commit is such reads. The
+      # queue settles its own answers. With confinement off nothing confines the run, so the ruling must not
+      # say it was, and the files are never scanned.
+      #
+      # A composed reader's allow is not asked either: its programs send nothing, its listing and walk
+      # predicates check every name they print, and it already runs on the reader profile with the masks,
+      # so asking would scan on the hot path for nothing.
+      def contained(ruling, effect, context)
+        return ruling unless containable?(ruling) && Disclosure.in(context).holds_secrets?
+        return uncontainable(ruling, effect, context) if @containment.state == :unable
+
+        ruling.with(contained: true)
+      end
+
+      # The rung's allow is journaled before the park, so the stream still says which rung would have run it.
+      def uncontainable(ruling, effect, context)
+        held = format(HELD, who: allower(ruling.rung))
+        record(Ruling.abstain(rung: ruling.rung, because: held, rule: ruling.rule), effect, context)
+        @asking.call(effect, Noted.new(context, Parked::Queue::Reason.own(held)))
+      end
+
+      def allower(rung)
+        { Judged::NAME => "the judge", Rules::NAME => "a rule", Bypass::NAME => "bypass" }.fetch(rung, rung)
+      end
+
+      def containable?(ruling)
+        @containment.state != :off && ruling.allow? && ruling.rung != Surfaces::NAME &&
+          ruling.rule != ComposedTerm.rule_name
       end
 
       # A rung's own ladder that decided nothing, cleanly, abstained, as a
@@ -887,6 +933,26 @@ module Lain
           end
 
           Ruling.allow(rung: NAME, because: BECAUSE)
+        end
+      end
+
+      # Where an automatic allow the box cannot contain goes when nobody is attended. It refuses for good, and
+      # never names the network answer, since no human is there to give it.
+      class Uncontained
+        NAME = "uncontained"
+        TOLD = "not run: it reads secrets and lain cannot run it contained on this box (%<because>s)"
+
+        # @param containment [Confine::Sandbox::Containment] the session's, which says why it cannot contain
+        def initialize(containment)
+          @because = containment.because
+          freeze
+        end
+
+        def name = NAME
+
+        def call(_effect, _context)
+          Ruling.deny(rung: NAME, because: "#{UNCONTAINED}: #{@because}", final: true,
+                      told: format(TOLD, because: @because))
         end
       end
 

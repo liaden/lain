@@ -538,6 +538,104 @@ RSpec.describe Lain::Approval::Escalation do
     end
   end
 
+  describe "an automatic allow of a call that reads secrets" do
+    let(:secret) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+    let(:context) { Struct.new(:disclosure).new(secret) }
+
+    it "is contained when the judge, bypass or a rule allows it, and the record says so" do
+      allowing = [EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow), described_class::Bypass.new,
+                  rules_rung(EscalationSpecSupport::Allower.new)]
+
+      expect(allowing.map { ladder(_1).rule(effect, context) })
+        .to all(have_attributes(verdict: :allow, contained?: true, network?: false))
+      expect(rulings.select { _1["verdict"] == "allow" }).to all(include("contained" => true))
+    end
+
+    it "is not contained when the call reads no secret and lain could read it" do
+      plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
+
+      expect(ladder(described_class::Bypass.new).rule(effect, plain)).to have_attributes(contained?: false)
+    end
+
+    it "leaves a surface's allow to the queue, which knows when confinement is off" do
+      queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1,
+                                                containment: Lain::Confine::Sandbox::Containment::OFF)
+      ruling = Sync do |task|
+        ruled = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, context) }
+        task.with_timeout(1) { queue.dequeue }
+            .decide(Lain::Approval::Verdict::Approve.new, surface: "oracle", authority: :automatic)
+        task.with_timeout(1) { ruled.wait }
+      end
+
+      expect(ruling).to have_attributes(verdict: :allow, contained?: false)
+    end
+
+    context "when confinement is off" do
+      it "runs as before, and the record says nothing of containment" do
+        off = described_class.new([described_class::Bypass.new], journal:,
+                                                                 containment: Lain::Confine::Sandbox::Containment::OFF)
+
+        expect(off.rule(effect, context)).to have_attributes(verdict: :allow, contained?: false)
+        expect(rulings.sole).not_to have_key("contained")
+      end
+
+      it "never reads the disclosure, which would scan the call's files for nothing" do
+        read = 0
+        counting = Struct.new(:disclosure).new(secret)
+        counting.define_singleton_method(:disclosure) { (read += 1) && super() }
+        off = described_class.new([described_class::Bypass.new], journal:,
+                                                                 containment: Lain::Confine::Sandbox::Containment::OFF)
+
+        off.rule(effect, counting)
+
+        expect(read).to eq(0)
+      end
+    end
+
+    context "when the box cannot contain the call" do
+      let(:unable) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
+
+      it "parks it for the human where one is attended, who may answer network" do
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1, containment: unable)
+        judge = EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow)
+        attended = described_class.new([judge], journal:, containment: unable,
+                                                asking: described_class::Surfaces.new(queue))
+        parked = nil
+        ruling = Sync do |task|
+          ruled = task.async { attended.rule(effect, context) }
+          parked = task.with_timeout(1) { queue.dequeue }
+          parked.decide(Lain::Approval::Verdict::Approve.new(network: true), surface: "tty", authority: :human)
+          task.with_timeout(1) { ruled.wait }
+        end
+
+        held = format(described_class::HELD, who: "the judge")
+        expect(parked.containment).to be(unable)
+        expect(parked.reasons.map(&:to_s)).to include(held)
+        expect(ruling).to have_attributes(verdict: :allow, authority: :human, network?: true, contained?: false)
+        expect(rulings.first).to include("rung" => Lain::Approval::Judged::NAME, "verdict" => "abstain",
+                                         "reason" => held)
+      end
+
+      it "refuses it where nobody is attended, for good, and never tells the model a human could answer" do
+        unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)
+
+        ruling = unattended.rule(effect, context)
+
+        expect(ruling).to have_attributes(verdict: :deny, final?: true, liftable?: false)
+        expect(ruling.told).to include("cannot run it contained on this box", "the box lacks bwrap")
+        expect(ruling.told).not_to include("network", "human", "do not send")
+        expect(rulings.map { _1["reason"] }.join).not_to include("human")
+      end
+
+      it "still runs a call that reads no secret" do
+        plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
+        unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)
+
+        expect(unattended.rule(effect, plain)).to have_attributes(verdict: :allow, contained?: false)
+      end
+    end
+  end
+
   # Scenario: the ladder remains fail-closed
   describe "fail-closed" do
     it "denies a call that reaches the timeout with no answer from any surface" do

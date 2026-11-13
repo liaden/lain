@@ -12,12 +12,13 @@ module Lain
     # its target dir, so with the workspace switch on it runs under the workspace
     # profile, and with the switch off it stays on the reader. With the workspace
     # switch on, an automatic allow by the judge, a rule or bypass runs under the
-    # workspace profile, since no person saw the command. A surface's plain
-    # allow of a call that reads secrets runs contained, under the workspace
-    # profile with the switch on and the reader's with it off, and in a
-    # private network either way. Any other allow is traced and not confined:
-    # a human's that chose network, and a surface's of a call that read no
-    # secret, whose machine answers stand beside a person's in the same queue.
+    # workspace profile, since no person saw the command. A plain allow of a
+    # call that reads secrets, a surface's or an automatic rung's, runs
+    # contained, under the workspace profile with the switch on and the
+    # reader's with it off, and in a private network either way. Any other
+    # allow is traced and not confined: a human's that chose network, and a
+    # surface's of a call that read no secret, whose machine answers stand
+    # beside a person's in the same queue.
     #
     # A workspace call earns its build tool's ports, the grant profile, only
     # through {BuildGrant}: one fetching stage of a trusted program, while

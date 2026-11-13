@@ -32,8 +32,9 @@ module Lain
           @disclose = disclose
         end
 
-        # Computed on first read, so a call a rule approves never reads its files;
-        # a memo adds no note, so no rung below sees anything it would not have.
+        # Computed on first read, so a call no rung asks about, such as one a composed reader allows or any
+        # call with confinement off, never reads its files; a memo adds no note, so no rung below sees
+        # anything it would not have.
         def disclosure = @disclosure ||= @disclose.call
       end
 

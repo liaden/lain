@@ -5,6 +5,28 @@ require "stringio"
 require "tmpdir"
 
 RSpec.describe Lain::CLI::Switchboard do
+  # A call whose context says it reads secrets.
+  def secret_bearing_call
+    Lain::Effect::ToolCall.new(tool_use_id: "tu_9", name: "write_file", input: { "path" => "a.rb", "content" => "" })
+  end
+
+  def secret_context(inner = nil)
+    held = inner || Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: {}))
+    secret = Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false)
+    SimpleDelegator.new(held).tap { |context| context.define_singleton_method(:disclosure) { secret } }
+  end
+
+  # The pending a secret-bearing call parks as, once the human has answered it.
+  def parked_secret(board, ladder, inner = nil)
+    Sync do |task|
+      ruled = task.async { ladder.rule(secret_bearing_call, secret_context(inner)) }
+      task.with_timeout(1) { board.approvals.dequeue }.tap do |pending|
+        pending.deny(surface: "spec", authority: :human)
+        ruled.wait
+      end
+    end
+  end
+
   let(:journal_io) { StringIO.new }
   let(:journal) { Lain::Journal.new(io: journal_io) }
 
@@ -36,6 +58,42 @@ RSpec.describe Lain::CLI::Switchboard do
 
       expect(switchboard(containment: off).approvals.containment).to be(off)
       expect(switchboard.approvals.containment).to be(Lain::Confine::Sandbox::Containment::NONE)
+    end
+  end
+
+  describe "what an automatic allow of a secret-bearing call does on a box that cannot contain it" do
+    let(:unable) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
+    let(:allowing) do
+      Class.new(Lain::Approval::Rule) do
+        def self.rule_name = "spec_allows"
+        def decide(call) = allow(call, because: "the spec allows it")
+      end.new
+    end
+
+    def parked_under(board, level)
+      board.mode_switch.switch(mode(level), surface: "tty") unless level == :ask
+      parked_secret(board, board.policy_switch.current)
+    end
+
+    it "parks a rule's allow under ask, a judge's under auto and bypass's own, where a human is attended" do
+      boards = { ask: switchboard(containment: unable, rules: [allowing]),
+                 auto: switchboard(containment: unable, judge: judge_answering(:approve)),
+                 bypass: switchboard(containment: unable) }
+      parked = boards.to_h { |level, board| [level, parked_under(board, level)] }
+
+      expect(parked.values.map(&:containment)).to all(be(unable))
+      expect(parked.transform_values { |pending| pending.reasons.map(&:to_s) })
+        .to match(ask: include(format(Lain::Approval::Escalation::HELD, who: "a rule")),
+                  auto: include(format(Lain::Approval::Escalation::HELD, who: "the judge")),
+                  bypass: include(format(Lain::Approval::Escalation::HELD, who: "bypass")))
+    end
+
+    it "refuses a bypass allow where nobody is attended, and parks nothing" do
+      board = switchboard(containment: unable, attended: false)
+      board.mode_switch.switch(mode(:bypass), surface: "tty")
+
+      expect(board.policy_switch.current.rule(secret_bearing_call, secret_context))
+        .to have_attributes(verdict: :deny, final?: true, liftable?: false, told: include("the box lacks bwrap"))
     end
   end
 
@@ -1713,6 +1771,18 @@ RSpec.describe Lain::CLI::Switchboard do
     def plan!(approval = :ask) = board.mode_switch.switch(Lain::Mode.new(scope: :plan, approval:), surface: "tty")
 
     def spiked = spike.leases.last.worker_env.checkout
+
+    describe "an automatic allow of a secret-bearing call on a box that cannot contain it" do
+      it "parks a judge's allow under plan auto where a human is attended" do
+        unable = Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap")
+        board(containment: unable, judge: judge_answering(:approve))
+        plan!(:auto)
+
+        parked = parked_secret(board, board.policy_switch.current, session)
+
+        expect(parked.reasons.map(&:to_s)).to include(format(Lain::Approval::Escalation::HELD, who: "the judge"))
+      end
+    end
 
     describe "a flip into plan" do
       it "leases a directory and moves the session's tools and reminders there" do

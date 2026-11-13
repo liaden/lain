@@ -221,7 +221,11 @@ module Lain
       NONE = new(holdings: {}, sinks: [], unnameable: false)
 
       # @return [Boolean] whether a file it reads holds a region, or what it reads is not wholly known
-      def secret_bearing? = holdings.values.any?(&:positive?) || unnameable || unscanned.any?
+      def secret_bearing? = holds_secrets? || unnameable || unscanned.any?
+
+      # @return [Boolean] whether a file it reads holds a region: all an automatic allow is contained for, since
+      #   a read lain could not name or scan whole is most of a build or a commit
+      def holds_secrets? = holdings.values.any?(&:positive?)
 
       # @return [Array<Parked::Queue::Reason>] lain's own words, each path and host inspected
       def notes

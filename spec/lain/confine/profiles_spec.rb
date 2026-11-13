@@ -1420,6 +1420,25 @@ RSpec.describe Lain::Confine::Profiles do
           .to raise_error(described_class::Uncontainable) { expect(_1.profile).to eq(:reader) }
       end
 
+      it "contains an automatic allow the same way, under either switch" do
+        answers["lain-fence"] = netted
+        judged = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged",
+                                                          contained: true)
+        workspace = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+        expect([profiles.for(request(judged)), workspace.for(request(judged))].map { [_1.name, _1.private_net] })
+          .to eq([[:reader, true], [:workspace, true]])
+      end
+
+      it "refuses an automatic contained allow where the box cannot give a private network, under either switch" do
+        judged = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged",
+                                                          contained: true)
+        workspace = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+        expect { profiles.for(request(judged)) }.to raise_error(described_class::Uncontainable)
+        expect { workspace.for(request(judged)) }.to raise_error(described_class::Uncontainable)
+      end
+
       it "stays traced and unconfined when the human chose network" do
         answers["lain-fence"] = netted
 

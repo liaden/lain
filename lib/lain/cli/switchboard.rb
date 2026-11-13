@@ -263,11 +263,10 @@ module Lain
                      silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off,
                      containment: Confine::Sandbox::Containment::NONE)
         @attended = attended
-        @masks = masks
-        @display = display
         @journal = journal
         @spike = spike
-        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:)
+        hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:,
+                          masks:, display:, containment:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
         @approvals = queue_over(sensitivity, approval_timeout, silence, containment) if @attended
@@ -443,7 +442,11 @@ module Lain
       # workers' included, is built over these two, so `auto` judges alike
       # wherever a call is asked. One breaker for them all, so a requester's
       # count does not restart when its call is asked through another ladder.
-      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:)
+      def hold_ladder_parts(rules:, approving:, classifiers:, verdict:, judge:, sensitivity:, arms:, request:, memo:,
+                            masks:, display:, containment:)
+        @masks = masks
+        @display = display
+        @containment = containment
         @judge_facts = arms.judge_facts?
         @denials = Approval::DenialBreaker.for(arms.judge_denials, journal: @journal)
         @request = arms.judge_requests? ? request : Approval::Judge::Unrequested
@@ -495,7 +498,7 @@ module Lain
       def plan_ladders(classifiers, root)
         triage = Approval::Escalation::Triage.new(sensitivity: classifiers, verdict: @verdict, policy: @sensitivity)
         rules = @approving.call(@rules.map { |rule| DeniesOnly.new(rule) }, classifiers)
-        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Unattended.new
+        asking = attended_asking || Unattended.new
         { ask: confined_ladder("plan ask", triage:, rules:, asking:, otherwise: asking, root:),
           auto: confined_ladder("plan auto", triage:, rules:, asking:, otherwise: judged(classifiers), root:),
           bypass: confined_ladder("plan bypass", triage:, rules:, asking:, root:,
@@ -505,7 +508,7 @@ module Lain
       def confined_ladder(label, triage:, rules:, asking:, otherwise:, root:)
         bottom = Unconfinable.new(asking:, otherwise:, root:)
         Approval::Escalation.new([triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), bottom],
-                                 journal: @journal, label:)
+                                 journal: @journal, label:, containment: @containment, asking: uncontained_asking)
       end
 
       def faults = Approval::Escalation::Faults.new(@journal)
@@ -557,9 +560,12 @@ module Lain
       # session's verdict and its exclusion table reach nothing here: refusing
       # everything is already stricter than any table could be.
       def build_ladder(triage:, rules:)
-        return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask") unless @approvals
+        unless @approvals
+          return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask", containment: @containment)
+        end
 
-        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:)
+        Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:,
+                                 containment: @containment)
       end
 
       # `auto` approval's ladder: the deterministic rungs, then the judge. An
@@ -569,12 +575,12 @@ module Lain
       def judged_ladder(triage:, rules:, classifiers:)
         Approval::Escalation.new(
           [triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), judged(classifiers)],
-          journal: @journal, label: "auto"
+          journal: @journal, label: "auto", containment: @containment, asking: uncontained_asking
         )
       end
 
       def judged(classifiers)
-        asking = @approvals ? Approval::Escalation::Surfaces.new(@approvals, denials: @denials) : Approval::Judged::Unattended.new
+        asking = attended_asking || Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
                              facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks,
                              memo: @memo)
@@ -589,11 +595,18 @@ module Lain
       end
 
       # `bypass` approval's ladder, built for attended and unattended sessions
-      # alike: nobody is asked under it, so whether anybody could be changes
-      # nothing, and the triage and rules rungs still decide first.
+      # alike: the triage and rules rungs still decide first, and nobody is
+      # asked but about a call that reads secrets the box cannot contain.
       def bypass_ladder(triage:, rules:)
-        Approval::Escalation.bypass(tools: @toolset, journal: @journal, rules:, triage:)
+        Approval::Escalation.bypass(tools: @toolset, journal: @journal, rules:, triage:, containment: @containment,
+                                    asking: uncontained_asking)
       end
+
+      def attended_asking
+        @approvals && (@attended_asking ||= Approval::Escalation::Surfaces.new(@approvals, denials: @denials))
+      end
+
+      def uncontained_asking = attended_asking || Approval::Escalation::Uncontained.new(@containment)
 
       # A mode as this session's live collaborators, out of the ladders the
       # scope it is entering stands on. Pure, and it raises before anything moves.

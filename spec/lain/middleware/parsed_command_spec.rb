@@ -200,6 +200,28 @@ RSpec.describe Lain::Middleware::ParsedCommand do
       expect([disclosures, scans]).to eq([0, 0])
     end
 
+    # Not because a composed allow never reads secrets (an ls, find or rg allow can): its programs send nothing,
+    # its listing and walk predicates check every name they print, and it runs on the reader profile with masks.
+    it "builds no disclosure for a composed reader's allow under --confine reader, which runs it under the reader" do
+      fence = Lain::Confine::Bwrap.fence_binary
+      skip("bwrap is not installed") unless File.executable?("/usr/bin/bwrap")
+      skip("lain-fence is not built at #{fence}") unless File.executable?(fence)
+      File.write(File.join(@root, ".env"), "API_TOKEN=ghp_#{SecureRandom.alphanumeric(36)}\n")
+      disclosures = 0
+      allow(Lain::Approval::Disclosure).to receive(:of).and_wrap_original do |original, *args, **rest|
+        disclosures += 1
+        original.call(*args, **rest)
+      end
+
+      result, = dispatched("cat lib/a.rb", confine: "reader")
+
+      expect(result).to have_attributes(is_error: false, content: include("foo = 1"))
+      expect(settled_by).to include("rung" => "rules", "verdict" => "allow")
+      expect(settled_by).not_to have_key("contained")
+      expect(disclosures).to eq(0)
+      expect(journal_records(journal_io, "sandbox").first).to include("profile" => "reader")
+    end
+
     it "parks a call naming a path with a NUL byte rather than faulting" do
       switchboard, session = board(approval: "auto")
       layers = Lain::CLI::ToolGuard.stack(chronicle, switchboard).to_a
