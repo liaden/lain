@@ -1676,7 +1676,7 @@ RSpec.describe Lain::Review::Session do
       expect(rows.map(&:state).tally).to eq({ "reviewed" => 1, "unreviewed" => corpus_size - 1 })
     end
 
-    # Through the surface a `lain review` actually reaches, not the null one --
+    # Through the surface a `qa-lain review` actually reaches, not the null one --
     # the claim is about what a USER pays to see a survey's table, and a null
     # surface would prove only that the session did not chunk on its own.
     it "draws the whole table through a real text surface, still without reading a file" do

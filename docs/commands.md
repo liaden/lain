@@ -9,7 +9,7 @@ declarations in `exe/lain`.
 `lain <subcommand> --help` reaches the same screen. A `--help` written *after* a command name is
 routed to `help`, so `lain chat --help`, `lain up --help` and `lain sessions --help` print that
 command's usage rather than refusing an unknown switch. Every other unknown switch *is* refused
-by name — `lain survey ./docs --permissive` answers `Unknown switches "--permissive"` — so a
+by name — `qa-lain survey ./docs --permissive` answers `Unknown switches "--permissive"` — so a
 mistyped flag never gets read as a positional argument.
 
 ---
@@ -594,85 +594,6 @@ This is the only command that writes to herdr's configuration, and it does so by
 records a link to the plugin folder this lain ships, so an upgrade of lain is picked up without
 linking again. A herdr not on `PATH` exits 1 saying so, and nothing is written.
 
-### lain review
-
-Review a pull request or a branch. `lain review 4821` takes a pull request number,
-`lain review feature/foo` a branch. It resolves the target, opens a round over the changeset,
-and prints the round as **text** — no editor is involved. [`/review`](#review) is the same round
-drawn in the cockpit.
-
-```bash
-lain review 4821
-lain review feature/foo --scope by_directory
-lain review feature/foo --base origin/main
-lain review open help                        # a branch actually named `help`
-```
-
-`open` is a disambiguating verb, not a mode. Thor owns the first word, so a target named `help`
-or `tree` would reach Thor's own command instead of the resolver; `lain review open help` is the
-way through. Every target that does not collide works without it.
-
-| Flag | Default | What it does |
-|---|---|---|
-| `--scope` | unset — the round opens at `cumulative` | `cumulative`, `commits`, or `by_directory`: which grouping the sidebar opens on. The enum is read off the registered partition strategies rather than written out in `exe/lain`, so a scope the registry serves cannot be refused before the registry is asked. |
-| `--base` | unset | Override the base ref the changeset is cut against. |
-
-An unresolvable target is refused by name, and names the repository it looked in:
-`head ref "does-not-exist-xyz" does not resolve to a commit in <root>`.
-
-### lain survey
-
-Review a directory **as it stands** — no pull request, no branch, no diff. `lain survey ./docs`
-walks the tree, opens a round over it, and prints the listing as text.
-[`/survey`](#survey) is the same round drawn in the cockpit.
-
-```bash
-lain survey ./docs
-lain survey ./lib --unbounded
-lain survey open help                        # a directory actually named `help`
-```
-
-`open` is the same escape valve `lain review` carries, for the same reason.
-
-| Flag | Default | What it does |
-|---|---|---|
-| `--scope` | unset — the round opens at `cumulative` | The same three registered strategies `lain review` offers. A corpus does not answer all of them — see below. |
-| `--unbounded` | `false` | Present the whole tree however large it is. It lifts the corpus file ceiling below; the separate `/critique` packing ceiling still holds. It does not lift the 20,000-entry walk bound: a root holding more entries is refused with the bound and the root named, rather than surveyed in part. |
-
-**`--permissive` is not a flag of this command.** It chooses the rule a *verdict* is judged
-under, and `lain survey` renders a tree and submits nothing; the in-session
-[`/survey`](#survey) is where it lives. `lain survey ./docs --permissive` answers
-`Unknown switches "--permissive"` — it names the switch you typed rather than reading the word
-as a path or inventing a verb for it.
-
-A tree outside the project is judged by the names below its own root, so `secrets/prod` is masked whole in the corpus, the
-notes and the briefs, and the docent that answers questions about the survey works inside the surveyed tree: a read it makes
-there meets the same name rule from that root.
-
-Two refusals worth meeting on paper first.
-
-**A scope the registry has but this source cannot answer** is refused in prose, and names the
-ones that would have worked:
-
-```
-scope commits is not available for the corpus source -- it does not answer what that grouping
-reads. cumulative, by_directory do present this one
-```
-
-A scope that is not registered at all never reaches the source: Thor validates the enum ahead of
-dispatch and answers `Expected '--scope' to be one of cumulative, commits, by_directory; got by_size`.
-
-**A tree over the file ceiling** is refused before a single file is read:
-
-```
-this corpus is 742 files, over the ceiling of 300 -- survey a subdirectory instead, or raise
-the ceiling with --unbounded
-```
-
-The decision is made from a file count alone, when the corpus is built — **before any `--scope`
-is applied**. So no scope lifts it: `--scope by_directory` groups the same file set and refuses
-with the same sentence. The two remedies the refusal names are the only two there are.
-
 ### lain bench variance
 
 Report determinism, divergence, and distribution across recorded sessions. Offline.
@@ -745,6 +666,90 @@ printed in the report); give that file to `--recorded` to re-score it. `--gatewa
 and `--model` follow `--secret-oracle cloud`: the gateway is proven first, its token is read from
 its token file and never from the URL, and a cloud run needs both. `--paths` names another set of
 the same shape (default `spec/fixtures/oracle/paths.yml`).
+
+
+## qa-lain
+
+Text-mode review commands, run from `bin/qa-lain` (the QA sandbox puts it on `PATH`). They are not part of `lain`.
+
+### qa-lain review
+
+Review a pull request or a branch. `qa-lain review 4821` takes a pull request number,
+`qa-lain review feature/foo` a branch. It resolves the target, opens a round over the changeset,
+and prints the round as **text** — no editor is involved. [`/review`](#review) is the same round
+drawn in the cockpit.
+
+```bash
+qa-lain review 4821
+qa-lain review feature/foo --scope by_directory
+qa-lain review feature/foo --base origin/main
+qa-lain review open help                        # a branch actually named `help`
+```
+
+`open` is a disambiguating verb, not a mode. Thor owns the first word, so a target named `help`
+or `tree` would reach Thor's own command instead of the resolver; `qa-lain review open help` is the
+way through. Every target that does not collide works without it.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--scope` | unset — the round opens at `cumulative` | `cumulative`, `commits`, or `by_directory`: which grouping the sidebar opens on. The enum is read off the registered partition strategies rather than written out in `exe/lain`, so a scope the registry serves cannot be refused before the registry is asked. |
+| `--base` | unset | Override the base ref the changeset is cut against. |
+
+An unresolvable target is refused by name, and names the repository it looked in:
+`head ref "does-not-exist-xyz" does not resolve to a commit in <root>`.
+
+### qa-lain survey
+
+Review a directory **as it stands** — no pull request, no branch, no diff. `qa-lain survey ./docs`
+walks the tree, opens a round over it, and prints the listing as text.
+[`/survey`](#survey) is the same round drawn in the cockpit.
+
+```bash
+qa-lain survey ./docs
+qa-lain survey ./lib --unbounded
+qa-lain survey open help                        # a directory actually named `help`
+```
+
+`open` is the same escape valve `qa-lain review` carries, for the same reason.
+
+| Flag | Default | What it does |
+|---|---|---|
+| `--scope` | unset — the round opens at `cumulative` | The same three registered strategies `qa-lain review` offers. A corpus does not answer all of them — see below. |
+| `--unbounded` | `false` | Present the whole tree however large it is. It lifts the corpus file ceiling below; the separate `/critique` packing ceiling still holds. It does not lift the 20,000-entry walk bound: a root holding more entries is refused with the bound and the root named, rather than surveyed in part. |
+
+**`--permissive` is not a flag of this command.** It chooses the rule a *verdict* is judged
+under, and `qa-lain survey` renders a tree and submits nothing; the in-session
+[`/survey`](#survey) is where it lives. `qa-lain survey ./docs --permissive` answers
+`Unknown switches "--permissive"` — it names the switch you typed rather than reading the word
+as a path or inventing a verb for it.
+
+A tree outside the project is judged by the names below its own root, so `secrets/prod` is masked whole in the corpus, the
+notes and the briefs, and the docent that answers questions about the survey works inside the surveyed tree: a read it makes
+there meets the same name rule from that root.
+
+Two refusals worth meeting on paper first.
+
+**A scope the registry has but this source cannot answer** is refused in prose, and names the
+ones that would have worked:
+
+```
+scope commits is not available for the corpus source -- it does not answer what that grouping
+reads. cumulative, by_directory do present this one
+```
+
+A scope that is not registered at all never reaches the source: Thor validates the enum ahead of
+dispatch and answers `Expected '--scope' to be one of cumulative, commits, by_directory; got by_size`.
+
+**A tree over the file ceiling** is refused before a single file is read:
+
+```
+this corpus is 742 files, over the ceiling of 300 -- survey a subdirectory instead, or raise
+the ceiling with --unbounded
+```
+
+The decision is made from a file count alone, when the corpus is built — **before any `--scope`
+is applied**. So no scope lifts it: `--scope by_directory` groups the same file set and refuses
+with the same sentence. The two remedies the refusal names are the only two there are.
 
 ---
 
@@ -1220,7 +1225,7 @@ A secret gist is unlisted, not private: anyone holding the URL can read it.
 ### /survey
 
 `/survey <path>` opens a survey of a directory in the editor this chat is **already** attached
-to — the round [`lain survey`](#lain-survey) prints as text, drawn in the cockpit with this
+to — the round [`qa-lain survey`](#qa-lain-survey) prints as text, drawn in the cockpit with this
 chat's gesture rails bound to it. Its usage line:
 
 ```
@@ -1230,7 +1235,7 @@ chat's gesture rails bound to it. Its usage line:
 The scope names in that line are filled in from the registered partition strategies, so the
 usage enumerates whatever is registered rather than restating a list that could drift from it.
 
-It reads three flags: the two `lain survey` has, plus `--permissive`, which the one-shot has no
+It reads three flags: the two `qa-lain survey` has, plus `--permissive`, which the one-shot has no
 use for. `--permissive` chooses the rule a **verdict** is judged under — it forgives rows nobody
 read and still refuses an objection nobody answered — and only the cockpit submits a verdict.
 Anything else beginning with `--` is refused by name rather than read as a path, and a declared
@@ -1238,7 +1243,7 @@ flag whose value is missing gets its own refusal, because the remedy is the oppo
 
 Without an editor it **refuses** rather than drawing into nothing: a survey nothing drew and no
 gesture could reach is the failure the review surface was written against. The refusal names
-`lain up --nvim` (or `lain chat --nvim <socket>`) as the way to get one, and `lain survey <path>`
+`lain up --nvim` (or `lain chat --nvim <socket>`) as the way to get one, and `qa-lain survey <path>`
 as the way to read one without.
 
 **A survey opens two windows: `sidebar | file`.** There is no diff pair — a corpus has no base
@@ -1417,7 +1422,7 @@ tests preset: :rspec
   (`vault-pass.txt`, `dbToken.txt`), `api key` or `api_keys`, or ends in `secret`, `password`, `credential` or `apikey`
   (`mysecrets.txt`); `AUTHORS` and `tokenizer.json` are ordinary, and source and markdown files are excepted by extension.
   `dbPasswordFile.txt` is a known miss and `libsecret` a known catch; a bare `pass` also gates compiler-pass files such as `*_pass.mlir` and `hlo/pass/`, by ruling. A directory named so counts below the project root,
-  below a checkout, and below the root of a `lain survey` of a tree outside the project.
+  below a checkout, and below the root of a `qa-lain survey` of a tree outside the project.
 * `shell`: `exclude:`, a list of program names or globs the shell tool refuses. `exclude: %w[*]` is
   the strictest setting.
 * `search`: how `grep`, `glob`, `list_files` and `ast_search` walk the project. Searches list files

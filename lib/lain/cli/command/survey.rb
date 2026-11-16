@@ -12,7 +12,7 @@ module Lain
       # Not a thinner {Lain::CLI::Survey}: what differs is what it is wired TO
       # -- the chat's own journal, the editor's surface, and the gesture rails
       # a `<CR>` arrives on, which a one-shot process has none of.
-      # `--permissive` is its alone, because `lain survey` judges no verdict.
+      # `--permissive` is its alone, because `qa-lain survey` judges no verdict.
       #
       # It refuses without an editor rather than coalescing to
       # {Lain::Review::Surface::Null}, {Command::Review}'s rule: a survey

@@ -3,15 +3,15 @@
 require "fileutils"
 require "tmpdir"
 
-# The exe half of this card, `load`ed the way `spec/lain/cli_spec.rb` loads it:
-# the script ends in `LainCLI.start(ARGV)` guarded by `$PROGRAM_NAME ==
+# The exe half of this card, `load`ed the way `spec/lain/cli_spec.rb` loads its own:
+# the script ends in `QALain.start(ARGV)` guarded by `$PROGRAM_NAME ==
 # __FILE__`, so this defines the Thor classes without parsing rspec's ARGV.
 # Needed here because Thor validates an `enum:` BEFORE it dispatches, so the
 # `--scope` list is a scope vocabulary of its own and the one most easily left
-# behind -- `lain review --scope by_directory` was exactly that failure.
-load File.expand_path("../../../exe/lain", __dir__)
+# behind -- `qa-lain review --scope by_directory` was exactly that failure.
+load File.expand_path("../../../bin/qa-lain", __dir__)
 
-# `lain survey PATH`: the third source reached from a command line.
+# `qa-lain survey PATH`: the third source reached from a command line.
 #
 # Nothing is doubled. The filesystem, the classifier, the walk, the projection,
 # the corpus, the session and the journal are all real, because what this card
@@ -74,7 +74,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
   # from `named_from: @cwd` -- the chat's own cwd, never the surveyed tree --
   # so a name a human reads in the editor resolves relative to where they are
   # standing. This process has no chat, but it has an equivalent cwd (the
-  # resolved Project's), and a row from `lain survey` on a directory OUTSIDE
+  # resolved Project's), and a row from `qa-lain survey` on a directory OUTSIDE
   # that cwd has to come out named the same way, or the two surfaces disagree
   # about what to call the very file they are both looking at.
   describe "row names, when the surveyed directory is not the invoking cwd" do
@@ -250,7 +250,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     end
 
     # The flag the human actually has, at the surface that actually offers it --
-    # `--unbounded` is declared on `lain survey` and nowhere else, so a refusal
+    # `--unbounded` is declared on `qa-lain survey` and nowhere else, so a refusal
     # naming it anywhere else would be naming a flag its reader cannot type.
     #
     # The LAST-position half of this pin is defence in depth, not a guard over
@@ -482,7 +482,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
 
   # Where the project's own table went missing. The classifier was anchored on
   # the process's working directory AND asked for the table under it, so every
-  # `lain survey` below the repository top resolved the config under the cwd,
+  # `qa-lain survey` below the repository top resolved the config under the cwd,
   # found nothing, and classified with `Rules.empty` -- a project's denials
   # silently not in force, which is the worst outcome the whole boundary is
   # written against. The root answers "whose rules", the cwd answers "relative
@@ -559,7 +559,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
   end
 end
 
-# The exe half. Thor owns the first word, so `lain survey ./docs` only reaches
+# The exe half. Thor owns the first word, so `qa-lain survey ./docs` only reaches
 # the lib at all through `default_command`, and Thor validates an `enum:` before
 # it dispatches -- both are wiring nothing in `lib/` can pin.
 #
@@ -569,11 +569,11 @@ end
 # `.start` with `debug: true` throughout -- Thor renders a refusal as `exit(1)`,
 # RSpec does not rescue SystemExit inside an example, and a truncated run
 # reports what had already passed as a pass.
-RSpec.describe LainCLI, "the survey subcommand" do
-  def survey_command = LainCLI::Survey.commands.fetch("open")
+RSpec.describe QALain, "the survey subcommand" do
+  def survey_command = QALain::Survey.commands.fetch("open")
 
   it "routes a bare PATH through the default command, so a path is never read as a command name" do
-    expect(LainCLI::Survey.default_command).to eq("open")
+    expect(QALain::Survey.default_command).to eq("open")
   end
 
   it "offers every registered strategy on --scope, so shipping one is all it takes to reach it" do
@@ -591,7 +591,7 @@ RSpec.describe LainCLI, "the survey subcommand" do
   end
 
   it "is reachable as a subcommand of the executable" do
-    expect(described_class.subcommand_classes["survey"]).to be(LainCLI::Survey)
+    expect(described_class.subcommand_classes["survey"]).to be(QALain::Survey)
   end
 
   # The refusal a human meets for a switch `survey` does not declare, and the
@@ -601,7 +601,7 @@ RSpec.describe LainCLI, "the survey subcommand" do
   # `default_command`, Thor builds the verb from `ancestor_name` + `name`, so a
   # word the human never typed entered the sentence they were asked to act on.
   #
-  # A declaration on LainCLI alone would not have fixed it: Thor's
+  # A declaration on QALain alone would not have fixed it: Thor's
   # `check_unknown_options?` returns false for any name registered through
   # `subcommand`, so `survey` needs its OWN -- which is what makes these
   # examples worth having here rather than only in `spec/lain/cli_spec.rb`.
@@ -706,7 +706,7 @@ RSpec.describe LainCLI, "the survey subcommand" do
     end
 
     # The row names from this PROCESS's own cwd, not from the surveyed tree --
-    # so a `lain survey` of a directory elsewhere on disk
+    # so a `qa-lain survey` of a directory elsewhere on disk
     # names the file relative to here, not bare. What this example pins is
     # that argv reaches the lib and the lib's rendering reaches stdout; exact
     # row naming is `survey_spec.rb`'s own describe block above.

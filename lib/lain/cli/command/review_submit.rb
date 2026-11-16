@@ -13,7 +13,7 @@ module Lain
       # found it constructed NOWHERE in the tree. Reviewing somebody else's pull
       # request and leaving the review on your own disk is not a code review.
       #
-      # A repl verb rather than `lain review submit`, because a review with
+      # A repl verb rather than `qa-lain review submit`, because a review with
       # anything to say was annotated in the EDITOR: the gesture rails only
       # exist inside a chat with a cockpit attached, so the human who has
       # finished a review is by construction sitting at this prompt. A one-shot

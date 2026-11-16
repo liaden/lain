@@ -25,7 +25,7 @@ module Lain
         # would be INERT for `epic`, `review`, `survey` and `bench` -- the four
         # commands a stray switch was actually reaching, because each is a separate
         # `< Thor` class dispatched by name. Undeclared, Thor left the switch in the
-        # POSITIONAL remainder: `lain survey PATH --permissive` became an arity
+        # POSITIONAL remainder: `qa-lain survey PATH --permissive` became an arity
         # error naming `survey open`, a verb the human never typed and which only
         # exists because `default_command :open` lets Thor compose one.
         #

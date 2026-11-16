@@ -233,8 +233,8 @@ RSpec.describe Lain::CLI::Review, :seam do
       expect(sources_journaled).to eq(["github_pr"])
     end
 
-    # Thor reserves `help` and `tree` as command names, so `lain review help`
-    # prints the help screen -- the exe's `desc` says so, and `lain review open
+    # Thor reserves `help` and `tree` as command names, so `qa-lain review help`
+    # prints the help screen -- the command's `desc` says so, and `qa-lain review open
     # help` is the way through. The LIB has no such reservation, and this is
     # what holds the two apart: nothing here treats a target as a command name.
     it "reviews a branch that happens to be named like a Thor command" do

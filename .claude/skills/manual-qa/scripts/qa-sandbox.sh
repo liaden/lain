@@ -49,12 +49,14 @@ mkdir -p "$QA/tmux"
 chmod 700 "$QA/tmux"
 
 # --- the shim: PANE_ENV forwards LAIN_* only, so carry the toolchain in here --
-cat > "$QA/shim/lain" <<EOF
+for shim in lain:exe/lain qa-lain:bin/qa-lain; do
+  cat > "$QA/shim/${shim%%:*}" <<EOF
 #!/usr/bin/env bash
 eval "\$(mise env -s bash ruby@4.0.9)"
-exec "$REPO/exe/lain" "\$@"
+exec "$REPO/${shim#*:}" "\$@"
 EOF
-chmod +x "$QA/shim/lain"
+  chmod +x "$QA/shim/${shim%%:*}"
+done
 
 # --- which pane is the chat? which is the editor? ----------------------------
 # Sourced by BOTH drive.sh and peek.sh so aiming a send and aiming a read cannot

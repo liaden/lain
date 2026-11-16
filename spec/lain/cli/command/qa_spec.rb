@@ -275,7 +275,7 @@ RSpec.describe Lain::CLI::Command::QA do
 
     # The whole point of the card: a human types a line and the ladder runs. Every
     # example above holds the command directly, which would stay green for a
-    # command no `you>` line could ever reach -- the fate `lain review` met for a
+    # command no `you>` line could ever reach -- the fate `qa-lain review` met for a
     # whole chunk. So one example goes through the registry the Repl consults,
     # over a Surface built as the wiring builds it.
     it "runs from a typed line, through the surface's own registry" do

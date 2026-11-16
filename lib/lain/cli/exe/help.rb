@@ -14,7 +14,7 @@ module Lain
       #
       # Not a courtesy invented here: Thor's own `subcommand` wrapper already does
       # it one layer down (`invoke_args.unshift "help" if opts.delete("--help") ||
-      # opts.delete("-h")`, thor.rb:337), which is exactly why `lain survey --help`
+      # opts.delete("-h")`, thor.rb:337), which is exactly why `qa-lain survey --help`
       # worked while `lain chat --help` did not. This gives the commands declared on
       # THIS class the same answer, off the same HELP_MAPPINGS.
       #

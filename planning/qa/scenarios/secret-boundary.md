@@ -433,7 +433,7 @@ which is exactly what this boundary declines to do.
 
 Round 20's D-2 (round 19's F133): a note placed on a masked line journaled `anchor_text` raw, so the
 journal held the secret the read path had masked. Fixture: a git changeset whose new side holds
-`API_KEY=sk-live-0000000000000000` on a known line. Open `/review` (or the `lain review` cockpit), place a
+`API_KEY=sk-live-0000000000000000` on a known line. Open `/review` (or the `qa-lain review` cockpit), place a
 note on that line with `\LN` and hand it back, then:
 
 ```bash

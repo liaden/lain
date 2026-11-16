@@ -691,8 +691,7 @@ RSpec.describe LainCLI do
     end
 
     it "finds them all at all, so an empty sweep cannot pass vacuously" do
-      expect(thor_classes).to contain_exactly(described_class, described_class::Survey,
-                                              described_class::Review, described_class::Bench,
+      expect(thor_classes).to contain_exactly(described_class, described_class::Bench,
                                               described_class::Epic, described_class::Worktrees, described_class::Todos,
                                               described_class::Land)
     end
@@ -706,8 +705,6 @@ RSpec.describe LainCLI do
       "chat" => %w[chat --nope],
       "sessions" => %w[sessions --nope],
       "epic status" => %w[epic status --nope],
-      "review" => %w[review open feature/x --nope],
-      "survey" => %w[survey /tmp --nope],
       "bench variance" => %w[bench variance /tmp --nope],
       "worktrees gc" => %w[worktrees gc --nope],
       "land status" => %w[land status --nope],
@@ -1109,7 +1106,7 @@ end
 # repository.
 #
 # Found by the manual pass, 2026-08-05, against a real checkout of rack:
-# `lain review open 2490` died in `Bundler::GemNotFound` looking for one of
+# the review command on `open 2490` died in `Bundler::GemNotFound` looking for one of
 # RACK's development dependencies. `bundler/setup` resolves the Gemfile it
 # finds by walking UP FROM THE CWD, and reviewing somebody else's repository
 # means running there. It is the review surface's whole use case.
@@ -1177,8 +1174,9 @@ RSpec.describe "exe/lain outside its own repository", :seam do
     hostile_project do |dir|
       Dir.mktmpdir("lain-fake-gem") do |gem_dir|
         installed = File.join(gem_dir, "exe")
-        FileUtils.mkdir_p(installed)
+        FileUtils.mkdir_p([installed, File.join(gem_dir, "lib/lain/boot")])
         FileUtils.cp(exe, File.join(installed, "lain"))
+        FileUtils.cp(File.join(lib, "lain/boot/launch.rb"), File.join(gem_dir, "lib/lain/boot"))
 
         output, status = lain("help", chdir: dir, script: File.join(installed, "lain"))
 
@@ -1196,7 +1194,7 @@ RSpec.describe "exe/lain outside its own repository", :seam do
     output, status = checkout_boot
 
     expect(status).to eq(0)
-    expect(output).to include("lain review")
+    expect(output).to include("lain sessions")
   end
 
   it "starts from its cached load path in a project whose Gemfile it cannot resolve" do
@@ -1208,7 +1206,7 @@ RSpec.describe "exe/lain outside its own repository", :seam do
         Array.new(2) { lain("help", chdir: dir, flags: ["-r#{probe}"], "LAIN_LOAD_PATH_CACHE" => cache) }
       end
 
-      seen = boots.map { |out, status| [status, out.include?("lain review"), out.include?("Bundler::GemNotFound")] }
+      seen = boots.map { |out, status| [status, out.include?("lain sessions"), out.include?("Bundler::GemNotFound")] }
 
       expect(seen).to eq([[0, true, false]] * 2)
       expect(File.readlines(File.join(cache, "bundler"), chomp: true)).to eq(["constant", ""])
@@ -1277,8 +1275,9 @@ RSpec.describe "exe/lain bootsnap cache", :seam do
   # not for loading lain.
   def run_stand_in(**env)
     stand_in = File.join(root, "stand-in")
-    FileUtils.mkdir_p(File.join(stand_in, "exe"))
+    FileUtils.mkdir_p([File.join(stand_in, "exe"), File.join(stand_in, "lib/lain/boot")])
     FileUtils.cp(exe, File.join(stand_in, "exe", "lain"))
+    FileUtils.cp(File.join(lib, "lain/boot/launch.rb"), File.join(stand_in, "lib/lain/boot"))
     File.write(File.join(stand_in, "bootsnap.rb"),
                %(module Bootsnap; def self.setup(cache_dir:) = File.write(ENV.fetch("SETUP_RECORD"), cache_dir); end))
     File.write(File.join(stand_in, "lain.rb"), "exit!(0)")
@@ -1404,23 +1403,6 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
     expect(options["max_tokens"]).to be_nil
     expect(options["temperature"]).to be_nil
     expect(profile_under(env, []).keep_alive).to be_nil
-  end
-
-  # Thor validates an `enum:` BEFORE it dispatches, so this list is a scope
-  # vocabulary like any other -- and the one most easily missed, because a
-  # registry that knows about a strategy while Thor does not fails at the flag
-  # with the registry never consulted. `lain review --scope by_directory` was
-  # exactly that failure until this list was derived from the registry.
-  describe "the --scope flag of `lain review open`" do
-    def scope_option = LainCLI::Review.commands.fetch("open").options.fetch(:scope)
-
-    it "offers every registered strategy, so shipping one is all it takes to reach it" do
-      expect(scope_option.enum).to match_array(Lain::Review::Partition::STRATEGIES.values.map(&:name))
-    end
-
-    it "offers nothing the registry would then refuse" do
-      expect { scope_option.enum.each { |scope| Lain::Review::Session.scope!(scope) } }.not_to raise_error
-    end
   end
 
   # The rule this whole seam is drawn on: the environment may say HOW the model

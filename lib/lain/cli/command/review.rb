@@ -8,7 +8,7 @@ module Lain
       # rails to the review it opened.
       #
       # A repl command rather than a second process, because the first draft --
-      # `lain review --nvim=<socket>` -- was measured to be data destruction:
+      # `qa-lain review --nvim=<socket>` -- was measured to be data destruction:
       # the human's only socket is the cockpit's, a second attach re-injects the
       # runtime with its own channel id and reassigns every `_G.__lain.*`
       # function, and the parked chat then loses `:LainReply` and every review

@@ -280,7 +280,7 @@ RSpec.describe Lain::CLI::Sessions do
         .and match(/20260101T000000-1\.ndjson.*\bempty\b/)
     end
 
-    # The THIRD headerless case, and it arrived with `lain review`: a file whose
+    # The THIRD headerless case, and it arrived with `qa-lain review`: a file whose
     # records load perfectly and simply are not a chat's. It is neither empty nor
     # corrupt, so both existing words are wrong about it -- and "unreadable" is
     # wrong in the expensive direction, sending a reader hunting damage that is

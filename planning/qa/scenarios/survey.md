@@ -1,6 +1,6 @@
 # Scenario: the survey command
 
-**What it exercises:** `/survey` and `lain survey` **as commands** — the parse, the refusals, the
+**What it exercises:** `/survey` and `qa-lain survey` **as commands** — the parse, the refusals, the
 ceilings at a scale no round has ever driven, the walk's admission decisions, the one-review-per-chat
 guard, and the docent thread that is the only part of a survey that spends a model call.
 
@@ -57,26 +57,26 @@ Expected, in order:
 - **`--squash`** → the *unknown flag* sentence. The two remedies are opposites (delete the word you
   got right vs. supply the word after it), which is why one sentence for both would be wrong.
 - **a valid line, headless** → the no-editor refusal, which must name `lain up --nvim`, `lain chat
-  --nvim <socket>` **and** `lain survey <path>` as the text alternative. It must **not** coalesce to
+  --nvim <socket>` **and** `qa-lain survey <path>` as the text alternative. It must **not** coalesce to
   a Null surface and draw nothing.
 
 Then the one-shot, which needs no editor at all:
 
 ```bash
-lain survey ./lib/lain/survey
-lain survey open help      # the disambiguating verb, for a path colliding with a command name
+qa-lain survey ./lib/lain/survey
+qa-lain survey open help      # the disambiguating verb, for a path colliding with a command name
 ```
 
-Headline format is `surveying <root> at <scope> scope: <n> files`. **`lain survey` renders and
+Headline format is `surveying <root> at <scope> scope: <n> files`. **`qa-lain survey` renders and
 submits nothing** — it has no `--permissive`, because there is no verdict to judge. Confirm the
 flag is refused rather than silently accepted.
 
 **Both surfaces name a row from the same base since 2026-09-14.** Round 17 (V1): outside the chat's
-cwd, `lain survey` listed `anchor.rb` where `/survey` listed `dev/lain/lib/lain/review/anchor.rb` for
+cwd, `qa-lain survey` listed `anchor.rb` where `/survey` listed `dev/lain/lib/lain/review/anchor.rb` for
 the same file. *Driven 2026-09-14*, the one-shot side: from a sibling directory,
-`lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
+`qa-lain survey <abs>/cs/changeset/lib` headlined `surveying <abs>/cs/changeset/lib at cumulative scope:
 1 file` and listed `[ ] cs/changeset/lib/tally.rb`; run from inside the repository as
-`lain survey lib` it listed `[ ] lib/tally.rb`. A one-shot run from another directory names every row relative to that cwd (`../` prefixes included), never relative to the surveyed root; read the rows against the directory you launched from. Survey the same absolute path with `/survey` from
+`qa-lain survey lib` it listed `[ ] lib/tally.rb`. A one-shot run from another directory names every row relative to that cwd (`../` prefixes included), never relative to the surveyed root; read the rows against the directory you launched from. Survey the same absolute path with `/survey` from
 the same cwd and confirm the rows read identically. b25-10 is fixed (T10): the refusal, the `opened` report and the hunk count in `lain://review` now name a row's path as the sidebar displays it, so a leading `../` is stripped in all of them; check the sidebar naming against the refusal text. b27-2, still open in round 28: the thread header and the `annotation_placed.path` say `../plant/tree/lib/calc.rb` while the sidebar says `plant/tree/lib/calc.rb`, and the approve refusal says `../p7/README.md` beside sidebar `p7/README.md`. b28-2, inconclusive: fork m could not make `x` mark a never-opened survey row in 8 shapes (every one refused `nothing has read it -- <CR> opens it`), while fork b saw it after notes, a re-survey and a partial-verdict refusal on the same tree; the refusal fires only while nothing has chunked that row's file, so which call chunked it is the open question *(Prediction, not yet driven: the `/survey` side
 needs the cockpit.)*
 
@@ -265,7 +265,7 @@ a round still open makes `/survey` refuse for the wrong reason. `/review close` 
 without a verdict.
 
 - **survey over a changeset review** → refuses, **naming the target already open**, and points at
-  `lain survey <path>` for a text rendering outside the chat.
+  `qa-lain survey <path>` for a text rendering outside the chat.
 - **survey over a survey** → **rebinds**, does not refuse. That is how a human takes a second look
   at a tree, and it is `/review`'s documented behaviour for its own second call.
 - **after any refusal, `/review` still works.** Nothing may be left held: the round is taken only

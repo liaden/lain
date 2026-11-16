@@ -2,7 +2,7 @@
 
 **Round 26 is the re-check** for the round 25 fixes stated in item 4 (h25-10: a verdict or a second `/review` with held notes is refused).
 
-**What it exercises:** `lain review <branch>`, `Review::Source::LocalBranch`, `Review::Changeset`,
+**What it exercises:** `qa-lain review <branch>`, `Review::Source::LocalBranch`, `Review::Changeset`,
 `Delta`/`Hunk`, all three `Review::Partition` strategies, `Review::Bounds`' three ceilings,
 `Review::Verdict::Policy` (strict vs `--permissive`), the `/review` command at `you>`, and
 `/review-submit`'s refusal when there is nowhere to post.
@@ -77,11 +77,11 @@ compare against the last one.
 ## 1 — Resolution, and the two refusals
 
 ```bash
-lain review feature                  # the default: base is the default base, head is `feature`
-lain review open feature             # identical -- `open` is the escape, not a different command
-lain review feature --base "$BASE"
-lain review no-such-branch           # UnknownRef
-lain review feature --base no-such   # UnknownRef, naming the BASE role
+qa-lain review feature                  # the default: base is the default base, head is `feature`
+qa-lain review open feature             # identical -- `open` is the escape, not a different command
+qa-lain review feature --base "$BASE"
+qa-lain review no-such-branch           # UnknownRef
+qa-lain review feature --base no-such   # UnknownRef, naming the BASE role
 ```
 
 Expected, and **the role must be named** — `base` and `head` fail identically otherwise and an
@@ -93,7 +93,7 @@ head ref "no-such-branch" does not resolve to a commit in <repo>: <git's own det
 
 The `: <detail>` tail is load-bearing. `rev-parse --verify --quiet` silences "unknown revision" but
 **not** "not a git repository" or "cannot change to …", and those two are exactly the ones a caller
-needs. Run `lain review feature` from **outside any repository** and confirm the detail survives
+needs. Run `qa-lain review feature` from **outside any repository** and confirm the detail survives
 rather than being swallowed into a bare "does not resolve".
 
 **And in a repository with no `main`.** The default base is the literal `main`, so a `master`
@@ -104,8 +104,8 @@ differently, and a round should drive both:
   base to review a branch against; name one with --base <ref>`. *(Driven round 26: the
   cockpit wording names `--base <ref>`. A headless chat refuses `/review` for having no editor before it resolves any ref, so this needs the
   cockpit.)*
-- **`lain review <branch>` names it too, since round 26's fix (T48).** *Driven 2026-09-14, and again round 26,
-  when `lain review feature` in a `master` repo said `base ref "main" does not resolve` with no `--base` hint.* In
+- **`qa-lain review <branch>` names it too, since round 26's fix (T48).** *Driven 2026-09-14, and again round 26,
+  when `qa-lain review feature` in a `master` repo said `base ref "main" does not resolve` with no `--base` hint.* In
   a `git init -b master` repository both entry points now say `… -- this repository has no default base to review a
   branch against; name one with --base <ref>`, exit 1, from the one `Target#branch`. A `--base` the human typed
   that does not resolve still reports the plain `base ref … does not resolve`.
@@ -116,7 +116,7 @@ The refusal that exists because the alternative is silent and catastrophic:
 
 ```bash
 git checkout -q --orphan orphan; git commit -q --allow-empty -m 'unrelated'
-lain review feature --base orphan
+qa-lain review feature --base orphan
 ```
 
 ```
@@ -134,19 +134,19 @@ below the exe treats a target as anything but a ref.
 
 ```bash
 git branch help feature; git branch tree feature
-lain review help          # Thor's HELP SCREEN -- correct, and the reason `open` exists
-lain review open help     # reviews the branch
-lain review open tree     # reviews the branch
+qa-lain review help          # Thor's HELP SCREEN -- correct, and the reason `open` exists
+qa-lain review open help     # reviews the branch
+qa-lain review open tree     # reviews the branch
 ```
 
-A `lain review help` that tries to review a branch is as much a defect as `lain review open help`
+A `qa-lain review help` that tries to review a branch is as much a defect as `qa-lain review open help`
 printing help.
 
 ## 2 — The three scopes, and where the enum comes from
 
 ```bash
-for s in cumulative commits by_directory; do lain review feature --scope "$s"; done
-lain review feature --scope by_files      # Thor rejects: not in the enum
+for s in cumulative commits by_directory; do qa-lain review feature --scope "$s"; done
+qa-lain review feature --scope by_files      # Thor rejects: not in the enum
 ```
 
 **Corrected by round 17: the scopes are `cumulative`, `commits` and `by_directory`**, not `whole` and
@@ -165,7 +165,7 @@ by_directory; got by_files`.
 **The enum is read off `Review::Partition::STRATEGIES`, not written by hand in the exe**, and that
 is a real past defect rather than tidiness: Thor validates `enum:` *before* it dispatches, so a
 hand-written list rejects a scope the registry serves without the registry ever being asked.
-`lain review --scope by_directory` was exactly that failure. **Check the failure direction:** a
+`qa-lain review --scope by_directory` was exactly that failure. **Check the failure direction:** a
 scope the registry serves must be accepted, and a scope it does not must be refused by Thor with
 the valid set named.
 
@@ -175,7 +175,7 @@ the valid set named.
 
 ```bash
 git switch -q "$BASE"; git commit -q --allow-empty -m 'base moved on'
-lain review feature --base "$BASE"
+qa-lain review feature --base "$BASE"
 ```
 
 The changeset must be unchanged by that empty commit on the base. A review that grows a "base moved
@@ -199,7 +199,7 @@ Manufacture the file ceiling; it is the cheapest:
 git switch -qc wide feature
 ruby -e '301.times { |i| File.write("f#{i}.txt", "x\n") }'
 git add -A; git commit -qm 'wide'
-lain review wide --base feature
+qa-lain review wide --base feature
 ```
 
 **Then read the journal, because T31c changed something the screen cannot show.** The ceiling is
@@ -378,10 +378,10 @@ git switch -qc unicode feature
 printf 'x\n' > "café.rb"; mkdir -p 'a b'; printf 'y\n' > 'a b/spaced.rb'
 git add -A; git commit -qm 'unicode and spaces'
 git config core.quotePath true              # and repeat with GIT_CONFIG_COUNT=1 ...
-lain review unicode --base feature
+qa-lain review unicode --base feature
 ```
 
-Both files must appear under their real names, under **all three** config routes. Also plant a name with a control character (`ruby -e 'File.write("evil\e[2K\rinnocent.rb","x\n")'`) and a newline in a name. h28-1, open: `lain review` prints the raw escape (`Review::Surface::Text#displayed_path` calls `Utf8.legible`, which scrubs only invalid UTF-8), so a terminal shows `innocent.rb` and a newline splits the row in 2; commit subjects have the same gap. `lain trust` escapes control characters in a file it prints, which is the precedent. A `"caf\303\251.rb"`
+Both files must appear under their real names, under **all three** config routes. Also plant a name with a control character (`ruby -e 'File.write("evil\e[2K\rinnocent.rb","x\n")'`) and a newline in a name. h28-1, open: `qa-lain review` prints the raw escape (`Review::Surface::Text#displayed_path` calls `Utf8.legible`, which scrubs only invalid UTF-8), so a terminal shows `innocent.rb` and a newline splits the row in 2; commit subjects have the same gap. `lain trust` escapes control characters in a file it prints, which is the precedent. A `"caf\303\251.rb"`
 in the listing is the finding, and it is one that only shows up if the round sets the config
 deliberately — the default already being ON is not enough, because a global config could equally be
 setting it OFF on this box.
@@ -410,7 +410,7 @@ in play. Record `git rev-parse main feature` beside the findings.
 **1. Open it in each scope.** From `$R`, with `method.md`'s redirected `XDG_*`:
 
 ```bash
-for s in cumulative commits by_directory; do /usr/bin/time -f "$s %es" lain review feature --base main --scope "$s" | grep -c '^ *\[ \]'; done
+for s in cumulative commits by_directory; do /usr/bin/time -f "$s %es" qa-lain review feature --base main --scope "$s" | grep -c '^ *\[ \]'; done
 ```
 
 Driven 2026-11-10 against this fixture (the checkout's `exe/lain` through `bundle exec`, about 2 s wall per run, boot
@@ -438,7 +438,7 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next
 
 3 opens leave 3 records, each `local_branch`, and **one digest** across them: the identity is the same commits, whatever
 the scope, so a digest that moves between the scopes of one branch is a defect (hand-driven 2026-11-10: it did not move).
-Each `lain review` run is its own session file, so read the glob rather than one journal.
+Each `qa-lain review` run is its own session file, so read the glob rather than one journal.
 
 **3. In the cockpit** *(prediction)*. Piggyback on the subject session, as §5 does:
 

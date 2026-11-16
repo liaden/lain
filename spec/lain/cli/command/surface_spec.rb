@@ -250,7 +250,7 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
-  # THE FREE FOLLOW-UP THIS CHUNK KEPT PAYING FOR. `lain review` was written,
+  # THE FREE FOLLOW-UP THIS CHUNK KEPT PAYING FOR. `qa-lain review` was written,
   # specced with 28 examples and mounted in NO exe for the whole chunk, because
   # nothing anywhere asserted the command SET -- only that individual commands
   # behaved. A repl command is one require and one line in #builtins away from

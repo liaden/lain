@@ -249,7 +249,7 @@ RSpec.describe Lain::Review::Source::Corpus do
 
     before { write("lib/greeter.rb", document("class Greeter", "  def greet", "    :hello", "  end", "end")) }
 
-    # The default, and what every diff-shaped caller and `lain survey` get: the
+    # The default, and what every diff-shaped caller and `qa-lain survey` get: the
     # survey IS the root, so the name is the walk's own.
     it "is the walked tree when nobody names one, so a survey of a whole project is unchanged" do
       expect(corpus.files.map(&:path)).to eq(["greeter.rb"])

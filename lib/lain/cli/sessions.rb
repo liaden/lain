@@ -143,7 +143,7 @@ module Lain
         # zero-byte file is what {Journal.open} left when a chat died before its
         # header; an unreadable one holds bytes nothing can load; and a file
         # whose records load PERFECTLY and simply are not a chat's is neither --
-        # `lain review` writes one of those per run, opening with
+        # `qa-lain review` writes one of those per run, opening with
         # `changeset_opened` and no session header at all.
         #
         # Naming that third case by its first record rather than calling it

@@ -5,7 +5,7 @@ require "stringio"
 
 module Lain
   module CLI
-    # `lain review <pull-request|branch>`: resolve a source, open a round on it,
+    # `qa-lain review <pull-request|branch>`: resolve a source, open a round on it,
     # and hand back what the surface drew.
     #
     # Returns Strings; only the frontend prints (CLAUDE.md's Output
@@ -17,7 +17,7 @@ module Lain
     #
     # Nothing below treats a target as anything but a ref: `present("help")`
     # reviews a branch called `help`. Thor is the half that reserves `help` and
-    # `tree` as command names, so `lain review open help` is the way through --
+    # `tree` as command names, so `qa-lain review open help` is the way through --
     # named in the exe's own `desc`, since this class cannot fix it from here.
     #
     # == `Lain::Review` is spelled out, everywhere

@@ -7,54 +7,11 @@
 # Warning state is the EXE's call; the library must never do it for its host.
 Warning[:experimental] = false
 
-# ONLY from a source checkout, and the guard is the whole of what makes `lain`
-# usable outside its own repository. `bundler/setup` resolves the Gemfile it
-# finds by walking UP FROM THE CWD, so an unconditional require here means the
-# INSTALLED gem, run inside any project that has a Gemfile of its own, resolves
-# THAT project's bundle and dies in Bundler::GemNotFound before `lain` gets a
-# say. Measured 2026-08-05 against a real checkout of rack: `lain review open
-# 2490` could not start, and reviewing somebody else's repository is the whole
-# point of the review surface.
-#
-# `../Gemfile` relative to THIS FILE tells the two cases apart exactly: a
-# checkout has one beside `exe/`, and the packaged gem ships none (verified
-# against `pkg/lain-0.1.0.gem`). The CWD is not consulted, deliberately -- that
-# is the thing that was wrong.
-# Pinning BUNDLE_GEMFILE is the second half and is not optional: the guard
-# alone still leaves `bundler/setup` resolving whatever it walks up to, so a
-# SOURCE checkout invoked from elsewhere -- `ruby ~/dev/lain/exe/lain review
-# ...` inside the repository under review -- fails the same way the installed
-# gem did. `||=` so an explicit BUNDLE_GEMFILE still wins.
-#
-# What bundler/setup resolved is replayed from a cache keyed on the bundle's inputs, so a launch
-# that changed none of them skips Bundler.
-# Paths is not loaded yet, so its XDG rule is restated here.
-xdg = ENV.fetch("XDG_CACHE_HOME", "")
-cache_home = File.expand_path(xdg.empty? ? "~/.cache" : xdg)
-lain_gemfile = File.expand_path("../Gemfile", __dir__)
-if File.exist?(lain_gemfile)
-  ENV["BUNDLE_GEMFILE"] ||= lain_gemfile
-  require File.expand_path("../lib/lain/boot/frozen_load_path", __dir__)
-  load_path_cache = ENV.fetch("LAIN_LOAD_PATH_CACHE") { File.join(cache_home, "lain", "load_path") }
-  Lain::Boot::FrozenLoadPath.setup(gemfile: ENV.fetch("BUNDLE_GEMFILE"), cache_dir: load_path_cache)
-end
-require "thor"
-
-# A process that already ran Bootsnap.setup (a spec worker, a child given -rbootsnap/setup) keeps its own.
-# A cache that cannot be had must never stop lain.
-unless defined?(Bootsnap) || ENV["LAIN_BOOTSNAP"] == "0"
-  begin
-    require "bootsnap"
-    Bootsnap.setup(cache_dir: ENV.fetch("LAIN_BOOTSNAP_CACHE") { File.join(cache_home, "lain", "bootsnap") })
-  rescue LoadError, SystemCallError
-    nil
-  end
-end
-
 # A refusal lain makes while it boots, such as a secret named in LAIN_ENV_PASS,
 # is the human's to fix, so it reads as one line rather than a backtrace.
+require File.expand_path("../lib/lain/boot/launch", __dir__)
 begin
-  require "lain"
+  Lain::Boot::Launch.call
 rescue StandardError => e
   raise unless defined?(Lain::Error) && e.is_a?(Lain::Error)
 
@@ -259,72 +216,6 @@ class LainCLI < Thor
       def todos
         Lain::CLI::Todos.new(project: Lain::Project::Resolver.default_project, paths: Lain::Paths.new,
                              sink: $stdout, runner: nil)
-      end
-    end
-  end
-
-  # The review subcommand, on the same thin-wiring rule as epic: Lain::CLI::Review
-  # resolves the source, opens the round, and returns a String; this class parses
-  # argv and says it.
-  #
-  # `open` exists because Thor owns the first word: `lain review help` is Thor's
-  # help screen and `lain review tree` is the tree command, so a branch actually
-  # NAMED `help` needs a way through. {Lain::CLI::Review} treats a target as a ref
-  # and nothing else -- the reservation is the exe's problem, so the exe carries
-  # the escape. `default_command` is what keeps `lain review feature/foo` working
-  # for every target that does not collide.
-  class Review < Thor
-    include Lain::CLI::Exe::Boundary
-
-    def self.exit_on_failure? = true
-
-    default_command :open
-
-    # The enum comes off the strategy registry, and that is not tidying: Thor
-    # validates an `enum:` BEFORE it dispatches, so a list written by hand here
-    # rejects a scope the registry serves without the registry ever being
-    # asked. `lain review --scope by_directory` was exactly that failure.
-    method_option :scope, type: :string,
-                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
-                          desc: "Which grouping to open on -- one per registered partition strategy"
-    method_option :base, type: :string, desc: "Override the base ref the changeset is cut against"
-    desc "open TARGET", "Resolve a pull request or branch, open a round, and present it"
-    def open(target)
-      render do
-        Lain::CLI::Review.new.present(target, scope: options[:scope]&.to_sym, base: options[:base])
-      end
-    end
-  end
-
-  # The survey subcommand, the review subcommand's shape over a directory:
-  # Lain::CLI::Survey walks the tree, opens the round, and returns a String;
-  # this class parses argv and says it.
-  #
-  # `open` and `default_command` for the reason Review needs them -- Thor owns
-  # the first word, so `lain survey help` is Thor's help screen and a directory
-  # actually NAMED `help` needs a way through. Lain::CLI::Survey treats a target
-  # as a path and nothing else; the reservation is the exe's problem, so the exe
-  # carries the escape.
-  class Survey < Thor
-    include Lain::CLI::Exe::Boundary
-
-    def self.exit_on_failure? = true
-
-    default_command :open
-
-    # The enum comes off the strategy registry, and that is not tidying: Thor
-    # validates an `enum:` BEFORE it dispatches, so a list written by hand here
-    # rejects a scope the registry serves without the registry ever being asked.
-    method_option :scope, type: :string,
-                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
-                          desc: "Which grouping to open on -- one per registered partition strategy"
-    method_option :unbounded, type: :boolean, default: false,
-                              desc: "Present the whole tree however large it is (the /critique ceiling still holds)"
-    desc "open PATH", "Walk a directory, open a round over it as it stands, and present it"
-    def open(path)
-      render do
-        Lain::CLI::Survey.new(project: Lain::Project::Resolver.default_project)
-                         .present(path, scope: options[:scope]&.to_sym, unbounded: options[:unbounded])
       end
     end
   end
@@ -668,15 +559,6 @@ class LainCLI < Thor
 
   desc "todos SUBCOMMAND", "the chore file: drain runs the open items, status and add read and extend it"
   subcommand "todos", Todos
-
-  desc "review [open] TARGET", "Review a pull request or a branch: `lain review 4821`, " \
-                               "`lain review feature/foo`. Say `open` when the target " \
-                               "collides with a command name -- `lain review open help`"
-  subcommand "review", Review
-
-  desc "survey [open] PATH", "Review a directory as it stands: `lain survey ./docs`. Say `open` " \
-                             "when the path collides with a command name -- `lain survey open help`"
-  subcommand "survey", Survey
 
   desc "bench SUBCOMMAND ...ARGS",
        "Bench drivers over recorded sessions, and the live arm comparison " \

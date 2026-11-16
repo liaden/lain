@@ -407,7 +407,7 @@ RSpec.describe Lain::Review::Bounds do
     # `ownership` with a `NoMethodError` naming neither the scope asked for nor
     # the source that could not serve it.
     #
-    # `lain survey` is what makes this reachable rather than theoretical: a
+    # `qa-lain survey` is what makes this reachable rather than theoretical: a
     # corpus source answers no `#commits` and `survey` defaults to `cumulative`.
     describe "a candidate the source cannot be grouped by" do
       # `diff`, `base_ref` and `head_ref` and nothing else -- a Data genuinely

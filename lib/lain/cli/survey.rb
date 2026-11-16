@@ -5,7 +5,7 @@ require "stringio"
 
 module Lain
   module CLI
-    # `lain survey PATH`: walk a directory, open a round over it AS IT STANDS,
+    # `qa-lain survey PATH`: walk a directory, open a round over it AS IT STANDS,
     # and hand back what the surface drew.
     #
     # {CLI::Review}'s shape over the third source, deliberately: the journal,
@@ -40,7 +40,7 @@ module Lain
     #
     # {Survey::Projection} requires the run's ONE region ledger and offers no
     # default and no Null, because a second ledger holds releases nobody ever
-    # sees. A one-shot `lain survey` process has no Switchboard and no chat, so
+    # sees. A one-shot `qa-lain survey` process has no Switchboard and no chat, so
     # the ledger built here IS the run's. The keyword stays open so `/survey`,
     # running inside a session that already has a board, injects the board's
     # rather than minting a second.
@@ -49,7 +49,7 @@ module Lain
     #
     # Two questions, and a bare `cwd:` answered both with one directory: WHOSE
     # rules are in force is the project's ROOT, and what a relative path
-    # resolves against is where the human is STANDING -- so `lain survey` run
+    # resolves against is where the human is STANDING -- so `qa-lain survey` run
     # below the repository top found no `.lain/config.rb` at all and
     # classified with `Rules.empty`. The surveyed tree is neither half: it is
     # {#present}'s argument and may point anywhere. A malformed table RAISES

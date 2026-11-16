@@ -1,0 +1,86 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# The commands a QA pass and the bench drive as text. They are not part of the
+# daily `lain`, so they live in their own executable over the same boot.
+Warning[:experimental] = false
+
+require File.expand_path("../lib/lain/boot/launch", __dir__)
+begin
+  Lain::Boot::Launch.call
+rescue StandardError => e
+  raise unless defined?(Lain::Error) && e.is_a?(Lain::Error)
+
+  abort "qa-lain: #{e.message}"
+end
+
+# The text-mode review commands, one Thor class per subcommand beneath it.
+class QALain < Thor
+  include Lain::CLI::Exe::Boundary
+
+  # `open` exists because Thor owns the first word: `qa-lain review help` is Thor's
+  # help screen and `qa-lain review tree` is the tree command, so a branch actually
+  # NAMED `help` needs a way through. {Lain::CLI::Review} treats a target as a ref
+  # and nothing else, so the escape lives here. `default_command` keeps
+  # `qa-lain review feature/foo` working for every target that does not collide.
+  class Review < Thor
+    include Lain::CLI::Exe::Boundary
+
+    def self.exit_on_failure? = true
+
+    default_command :open
+
+    # The enum comes off the strategy registry, and that is not tidying: Thor
+    # validates an `enum:` BEFORE it dispatches, so a list written by hand here
+    # rejects a scope the registry serves without the registry ever being
+    # asked. `review --scope by_directory` was exactly that failure.
+    method_option :scope, type: :string,
+                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
+                          desc: "Which grouping to open on -- one per registered partition strategy"
+    method_option :base, type: :string, desc: "Override the base ref the changeset is cut against"
+    desc "open TARGET", "Resolve a pull request or branch, open a round, and present it"
+    def open(target)
+      render do
+        Lain::CLI::Review.new.present(target, scope: options[:scope]&.to_sym, base: options[:base])
+      end
+    end
+  end
+
+  # The review subcommand's shape over a directory: `open` and `default_command`
+  # for the same reason, and {Lain::CLI::Survey} treats a target as a path and
+  # nothing else.
+  class Survey < Thor
+    include Lain::CLI::Exe::Boundary
+
+    def self.exit_on_failure? = true
+
+    default_command :open
+
+    method_option :scope, type: :string,
+                          enum: Lain::Review::Partition::STRATEGIES.values.map(&:name),
+                          desc: "Which grouping to open on -- one per registered partition strategy"
+    method_option :unbounded, type: :boolean, default: false,
+                              desc: "Present the whole tree however large it is (the /critique ceiling still holds)"
+    desc "open PATH", "Walk a directory, open a round over it as it stands, and present it"
+    def open(path)
+      render do
+        Lain::CLI::Survey.new(project: Lain::Project::Resolver.default_project)
+                         .present(path, scope: options[:scope]&.to_sym, unbounded: options[:unbounded])
+      end
+    end
+  end
+
+  def self.exit_on_failure? = true
+
+  desc "review [open] TARGET", "Review a pull request or a branch: `qa-lain review 4821`, " \
+                               "`qa-lain review feature/foo`. Say `open` when the target " \
+                               "collides with a command name -- `qa-lain review open help`"
+  subcommand "review", Review
+
+  desc "survey [open] PATH", "Review a directory as it stands: `qa-lain survey ./docs`. Say `open` " \
+                             "when the path collides with a command name -- `qa-lain survey open help`"
+  subcommand "survey", Survey
+end
+
+# Guarded like exe/lain, so a spec can `load` this file without parsing ARGV.
+QALain.start(ARGV) if $PROGRAM_NAME == __FILE__ || File.basename($PROGRAM_NAME) == File.basename(__FILE__)
