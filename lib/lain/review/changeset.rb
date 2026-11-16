@@ -48,6 +48,15 @@ module Lain
       # @return [String] the resolved head every new-side anchor rests on
       def head_ref = @source.head_ref
 
+      # The changeset a comment is placed against when posted: this one, unless
+      # the source was narrowed to a range of a larger whole.
+      #
+      # @return [Changeset]
+      def placement
+        whole = @source.whole
+        whole.equal?(@source) ? self : self.class.new(source: whole)
+      end
+
       # The source's walk, oldest first, forwarded because a {Partition::Strategy}
       # takes a CHANGESET and never a source -- {Partition::ByCommit} needs the
       # walk to attribute a file, and a strategy holding a source would be the

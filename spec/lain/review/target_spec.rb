@@ -117,6 +117,24 @@ RSpec.describe Lain::Review::Target, :seam do
         .to raise_error(Lain::Error, /--base cannot override the base of pull request/)
     end
 
+    it "reviews a pull request since a commit, still numbered for the submit" do
+      since = git("rev-parse", "main").stdout.strip
+      resolved = targets.resolve(pull_request.to_s, since:)
+
+      expect([resolved.source.base_ref, resolved.number]).to eq([since, pull_request])
+    end
+
+    it "carries the source's since note on the resolved target" do
+      resolved = targets.resolve(pull_request.to_s, since: git("rev-parse", "feature").stdout.strip)
+
+      expect(resolved.note).to be_nil
+    end
+
+    it "refuses --since against a branch, naming --base" do
+      expect { targets.resolve("feature", since: git("rev-parse", "main").stdout.strip) }
+        .to raise_error(Lain::Error, /--since.*pull request.*--base/m)
+    end
+
     it "asks for a base when the repository has no default one" do
       git("branch", "-m", "main", "trunk")
 

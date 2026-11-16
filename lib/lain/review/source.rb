@@ -29,7 +29,7 @@ module Lain
     # Six arguments behind this port live in `docs/review.md` under "The
     # changeset-source port": why {#sides} is the SOURCE's question and not a
     # file's, why the port hands down model values rather than bytes, why the
-    # laws split into universal and diff-bearing halves, why {#file_at} exists
+    # laws split into universal and diff-bearing halves, why `#file_at` exists
     # when a diff does not carry enough to draw from, why {DiffOrigin} is on the
     # port rather than under {GithubPr}, and why refusals here RAISE where
     # {Forge::Gh}'s are values.
@@ -302,6 +302,12 @@ module Lain
         # @return [Identity]
         def identity = @identity ||= Identity.new(scheme: DIGEST_SCHEME, parts: identity_parts)
 
+        # The source whose diff GitHub-side placement is checked against. A
+        # source is its own whole changeset unless it was narrowed to a range.
+        #
+        # @return [Diffed]
+        def whole = self
+
         # What may be SEEN of a line before a note journals it. Unwired, a fresh
         # ledger masks every detected region; the run's own ledger is injected
         # through {#projection=} so a released region journals as released.
@@ -312,7 +318,7 @@ module Lain
         # @param value [Survey::Projection]
         attr_writer :projection
 
-        # One line of {#file_at}'s answer, cut by {Anchor.lines}' rule and masked
+        # One line of `#file_at`'s answer, cut by {Anchor.lines}' rule and masked
         # as {Survey::Projection#line} masks it -- what a note's evidence is read
         # from, and a note is journaled. {Corpus#line_at} answers the same
         # question, and cannot be this: its whole-file answer is projected, and a

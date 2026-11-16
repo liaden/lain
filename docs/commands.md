@@ -1266,7 +1266,7 @@ open.
 `/review <pull-request|branch>` opens a changeset review in the attached editor. Its usage line:
 
 ```
-/review <pull-request|branch> [--base <ref>] [--scope cumulative|commits|by_directory] [--permissive]
+/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope cumulative|commits|by_directory] [--permissive]
 /review close
 ```
 
@@ -1293,6 +1293,13 @@ by naming the rows that are outstanding — the first few, then a count of the r
 two remedies: mark each row reviewed with `x` in `lain://review`, or re-open the review with
 `--permissive` if this run means to judge regardless. A command that could not read the flag
 would be naming a remedy unreachable from the very review that refused.
+
+`--since <sha>` is for pull requests: it shows only the commits after `<sha>`, so a re-review
+reads what changed since your last look. A branch refuses it and names `--base`. When `<sha>`
+is not an ancestor of the head, as after a force-push, the round shows the whole pull request
+and its banner says so. Comments are still placed against the whole pull request when the
+round is posted, so a comment on a line the whole pull request does not change goes into the
+review's body rather than inline.
 
 ### /review-submit
 

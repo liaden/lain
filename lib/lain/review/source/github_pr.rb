@@ -50,6 +50,10 @@ module Lain
         # whenever the two disagree.
         include Diffed
 
+        # A since commit as a human gives it: abbreviated or whole, and never
+        # something git could read as an option.
+        SINCE = /\A\h{4,40}\z/
+
         # gh is not on this machine. Named rather than left as
         # `Errno::ENOENT - gh`, which tells a newcomer nothing.
         #
@@ -233,15 +237,18 @@ module Lain
         # @param shell_out_factory [#call] builds the subprocess runner,
         #   injected exactly as {Forge::Gh} and {LocalBranch} do
         # @param reads [Forge::Gh::Reads] runs the gh reads as the configured account
+        # @param since [String, nil] a commit to review from instead of the merge
+        #   base, as a re-review of a pull request the reviewer has already read
         # @raise [UnknownRef] if `pull_request` names no pull request, or gh
-        #   cannot resolve the one it names
-        def initialize(pull_request:, reads:, repo_root: Dir.pwd, remote: "origin",
+        #   cannot resolve the one it names, or `since` is not a sha
+        def initialize(pull_request:, reads:, repo_root: Dir.pwd, remote: "origin", since: nil,
                        shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
           @remote = remote.to_s
           @shell_out_factory = shell_out_factory
           @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
           @remote_pr = Remote.new(ref: pull_request.to_s, cwd: @repo_root, reads:)
+          @since = since && since_sha!(since.to_s)
           read_refs
         end
 
@@ -266,7 +273,29 @@ module Lain
 
         # @return [String] raw unified diff bytes, binary-encoded for
         #   {LocalBranch#diff}'s reason
-        def diff = @diff ||= locally_answerable? ? from_object_database(DiffOrigin.already_local) : from_api
+        def diff = @diff ||= api_answerable? ? from_api : from_object_database(DiffOrigin.already_local)
+
+        # The pull request from its merge base, which is what GitHub places a
+        # comment against whatever range the round shows.
+        #
+        # @return [Diffed]
+        def whole
+          return self if @since.nil?
+
+          local
+          @whole ||= LocalBranch.new(base: @base_oid, head: @head_ref, repo_root: @repo_root,
+                                     shell_out_factory: @shell_out_factory)
+        end
+
+        # @return [String, nil] why the whole pull request is shown although a
+        #   since commit was named, or nil when the range is as asked. Asking
+        #   forces the fetch, because only the object database knows ancestry.
+        def since_note
+          return if @since.nil?
+
+          local
+          @since_note
+        end
 
         # Delegated like {#base_ref} and {#commits}, and for the sharper half of
         # their reason: one file at one revision is a question only the object
@@ -315,6 +344,50 @@ module Lain
         # report a different {#diff_origin} purely by message order.
         def locally_answerable? = @prefetched || !@local.nil?
 
+        # GitHub's combined diff is always the whole pull request, so a range
+        # can only come from the object database.
+        def api_answerable? = @since.nil? && !locally_answerable?
+
+        def since_sha!(value)
+          return value.freeze if value.match?(SINCE)
+
+          raise UnknownRef, "--since #{value.inspect} is not a commit sha"
+        end
+
+        # The old side of the review: the since commit when the head descends
+        # from it, else the merge base the whole pull request is anchored to,
+        # with the reason kept for the banner.
+        def range_base
+          @range_base ||= ancestral_since || @base_oid
+        end
+
+        def ancestral_since
+          return if @since.nil?
+
+          @since = full_since
+          return @since if ancestor?(@since)
+
+          @since_note = "since commit #{@since[0, 12]} is not an ancestor of the pull request head " \
+                        "#{@head_ref[0, 12]} (force-pushed?), so the whole pull request is shown"
+          nil
+        end
+
+        # git prefers a ref NAME over an abbreviated sha, so the answer is only
+        # the commit the human typed if it still begins with what they typed.
+        def full_since
+          shell = @git.run("rev-parse", "--verify", "--quiet", "--end-of-options", "#{@since}^{commit}",
+                           pins: LocalBranch::PINS)
+          found = shell.stdout.to_s.strip
+          return found.freeze if Shell::Out.ok?(shell) && found.start_with?(@since.downcase)
+
+          raise UnknownRef, "since commit #{@since} is unknown or ambiguous in this repository: " \
+                            "name a commit sha that no branch or other commit shares a prefix with"
+        end
+
+        def ancestor?(sha)
+          Shell::Out.ok?(@git.run("merge-base", "--is-ancestor", "#{sha}^{commit}", @head_ref, pins: LocalBranch::PINS))
+        end
+
         # Whether the head was here BEFORE this object touched anything is read
         # once and kept, because it is the fetch's own precondition: reading it
         # afterwards would answer about the fetch instead of about the
@@ -333,7 +406,7 @@ module Lain
         def local
           @local ||= begin
             fetch! unless @prefetched
-            LocalBranch.new(base: @base_oid, head: @head_ref, repo_root: @repo_root,
+            LocalBranch.new(base: range_base, head: @head_ref, repo_root: @repo_root,
                             shell_out_factory: @shell_out_factory)
           end
         end

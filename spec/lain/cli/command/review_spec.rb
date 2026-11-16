@@ -378,6 +378,66 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
   end
 
+  describe "a pull request reviewed since a commit" do
+    let(:number) { 12 }
+    let(:pull_factory) do
+      lambda do |*argv, **options|
+        next Lain::Shell::Out.new(*argv, **options) unless argv.first == "gh"
+
+        view = { "baseRefName" => "main", "baseRefOid" => git(@repo, "rev-parse", "main").stdout.strip,
+                 "headRefOid" => git(@repo, "rev-parse", "feature").stdout.strip }
+        Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(JSON.generate(view), "", 0)
+      end
+    end
+    let(:command) do
+      described_class.new(root: @repo, outbox:, shell_out_factory: pull_factory, ledger: Lain::Sensitivity::Ledger.new,
+                          gh_account: Lain::Forge::Gh::Account::None.new)
+    end
+
+    before do
+      git(@repo, "update-ref", "refs/pull/#{number}/head", git(@repo, "rev-parse", "feature").stdout.strip)
+      attached
+    end
+
+    it "opens the round on the commits after the since commit, still posting to the pull request" do
+      since = git(@repo, "rev-parse", "feature~1").stdout.strip
+
+      answer = command.call("#{number} --since #{since}", env)
+
+      expect(answer).to include("pull request #{number}").and include("#{since}..")
+      expect(outbox.open?).to be(true)
+    end
+
+    it "says in the banner when the since commit is not an ancestor, and shows the whole pull request" do
+      git(@repo, "checkout", "-q", "main")
+      File.write(File.join(@repo, "elsewhere"), "x\n")
+      commit(@repo, "off the pull request")
+      stray = git(@repo, "rev-parse", "HEAD").stdout.strip
+      git(@repo, "checkout", "-q", "feature")
+
+      answer = command.call("#{number} --since #{stray}", env)
+
+      expect(answer).to include("not an ancestor")
+    end
+
+    it "refuses --since on a branch, naming --base" do
+      expect { command.call("feature --since #{git(@repo, "rev-parse", "main").stdout.strip}", env) }
+        .to raise_error(Lain::Error, /--base/)
+    end
+
+    it "refuses --since with no commit after it" do
+      expect { command.call("#{number} --since", env) }.to raise_error(Lain::Error, /--since takes a commit/)
+    end
+
+    it "advertises the flag" do
+      expect(command.usage).to include("--since <sha>")
+    end
+
+    it "refuses --since on a close" do
+      expect { command.call("close --since abc1234", env) }.to raise_error(Lain::Error, /takes nothing/)
+    end
+  end
+
   # `--base`'s default is {Lain::Forge::Landing::BASE} ("main"), and a
   # repository whose trunk is called something else has this fail with no
   # `--base` ever typed -- the one shape the target resolver tells apart

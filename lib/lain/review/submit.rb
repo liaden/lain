@@ -369,7 +369,7 @@ module Lain
       private
 
       def draft(summary:)
-        Draft.new(comments: @comments, placer: Placer.new(@session.changeset), summary:,
+        Draft.new(comments: @comments, placer: Placer.new(@session.changeset.placement), summary:,
                   commit_id: @session.changeset.head_ref, event:)
       end
 

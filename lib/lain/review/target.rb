@@ -22,11 +22,13 @@ module Lain
       # source later, so nothing downstream has to type-test a source to find
       # out whether a review of it has anywhere to go.
       # {Submit::Outbox} turns the nil into a refusal naming {#label}.
-      Resolved = Data.define(:source, :label, :number) do
+      #
+      # `note` is what the headline owes the reader beside the range, or nil.
+      Resolved = Data.define(:source, :label, :number, :note) do
         # The name the round is JOURNALED under, derived from the source's
         # class rather than written as a literal: a literal goes on naming
         # `local_branch` after the class is renamed, and
-        # {ChangesetOpened} validates this field for presence only,
+        # `ChangesetOpened` validates this field for presence only,
         # so nothing downstream would catch it.
         def name = source.class.name.split("::").last.underscore
       end
@@ -47,40 +49,44 @@ module Lain
 
       # @param target [String]
       # @param base [String, nil]
+      # @param since [String, nil] review a pull request from this commit
       # @return [Resolved]
       # @raise [Ambiguous] for a pull request spelling that also names a branch
-      # @raise [Error] for `--base` against a pull request
+      # @raise [Error] for `--base` against a pull request, or `--since` against a branch
       # @raise [Source::UnknownRef] for a ref or pull request that resolves to
       #   nothing -- {Source}'s own doctrine, and the one this class inherits
       #   rather than restates
-      def resolve(target, base: nil)
-        return branch(target, base) unless pull_request?(target)
+      def resolve(target, base: nil, since: nil)
+        return branch(target, base, since) unless pull_request?(target)
         # `--base` against a pull request, said apart from the {Ambiguous} below
         # because the remedy is nothing alike: this one is a flag that does not
         # apply, not a target that reads two ways.
         raise Error, base_message(target) unless base.nil?
         raise Ambiguous, ambiguous_message(target) if branch?(target)
 
-        pull_request(target)
+        pull_request(target, since)
       end
 
       private
 
-      def pull_request(target)
+      def pull_request(target, since)
         reads = Lain::Forge::Gh::Reads.new(cwd: @repo_root, account: @account,
                                            shell_out_factory: @shell_out_factory)
         source = Lain::Review::Source::GithubPr.new(pull_request: target, repo_root: @repo_root,
-                                                    shell_out_factory: @shell_out_factory, reads:)
+                                                    shell_out_factory: @shell_out_factory, reads:, since:)
         source.projection = @projection
-        Resolved.new(source:, label: "pull request #{source.number}", number: source.number)
+        Resolved.new(source:, label: "pull request #{source.number}", number: source.number,
+                     note: source.since_note)
       end
 
-      def branch(target, base)
+      def branch(target, base, since)
+        raise Error, since_message(target) unless since.nil?
+
         source = Lain::Review::Source::LocalBranch.new(base: base || default_base, head: target,
                                                        repo_root: @repo_root,
                                                        shell_out_factory: @shell_out_factory)
         source.projection = @projection
-        Resolved.new(source:, label: "branch #{target}", number: nil)
+        Resolved.new(source:, label: "branch #{target}", number: nil, note: nil)
       rescue Lain::Review::Source::UnknownRef => e
         raise e unless base.nil? && e.role == "base"
 
@@ -116,6 +122,11 @@ module Lain
           "#{@repo_root}, and this will not guess between them -- they review different changesets. " \
           "Say \"refs/heads/#{target}\" for the branch, or the pull request's URL (.../pull/#{number}) " \
           "for the pull request."
+      end
+
+      def since_message(target)
+        "--since is for pull requests, and #{target.inspect} is a branch: name the commit to review " \
+          "from with --base <ref> instead."
       end
 
       def base_message(target)

@@ -30,7 +30,7 @@ module Lain
         # Anything else beginning with `--` is refused rather than read as a
         # branch name: `refs/heads/--squash` is nobody's ref, so resolving it
         # would answer a confusing UnknownRef instead of naming the typo.
-        FLAGS = %w[--base --scope].freeze
+        FLAGS = %w[--base --scope --since].freeze
 
         # The flags that take nothing, held apart from {FLAGS} because the parse
         # drops TWO words for one and ONE for the other. It is here so the
@@ -46,12 +46,12 @@ module Lain
         # naming the THING missing (a ref, a scope) rather than the generic
         # "a value", which said nothing a human could act on beyond "retype
         # something".
-        NEEDS_VALUE = { "base" => "a ref", "scope" => "a scope" }.freeze
+        NEEDS_VALUE = { "base" => "a ref", "scope" => "a scope", "since" => "a commit" }.freeze
 
         # A FORMAT rather than the sentence: the scopes come off
         # {Review::Partition::STRATEGIES}, and {#usage} fills them in, so a
         # strategy registered there cannot leave this line advertising a stale set.
-        USAGE = "/review <pull-request|branch> [--base <ref>] [--scope %<scopes>s] [--permissive] -- " \
+        USAGE = "/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope %<scopes>s] [--permissive] -- " \
                 "open a changeset review in the attached editor; /review close lets the open round go " \
                 "without a verdict (a branch named close is refs/heads/close)"
 
@@ -217,7 +217,7 @@ module Lain
 
         # One `/review` line, read. Its own value because "what did they type"
         # and "open a review of it" are separate questions.
-        Parsed = Data.define(:target, :base, :scope, :permissive)
+        Parsed = Data.define(:target, :base, :since, :scope, :permissive)
         private_constant :Parsed
 
         # {Command::Args} splits the line, pairs a declared flag with its
@@ -228,8 +228,8 @@ module Lain
         def parse(text)
           parsed = Lain::CLI::Command::Args.parse(text, name: "review", usage:, flags: FLAGS, switches: SWITCHES)
           refuse_unreadable!(parsed.pairs)
-          Parsed.new(target: parsed.positionals.first, base: parsed.pairs["base"], scope: parsed.pairs["scope"],
-                     **parsed.switches)
+          Parsed.new(target: parsed.positionals.first, base: parsed.pairs["base"], since: parsed.pairs["since"],
+                     scope: parsed.pairs["scope"], **parsed.switches)
         end
 
         # A flag at the end of the line has nil for a value, which read as
@@ -264,7 +264,7 @@ module Lain
         # verdict. A headless chat holds none, so the null surface it falls back
         # to is never drawn on -- the outbox refuses first.
         def closed(parsed, env)
-          raise Error, CLOSE_TAKES_NOTHING if [parsed.base, parsed.scope, parsed.permissive].any?
+          raise Error, CLOSE_TAKES_NOTHING if [parsed.base, parsed.since, parsed.scope, parsed.permissive].any?
 
           hinted(close_branch_hint) { closing_for(env, env.replies.review_surface || Lain::Review::Surface::Null.new).call }
         end
@@ -289,7 +289,7 @@ module Lain
           Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
         end
 
-        def resolved_target(parsed) = targets.resolve(parsed.target, base: parsed.base)
+        def resolved_target(parsed) = targets.resolve(parsed.target, base: parsed.base, since: parsed.since)
 
         # Notes the editor still holds are not on the journal, and a new round
         # would leave them with no review to be handed back to. Asked only over
@@ -306,8 +306,10 @@ module Lain
             source: resolved.source, source_name: resolved.name, target: target_of(resolved), label: resolved.label,
             number: resolved.number, bounds: @bounds, policy:, spawn: env.role_spawn,
             headline: lambda { |session, scope|
-              format(Lain::Review::Target::HEADLINE, label: resolved.label, scope:,
-                                                     base: session.changeset.base_ref, head: session.changeset.head_ref)
+              changeset = session.changeset
+              [format(Lain::Review::Target::HEADLINE, label: resolved.label, scope:,
+                                                      base: changeset.base_ref, head: changeset.head_ref),
+               resolved.note].compact.join("\n")
             }
           )
         end

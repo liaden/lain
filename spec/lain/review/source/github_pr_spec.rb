@@ -257,8 +257,8 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     Lain::Forge::Gh::Reads.new(**options, **(factory ? { shell_out_factory: factory } : {}))
   end
 
-  def build(pull_request: number)
-    described_class.new(pull_request:, repo_root: @repo, shell_out_factory: factory, reads: unaccounted_reads)
+  def build(pull_request: number, since: nil)
+    described_class.new(pull_request:, repo_root: @repo, shell_out_factory: factory, reads: unaccounted_reads, since:)
   end
 
   def gh_calls = calls.select { |argv| argv.first == "gh" }
@@ -423,6 +423,125 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
 
       expect { accounted }.to raise_error(Lain::Forge::Gh::Account::Refused, /nobody/)
       expect(gh_calls).to be_empty
+    end
+  end
+
+  describe "a review since a commit" do
+    before { local_repo_with_head }
+
+    def feature_commits = run_git(@repo, "rev-list", "--reverse", "#{merge_base}..#{head_oid}").split
+
+    def diff_between(from, to)
+      run_git(@repo, *Lain::Review::Source::LocalBranch::CONFIG_PINS, "diff",
+              *Lain::Review::Source::LocalBranch::DIFF_HYGIENE, from, to).b
+    end
+
+    it "diffs only the commits after an ancestor of the head" do
+      since = feature_commits.first
+      source = build(since:)
+
+      expect(source.diff).to eq(diff_between(since, head_oid))
+      expect(source.base_ref).to eq(since)
+      expect(source.commits.map(&:subject)).to eq(["feature two", "feature three"])
+    end
+
+    it "keeps the pull request's own number, so a submit still posts to it" do
+      expect(build(since: feature_commits.first).number).to eq(number)
+    end
+
+    it "serves the range from the object database, never the combined diff" do
+      source = build(since: feature_commits.first)
+      source.diff
+
+      expect(gh_calls.map { |argv| argv[1..2] }).not_to include(%w[pr diff])
+      expect(source.diff_origin.origin).to eq("object_database")
+    end
+
+    it "says nothing about the range when the since commit is an ancestor" do
+      expect(build(since: feature_commits.first).since_note).to be_nil
+    end
+
+    it "shows the whole pull request, and says why, when the since commit is not an ancestor of the head" do
+      source = build(since: base_oid)
+
+      expect(source.diff).to eq(expected_diff)
+      expect(source.base_ref).to eq(merge_base)
+      expect(source.since_note).to match(/#{base_oid[0, 12]}.*not an ancestor/)
+    end
+
+    it "answers the whole pull request as the source to place comments against" do
+      whole = build(since: feature_commits.first).whole
+
+      expect([whole.diff, whole.base_ref, whole.head_ref]).to eq([expected_diff, merge_base, head_oid])
+    end
+
+    it "is its own whole pull request when no since commit was named" do
+      source = build
+
+      expect(source.whole).to equal(source)
+    end
+
+    it "resolves an abbreviated sha to the full one before it reaches the range" do
+      since = feature_commits.first
+
+      expect(build(since: since[0, 10]).base_ref).to eq(since)
+    end
+
+    it "refuses an abbreviation that a branch of the same name would shadow" do
+      since = feature_commits.first
+      run_git(@repo, "branch", since[0, 10], base_oid)
+
+      expect { build(since: since[0, 10]).since_note }
+        .to raise_error(Lain::Review::Source::UnknownRef, /#{since[0, 10]}.*(ambiguous|unknown)/m)
+    end
+
+    it "has no note when no since commit was named" do
+      expect(build.since_note).to be_nil
+    end
+
+    it "refuses a since that names no commit, saying so" do
+      expect { build(since: "0" * 40).since_note }
+        .to raise_error(Lain::Review::Source::UnknownRef, /#{"0" * 40}/)
+    end
+
+    it "refuses a since that is not a sha before any git sees it as an option" do
+      expect { build(since: "--output=x") }.to raise_error(Lain::Review::Source::UnknownRef, /not a commit sha/)
+    end
+
+    # A comment GitHub would refuse: the head reverts shared.rb, so the pull
+    # request's own diff no longer touches it while a range from the commit
+    # before the revert still does. Pinned, not solved: the review lets a human
+    # anchor on a line GitHub's diff does not show.
+    it "can show a file the whole pull request's diff does not touch" do
+      before_revert = head_oid
+      File.write(File.join(@repo, "shared.rb"), "a\nb\nc\n")
+      run_git(@repo, "commit", "-q", "-am", "revert shared")
+      reverted = run_git(@repo, "rev-parse", "HEAD").strip
+      run_git(@repo, "update-ref", "refs/pull/#{number}/head", reverted)
+      replies[:view] = answered(stdout: JSON.generate(view_document.merge("headRefOid" => reverted)))
+
+      since_paths = build(since: before_revert).files.map(&:path)
+      whole_paths = build.files.map(&:path)
+
+      expect(since_paths).to include("shared.rb")
+      expect(whole_paths).not_to include("shared.rb")
+    end
+  end
+
+  describe "a range asked for before anything was fetched" do
+    def diff_between_in(repo, from, to)
+      run_git(repo, *Lain::Review::Source::LocalBranch::CONFIG_PINS, "diff",
+              *Lain::Review::Source::LocalBranch::DIFF_HYGIENE, from, to).b
+    end
+
+    it "gives the range for a diff asked first, without the API, when the head was never fetched" do
+      since = run_git(origin, "rev-list", "--reverse", "#{merge_base}..#{head_oid}").split.first
+      local_repo_without_head
+      source = build(since:)
+
+      expect(source.diff).to eq(diff_between_in(origin, since, head_oid))
+      expect(source.diff_origin.origin).to eq("object_database")
+      expect(gh_calls.map { |argv| argv[1..2] }).not_to include(%w[pr diff])
     end
   end
 

@@ -360,6 +360,71 @@ RSpec.describe Lain::Review::Submit do
     end
   end
 
+  describe "a round opened since a commit, placed against the whole pull request" do
+    def since_sha = -("a" * 40)
+
+    # Hunk one is the whole pull request's own; the second hunk is a range-only
+    # one, as when the head reverts what the since commit still shows.
+    def ranged_diff
+      diff.lines[0..11].join + <<~DIFF
+        @@ -59,1 +60,2 @@ def revert
+         fifty nine
+        +sixty
+      DIFF
+    end
+
+    def ranged_source
+      double = instance_double(Lain::Review::Source::LocalBranch, diff: ranged_diff.b, commits: commits.freeze,
+                                                                  base_ref: since_sha, head_ref: head_sha)
+      whole = changeset.instance_variable_get(:@source)
+      DiffSource.over(double).tap { |ranged| ranged.define_singleton_method(:whole) { whole } }
+    end
+
+    def session
+      @session ||= Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: ranged_source),
+                                              journal:, source: "github_pr")
+    end
+
+    it "moves a new-side note on a line only the range shows into the body, as no such line" do
+      annotate(line: 60, anchor_text: "sixty")
+      submission.call
+
+      expect(sent.fetch("comments")).to be_empty
+      expect(body_sent).to include(described_class::UNPLACED_HEADING)
+                       .and include(described_class::REASONS.fetch(:no_such_line))
+    end
+
+    it "refuses a range over lines only the range shows" do
+      placed = annotate(line: 60, anchor_text: "sixty")
+
+      expect { submission(comments: [comment_of(placed, start_line: 59)]).call }
+        .to raise_error(described_class::Refused, refusing(:no_such_line))
+    end
+
+    it "moves an old-side note written at the since commit's line numbers into the body" do
+      annotate(side: :old, line: 41, anchor_text: "forty one", revision: since_sha)
+      submission.call
+
+      expect(sent.fetch("comments")).to be_empty
+      expect(body_sent).to include(described_class::REASONS.fetch(:revision_moved))
+    end
+
+    it "places a new-side note on a line in both the range and the whole pull request inline" do
+      annotate
+      submission.call
+
+      expect(sent.fetch("comments"))
+        .to eq([{ "path" => "app.rb", "line" => 42, "side" => "RIGHT", "body" => "kaboom" }])
+    end
+
+    it "posts against the head the round shows" do
+      annotate
+      submission.call
+
+      expect(sent.fetch("commit_id")).to eq(head_sha)
+    end
+  end
+
   describe "durability across a lost round trip" do
     # A refusal is a VALUE at this tier, so it must reach the caller as one --
     # Submit returning it unchanged is what lets a caller decide, and what keeps
