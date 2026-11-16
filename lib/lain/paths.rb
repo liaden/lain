@@ -348,6 +348,13 @@ module Lain
       File.join(ensure_dir(state_home), "improvements.ndjson")
     end
 
+    # One file for every checkout, appended by many processes, so it lives
+    # beside no project's sessions; the directory is ensured because
+    # {Review::Queue::Log} opens this path directly, per append.
+    def review_queue_log
+      File.join(ensure_dir(File.join(state_home, "queue")), "log.ndjson")
+    end
+
     # Purgeable: deleting the directory costs one export per image on the next run.
     #
     # @param id [String] 64 hex characters

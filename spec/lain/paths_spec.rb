@@ -358,6 +358,17 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  describe "#review_queue_log" do
+    it "names queue/log.ndjson under state_home and creates its directory" do
+      Dir.mktmpdir do |tmp|
+        file = paths("XDG_STATE_HOME" => tmp).review_queue_log
+
+        expect([file, Dir.exist?(File.dirname(file)), File.exist?(file)])
+          .to eq(["#{tmp}/lain/queue/log.ndjson", true, false])
+      end
+    end
+  end
+
   describe "#exec_image_listing" do
     let(:id) { "d529dd0c6e5597ac7e4a3e2dea65c3fcc6173f4cae713c409265c1dd9914a11b" }
 
