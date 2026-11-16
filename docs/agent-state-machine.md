@@ -10,6 +10,7 @@
 ```mermaid
 stateDiagram-v2
   awaiting_user : awaiting_user
+  [*] --> awaiting_user
   awaiting_model : awaiting_model
   awaiting_tools : awaiting_tools
   done : done

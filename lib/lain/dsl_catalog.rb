@@ -118,8 +118,10 @@ module Lain
     end
     private_class_method :unclosed_lines
 
+    # Prism 2 splits an opener by role (`PARENTHESIS_LEFT_GROUPING`, `BRACE_LEFT_HASH`), so
+    # match `_LEFT` anywhere; `BRACKET_LEFT_RIGHT` is the `[]` method name, not an opener.
     def self.opener?(type)
-      type.end_with?("_LEFT", "_BEGIN", "_LEFT_ARRAY", "_PARENTHESES") || type.start_with?("PERCENT_")
+      type.match?(/_LEFT(?!_RIGHT)/) || type.end_with?("_BEGIN") || type.start_with?("PERCENT_")
     end
 
     # `end` and a heredoc terminator are `_END` too, and close nothing in this stack.

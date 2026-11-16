@@ -63,8 +63,8 @@ RSpec.describe Lain::Approval::Reply do
     parse: ->(s) { described_class.parse(s) },
     population: lambda {
       [Lain::Approval::Verdict::Approve, Lain::Approval::Verdict::Hold, Lain::Approval::Verdict::Deny]
-      .product([nil, "wrong crate", "a; b", "./build", "a, b", "x: y", "approve me", "é, 日本語", "! x", "- item",
-                "; x", ": x", "- "]).map { |k, note| k.new(note:) }
+        .product([nil, "wrong crate", "a; b", "./build", "a, b", "x: y", "approve me", "é, 日本語", "! x", "- item",
+                  "; x", ": x", "- "]).map { |k, note| k.new(note:) }
     }
   }
 

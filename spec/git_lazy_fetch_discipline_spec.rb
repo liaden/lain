@@ -174,9 +174,9 @@ RSpec.describe "git lazy fetch discipline" do
     "lain/session_record/provenance.rb" => -> { Lain::SessionRecord::Provenance.harness(gem_root: repo) },
     "lain/workspace/snapshot/scope/shadow_git/repository.rb" => lambda {
       Lain::Workspace::Snapshot::Scope::ShadowGit::Repository
-      .new(root: repo, dir: File.join(@base, "shadow"), index: File.join(@base, "shadow-index"),
-           shell_out_factory: Lain::Shell::Out.method(:new))
-      .ready.stage
+        .new(root: repo, dir: File.join(@base, "shadow"), index: File.join(@base, "shadow-index"),
+             shell_out_factory: Lain::Shell::Out.method(:new))
+        .ready.stage
     }
   }
 
