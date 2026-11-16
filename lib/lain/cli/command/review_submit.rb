@@ -53,11 +53,14 @@ module Lain
         #   review is open" forever, with nothing wrong to see.
         # @param root [String] the repository `gh` runs in, which is how it
         #   resolves WHICH pull request the number names
+        # @param account [Forge::Gh::Account, Forge::Gh::Account::None] whose token gh posts with
         # @param shell_out_factory [#call] builds the subprocess runner, injected
         #   as {Forge::Gh} and both review sources do
-        def initialize(outbox:, root: Dir.pwd, shell_out_factory: Lain::Shell::Out.public_method(:new))
+        def initialize(outbox:, root: Dir.pwd, account: Forge::Gh::Account::None.new,
+                       shell_out_factory: Lain::Shell::Out.public_method(:new))
           @outbox = outbox
           @root = root
+          @account = account
           @shell_out_factory = shell_out_factory
           freeze
         end
@@ -83,7 +86,7 @@ module Lain
         # Built per call rather than held, so a `Gh` is never constructed for a
         # chat that submits nothing -- and so the one built is bound to the
         # repository as it stands when the review is actually sent.
-        def executor = Forge::Gh.new(cwd: @root, shell_out_factory: @shell_out_factory)
+        def executor = Forge::Gh.new(cwd: @root, account: @account, shell_out_factory: @shell_out_factory)
 
         # The target comes off the outbox rather than out of this method's
         # arguments: it is the human's own words for what they opened, and the

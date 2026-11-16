@@ -222,13 +222,15 @@ module Lain
 
       # @param cwd [String] where gh runs, which is how it resolves WHICH repo it
       #   is talking to -- a landing runs inside a leased worktree
+      # @param account [Account, Account::None] whose token every gh child runs with
       # @param timeout [Numeric] seconds one gh call may take
       # @param poll [Poll] the UNKNOWN retry policy, and the home of the sleeper
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   exactly as {Isolation::Worktree} and {Tools::Bash} do
-      def initialize(cwd: Dir.pwd, timeout: DEFAULT_TIMEOUT, poll: Poll.new,
+      def initialize(cwd: Dir.pwd, account: Account::None.new, timeout: DEFAULT_TIMEOUT, poll: Poll.new,
                      shell_out_factory: Shell::Out.public_method(:new))
         @cwd = cwd.to_s
+        @account = account
         @timeout = timeout
         @poll = poll
         @shell_out_factory = shell_out_factory
@@ -324,9 +326,12 @@ module Lain
 
       # The one place a subprocess happens. A zero exit yields to the verb's own
       # reading; anything else takes the refusal path, which a verb may override
-      # when it can read more out of the failure than "it failed".
+      # when it can read more out of the failure than "it failed". An account gh
+      # cannot lend a token for raises, like a missing gh: no call runs as
+      # whichever account gh would pick instead.
       def invoke(argv, input: nil, on_refusal: method(:refusal))
-        shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout, **stdin(input))
+        shell = @shell_out_factory.call("gh", *argv, cwd: @cwd, timeout: @timeout,
+                                                     environment: @account.environment, **stdin(input))
         shell.run_command
         Shell::Out.ok?(shell) ? yield(shell) : on_refusal.call(argv, shell)
       rescue Shell::Out::Timeout => e

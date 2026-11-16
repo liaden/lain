@@ -75,6 +75,11 @@ module GhParity
     {"message":"Pull request review thread line must be part of the diff"}
   REFUSAL
 
+  # The one account gh holds a token for. `gh auth token --user` answers TOKEN for it and refuses
+  # any other name in gh's own wording, so an account spec drives the same fake as the verbs.
+  ACCOUNT = "joel-fuze"
+  TOKEN = "t0k"
+
   # The closed verb set, named once so the tier-2 example below can iterate it
   # rather than trusting three spec files to list the same five.
   VERBS = %i[pr_create pr_merge pr_view merge_state submit_review].freeze
@@ -166,6 +171,7 @@ module GhParity
       when "create" then create_reply(argv)
       when "merge" then FakeGhShellOut.new(0, "", "")
       when "view" then viewed
+      when "token" then token_reply(argv)
       else FakeGhShellOut.new(1, "", "no fixture for #{argv.inspect}")
       end
     end
@@ -186,6 +192,13 @@ module GhParity
       return refused_create if argv.include?(REFUSED_HEAD)
 
       argv.include?(OPEN_HEAD) ? already_open : created
+    end
+
+    def token_reply(argv)
+      user = argv.last
+      return FakeGhShellOut.new(0, "#{TOKEN}\n", "") if user == ACCOUNT
+
+      FakeGhShellOut.new(1, "", "no oauth token found for github.com account #{user}")
     end
 
     def created = FakeGhShellOut.new(0, "#{URL}\n", "")

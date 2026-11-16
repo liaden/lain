@@ -1416,3 +1416,23 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
     expect(source).not_to include("LAIN_JOURNAL")
   end
 end
+
+RSpec.describe "lain epic finish and the GitHub account" do
+  # The finish itself is stood in for; what is under test is that the exe hands the account's note
+  # line to stderr, by driving the finish's own gh through the notes it was given.
+  it "writes to stderr that an exported GH_TOKEN wins over the configured account" do
+    Dir.mktmpdir("lain-finish-notes") do |tmp|
+      paths = Lain::Paths.new(env: { "HOME" => tmp, "XDG_CONFIG_HOME" => File.join(tmp, "config"),
+                                     "XDG_STATE_HOME" => File.join(tmp, "state") })
+      allow(Lain::CLI::EpicFinish).to receive(:new) do |notes:|
+        Lain::CLI::EpicFinish.github(root: tmp, paths:, shell_out_factory: GhParity.factory, notes:).pr_list(head: "x")
+        instance_double(Lain::CLI::EpicFinish, finish: Lain::CLI::Said.new(text: "finished demo", status: 0))
+      end
+
+      with_env("LAIN_GH_ACCOUNT" => GhParity::ACCOUNT, "GH_TOKEN" => "exported") do
+        expect { LainCLI::Epic.start(%w[finish demo], debug: true) }
+          .to output(/GH_TOKEN is exported.*#{GhParity::ACCOUNT}/o).to_stderr.and output(/finished demo/).to_stdout
+      end
+    end
+  end
+end

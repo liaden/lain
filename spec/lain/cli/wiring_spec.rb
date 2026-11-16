@@ -4137,6 +4137,27 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.command_env.reporter).to be(reporter)
     end
 
+    # One account per process, read by the command surface, whose notes go to the chat's own line.
+    it "builds the GitHub account once, over herdr's notes, and hands it to the command surface", :seam do
+      account = instance_double(Lain::Forge::Gh::Account)
+      notes = Lain::Herdr::HeldNotes.new
+      allow(Lain::Forge::Gh::Account).to receive(:configured).and_return(account)
+      allow(Lain::CLI::Command::Surface).to receive(:new).and_call_original
+
+      Dir.mktmpdir do |dir|
+        herdr = Struct.new(:tty_factory, :focus, :reporter, :window_surface, :notes)
+                      .new(tty_factory(dir), Lain::Frontend::Focus.tmux(env: {}), Lain::Herdr::Reporter::Null.new,
+                           Lain::CLI::TmuxSurface.new, notes)
+        built = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"), herdr:,
+                           conductor_opener:)
+        built.run(backend:, resumed: nil, nvim: nil)
+        built.conductor.close(reason: :exit)
+      end
+
+      expect(Lain::Forge::Gh::Account).to have_received(:configured).once.with(hash_including(notes:))
+      expect(Lain::CLI::Command::Surface).to have_received(:new).with(hash_including(gh_account: account))
+    end
+
     it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire", :seam do
       wiring = run_wiring
 

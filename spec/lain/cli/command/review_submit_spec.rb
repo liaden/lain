@@ -281,6 +281,117 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
     end
   end
 
+  # Built the way a chat builds it: a real Surface and a real Account over a project whose config
+  # names the account, with gh faked only at the Shell::Out seam, so the account reaches the gh
+  # children through the production commands rather than through an injected executor.
+  describe "the account, through the chat's own surface" do
+    around do |example|
+      Dir.mktmpdir("lain-gh-account") do |tmp|
+        @tmp = tmp
+        with_env("GH_TOKEN" => nil, "GITHUB_TOKEN" => nil, "LAIN_GH_ACCOUNT" => nil) { example.run }
+      end
+    end
+
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+    let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+    let(:notes) { Lain::Herdr::HeldNotes.new }
+    let(:chronicle) { Lain::CLI::Chronicle::Null.new }
+    let(:export) { instance_double(Lain::CLI::Export, released: 0, masked: 0, call: "<p>s</p>") }
+
+    before do
+      allow(Lain::Shell::Out).to receive(:new) { |*argv, **options| factory.call(*argv, **options) }
+      allow(Lain::CLI::Export).to receive(:new).and_return(export)
+      allow(chronicle).to receive(:journal_path).and_return(File.join(@tmp, "s-1.ndjson"))
+    end
+
+    def surface
+      @surface ||= Lain::CLI::Command::Surface.new(
+        agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
+        supervisor: Lain::Supervisor::Null, role_spawn: instance_spy(Lain::Skill::RoleSpawn), root:, gh_account:,
+        chronicle:, library: Lain::Skill::Library.load(root:), herdr:, **unread_collaborators
+      )
+    end
+
+    # The account as Wiring builds it for the process.
+    def gh_account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:)
+
+    def herdr
+      Struct.new(:reporter, :window_surface, :notes).new(Lain::Herdr::Reporter::Null.new, Lain::CLI::TmuxSurface.new,
+                                                         notes)
+    end
+
+    # Required by the surface, and never reached by the two commands under test.
+    def unread_collaborators
+      { status_feed: instance_double(Lain::StatusFeed), model_switch: instance_double(Lain::Context::ModelSwitch),
+        mode_switch: instance_double(Lain::Mode::Switch), ledger: Lain::Sensitivity::Ledger.new,
+        snapshots: instance_double(Lain::Agent::SnapshotSlot),
+        sensitivity: Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: @tmp, cwd: @tmp)),
+        window: Lain::CLI::Backend::WindowBook::Served.new(model: "m", window_tokens: 32_768) }
+    end
+
+    def typed(line) = surface.commands.dispatch(line) { raise "#{line} reached no command" }
+
+    def held_round
+      note(path: "app.rb", side: :new, line: 42, text: "kaboom", revision: head_sha)
+      surface.outbox.hold(session:, number: GhParity::NUMBER, label: "pull request #{GhParity::NUMBER}")
+    end
+
+    def token_asks = gh_calls.count { |argv| argv[1, 2] == %w[auth token] }
+
+    def options_of(subcommand) = factory.argvs.zip(factory.options).select { |argv, _| argv[1] == subcommand }
+
+    it "lends the account's token to the review POST and the gist, asking gh for it once" do
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
+      held_round
+
+      typed("/review-submit")
+      typed("/share")
+
+      lent = options_of("api") + options_of("gist")
+      expect(lent.size).to eq(2)
+      expect(lent.map { |_, options| options[:environment] }).to all(eq("GH_TOKEN" => GhParity::TOKEN))
+      expect(token_asks).to eq(1)
+    end
+
+    it "refuses an account gh does not know, naming the fix, with no gh run under another account" do
+      write_config(root, "github account: \"nobody\"\n", paths:)
+      held_round
+
+      expect { typed("/review-submit") }.to raise_error(Lain::Error) { |error|
+        expect(error.message).to include("nobody").and include("gh auth login")
+      }
+      expect(options_of("api")).to be_empty
+    end
+
+    it "leaves an exported token alone and tells the chat once" do
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
+      said = []
+      notes.bind(->(line) { said << line })
+      held_round
+
+      with_env("GH_TOKEN" => "exported") do
+        typed("/review-submit")
+        typed("/share")
+      end
+
+      expect(options_of("api") + options_of("gist")).to all(satisfy { |_, options| options[:environment] == {} })
+      expect(said.grep(/#{GhParity::ACCOUNT}/o).size).to eq(1)
+      expect(token_asks).to eq(0)
+    end
+
+    it "runs gh under the parent's environment when no account is configured" do
+      held_round
+
+      typed("/review-submit")
+
+      expect(options_of("api").map { |_, options| options[:environment] }).to eq([{}])
+      expect(token_asks).to eq(0)
+    end
+  end
+
   describe "the command surface it presents" do
     it "answers the name the registry dispatches and a usage naming the summary" do
       expect(command.name).to eq("review-submit")

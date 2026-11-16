@@ -125,8 +125,8 @@ class LainCLI < Thor
                           desc: "Merge epic/SLUG into main, which must be checked out and clean; " \
                                 "no remote, no pull request"
     def finish(slug = nil)
-      local = options[:local] ? { finisher: Lain::CLI::EpicFinish::Local.new } : {}
-      render_failing(-> { Lain::CLI::EpicFinish.new(**local) }) { |finish| finish.finish(slug) }
+      build = options[:local] ? -> { Lain::CLI::EpicFinish.local } : -> { Lain::CLI::EpicFinish.new(notes: $stderr) }
+      render_failing(build) { |finish| finish.finish(slug) }
     end
   end
 

@@ -348,8 +348,24 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
   describe "finishing locally" do
     before { git(root, "remote", "remove", "origin") }
 
+    it "builds a local finish over the github that refuses every verb" do
+      allow(described_class).to receive(:new).and_call_original
+
+      described_class.local(root:)
+
+      expect(described_class).to have_received(:new)
+        .with(hash_including(github: an_instance_of(described_class::NoGithub)))
+    end
+
+    # Every local example runs over this github, so a Local that reached gh would raise there.
+    it "gives a local finish a github that refuses every gh verb" do
+      Lain::Forge::Gh.public_instance_methods(false).each do |verb|
+        expect { described_class::NoGithub.new.public_send(verb, number: 7) }.to raise_error(Lain::Error, /local/)
+      end
+    end
+
     def local
-      described_class.new(root:, paths:, config:, github:, shell_out_factory: recording,
+      described_class.new(root:, paths:, config:, github: described_class::NoGithub.new, shell_out_factory: recording,
                           finisher: described_class::Local.new(root:, shell_out_factory: recording))
     end
 
@@ -368,7 +384,6 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, landed])
       expect(output).to include("finished demo at #{landed}", "merged into main", "nothing was pushed")
       expect(calls.flatten).not_to include("push")
-      expect(github).not_to have_received(:pr_create)
       intent, outcome = forge_records
       expect(intent).to include("action" => "local_merge", "epic_slug" => "demo")
       expect(outcome).to include("intent_id" => intent["intent_id"], "ok" => true)
@@ -403,9 +418,10 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       expect(git(root, "rev-parse", "main")).to eq(before)
     end
 
-    it "is what `lain epic finish SLUG --local` runs" do
+    it "is what `lain epic finish SLUG --local` runs, reading no GitHub account" do
       env = { "XDG_STATE_HOME" => state_home, "XDG_CONFIG_HOME" => File.join(@tmp, "config"), "HOME" => state_home }
       before = git(root, "rev-parse", "main")
+      allow(Lain::Config).to receive(:github).and_call_original
 
       with_env(env) do
         home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
@@ -415,6 +431,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       end
 
       expect(git(root, "rev-list", "--parents", "-n", "1", "main").split.drop(1)).to eq([before, tip])
+      expect(Lain::Config).not_to have_received(:github)
     end
 
     # A draft parked before the approved one waits on nothing, so it must not hold the finish up.
@@ -466,6 +483,42 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
     described_class.new(root:, paths:, config:, github:).finish("demo")
 
     expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", any_args).at_least(:once)
+  end
+
+  describe "its own gh, under the configured account" do
+    let(:gh_options) { [] }
+    let(:routed) do
+      gh_options = self.gh_options
+      answers = { "list" => "[]\n", "create" => "#{GhParity::URL}\n", "merge" => "",
+                  "view" => %({"state":"OPEN","mergeStateStatus":"CLEAN"}\n), "token" => "#{GhParity::TOKEN}\n" }
+      lambda do |*argv, **options|
+        return Lain::Shell::Out.new(*argv, **options) unless argv.first == "gh"
+
+        gh_options << [argv, options]
+        GhParity::FakeGhShellOut.new(0, answers.fetch(argv[2]), "")
+      end
+    end
+
+    def verbs = gh_options.reject { |argv, _| argv[1] == "auth" }
+
+    it "runs every gh verb with the account's token" do
+      with_env("LAIN_GH_ACCOUNT" => GhParity::ACCOUNT, "GH_TOKEN" => nil, "GITHUB_TOKEN" => nil) do
+        described_class.new(root:, paths:, config:, shell_out_factory: routed).finish("demo")
+      end
+
+      expect(verbs.map { |argv, _| argv[2] }).to include("create", "merge")
+      expect(verbs.map { |_, options| options[:environment] }).to all(eq("GH_TOKEN" => GhParity::TOKEN))
+    end
+
+    it "tells the notes line once when an exported token wins over the account" do
+      notes = StringIO.new
+      with_env("LAIN_GH_ACCOUNT" => GhParity::ACCOUNT, "GH_TOKEN" => "exported", "GITHUB_TOKEN" => nil) do
+        described_class.new(root:, paths:, config:, shell_out_factory: routed, notes:).finish("demo")
+      end
+
+      expect(notes.string.lines.grep(/#{GhParity::ACCOUNT}/o).size).to eq(1)
+      expect(verbs.map { |_, options| options[:environment] }).to all(eq({}))
+    end
   end
 
   it "refuses an unnamed choice between epics, advising the finish spelling" do

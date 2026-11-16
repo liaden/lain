@@ -365,6 +365,12 @@ module Lain
 
       private
 
+      # The process's one GitHub account, so every gh it runs asks for the token once. Read when
+      # the command surface is built, while `.lain/config.rb` holds the bytes the launch trusted.
+      def gh_account
+        @gh_account ||= Lain::Forge::Gh::Account.configured(root: project.root, paths: @paths, notes: @herdr.notes)
+      end
+
       attr_reader :options, :chronicle, :run_clock, :paths
 
       def terminal_keywords(agent, notice)
@@ -1003,7 +1009,7 @@ module Lain
       def assemble_surface(agent:, library:, window:, endpoint:, middleware:, profile:)
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
-                             cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr, profile:,
+                             cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr, profile:, gh_account:,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor,
                                                          endpoint:),

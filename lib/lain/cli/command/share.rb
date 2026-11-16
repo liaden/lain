@@ -18,10 +18,12 @@ module Lain
         #   the {CLI::Export} over it
         # @param shell [Class] answers `new(*argv, input:)` and `#run_command`, {Shell::Out}'s shape
         # @param journal [#record] takes the {Telemetry::SessionShared}
-        def initialize(exports:, journal:, shell: Shell::Out)
+        # @param account [Forge::Gh::Account, Forge::Gh::Account::None] whose token gh creates the gist with
+        def initialize(exports:, journal:, shell: Shell::Out, account: Forge::Gh::Account::None.new)
           @exports = exports
           @shell = shell
           @journal = journal
+          @account = account
           freeze
         end
 
@@ -70,7 +72,7 @@ module Lain
 
         def spawn(base, document)
           argv = ["gh", "gist", "create", "--public=false", "--filename", "#{base}.#{FORMAT}", "-"]
-          @shell.new(*argv, input: document).run_command
+          @shell.new(*argv, input: document, environment: @account.environment).run_command
         rescue Errno::ENOENT
           raise GhMissing
         end

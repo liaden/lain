@@ -302,7 +302,8 @@ RSpec.describe Lain::CLI::Command::QA do
           sensitivity: Lain::Sensitivity.new(home: Dir.tmpdir, cwd: @root)
         ),
         snapshots: instance_double(Lain::Agent::SnapshotSlot),
-        window: Lain::CLI::Backend::WindowBook::Served.new(model: "probe", window_tokens: 32_768)
+        window: Lain::CLI::Backend::WindowBook::Served.new(model: "probe", window_tokens: 32_768),
+        gh_account: Lain::Forge::Gh::Account::None.new
       )
     end
   end

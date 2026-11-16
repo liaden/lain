@@ -63,18 +63,50 @@ module Lain
         def detailed(detail) = [detail["epic_slug"].to_s, detail["issue_id"].to_s]
       end
 
+      # The gh a remote finish runs, as the configured GitHub account.
+      #
+      # @param root [String] where gh runs, and whose config names the account
+      # @param paths [Paths] finds the user's config
+      # @param shell_out_factory [#call]
+      # @param notes [#puts]
+      # @return [Forge::Gh]
+      def self.github(root:, paths:, shell_out_factory:, notes:)
+        account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:, shell_out_factory:)
+        Lain::Forge::Gh.new(cwd: root, account:, shell_out_factory:)
+      end
+
+      # A finish merged into main here. It runs no gh verb, so no GitHub account is read.
+      #
+      # @param root [String]
+      # @return [EpicFinish]
+      def self.local(root: Project::Resolver.default_project.root)
+        new(root:, github: NoGithub.new, finisher: Local.new(root:))
+      end
+
+      # The github of a local finish, which has no remote: every gh verb refuses, so a Local that
+      # reached for one fails loudly instead of acting on GitHub.
+      class NoGithub
+        REFUSAL = "a local finish runs no gh, but %<verb>s was called"
+
+        Lain::Forge::Gh.public_instance_methods(false).each do |verb|
+          define_method(verb) { |**| raise Error, format(REFUSAL, verb:) }
+        end
+      end
+
       # @param root [String] the project root, which is also the checkout
       #   holding `epic/<slug>`
       # @param paths [Paths] injected, so a spec resolves a throwaway state home
       # @param config [Config] `.lain/config.rb`, already read
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means
-      # @param shell_out_factory [#call] every git subprocess
+      # @param shell_out_factory [#call] every git and gh subprocess
+      # @param notes [#puts] told when an exported token wins over the configured account
       # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]
       # @param finisher [#call, #finished, #rerun, #untouched] {Remote}, or
       #   {Local} to merge into main here with no remote and no pull request
       def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
                      epics: Epic.new(root:, paths:, config:),
-                     shell_out_factory: Shell::Out.public_method(:new), github: Lain::Forge::Gh.new(cwd: root),
+                     shell_out_factory: Shell::Out.public_method(:new), notes: Sink::Null.new,
+                     github: EpicFinish.github(root:, paths:, shell_out_factory:, notes:),
                      finisher: Remote.new(root:, paths:, github:, shell_out_factory:))
         @root = root
         @paths = paths

@@ -47,9 +47,12 @@ module Lain
         # editor resolves a row against the directory it was started in and
         # `lain up` gives both panes one `-c`. `root:` stays on its own
         # business: {Meta} reads the project's `.lain/` config from it.
+        # `gh_account:` is the process's one {Forge::Gh::Account}, built by
+        # {Wiring}, so `/review-submit` and `/share` share 1 token ask.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
-                       approvals: nil, root: Dir.pwd, cwd: Dir.pwd, approval_prompt: nil, goal_driver: GoalDriver::Null,
+                       gh_account:, approvals: nil, root: Dir.pwd, cwd: Dir.pwd,
+                       approval_prompt: nil, goal_driver: GoalDriver::Null,
                        epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail,
                        herdr: Wiring::HerdrBinding::Null.new, profile: RunProfile.from_options({}))
           @role_spawn = role_spawn
@@ -57,7 +60,7 @@ module Lain
           @configured = middleware
           @window = window
           @goal_driver = goal_driver
-          seat(root:, cwd:, herdr:)
+          seat(root:, cwd:, herdr:, gh_account:)
           @rail = rail
           @library = library
           @ledger = ledger
@@ -74,10 +77,11 @@ module Lain
 
         attr_reader :env, :goal_driver
 
-        def seat(root:, cwd:, herdr:)
+        def seat(root:, cwd:, herdr:, gh_account:)
           @root = root
           @cwd = cwd
           @notes = herdr.notes
+          @gh_account = gh_account
         end
         private :seat
 
@@ -208,7 +212,7 @@ module Lain
         # #builtins' reason; the export is opened per call because promotion renames the file.
         def share_commands
           exports = ->(file) { Export.new(selector: file, paths: Paths.new, project: place) }
-          [Share.new(exports:, journal: @env.chronicle.record_journal)]
+          [Share.new(exports:, journal: @env.chronicle.record_journal, account: @gh_account)]
         end
 
         # The commands of the epic this chat is seated in. Its own group rather
@@ -231,7 +235,8 @@ module Lain
         # it. Their own line because they share {#outbox} AS A ROUND, where
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
-          [Review.new(root: @root, outbox:, ledger: @ledger), ReviewSubmit.new(root: @root, outbox:),
+          [Review.new(root: @root, outbox:, ledger: @ledger),
+           ReviewSubmit.new(root: @root, outbox:, account: @gh_account),
            Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity)]
         end
       end

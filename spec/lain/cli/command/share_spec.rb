@@ -43,6 +43,20 @@ RSpec.describe Lain::CLI::Command::Share do
     expect(reply).to include("https://gist.github.com/u/abc123").and include("3 regions")
   end
 
+  it "spawns the gist under the configured account's environment" do
+    account = instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" })
+
+    described_class.new(exports: ->(_file) { export }, shell: gh, journal:, account:).call("", env)
+
+    expect(spawned.first.last).to include(environment: { "GH_TOKEN" => "t0k" })
+  end
+
+  it "spawns the gist under the parent's environment unchanged when no account is configured" do
+    command.call("", env)
+
+    expect(spawned.first.last).to include(environment: {})
+  end
+
   it "opens the export over the session file as the chat holds it at call time" do
     command.call("", env)
 

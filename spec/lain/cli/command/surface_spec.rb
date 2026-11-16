@@ -40,9 +40,9 @@ RSpec.describe Lain::CLI::Command::Surface do
   # library and hands it over, so a surface that read its own would be a second
   # read of the same tree -- the drift this class's one-snapshot promise exists
   # to deny.
-  def build_surface(root, approvals: nil, **rest)
+  def build_surface(root, approvals: nil, gh_account: Lain::Forge::Gh::Account::None.new, **rest)
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
-                        supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:,
+                        supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:, gh_account:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
                         status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
   end
@@ -66,6 +66,20 @@ RSpec.describe Lain::CLI::Command::Surface do
     build_surface(Dir.pwd, herdr:).commands
 
     expect(Lain::Notices).to have_received(:for).with(env: ENV, notes:)
+  end
+
+  # The account is the process's one, built by Wiring, so its token is asked of gh once per process.
+  it "lends /review-submit and /share the account it is handed, and builds none of its own" do
+    account = instance_double(Lain::Forge::Gh::Account, environment: {})
+    allow(Lain::Forge::Gh::Account).to receive(:for)
+    allow(Lain::CLI::Command::ReviewSubmit).to receive(:new).and_call_original
+    allow(Lain::CLI::Command::Share).to receive(:new).and_call_original
+
+    build_surface(Dir.pwd, gh_account: account).commands
+
+    expect(Lain::Forge::Gh::Account).not_to have_received(:for)
+    expect(Lain::CLI::Command::ReviewSubmit).to have_received(:new).with(hash_including(account:))
+    expect(Lain::CLI::Command::Share).to have_received(:new).with(hash_including(account:))
   end
 
   it "gets tmux windows and no reporting when built without a launch" do
@@ -477,6 +491,21 @@ RSpec.describe Lain::CLI::Command::Surface do
       surface.middleware.call({ text: "/create-epic-issues", agent: }) { |env| env.merge(response: "ran") }
 
       expect(agent).to have_received(:allow).with(having_attributes(iterations: 124))
+    end
+  end
+
+  # A defaulted account would run gh as whichever account gh last switched to, the mis-wire this
+  # keyword exists to stop.
+  it "refuses to construct without the process's GitHub account, rather than defaulting one" do
+    with_project do |root|
+      accountless = lambda do
+        described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
+                            supervisor: Lain::Supervisor::Null, role_spawn:, root:,
+                            chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
+                            status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:)
+      end
+
+      expect { accountless.call }.to raise_error(ArgumentError, /gh_account/)
     end
   end
 

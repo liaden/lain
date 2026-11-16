@@ -334,4 +334,31 @@ RSpec.describe Lain::Forge::Gh do
       expect(first).not_to be(second)
     end
   end
+
+  describe "the account gh acts as" do
+    let(:account) { instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" }) }
+
+    it "runs every verb with the account's environment" do
+      lent = described_class.new(account:, shell_out_factory: factory, cwd: "/tmp/checkout")
+
+      lent.pr_merge(number: 7)
+      lent.submit_review(number: 7, review: { "body" => "b" })
+
+      expect(factory.options).to all(include(environment: { "GH_TOKEN" => "t0k" }))
+    end
+
+    it "runs under the parent's environment unchanged when no account is configured" do
+      gh.pr_merge(number: 7)
+
+      expect(factory.options.last).to include(environment: {})
+    end
+
+    it "runs no gh at all when the account refuses" do
+      allow(account).to receive(:environment).and_raise(Lain::Forge::Gh::Account::Refused, "nobody")
+      refusing = described_class.new(account:, shell_out_factory: factory)
+
+      expect { refusing.pr_merge(number: 7) }.to raise_error(Lain::Forge::Gh::Account::Refused)
+      expect(factory.argvs).to be_empty
+    end
+  end
 end
