@@ -1667,3 +1667,31 @@ fallback rather than redesigning mid-run.
 - **A background auto-approver can be refused by the agent harness.** Fork c's was ("Create Unsafe Agents"), while
   fork h's narrow gatekeeper ran, so expect to answer parked calls by hand. A small script that refuses unless exactly 1 call is parked, answers it, then waits for the
   next keeps each answer cheap (fork c's `records/ok.sh`).
+
+## Round 29 (2026-11-11): what 19 forks taught the process
+
+- **An agent shell inside the operator's herdr reaches the real herdr.** Every Bash call inherited `HERDR_BIN_PATH
+  HERDR_ENV HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_TAB_ID HERDR_WORKSPACE_ID`, and `mise env` put `herdr` back on PATH,
+  so fork a's `lain up` linked lain's plugin into the operator's herdr. `env.sh` now unsets all 6. Launch every tmux
+  server and cockpit with `env -u` for each as well, and never run a `herdr` command that writes outside an isolated
+  herdr.
+- **A command that drops `--socket` lands on the default tmux server.** A herdr restart reran a stored cockpit command
+  without it (a29-4) and built session `ck` beside the operator's own, with a real `~/.local/state/lain/sessions` dir.
+  `env.sh` now exports `TMUX_TMPDIR=$QA/tmux`, so even a bare `tmux` stays in the sandbox.
+- **A `notify-feed` stand-in on PATH is not reached.** Inside `exe/lain` the mise Ruby gem bin dir comes first and
+  holds a stale `notify-feed` that exits 1 silently (a29-2). Verify which binary ran before reading a missing feed as
+  a lain defect.
+- **Every judge call reloads the shared runner twice until i29-1 is fixed** (about 30 s each, at the judge's 30 s
+  timeout). Launch with `--approval ask` or exact `allow` rules unless the judge is what a section tests, and announce
+  that section in `announce.log`. The cost is coverage: no fork ran `auto`, so k28-1, k28-2 and the split of
+  approvals by rule, judge and human were not reached. Schedule 1 `auto` run on a quiet box instead.
+- **Count approvals by who settled them from the journal**, never the screen: `escalation.rung` (`rules`, `judge`),
+  `approval_decision.surface` (`nvim`, `timeout`) and `gate_decision.answered_by`. `rung "rules"` does not separate an
+  allow rule from the allowlist or the shell rule (x29-1); only `reason` does.
+- **`reply.sh` dropped any answer holding `&&` or `<`** when typed as `:LainReply`. It now reads the answer from a file
+  through `execute()` over `nv.sh expr`.
+- **A prompt sent before a bare `you>` becomes a note for the agent,** a `/mode` included. Wait for the prompt.
+- **A fork can hit its turn limit** (fork c did at 200) and is resumed by message. Updating the report after every
+  section is what made that lossless.
+- **A user may stop and then resume a scenario mid-round.** Record each metered stretch as START and STOP lines in
+  `announce.log` so the spend survives the interruption (fork r).

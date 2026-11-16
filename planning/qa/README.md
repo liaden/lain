@@ -347,6 +347,12 @@ discharged, and git history is the archive: `git log --diff-filter=D --stat -- p
 commit that removed them, and `git show <commit>^:<path>` reads any of them back whole. A round
 stays here only while it is still in flight:
 
+- [`../qa-findings-round29-2026-11-11.md`](../qa-findings-round29-2026-11-11.md): round 29, a full round over 26 of the 27
+  scenarios in 19 forks, against `c0ce028b` (433 commits past round 28); `bench-arms` and every bench section dropped by
+  the user. Fixed: i28-4, g28-1 to g28-3, k28-4, x28-1 and 12 more. **Two new HIGH:** a stage gate answered from the
+  phone is silently lost (b29-1), and `/stop` during an epic red step stops nothing (e29-9). **Five MED-HIGH:** g29-2,
+  e29-5, a29-1, i29-1 (the judge thrashes the shared runner) and h29-2 (approving `cat <file>` releases its secrets;
+  researched, ruling open).
 - [`../qa-findings-round28-2026-10-28.md`](../qa-findings-round28-2026-10-28.md): round 28, a full round over all 22
   scenarios in 13 forks, against `955cf59b` (452 commits past round 27). Both round 27 HIGHs are fixed, b27-4 on every
   trigger. **One new HIGH:** a memory item with `sources` makes every later session in its project unresumable (i28-4).
