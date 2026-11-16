@@ -17,7 +17,7 @@ use signal_hook::consts::{SIGCHLD, SIGHUP, SIGINT, SIGTERM};
 use signal_hook::iterator::Signals;
 use signal_hook::low_level::{emulate_default_handler, raise};
 
-use crate::{EXEC_FAILED, NOT_ENFORCED, complain, fail};
+use crate::linux_main::{EXEC_FAILED, NOT_ENFORCED, complain, fail};
 
 /// How long a stop may spend before the fence gives up and dies anyway: inside
 /// Shell::Pipeline::DEFAULT_GRACE (3s), so the fence finishes its own KILL rounds

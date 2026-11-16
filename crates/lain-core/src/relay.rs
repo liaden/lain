@@ -43,6 +43,7 @@ pub(crate) enum StartError {
     NotASocket(PathBuf),
     #[error("cannot bind {what}: {error}")]
     Bind { what: String, error: io::Error },
+    #[cfg(target_os = "linux")]
     #[error("cannot confine the relay: {0}")]
     Confine(landlock::RulesetError),
     #[error("this kernel enforces no Landlock ruleset, and the relay does not run unconfined")]
@@ -60,7 +61,9 @@ impl StartError {
             | Self::SocketInUse(_)
             | Self::NotASocket(_)
             | Self::Bind { .. } => crate::BIND_ERROR,
-            Self::Confine(_) | Self::Unconfined => crate::CONFINE_ERROR,
+            #[cfg(target_os = "linux")]
+            Self::Confine(_) => crate::CONFINE_ERROR,
+            Self::Unconfined => crate::CONFINE_ERROR,
         }
     }
 }
@@ -211,6 +214,12 @@ fn clear_stale_socket(path: &Path) -> Result<(), StartError> {
 /// for the calling thread and every thread it spawns after. The devices
 /// directory is listed too, because every reread checks what it holds. A kernel that
 /// enforces none of it is refused too: an unconfined relay is not one we run.
+#[cfg(not(target_os = "linux"))]
+pub(crate) fn confine(_: &Path, _: &Path) -> Result<(), StartError> {
+    Err(StartError::Unconfined)
+}
+
+#[cfg(target_os = "linux")]
 pub(crate) fn confine(devices_dir: &Path, socket_dir: &Path) -> Result<(), StartError> {
     use landlock::{
         ABI, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
@@ -1028,6 +1037,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn the_relay_confines_itself_to_its_devices_and_socket_directories() {
         let dir = tempfile::tempdir().expect("a dir");

@@ -3,6 +3,7 @@
 //! The fenced command is python3, the interpreter the memfd probe was written
 //! in, because its `os.memfd_create` passes the flags straight to the kernel
 //! and its ctypes can make the raw x32 call.
+#![cfg(target_os = "linux")]
 
 pub mod common;
 

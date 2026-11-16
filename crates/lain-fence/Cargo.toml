@@ -10,7 +10,7 @@ publish = false
 name = "lain-fence"
 path = "src/main.rs"
 
-[dependencies]
+[target.'cfg(target_os = "linux")'.dependencies]
 # landlock(7) without unsafe. Its best-effort default makes an older kernel drop
 # the rights it lacks instead of refusing; the status line reports each drop.
 landlock = "0.4.7"

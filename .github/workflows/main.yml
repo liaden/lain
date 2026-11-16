@@ -159,6 +159,11 @@ jobs:
       # the skipped `ruby-checks` hook used to build on its way past.
       - name: Compile the Rust extension
         run: bundle exec rake compile
+      # ext/lain needs a macOS SDK to type-check, so only the pure crates are covered here.
+      - name: Type-check the Linux-gated crates for macOS
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-core -p lain-fence
       # `ruby-checks` would run the suite a second time; rubocop, its other
       # half, runs on its own below.
       # The remote-* hooks need WebKitGTK; the remote-app job runs them on a runner that has it.

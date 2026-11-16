@@ -5,6 +5,7 @@
 //! Python creates the sockets because it passes family, type and protocol
 //! straight to socket(2), adding `SOCK_CLOEXEC` to the type, which is the flag
 //! the filter must mask off. Its ctypes makes the raw io_uring and x32 calls.
+#![cfg(target_os = "linux")]
 
 pub mod common;
 

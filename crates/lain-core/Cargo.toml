@@ -61,8 +61,6 @@ serde = "1"
 # constant time, so its timing tells a peer neither which device nor how much of a guess matched.
 subtle = "2.6"
 blake3 = "1"
-# The relay confines itself after binding, without unsafe here.
-landlock = "0.4.7"
 # `getifaddrs` without unsafe, to find this host's tailscale0 address, and
 # `O_NOFOLLOW` (`fs`), so the devices file is never read through a symlink.
 nix = { version = "0.31", default-features = false, features = ["fs", "net"] }
@@ -75,3 +73,10 @@ tempfile = "3"
 # tests' `AsyncReadExt`/`AsyncWriteExt`; the daemon itself never needs it.
 # `test-util` for paused time, so the 5 s auth deadline is tested without a 5 s wait.
 tokio = { version = "1.53", features = ["process", "io-util", "test-util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The relay confines itself after binding, without unsafe here.
+landlock = "0.4.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+blake3 = { version = "1", features = ["pure"] }

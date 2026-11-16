@@ -5,6 +5,7 @@
 //! leaves behind, alive or an unreaped zombie, is reparented here once the
 //! fence exits. "The fence left nothing" is then "this process has no
 //! children", which is why the tests in this file run one at a time.
+#![cfg(target_os = "linux")]
 
 pub mod common;
 

@@ -3,6 +3,7 @@
 //! Whether to skip is decided from the kernel, never from the fence: asking
 //! the binary under test would let a broken `--status` skip every enforcement
 //! test and read as green.
+#![cfg(target_os = "linux")]
 
 pub mod common;
 

@@ -1,6 +1,7 @@
 //! `--private-net`, run for real: refused on a netns with a host interface,
 //! and inside `bwrap --unshare-net` TCP works on lo while seccomp still
 //! refuses datagrams and nothing routes out.
+#![cfg(target_os = "linux")]
 
 pub mod common;
 
