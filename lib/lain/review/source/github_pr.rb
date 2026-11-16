@@ -50,10 +50,6 @@ module Lain
         # whenever the two disagree.
         include Diffed
 
-        # A wedged gh must not stall the bench driving it -- {Forge::Gh}'s
-        # bound, at the same scale of one API round trip.
-        DEFAULT_TIMEOUT = 60
-
         # gh is not on this machine. Named rather than left as
         # `Errno::ENOENT - gh`, which tells a newcomer nothing.
         #
@@ -74,13 +70,13 @@ module Lain
         # caller means, what GitHub says its refs are, and -- when it can save a
         # fetch -- the combined diff itself.
         #
-        # Spawned here rather than through {Forge::Gh} because Gh is a CLOSED set
-        # of four landing verbs whose names are written in three places, and a
-        # verb missing from one of them replays straight through to the live
-        # remote. Reading a pull request needs `pr diff`, which is not one of
-        # them, and a read-only source has no landing to fold into. What is reused
-        # is the IDIOM, spelled identically: an argv array through an injected
-        # `shell_out_factory`, never a command string, and no `sh -c` anywhere.
+        # Spawned through {Forge::Gh::Reads} rather than {Forge::Gh} because Gh is
+        # a CLOSED set of four landing verbs whose names are written in three
+        # places, and a verb missing from one of them replays straight through to
+        # the live remote. Reading a pull request needs `pr diff`, which is not
+        # one of them, and a read-only source has no landing to fold into. What
+        # stays here is the reading of gh's answer: refusals map to raises and
+        # values below.
         class Remote
           # gh resolves a pull request from a URL, a branch or a number, and the
           # ref is handed over as the human wrote it. Only `refs/pull/N/head`
@@ -94,9 +90,6 @@ module Lain
           # is a gh whose shape this source does not know, and it is named
           # rather than passed along.
           SHA = /\A[0-9a-f]{40}\z/
-
-          # The `--json` fields read below, and nothing else.
-          FIELDS = %w[baseRefName baseRefOid headRefOid].freeze
 
           # GitHub's own words for the 300-file ceiling, as gh relays them:
           #
@@ -118,17 +111,14 @@ module Lain
           CombinedDiff = Data.define(:bytes, :origin)
 
           # @param ref [String] the pull request as the caller spelled it
-          # @param cwd [String] where gh runs, which is how it resolves WHICH
-          #   repository it is talking to
-          # @param timeout [Numeric] seconds one gh call may take
-          # @param shell_out_factory [#call] builds the subprocess runner
+          # @param cwd [String] the repository gh is asked about, named in a refusal
+          # @param reads [Forge::Gh::Reads] runs the gh calls, as the configured account
           # @raise [UnknownRef] if `ref` names no pull request at all
-          def initialize(ref:, cwd:, timeout:, shell_out_factory:)
+          def initialize(ref:, cwd:, reads:)
             @ref = ref
             @number = number_in(ref)
             @cwd = cwd
-            @timeout = timeout
-            @shell_out_factory = shell_out_factory
+            @reads = reads
             freeze
           end
 
@@ -149,7 +139,7 @@ module Lain
           # @return [CombinedDiff] gh's bytes, or a refusal saying why the
           #   object database has to answer instead
           def combined_diff
-            shell = gh("pr", "diff", @ref)
+            shell = naming_a_missing_gh { @reads.pr_diff(ref: @ref) }
             return CombinedDiff.new(bytes: "".b, origin: refusal(shell)) if refused?(shell)
 
             CombinedDiff.new(bytes: shell.stdout.b.freeze, origin: DiffOrigin.served)
@@ -170,7 +160,7 @@ module Lain
           end
 
           def view
-            shell = gh("pr", "view", @ref, "--json", FIELDS.join(","))
+            shell = naming_a_missing_gh { @reads.pr_refs(ref: @ref) }
             raise UnknownRef.unresolved("pull request", @ref, @cwd, shell) unless Shell::Out.ok?(shell)
 
             JSON.parse(shell.stdout)
@@ -229,10 +219,8 @@ module Lain
                                 message: stderr.strip)
           end
 
-          def gh(*)
-            shell = @shell_out_factory.call("gh", *, cwd: @cwd, timeout: @timeout)
-            shell.run_command
-            shell
+          def naming_a_missing_gh
+            yield
           rescue Errno::ENOENT
             raise NoGh.for(@ref)
           end
@@ -242,20 +230,18 @@ module Lain
         #   naming one
         # @param repo_root [String] the repository whose object database answers
         # @param remote [String] the remote `refs/pull/N/head` is fetched from
-        # @param timeout [Numeric] seconds one gh call may take
         # @param shell_out_factory [#call] builds the subprocess runner,
         #   injected exactly as {Forge::Gh} and {LocalBranch} do
+        # @param reads [Forge::Gh::Reads] runs the gh reads as the configured account
         # @raise [UnknownRef] if `pull_request` names no pull request, or gh
         #   cannot resolve the one it names
-        def initialize(pull_request:, repo_root: Dir.pwd, remote: "origin",
-                       timeout: DEFAULT_TIMEOUT,
+        def initialize(pull_request:, reads:, repo_root: Dir.pwd, remote: "origin",
                        shell_out_factory: Shell::Out.public_method(:new))
           @repo_root = File.expand_path(repo_root)
           @remote = remote.to_s
           @shell_out_factory = shell_out_factory
           @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
-          @remote_pr = Remote.new(ref: pull_request.to_s, cwd: @repo_root, timeout:,
-                                  shell_out_factory:)
+          @remote_pr = Remote.new(ref: pull_request.to_s, cwd: @repo_root, reads:)
           read_refs
         end
 

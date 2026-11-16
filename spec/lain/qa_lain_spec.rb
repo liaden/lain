@@ -67,6 +67,19 @@ RSpec.describe QALain do
       end
     end
 
+    it "says on stderr that an exported GH_TOKEN won over the configured account" do
+      Dir.mktmpdir("qa-lain-review-note") do |dir|
+        git(dir, "init", "-q", "-b", "main")
+        env = { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state"), "XDG_CACHE_HOME" => File.join(dir, "cache"),
+                "LAIN_GH_ACCOUNT" => "joel-fuze", "GH_TOKEN" => "exported-secret" }
+
+        _, err, = run_exe(File.join(root, "bin/qa-lain"), "review", "4821", chdir: dir, env:)
+
+        expect(err).to include("joel-fuze")
+        expect(err).not_to include("exported-secret")
+      end
+    end
+
     it "lists review, survey, bench, usage, friction and verify under qa-lain and none under lain" do
       qa, = run_exe(File.join(root, "bin/qa-lain"), "help")
       lain, = run_exe(File.join(root, "exe/lain"), "help")
@@ -144,6 +157,7 @@ RSpec.describe QALain do
     end
 
     it "leaves no bench, verify, usage or friction verb on lain" do
+      load File.expand_path("../../exe/lain", __dir__) unless defined?(LainCLI)
       expect(LainCLI.commands.keys & %w[bench usage friction verify review survey]).to eq([])
     end
 

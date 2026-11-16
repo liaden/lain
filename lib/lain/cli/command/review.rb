@@ -165,13 +165,16 @@ module Lain
         #   as {Lain::CLI::Review} and both sources do
         # @param ledger [Lain::Sensitivity::Ledger] the run's ONE region ledger, so
         #   a note's anchor text journals a released region as released
-        def initialize(outbox:, ledger:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+        # @param gh_account [Lain::Forge::Gh::Account, Lain::Forge::Gh::Account::None] the
+        #   process's one account, whose token a pull request's gh reads run with
+        def initialize(outbox:, ledger:, gh_account:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
                        shell_out_factory: Lain::Shell::Out.public_method(:new))
           @outbox = outbox
           @ledger = ledger
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
+          @gh_account = gh_account
           @round = ReviewRound.new(outbox:)
           freeze
         end
@@ -324,7 +327,7 @@ module Lain
         # and a second resolver here would be a second set of answers.
         def targets
           Lain::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory,
-                                   ledger: @ledger)
+                                   ledger: @ledger, account: @gh_account)
         end
       end
     end

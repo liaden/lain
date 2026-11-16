@@ -66,13 +66,16 @@ module Lain
       #   the text surface over a buffer this object owns
       # @param shell_out_factory [#call] builds the subprocess runner, injected
       #   as {Forge::Gh} and both sources do
-      def initialize(repo_root: Dir.pwd, root: Project::Resolver.default_project.root, paths: Paths.new, bounds: Lain::Review::Bounds.new,
-                     surface: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
+      # @param notes [#puts] told when an exported token wins over the configured GitHub account
+      def initialize(notes:, repo_root: Dir.pwd, root: Project::Resolver.default_project.root, paths: Paths.new,
+                     bounds: Lain::Review::Bounds.new, surface: nil,
+                     shell_out_factory: Lain::Shell::Out.public_method(:new))
         @paths = paths
         @root = root
         @bounds = bounds
         @surface = surface
-        @targets = Lain::Review::Target.new(repo_root:, shell_out_factory:)
+        account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:, shell_out_factory:)
+        @targets = Lain::Review::Target.new(repo_root:, shell_out_factory:, account:)
       end
 
       # @param target [String] a pull request (a number, `#number` or a URL), or

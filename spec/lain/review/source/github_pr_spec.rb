@@ -252,8 +252,13 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     end
   end
 
+  def unaccounted_reads(factory: self.factory)
+    options = { cwd: @repo, account: Lain::Forge::Gh::Account::None.new }
+    Lain::Forge::Gh::Reads.new(**options, **(factory ? { shell_out_factory: factory } : {}))
+  end
+
   def build(pull_request: number)
-    described_class.new(pull_request:, repo_root: @repo, shell_out_factory: factory)
+    described_class.new(pull_request:, repo_root: @repo, shell_out_factory: factory, reads: unaccounted_reads)
   end
 
   def gh_calls = calls.select { |argv| argv.first == "gh" }
@@ -364,6 +369,60 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     it "refuses loudly when gh answers no base branch to fetch" do
       replies[:view] = answered(stdout: JSON.generate({ "baseRefOid" => base_oid, "headRefOid" => head_oid }))
       expect { build }.to raise_error(Lain::Review::Source::UnknownRef, /baseRefName/)
+    end
+  end
+
+  it "refuses to be built without reads, so no gh read runs as whichever token is lying about" do
+    local_repo_with_head
+
+    expect { described_class.new(pull_request: number, repo_root: @repo, shell_out_factory: factory) }
+      .to raise_error(ArgumentError, /reads/)
+  end
+
+  describe "under a configured GitHub account" do
+    let(:account) { instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" }) }
+    let(:gh_options) { [] }
+
+    def accounted(pull_request: number)
+      gh_factory = lambda do |*argv, **options|
+        gh_options << options if argv.first == "gh"
+        factory.call(*argv, **options)
+      end
+      reads = Lain::Forge::Gh::Reads.new(cwd: @repo, account:, shell_out_factory: gh_factory)
+      described_class.new(pull_request:, repo_root: @repo, shell_out_factory: factory, reads:)
+    end
+
+    it "runs gh pr view and gh pr diff with the account's token" do
+      local_repo_without_head
+      replies[:diff] = answered(stdout: expected_diff)
+      accounted.diff
+
+      expect(gh_calls.map { |argv| argv[1..2] }).to eq([%w[pr view], %w[pr diff]])
+      expect(gh_options).to all(include(environment: { "GH_TOKEN" => "t0k" }))
+    end
+
+    it "refuses a pull request gh cannot resolve with UnknownRef naming it" do
+      local_repo_with_head
+      replies[:view] = answered(stderr: "could not resolve to a PullRequest", exitstatus: 1)
+
+      expect { accounted(pull_request: 99) }.to raise_error(Lain::Review::Source::UnknownRef, /99/)
+    end
+
+    it "still names a missing gh" do
+      local_repo_with_head
+      absent = ->(*argv, **) { argv.first == "gh" ? raise(Errno::ENOENT, "gh") : Lain::Shell::Out.new(*argv) }
+      reads = Lain::Forge::Gh::Reads.new(cwd: @repo, account:, shell_out_factory: absent)
+
+      expect { described_class.new(pull_request: number, repo_root: @repo, reads:) }
+        .to raise_error(Lain::Review::Source::GithubPr::NoGh)
+    end
+
+    it "lets an account with no token fail the review without spawning gh" do
+      local_repo_with_head
+      allow(account).to receive(:environment).and_raise(Lain::Forge::Gh::Account::Refused, "no token for nobody")
+
+      expect { accounted }.to raise_error(Lain::Forge::Gh::Account::Refused, /nobody/)
+      expect(gh_calls).to be_empty
     end
   end
 
@@ -705,7 +764,9 @@ RSpec.describe Lain::Review::Source::GithubPr, :seam do
     it "spawns gh and git through Shell::Out rather than forking them" do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
 
-      with_gh_on_path { described_class.new(pull_request: number, repo_root: @repo) }
+      with_gh_on_path do
+        described_class.new(pull_request: number, repo_root: @repo, reads: unaccounted_reads(factory: nil))
+      end
 
       expect(Lain::Shell::Out).to have_received(:new).with("gh", "pr", "view", any_args)
       expect(Lain::Shell::Out).to have_received(:new).with("git", "-C", @repo, any_args).at_least(:once)

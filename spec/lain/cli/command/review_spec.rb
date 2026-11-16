@@ -113,6 +113,7 @@ end
 RSpec.describe Lain::CLI::Command::Review, :seam do
   let(:command) do
     described_class.new(root: @repo, outbox:, shell_out_factory: Lain::Shell::Out.public_method(:new),
+                        gh_account: Lain::Forge::Gh::Account::None.new,
                         ledger: Lain::Sensitivity::Ledger.new)
   end
 
@@ -164,7 +165,8 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
 
   it "runs its git through Shell::Out when no factory is injected" do
     allow(Lain::Shell::Out).to receive(:new).and_call_original
-    defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new)
+    defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new,
+                                    gh_account: Lain::Forge::Gh::Account::None.new)
 
     attached
     defaulted.call("feature", env)
@@ -238,6 +240,37 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       # arrived: a swallowed target answers the usage instead.
       expect { registry.dispatch("/review 4821") { raise "fallthrough must not run" } }
         .to raise_error(Lain::Error, /4821/)
+    end
+  end
+
+  it "refuses to be built without a gh account" do
+    expect { described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new) }
+      .to raise_error(ArgumentError, /gh_account/)
+  end
+
+  describe "a pull request under a configured GitHub account" do
+    let(:account) { instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" }) }
+    let(:environments) { [] }
+    let(:registry) { Lain::CLI::Command::Registry.new([command]).bind(env) }
+    let(:refusing) do
+      lambda do |*argv, **options|
+        next Lain::Shell::Out.new(*argv, **options) unless argv.first == "gh"
+
+        environments << options[:environment]
+        Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new("", "no such pull request", 1)
+      end
+    end
+    let(:command) do
+      described_class.new(root: @repo, outbox:, shell_out_factory: refusing, gh_account: account,
+                          ledger: Lain::Sensitivity::Ledger.new)
+    end
+
+    it "reads the pull request as that account" do
+      attached
+
+      expect { registry.dispatch("/review 4821") { raise "fallthrough must not run" } }
+        .to raise_error(Lain::Error, /4821/)
+      expect(environments).to eq([{ "GH_TOKEN" => "t0k" }])
     end
   end
 
@@ -850,7 +883,8 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     # whose header names that file.
     def resumed(dir, earlier: "feature", earlier_dir: dir)
       prior = StringIO.new
-      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new)
+      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new,
+                          gh_account: Lain::Forge::Gh::Account::None.new)
                      .call(earlier, build_command_env(replies:,
                                                       chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
       File.write(File.join(earlier_dir, "earlier.ndjson"), prior.string)
@@ -985,7 +1019,8 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     # leaves it holding NOTHING (asserted below), which a spy could not say
     # honestly.
     def bounded(**ceilings)
-      described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, bounds: Lain::Review::Bounds.new(**ceilings),
+      described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new,
+                          bounds: Lain::Review::Bounds.new(**ceilings),
                           shell_out_factory: Lain::Shell::Out.public_method(:new))
     end
 

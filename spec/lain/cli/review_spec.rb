@@ -134,7 +134,8 @@ RSpec.describe Lain::CLI::Review, :seam do
   def paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state })
 
   def command(**overrides)
-    described_class.new(repo_root: @repo, root: @repo, paths:, shell_out_factory: factory, **overrides)
+    described_class.new(repo_root: @repo, root: @repo, paths:, shell_out_factory: factory, notes: Lain::Sink::Null.new,
+                        **overrides)
   end
 
   def gh_calls = calls.select { |argv| argv.first == "gh" }
@@ -149,6 +150,42 @@ RSpec.describe Lain::CLI::Review, :seam do
 
   def sources_journaled = opened_records.map { |record| record["source"] }
 
+  describe "the configured GitHub account" do
+    let(:environments) { [] }
+    let(:accounted) do
+      lambda do |*argv, **options|
+        next gh_account_reply(argv) if argv[1..2] == %w[auth token]
+
+        environments << options[:environment] if argv.first == "gh"
+        factory.call(*argv, **options)
+      end
+    end
+
+    def gh_account_reply(argv)
+      raise "unexpected #{argv.inspect}" unless argv.last == "joel-fuze"
+
+      answered(stdout: "t0k\n")
+    end
+
+    it "carries the account's token to gh when a pull request is reviewed" do
+      with_env("LAIN_GH_ACCOUNT" => "joel-fuze") do
+        described_class.new(repo_root: @repo, root: @repo, paths:, shell_out_factory: accounted, notes: Lain::Sink::Null.new).present(number.to_s)
+      end
+
+      expect(environments).to eq([{ "GH_TOKEN" => "t0k" }])
+    end
+
+    it "tells the notes sink when an exported token wins" do
+      notes = StringIO.new
+      with_env("LAIN_GH_ACCOUNT" => "joel-fuze", "GH_TOKEN" => "exported") do
+        described_class.new(repo_root: @repo, root: @repo, paths:, shell_out_factory: accounted, notes:)
+                       .present(number.to_s)
+      end
+
+      expect(notes.string).to include("joel-fuze")
+    end
+  end
+
   describe "resolving what the target names" do
     it "reads a bare number as a pull request, asking gh which one and journaling that source" do
       command.present(number.to_s)
@@ -160,7 +197,7 @@ RSpec.describe Lain::CLI::Review, :seam do
     it "runs its git through Shell::Out when no factory is injected" do
       allow(Lain::Shell::Out).to receive(:new).and_call_original
 
-      described_class.new(repo_root: @repo, paths:).present("feature")
+      described_class.new(repo_root: @repo, paths:, notes: Lain::Sink::Null.new).present("feature")
 
       expect(Lain::Shell::Out).to have_received(:new).with("git", any_args).at_least(:once)
     end
@@ -169,7 +206,7 @@ RSpec.describe Lain::CLI::Review, :seam do
       project = instance_double(Lain::Project, root: @repo)
       allow(Lain::Project::Resolver).to receive(:default_project).and_return(project)
 
-      built = described_class.new(repo_root: @repo, paths:, shell_out_factory: factory)
+      built = described_class.new(repo_root: @repo, paths:, shell_out_factory: factory, notes: Lain::Sink::Null.new)
       expect(Lain::Project::Resolver).to have_received(:default_project).once
 
       2.times { built.present("feature") }

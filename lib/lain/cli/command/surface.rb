@@ -235,7 +235,7 @@ module Lain
         # it. Their own line because they share {#outbox} AS A ROUND, where
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
-          [Review.new(root: @root, outbox:, ledger: @ledger),
+          [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account),
            ReviewSubmit.new(root: @root, outbox:, account: @gh_account),
            Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity)]
         end

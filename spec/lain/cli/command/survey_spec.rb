@@ -875,7 +875,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
       command.call(@root, env)
 
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new).call("feature", env) }
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
         .to raise_error(Lain::Error, /is already open in this chat/)
     end
 
@@ -886,7 +886,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
       command.call(@root, env)
 
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new).call("feature", env) }
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
         .to raise_error(Lain::Error, a_string_including(@root).and(include("is already open in this chat")))
     end
 
@@ -908,7 +908,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
       expect(outbox).not_to be_open
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new).call("feature", env) }
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -949,7 +949,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(outbox).not_to be_open
       expect(editor.bound).to be_nil
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new).call("feature", env) }
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -970,7 +970,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       command.call("#{@root} --permissive", env)
 
       expect(editor.bound.wrote_verdict("approve")).to be_nil
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new).call("feature", env) }
+      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -1093,7 +1093,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       in_session_dir do |dir|
         earlier(dir) do |survey, earlier_env, held|
           survey.call(@root, earlier_env)
-          Lain::CLI::Command::Review.new(root: @root, outbox: held, ledger: Lain::Sensitivity::Ledger.new).call(
+          Lain::CLI::Command::Review.new(root: @root, outbox: held, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call(
             "close", earlier_env
           )
         end

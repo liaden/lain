@@ -7,7 +7,8 @@ require "tmpdir"
 RSpec.describe Lain::Review::Target, :seam do
   let(:pull_request) { 12 }
   let(:ledger) { Lain::Sensitivity::Ledger.new }
-  let(:targets) { described_class.new(repo_root: @repo, shell_out_factory: factory, ledger:) }
+  let(:targets) { described_class.new(repo_root: @repo, shell_out_factory: factory, ledger:, account: none) }
+  let(:none) { Lain::Forge::Gh::Account::None.new }
 
   around do |example|
     Dir.mktmpdir("lain-review-target") do |dir|
@@ -50,6 +51,31 @@ RSpec.describe Lain::Review::Target, :seam do
     head = commit("touch a", files)
     git("update-ref", "refs/pull/#{pull_request}/head", head)
     head
+  end
+
+  it "refuses to be built without an account, so no gh read runs as whichever token is lying about" do
+    expect { described_class.new(repo_root: @repo, shell_out_factory: factory, ledger:) }
+      .to raise_error(ArgumentError, /account/)
+  end
+
+  describe "a pull request under a configured account" do
+    let(:account) { instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" }) }
+    let(:environments) { [] }
+    let(:targets) { described_class.new(repo_root: @repo, shell_out_factory: recording, ledger:, account:) }
+    let(:recording) do
+      lambda do |*argv, **options|
+        environments << options[:environment] if argv.first == "gh"
+        factory.call(*argv, **options)
+      end
+    end
+
+    before { feature_branch }
+
+    it "runs the gh read with the account's token" do
+      targets.resolve(pull_request.to_s)
+
+      expect(environments).to eq([{ "GH_TOKEN" => "t0k" }])
+    end
   end
 
   describe "#resolve" do

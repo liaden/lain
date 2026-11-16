@@ -35,9 +35,12 @@ module Lain
       # @param shell_out_factory [#call] builds the subprocess runner
       # @param ledger [Lain::Sensitivity::Ledger] the region ledger a resolved
       #   source masks a note's evidence against; a fresh one masks everything
-      def initialize(repo_root:, shell_out_factory:, ledger: Lain::Sensitivity::Ledger.new)
+      # @param account [Lain::Forge::Gh::Account, Lain::Forge::Gh::Account::None] whose token
+      #   the pull request's gh reads run with
+      def initialize(repo_root:, shell_out_factory:, account:, ledger: Lain::Sensitivity::Ledger.new)
         @repo_root = File.expand_path(repo_root)
         @shell_out_factory = shell_out_factory
+        @account = account
         @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
         @projection = Lain::Survey::Projection.new(ledger:)
       end
@@ -64,8 +67,10 @@ module Lain
       private
 
       def pull_request(target)
+        reads = Lain::Forge::Gh::Reads.new(cwd: @repo_root, account: @account,
+                                           shell_out_factory: @shell_out_factory)
         source = Lain::Review::Source::GithubPr.new(pull_request: target, repo_root: @repo_root,
-                                                    shell_out_factory: @shell_out_factory)
+                                                    shell_out_factory: @shell_out_factory, reads:)
         source.projection = @projection
         Resolved.new(source:, label: "pull request #{source.number}", number: source.number)
       end

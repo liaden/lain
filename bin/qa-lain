@@ -41,7 +41,7 @@ class QALain < Thor
     desc "open TARGET", "Resolve a pull request or branch, open a round, and present it"
     def open(target)
       render do
-        Lain::CLI::Review.new.present(target, scope: options[:scope]&.to_sym, base: options[:base])
+        Lain::CLI::Review.new(notes: $stderr).present(target, scope: options[:scope]&.to_sym, base: options[:base])
       end
     end
   end

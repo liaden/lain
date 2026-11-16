@@ -58,7 +58,8 @@ RSpec.describe Lain::Review::Queue::LocalChanges, :seam do
     branch_with("feature", "feature.txt")
     _, target, _, base = Shellwords.split(by_rank(:branch).first.request.review_line)
 
-    resolved = Lain::Review::Target.new(repo_root: @repo, shell_out_factory: Lain::Shell::Out.public_method(:new))
+    resolved = Lain::Review::Target.new(repo_root: @repo, shell_out_factory: Lain::Shell::Out.public_method(:new),
+                                        account: Lain::Forge::Gh::Account::None.new)
                                    .resolve(target, base:)
 
     expect([resolved.label, base]).to eq(["branch refs/heads/feature", "refs/heads/master"])
