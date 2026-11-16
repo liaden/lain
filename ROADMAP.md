@@ -150,6 +150,13 @@ was worth removing.
     and a Rust workspace that type-checks for macOS.
 
   Then `planning/specs/lain-macos-bringup.md`, run by Claude on the work MacBook.
+- **lain-daemon (2026-11-16).** `[planned]` `planning/specs/lain-daemon.md`, 26 cards plus 3 dotfiles steps,
+  from `planning/lain-daemon-research-2026-11.md`, after the review queue lands:
+  - a per-user Rust daemon with a registry of live chats, routing for queue offers and approvals, the
+    phone relay as a confined worker and ntfy once per item; `lain-core` retires into `lain-rpc`;
+  - headless runs (an epic, the review poll, chores) that park and route their asks to you with
+    `--human remote`, only where bash is sandboxed;
+  - a warmed Ruby spawner that forks runs, after the exec cost is measured.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,

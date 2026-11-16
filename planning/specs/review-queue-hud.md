@@ -26,6 +26,12 @@ Carry out `planning/review-hud-research-2026-11.md`, option 1, with the user's r
 
 The dotfiles changes are main-session steps D0 to D5 at the end. The Mac bring-up is a separate plan, `planning/specs/lain-macos-bringup.md`, run after this one lands and is pushed.
 
+The daemon research (`planning/lain-daemon-research-2026-11.md`) shaped 3 choices here, so its follow-on plan, `planning/specs/lain-daemon.md`, can take these pieces over rather than replace them:
+
+- the queue's state is 1 append-only log (T16);
+- live chats leave a record the queue reads (T31);
+- the queue's request is a plain value that maps 1 to 1 onto the daemon's future `Offer` message (T23).
+
 The ROADMAP line is under `## Status` as "Review queue and HUD count".
 
 ## Grounding
@@ -97,7 +103,7 @@ The ROADMAP line is under `## Status` as "Review queue and HUD count".
 | `lain review`, `survey`, `bench`, `verify`, `usage`, `friction` | free to break: move to `qa-lain` (ruling 2026-11-16) | Gem `0.1.0`, never published. Callers are QA scenarios, specs, docs and `lib/` strings in this repo, plus `/home/tara/w/ir`. |
 | `/review` and `/survey` | must keep behaviour | Their specs stay green through T7, except the 2 refusals that named a text command. |
 | `/review` flags | free to extend | Adds `--since` (T14) and `--critique[=FOCUS]` (T15). |
-| `reviews.json`, `queue/seen.json`, `queue/notified.json`, `queue/pending/*.json` under `state_home` | free | New. 1 writer per file. |
+| `reviews.json`, `queue/log.ndjson`, `queue/pending/*.json`, `live/<session>.json` under `state_home` | free | New. `log.ndjson` is append-only with many writers; each other file has 1 writer. The daemon plan replaces `live/` with registration. |
 | `state.json` and its `"hud"` | must keep | Unchanged. The reviews segment is added by each renderer (T29). |
 | Config verbs | free to extend | Adds `github` in both files (T5). |
 | `Forge::Gh` | free | Internal. Reads go in a new `Forge::Gh::Reads` (S10 of the panel), so the landing verb set and its mirrors stay closed. |
@@ -150,12 +156,14 @@ Only the main session edits these. Cards hand back 1-line diffs.
 - **Keyword and path queries in the 5-minute poll.** The poll counts requests with 1 cheap query.
 - **A "last 30 minutes" window for new requests.** "New" means since the queue was last opened.
 - **Snapshot a dirty tree at list time.** `reload` and preview would write commits. The snapshot is taken at open.
-- **A lain daemon for polling, or a token on every herdr workspace.** A timer is enough, and the user ruled for 1 `reviews` workspace.
+- **A daemon for polling, in this plan.** Out of scope here. `planning/specs/lain-daemon.md` (D19) moves the poll into the daemon, and the timer stands in until then.
+- **A token on every herdr workspace.** The user ruled for 1 `reviews` workspace.
 - **Skip `rake core:build` off Linux.** lain-core compiles on macOS after T1; its relay refuses to start unconfined, which is today's behaviour.
 
 ## Open decisions
 
 - **The input socket accepts raw `line` frames from any same-uid client.** This predates this plan. With no sandbox on macOS, the agent's bash can reach it. T24's `offer` frame doesn't fix it; closing it (a per-session secret held by the input pane) is a later card. The user has accepted a thinner macOS sandbox for now (2026-11-16). No card depends on this.
+- **The daemon.** `planning/specs/lain-daemon.md` follows this plan. It replaces T31's records with registration, routes T25's offers through the daemon, and runs T28's poll as a supervised task. No card here depends on it.
 - **What `/review` should do beyond this plan,** now that it is the formal form of a critique. Dogfood the queue and `--critique` first. No card depends on this.
 
 ## Dependency graph
@@ -193,6 +201,8 @@ flowchart LR
   T23 --> T24
   T22 --> T25
   T24 --> T25
+  T31 --> T25
+  T4 --> T31
   T25 --> T26
   T27 --> T26
   T25 --> T28
@@ -831,16 +841,21 @@ Spec file: `spec/lain/cli/command/review_spec.rb`, `spec/lain/seams/critique_ove
 **Stop and report if:**
 - A command cannot hand a follow-up line to the chat's dispatch without reaching into the REPL. Report the seam it would need before adding one.
 
-### T16: Model the review queue: rows, ranking and seen          [risk: medium]
+### T16: Model the review queue: rows, ranking and an append-only log          [risk: medium]
 
 **Depends on:** none
 **Files:**
-- `lib/lain/review/queue.rb` (new), `lib/lain/review/queue/row.rb` (new), `lib/lain/review/queue/seen.rb` (new), `lib/lain/paths.rb`
-- `spec/lain/review/queue_spec.rb` (new), `spec/lain/review/queue/seen_spec.rb` (new), `spec/lain/paths_spec.rb`
+- `lib/lain/review/queue.rb` (new), `lib/lain/review/queue/row.rb` (new), `lib/lain/review/queue/log.rb` (new), `lib/lain/paths.rb`
+- `spec/lain/review/queue_spec.rb` (new), `spec/lain/review/queue/log_spec.rb` (new), `spec/lain/paths_spec.rb`
 
-**Reuse:** `Paths#state_home` and `ensure_dir`; `File#flock` for the read-modify-write.
+**Reuse:**
+- `Paths#state_home` and `ensure_dir`;
+- the journal's NDJSON shape;
+- appends that open the file with `O_APPEND`, make 1 `syswrite` of 1 whole line, check the byte count, and close. Each write lands at the end of the file, so many writers need no lock. The log lives only on a local disk: `O_APPEND` is not atomic over NFS.
+
+This is the daemon research's finding: the queue's state is an event log that readers fold, as sessions are, and the daemon can fold the same file later.
 **Shared-file wiring:** none
-**Reachable from:** T21's `lain queue`, which builds `Review::Queue.new(sources:, seen: Queue::Seen.new(paths:))`.
+**Reachable from:** T21's `lain queue`, which builds `Review::Queue.new(sources:, log: Queue::Log.new(paths:))`. T28's poll calls `Log#prune` once per run.
 
 **Acceptance criteria**
 
@@ -854,12 +869,27 @@ Scenario: a seen head leaves the list until it moves
   Given row "pr:o/r#12" opened at head C
   Then it is absent while the head is C, and back when the head is D
 
-Scenario: concurrent openers don't lose a mark
-  Given 2 processes mark different rows at once
-  Then seen.json holds both
+Scenario: concurrent writers don't lose an event
+  Given 4 processes append 200 events each to the log at once
+  Then the log holds 800 whole lines, and folding it marks every opened row
+
+Scenario: "new since you last looked" is a fold
+  Given the log records the queue listed at 09:00 and again at 11:00
+  Then Log#last_listed_at is 11:00
+
+Scenario: a torn last line is skipped
+  Given a log whose last line was cut short by a crash
+  When the log is folded
+  Then every whole line counts, and the torn one is skipped with 1 note
+
+Scenario: the log stays small, by rotation
+  Given a log over 1 MiB
+  When Log#prune runs
+  Then the log is renamed to log.1, replacing the old log.1, and the fold reads both files
+  And an append that races the rename lands in 1 of the 2 files, never in an unlinked one
 ```
 
-Spec file: `spec/lain/review/queue_spec.rb`, `spec/lain/review/queue/seen_spec.rb`
+Spec file: `spec/lain/review/queue_spec.rb`, `spec/lain/review/queue/log_spec.rb`
 
 **Interface**
 
@@ -868,14 +898,17 @@ module Lain::Review
   class Queue
     include Enumerable
     Row = Data.define(:id, :rank, :reason, :request, :head_sha) # request: Queue::Request (T23)
-    def initialize(sources:, seen:) = ...
+    def initialize(sources:, log:) = ...
     def each(&) = ... # rows from every source, sorted by rank, seen heads skipped
   end
-  class Queue::Seen
+  class Queue::Log
+    Event = Data.define(:kind, :at, :row_id, :head_sha) # kind: :opened | :notified | :offered | :listed
     def initialize(paths:, clock: -> { Time.now }) = ...
-    def seen?(row) = ...
-    def mark(row) = ...   # flock'd read-modify-write of seen.json
-    def opened_at = ...
+    def append(event) = ...   # 1 O_APPEND write of 1 line; no lock
+    def seen?(row) = ...      # an :opened event for this id at this head
+    def notified?(row_id) = ...
+    def last_listed_at = ...  # time of the newest :listed event
+    def prune = ...           # rotate to log.1 above 1 MiB
   end
 end
 ```
@@ -1105,6 +1138,8 @@ Scenario: a dirty request snapshots at rebuild
 
 Spec file: `spec/lain/review/queue/request_spec.rb`
 
+Its `to_h` is a plain map of strings. The daemon plan forwards it as an opaque `request` map inside its `Offer` (D13), and the chat runs `Request.load` on it again, so nothing outside this class reads its fields.
+
 **Interface**
 
 ```ruby
@@ -1156,9 +1191,9 @@ Spec file: `spec/lain/frontend/intake/offer_spec.rb`, `spec/lain/cli/input_socke
 
 ### T25: Send a picked review to the chat in its checkout          [risk: high]
 
-**Depends on:** T22, T24
+**Depends on:** T22, T24, T31
 **Files:** `lib/lain/review/queue/delivery.rb` (new), `lib/lain/cli/queue.rb`, `spec/lain/review/queue/delivery_spec.rb` (new)
-**Reuse:** `InputSocket.path` and its `Codec`; `Project::Resolver`; `Queue::Seen#mark` (T16).
+**Reuse:** `LiveSessions` (T31) to find the attended chats in a checkout and their input sockets; the `InputSocket` `Codec`; `Queue::Log#append` (T16).
 **Shared-file wiring:** `docs/commands.md`: `lain queue open`.
 **Reachable from:** `lain queue open <id>`, which `pick` calls with the chosen row id. The request is rebuilt from the row, never from fzf's text.
 
@@ -1175,7 +1210,8 @@ Scenario: a row is never sent to another repository's chat
   Then nothing is sent, and the result is :no_chat
 
 Scenario: 2 chats in 1 checkout
-  Then the offer goes to the most recently started one, and the other is named in the output
+  Given 2 live records for the checkout, started at 09:00 and 10:00
+  Then the offer goes to the 10:00 one, and the other is named in the output
 
 Scenario: a PR with no local checkout
   Then it runs `gh pr view --web <url>` under the configured account, and sends nothing
@@ -1184,7 +1220,7 @@ Scenario: a PR with no local checkout
 Spec file: `spec/lain/review/queue/delivery_spec.rb` (`:seam`, real socket)
 
 **Stop and report if:**
-- The socket's name can't be tied to a start time without reading a new file.
+- A live record names an input socket that no longer answers. Skip it and report how often that happens in the seam spec.
 
 ### T26: Hold a review for the next chat, and start one in herdr          [risk: high]
 
@@ -1266,7 +1302,7 @@ end
 - `lib/lain/review/queue/poll.rb` (new), `lib/lain/cli/queue.rb`, `lib/lain/paths.rb`
 - `spec/lain/review/queue/poll_spec.rb` (new), `spec/lain/cli/queue_spec.rb`
 
-**Reuse:** `Reads#review_requests` (T13); `Queue::Seen#opened_at` (T16); `Notices.for(env:, notes:)`; `Herdr::Workspaces` (T27).
+**Reuse:** `Reads#review_requests` (T13); `Queue::Log#last_listed_at`, `#notified?` and `#prune` (T16); `Notices.for(env:, notes:)`; `Herdr::Workspaces` (T27).
 **Shared-file wiring:** `docs/commands.md`: `lain queue poll` and the timer note.
 **Reachable from:** `lain queue poll`, run by D3's timer with `Config.github(root: nil, ...)`.
 
@@ -1280,7 +1316,7 @@ Scenario: the count file is written
 
 Scenario: each new direct request notifies once
   Given the same 2 new requests on 2 polls
-  Then 2 notices go out on the 1st poll and none on the 2nd, tracked in notified.json, which only the poll writes
+  Then 2 notices go out on the 1st poll and none on the 2nd, each recorded as a :notified event in the queue log
 
 Scenario: the herdr workspace shows the count
   Then the `reviews` workspace token is "7 (2 new)"
@@ -1296,6 +1332,7 @@ Spec file: `spec/lain/review/queue/poll_spec.rb`
 
 **Stop and report if:**
 - A notice would carry a PR title through `notify-feed`'s argv unescaped.
+- `lain queue poll` needs anything but the environment and config to run. The daemon plan (D19) starts it as a process.
 
 ### T29: Show the review count in every HUD          [risk: medium]
 
@@ -1359,6 +1396,60 @@ Spec file: none. These are QA scenario documents; the manual pass in Integration
 
 **Stop and report if:**
 - A scenario needs a GitHub write to a real work PR. Use a throwaway PR in a personal repo.
+
+### T31: Record each live chat so the queue can find it          [risk: medium]
+
+**Depends on:** T4
+**Files:**
+- `lib/lain/live_sessions.rb` (new), `lib/lain/live_sessions/record.rb` (new), `lib/lain/cli/chat_launch.rb`
+- `spec/lain/live_sessions_spec.rb` (new), `spec/lain/cli/chat_launch_spec.rb`
+
+**Reuse:** `Paths#state_home` and `ensure_dir`, with the `live/` directory named inside `LiveSessions`; `Liveness::Writer.current` (`liveness.rb:125-156`) for pid, start and host; `Liveness::Probe` for dead records; `InputSocket.path`; atomic tmp-plus-rename writes.
+**Shared-file wiring:** none
+**Reachable from:** `ChatLaunch#call` (`chat_launch.rb:104`) enters the record once the session header is written (`chronicle.start`, `wiring.rb:343`), and `close_session` (`:340`) leaves it. `ChatLaunch` builds `LiveSessions.new(paths:)`. The session id is the journal's file name (`Journal.stem`, `journal.rb:160`). A `--no-journal` chat has no journal, so its id is `pid-<pid>-<start>`, and its `journal` field is nil.
+
+This is the file-based stand-in for the daemon's session registry (`planning/lain-daemon-research-2026-11.md`, phase 1). The daemon plan deletes it once chats register over the socket, so keep it to 1 small class and 1 value.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: an attended chat leaves a record while it runs
+  Given `lain chat --input socket:chat` starting in /work/api
+  When it has opened its session
+  Then state_home/live/<session id>.json holds its session id, pid, start, host, root, cwd, input socket path, journal path, attended true and started_at
+  And after the chat closes, the file is gone
+
+Scenario: a crashed chat's record is not trusted
+  Given a record whose pid is dead by Liveness::Probe
+  When LiveSessions#each runs
+  Then the record is skipped, and the reader doesn't delete it
+
+Scenario: the pre-flight fork writes nothing
+  When `lain up` runs its chat pre-flight
+  Then no live record is written
+
+Scenario: a headless chat is marked so
+  Given `lain chat --non-interactive --prompt x`
+  Then its record says attended false and names no input socket
+```
+
+Spec file: `spec/lain/live_sessions_spec.rb`, `spec/lain/cli/chat_launch_spec.rb` (production `ChatLaunch#call`)
+
+**Interface**
+
+```ruby
+class Lain::LiveSessions
+  include Enumerable
+  Record = Data.define(:session_id, :pid, :start, :host, :root, :cwd, :input_socket, :journal, :attended, :started_at)
+  def initialize(paths:, probe: Liveness::Probe.new) = ...
+  def enter(record) = ...   # writes live/<session_id>.json; returns a handle whose #leave removes it
+  def each(&) = ...         # live records only, newest started_at first
+  def in(root) = ...        # attended records for 1 checkout root
+end
+```
+
+**Stop and report if:**
+- `close_session` doesn't run on a signal-ended chat (`cli/signals.rb`), leaving records behind. Report it rather than adding a second cleanup path. The reader already skips dead pids.
 
 ## Main-session dotfiles steps
 
