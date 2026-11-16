@@ -19,18 +19,19 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
   # Unique per run: several agents share this box, so a fixed tag would build
   # over somebody else's sandbox and drive their server.
   #
-  # Short on purpose, and it has to be: the tag names the socket too (below),
-  # the socket lives inside this run's own TMUX_TMPDIR, and a descriptive name
-  # there blows the 108-byte limit a unix socket path has -- measured, tmux
-  # answers "File name too long" and the fixture never comes up.
-  let(:token) { "t#{Process.pid}#{SecureRandom.hex(3)}" }
+  # Short on purpose, and it has to be: the tag names the sandbox directory and
+  # the socket, the socket lives inside the sandbox's own TMUX_TMPDIR, and a
+  # descriptive name there blows the 108-byte limit a unix socket path has --
+  # measured, tmux answers "File name too long" and the fixture never comes up.
+  let(:token) { "t#{SecureRandom.hex(4)}" }
   # The SANDBOX's own socket name, not an independent one: `drive.sh` and
   # `peek.sh` source the generated `env.sh` and take `QA_SOCK` from there, so a
   # separately named server here would exercise `panes.sh` and nothing that
   # runs it. An empty `-L` would be worse than either -- it resolves to the
   # DEFAULT tmux server, which may be the operator's own.
   let(:socket) { "lain-qa-#{token}" }
-  let(:home) { @home ||= Dir.mktmpdir("qa") }
+  # No Dir.mktmpdir: its date and pid suffix spends bytes of the socket path.
+  let(:home) { @home ||= File.join(Dir.tmpdir, "q#{SecureRandom.hex(3)}").tap { |dir| Dir.mkdir(dir, 0o700) } }
   # Where the generator puts a sandbox, given that HOME.
   let(:qa) { File.join(home, "tmp", "lain-qa-#{token}") }
   # A read has to be tellable from a refusal that printed nothing, so the two
@@ -44,7 +45,7 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     example.run
   ensure
     leaked = pane_tree_pids
-    Open3.capture3({ "TMUX_TMPDIR" => @home.to_s }, "tmux", "-L", socket, "kill-server")
+    Open3.capture3(env, "tmux", "-L", socket, "kill-server")
     FileUtils.remove_entry(@home) if @home && File.directory?(@home)
     reap(leaked)
     watched = leaked.select { |_, _, comm| comm == "nvim" } + Array(@stubborn)
@@ -52,11 +53,11 @@ RSpec.describe "manual-QA sandbox pane resolution", :seam do
     raise "panes left processes behind: #{survivors}" unless survivors.empty?
   end
 
-  # One variable keeps the whole fixture disposable: TMUX_TMPDIR puts the socket
-  # inside the directory the `ensure` already removes, so a run leaves nothing
-  # in the shared /tmp/tmux-$UID tree and cannot collide with the operator's own
-  # tmux however the name is spelled.
-  def env = { "TMUX_TMPDIR" => home }
+  # The directory the generated env.sh exports, which the helpers' own tmux calls
+  # follow: a server started anywhere else is invisible to them. It sits inside
+  # the home the `ensure` removes, so a run leaves nothing in the shared
+  # /tmp/tmux-$UID tree and cannot collide with the operator's own tmux.
+  def env = { "TMUX_TMPDIR" => File.join(qa, "tmux") }
 
   def sh!(*argv, env: {})
     out, err, status = Open3.capture3(env, *argv)
