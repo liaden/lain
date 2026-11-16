@@ -117,6 +117,19 @@ module Lain
         downstream(env.merge(text: expand(invocation)), &app)
       end
 
+      # What `/critique <args>` runs, prepared for a command that opens the held
+      # round itself: every refusal a typed line gets before any spawn is raised
+      # HERE, and the critique over the held round runs when the result is called.
+      #
+      # @param args [String] what follows `/critique`, options and focus
+      # @return [#call] answers the findings text a typed `/critique` shows
+      # @raise [Lain::Error] a declared model no in-line critique can run on, or a bad option
+      def critique(args)
+        invocation = Skill::Invocation.parse("/#{CRITIQUE} #{args}".strip)
+        refuse_unspawned_model!(invocation)
+        prepared_critique(invocation)
+      end
+
       private
 
       # A plain line is not the work of the command before it, so its payments name none.
@@ -150,11 +163,18 @@ module Lain
 
       # A refusal raises {Review::Critique::Refused}, a {Lain::Error}, so it
       # reaches the dispatch boundary exactly as an unknown role does.
-      def report_critique(env, invocation)
+      def report_critique(env, invocation) = short_circuit(env, prepared_critique(invocation).call)
+
+      # Options are split here, ahead of the call, so a bad one refuses before
+      # anything is cut or spawned. The held round is read when the critique
+      # RUNS, which is what lets a caller prepare it ahead of opening the round.
+      def prepared_critique(invocation)
         options, focus = CritiqueOptions.split(invocation.args)
-        critique = Review::Critique.new(subject: Review::Critique::Diff.new(@outbox.held_changeset),
-                                        instructions: expand(invocation.with(args: focus)), **@critique, **options)
-        short_circuit(env, critique.call)
+        lambda do
+          critique = Review::Critique.new(subject: Review::Critique::Diff.new(@outbox.held_changeset),
+                                          instructions: expand(invocation.with(args: focus)), **@critique, **options)
+          critique.call
+        end
       end
 
       # The rendered scaffold, then the caller's args verbatim after a blank

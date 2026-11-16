@@ -533,6 +533,50 @@ RSpec.describe Lain::Middleware::SkillDispatch do
       end
     end
 
+    describe "asked for by another command, rather than typed" do
+      it "answers the very text the typed line does, once the prepared critique is called" do
+        typed_spawn = SkillDispatchCritiqueSpawn.new
+        typed = with_dispatch(shipped: critique_skill, role_spawn: typed_spawn, outbox: held_outbox) do |dispatch|
+          run(dispatch, "/critique critics=2 the error paths").first.fetch(:response).text
+        end
+        asked_spawn = SkillDispatchCritiqueSpawn.new
+        with_dispatch(shipped: critique_skill, role_spawn: asked_spawn, outbox: held_outbox) do |dispatch|
+          prepared = dispatch.critique("critics=2 the error paths")
+
+          expect(asked_spawn.calls).to be_empty
+          expect(prepared.call).to eq(typed)
+          expect(asked_spawn.calls.map { |call| call[:prompt] }).to eq(typed_spawn.calls.map { |call| call[:prompt] })
+        end
+      end
+
+      it "reads the held round when the prepared critique is called, not when it was prepared" do
+        round = SkillDispatchRound.new(nil)
+        with_dispatch(shipped: critique_skill, role_spawn: SkillDispatchCritiqueSpawn.new, outbox: round) do |dispatch|
+          prepared = dispatch.critique("")
+          round.held_changeset = held_outbox.held_changeset
+
+          expect(prepared.call).to include("critic findings")
+        end
+      end
+
+      it "refuses a blank model= before anything is spawned" do
+        spawn = SkillDispatchCritiqueSpawn.new
+        with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: held_outbox) do |dispatch|
+          expect { dispatch.critique("model= the error paths") }
+            .to raise_error(Lain::Review::Critique::Refused, /model/)
+          expect(spawn.calls).to be_empty
+        end
+      end
+
+      it "refuses a critique skill that declares a model, as the typed line does" do
+        declared = { "critique/skill.md" => "---\nmodel: claude-haiku-4\n---\n# critique\nLook.\n" }
+        with_dispatch(shipped: declared, role_spawn: SkillDispatchCritiqueSpawn.new, outbox: held_outbox) do |dispatch|
+          expect { dispatch.critique("") }
+            .to raise_error(Lain::Middleware::SkillDispatch::ModelWithoutSpawn, /critique.*claude-haiku-4/m)
+        end
+      end
+    end
+
     it "leaves every other skill in-line" do
       with_dispatch(shipped: create_plan.merge(critique_skill), outbox: held_outbox) do |dispatch|
         _result, seen = run(dispatch, "/create-plan go")

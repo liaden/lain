@@ -535,6 +535,17 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
+  # The registered /review is handed the REAL dispatch's critique: the options
+  # are split, and a blank model= refused, before the editor is even asked for.
+  it "gives the registered /review the skill middleware's own critique" do
+    with_project do |root|
+      commands = build_surface(root).commands
+
+      expect { commands.dispatch("/review feature --critique=model= the error paths") { raise "fell through" } }
+        .to raise_error(Lain::Review::Critique::Refused, /model/)
+    end
+  end
+
   # Where a critique's children read: checkouts of THIS project's repository,
   # under the same per-project container every other lain checkout lives in,
   # so `lain worktrees gc` finds one a killed process left behind.

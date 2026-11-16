@@ -1266,9 +1266,15 @@ open.
 `/review <pull-request|branch>` opens a changeset review in the attached editor. Its usage line:
 
 ```
-/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope cumulative|commits|by_directory] [--permissive]
+/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope cumulative|commits|by_directory] [--permissive] [--critique[=FOCUS]]
 /review close
 ```
+
+`--critique` is written bare or as `--critique=FOCUS`; the space form (`--critique focus`) is
+refused. The focus runs to the end of the line and takes `/critique`'s own options (`critics=`,
+`model=`), so put it last. A refusal the critique can only find after the review opens (an
+unserved model, no window, a chunk past the room) leaves the review open, with
+`the critique did not run: <reason>` under the headline.
 
 Same editor rule as `/survey`: no editor is a refusal, not a Null surface. Same one-surface rule
 too, from the other side.

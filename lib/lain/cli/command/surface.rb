@@ -229,13 +229,20 @@ module Lain
            Park.new(root: @root, notes: @notes), ResumeSession.new(dir: Paths.new.filing_dir(root: @root))]
         end
 
+        # The critique `/review --critique` runs, asked of the dispatch the chat
+        # types `/critique` into. Read when asked, because {#middleware} is built
+        # on first use and a command registered at construction must not force it.
+        def critique(args)
+          middleware.to_a.find { |member| member.is_a?(Lain::Middleware::SkillDispatch) }.critique(args)
+        end
+
         # The commands of one review: `/review` and `/survey` each open a round
         # into {#outbox} -- the run's ONE, which is what lets each refuse over
         # the other's open surface -- and `/review-submit` takes it out and posts
         # it. Their own line because they share {#outbox} AS A ROUND, where
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
-          [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account),
+          [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account, critique: method(:critique)),
            ReviewSubmit.new(root: @root, outbox:, account: @gh_account),
            Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity)]
         end

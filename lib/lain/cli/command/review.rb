@@ -51,9 +51,28 @@ module Lain
         # A FORMAT rather than the sentence: the scopes come off
         # {Review::Partition::STRATEGIES}, and {#usage} fills them in, so a
         # strategy registered there cannot leave this line advertising a stale set.
-        USAGE = "/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope %<scopes>s] [--permissive] -- " \
-                "open a changeset review in the attached editor; /review close lets the open round go " \
-                "without a verdict (a branch named close is refs/heads/close)"
+        USAGE = "/review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope %<scopes>s] [--permissive] " \
+                "[--critique[=FOCUS]] -- open a changeset review in the attached editor; /review close lets the " \
+                "open round go without a verdict (a branch named close is refs/heads/close); --critique runs " \
+                "/critique over the opened round, and takes the rest of the line as its options and focus"
+
+        # `--critique` closes the line: whatever follows `=` is `/critique`'s own
+        # options and focus, which hold spaces and words that look like flags, so
+        # it is cut off before the rest is split into words.
+        CRITIQUE_FLAG = /(?:\A|\s)--critique(?:=(?<focus>.*))?\z/m
+
+        # What the critique raises once it runs, as opposed to before: a refusal
+        # of its own, and the one a model the provider does not serve gets.
+        CRITIQUE_REFUSALS = [Lain::Review::Critique::Refused, Lain::Tools::Subagent::ModelChoice::Unserved].freeze
+
+        CRITIQUE_NOT_RUN = "the critique did not run: %<reason>s"
+
+        # The collaborator a command built without one gets. A critique asked for
+        # from a command that was never given a way to run one is refused, not
+        # skipped: the human typed the flag expecting findings.
+        NO_CRITIQUE = lambda do |_args|
+          raise Error, "this chat has no critique to run -- open the review without --critique, then type /critique"
+        end
 
         # The word that closes the chat's open round instead of naming a target.
         # It shadows a branch literally called `close`, which `refs/heads/close`
@@ -167,14 +186,18 @@ module Lain
         #   a note's anchor text journals a released region as released
         # @param gh_account [Lain::Forge::Gh::Account, Lain::Forge::Gh::Account::None] the
         #   process's one account, whose token a pull request's gh reads run with
+        # @param critique [#call] takes what follows `/critique` and answers a callable that runs it,
+        #   having raised every refusal a typed `/critique` raises before it spawns; asked BEFORE
+        #   the round opens, so a critique that cannot run leaves no review behind
         def initialize(outbox:, ledger:, gh_account:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
-                       shell_out_factory: Lain::Shell::Out.public_method(:new))
+                       shell_out_factory: Lain::Shell::Out.public_method(:new), critique: NO_CRITIQUE)
           @outbox = outbox
           @ledger = ledger
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
           @gh_account = gh_account
+          @critique = critique
           @round = ReviewRound.new(outbox:)
           freeze
         end
@@ -186,7 +209,7 @@ module Lain
         # shipping stops being advertised.
         def usage = format(USAGE, scopes: Lain::Review::Partition::STRATEGIES.each_key.to_a.join("|"))
 
-        # @param args [String] the target, and this command's three flags
+        # @param args [String] the target, and this command's flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
         #   both rails) and its {Chronicle} (the journal this round lands in)
         # @return [String] the headline and where to read the review, or what
@@ -199,6 +222,8 @@ module Lain
           parsed = parse(args.to_s)
           return usage if parsed.target.nil?
           return closed(parsed, env) if parsed.target == CLOSE
+
+          return critiqued(parsed, env) if parsed.critique
 
           opened(parsed, env, policy: policy_for(parsed))
         end
@@ -217,7 +242,7 @@ module Lain
 
         # One `/review` line, read. Its own value because "what did they type"
         # and "open a review of it" are separate questions.
-        Parsed = Data.define(:target, :base, :since, :scope, :permissive)
+        Parsed = Data.define(:target, :base, :since, :scope, :permissive, :critique)
         private_constant :Parsed
 
         # {Command::Args} splits the line, pairs a declared flag with its
@@ -226,10 +251,29 @@ module Lain
         # command alone, because it names the THING each flag takes and only
         # this command knows that noun.
         def parse(text)
-          parsed = Lain::CLI::Command::Args.parse(text, name: "review", usage:, flags: FLAGS, switches: SWITCHES)
+          critique = CRITIQUE_FLAG.match(text)
+          line = critique ? critique.pre_match : text
+          parsed = Lain::CLI::Command::Args.parse(line, name: "review", usage:, flags: FLAGS, switches: SWITCHES)
           refuse_unreadable!(parsed.pairs)
           Parsed.new(target: parsed.positionals.first, base: parsed.pairs["base"], since: parsed.pairs["since"],
-                     scope: parsed.pairs["scope"], **parsed.switches)
+                     scope: parsed.pairs["scope"], critique: critique && critique[:focus].to_s, **parsed.switches)
+        end
+
+        # The critique is prepared first, so what can be known up front refuses
+        # before the round exists, and run once the round is held, which is what
+        # it reads. A refusal only the run can find (an unserved model, no window,
+        # a chunk past the room) leaves the review open, so the headline is kept
+        # and the refusal sits under it rather than replacing it.
+        def critiqued(parsed, env)
+          prepared = @critique.call(parsed.critique)
+          headline = opened(parsed, env, policy: policy_for(parsed))
+          [headline, ran(prepared)].join("\n")
+        end
+
+        def ran(prepared)
+          prepared.call
+        rescue *CRITIQUE_REFUSALS => e
+          format(CRITIQUE_NOT_RUN, reason: e.message)
         end
 
         # A flag at the end of the line has nil for a value, which read as
@@ -264,7 +308,8 @@ module Lain
         # verdict. A headless chat holds none, so the null surface it falls back
         # to is never drawn on -- the outbox refuses first.
         def closed(parsed, env)
-          raise Error, CLOSE_TAKES_NOTHING if [parsed.base, parsed.since, parsed.scope, parsed.permissive].any?
+          raise Error, CLOSE_TAKES_NOTHING if [parsed.base, parsed.since, parsed.scope, parsed.permissive,
+                                               parsed.critique].any?
 
           hinted(close_branch_hint) { closing_for(env, env.replies.review_surface || Lain::Review::Surface::Null.new).call }
         end

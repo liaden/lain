@@ -438,6 +438,111 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
   end
 
+  describe "a critique asked for with the review" do
+    let(:number) { 12 }
+    let(:events) { [] }
+    let(:critique) do
+      lambda do |args|
+        events << [:checked, args, outbox.open?]
+        raise Lain::Error, "the critique's own refusal" if args.include?("unspawnable")
+
+        lambda do
+          events << [:ran, outbox.open?]
+          raise Lain::Tools::Subagent::ModelChoice::Unserved, "no such model served" if args.include?("unserved")
+          raise Lain::Review::Critique::Refused, "no window is known" if args.include?("windowless")
+          raise Lain::Error, "the provider fell over" if args.include?("broken")
+
+          "critique findings"
+        end
+      end
+    end
+    let(:pull_factory) do
+      lambda do |*argv, **options|
+        next Lain::Shell::Out.new(*argv, **options) unless argv.first == "gh"
+
+        view = { "baseRefName" => "main", "baseRefOid" => git(@repo, "rev-parse", "main").stdout.strip,
+                 "headRefOid" => git(@repo, "rev-parse", "feature").stdout.strip }
+        Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(JSON.generate(view), "", 0)
+      end
+    end
+    let(:command) do
+      described_class.new(root: @repo, outbox:, shell_out_factory: pull_factory, ledger: Lain::Sensitivity::Ledger.new,
+                          gh_account: Lain::Forge::Gh::Account::None.new, critique:)
+    end
+
+    before do
+      git(@repo, "update-ref", "refs/pull/#{number}/head", git(@repo, "rev-parse", "feature").stdout.strip)
+      attached
+    end
+
+    it "spends nothing on a plain review" do
+      answer = command.call(number.to_s, env)
+
+      expect(events).to be_empty
+      expect(answer).not_to include("critique findings")
+    end
+
+    it "opens the round first, then critiques it with the focus, and shows the findings after the headline" do
+      answer = command.call("#{number} --critique=migration safety", env)
+
+      expect(events).to eq([[:checked, "migration safety", false], [:ran, true]])
+      expect(answer).to include("pull request #{number}").and end_with("critique findings")
+    end
+
+    it "critiques with no focus when none is given" do
+      command.call("#{number} --critique", env)
+
+      expect(events).to eq([[:checked, "", false], [:ran, true]])
+    end
+
+    it "reads the focus to the end of the line, flags and all" do
+      command.call("#{number} --permissive --critique=critics=2 the error paths", env)
+
+      expect(events.first).to eq([:checked, "critics=2 the error paths", false])
+    end
+
+    it "refuses with the critique's own refusal before opening anything" do
+      expect { command.call("#{number} --critique=unspawnable", env) }
+        .to raise_error(Lain::Error, "the critique's own refusal")
+
+      expect(outbox.open?).to be(false)
+      expect(record.string).to be_empty
+      expect(events).to eq([[:checked, "unspawnable", false]])
+    end
+
+    it "keeps the review open and shows the headline when the critique refuses once the round is open" do
+      answer = command.call("#{number} --critique=model=nope unserved", env)
+
+      expect(outbox.open?).to be(true)
+      expect(answer).to include("pull request #{number}").and include("no such model served")
+      expect(answer.lines.last).to include("critique did not run")
+    end
+
+    it "treats a critique refusal of any other kind the same way" do
+      answer = command.call("#{number} --critique=windowless", env)
+
+      expect(answer).to include("pull request #{number}").and end_with("no window is known")
+    end
+
+    it "does not answer a failure that is not a refusal as though the critique had simply not run" do
+      expect { command.call("#{number} --critique=broken", env) }
+        .to raise_error(Lain::Error, "the provider fell over")
+    end
+
+    it "refuses the space form, naming the flag, rather than reviewing a branch called after it" do
+      expect { command.call("#{number} --critique migration", env) }.to raise_error(Lain::Error, /--critique/)
+      expect(outbox.open?).to be(false)
+    end
+
+    it "advertises the flag" do
+      expect(command.usage).to include("--critique[=FOCUS]")
+    end
+
+    it "refuses --critique on a close" do
+      expect { command.call("close --critique", env) }.to raise_error(Lain::Error, /takes nothing/)
+    end
+  end
+
   # `--base`'s default is {Lain::Forge::Landing::BASE} ("main"), and a
   # repository whose trunk is called something else has this fail with no
   # `--base` ever typed -- the one shape the target resolver tells apart

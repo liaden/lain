@@ -187,6 +187,32 @@ RSpec.describe "a critique of a held review", :seam do
     end
   end
 
+  describe "a critique another command asks for, over the round it opened" do
+    before { commit({ "lib.rb" => "reviewed line\n" }, "the reviewed change") }
+
+    def dispatch_of(stack) = stack.to_a.find { |member| member.is_a?(Lain::Middleware::SkillDispatch) }
+
+    it "answers what the typed line answers, and spends nothing until it is called" do
+      typed_provider = Lain::Provider::Mock.new(responses: [text("a finding")])
+      typed_answer = typed(stack(typed_provider), "/critique the error paths").first.fetch(:response).text
+      provider = Lain::Provider::Mock.new(responses: [text("a finding")])
+
+      prepared = dispatch_of(stack(provider)).critique("the error paths")
+
+      expect(provider.requests).to be_empty
+      expect(prepared.call).to eq(typed_answer)
+    end
+
+    it "refuses a blank model= before a checkout is cut or a child spawned" do
+      provider = Lain::Provider::Mock.new(responses: [text("a finding")])
+
+      expect { dispatch_of(stack(provider)).critique("model= the error paths") }
+        .to raise_error(Lain::Review::Critique::Refused, /model/)
+      expect(provider.requests).to be_empty
+      expect(worktrees).to eq(1)
+    end
+  end
+
   describe "a large changeset is critiqued in chunks, not truncated" do
     before do
       commit({ "lib/one.rb" => "one\n" }, "first change")
