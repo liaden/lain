@@ -140,6 +140,16 @@ was worth removing.
 
   Done when its integration checks pass, including the manual pass with Claude Code and lain side by
   side in herdr.
+- **Review queue and HUD count (2026-11-16).** `[planned]` `planning/specs/review-queue-hud.md`, 30 cards
+  plus 6 dotfiles steps, from `planning/review-hud-research-2026-11.md`:
+  - `lain queue`: plan runs, local changes and PRs requested of you, picked in a fzf popup and offered
+    to the chat in that checkout for 1 keypress, with 0 model calls;
+  - a 5-minute poll that puts the review count in the herdr sidebar and the HUD;
+  - `/review --since` for re-reviews and `--critique` for a targeted critique on request;
+  - 1 opener for `/review` and `/survey`, `gh` under a configurable account, QA commands in `qa-lain`,
+    and a Rust workspace that type-checks for macOS.
+
+  Then `planning/specs/lain-macos-bringup.md`, run by Claude on the work MacBook.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,

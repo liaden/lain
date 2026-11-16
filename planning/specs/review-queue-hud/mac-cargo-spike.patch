@@ -1,0 +1,126 @@
+diff --git a/crates/lain-core/Cargo.toml b/crates/lain-core/Cargo.toml
+index 7e39c4d7..233e116d 100644
+--- a/crates/lain-core/Cargo.toml
++++ b/crates/lain-core/Cargo.toml
+@@ -61,8 +61,6 @@ serde = "1"
+ # constant time, so its timing tells a peer neither which device nor how much of a guess matched.
+ subtle = "2.6"
+ blake3 = "1"
+-# The relay confines itself after binding, without unsafe here.
+-landlock = "0.4.7"
+ # `getifaddrs` without unsafe, to find this host's tailscale0 address, and
+ # `O_NOFOLLOW` (`fs`), so the devices file is never read through a symlink.
+ nix = { version = "0.31", default-features = false, features = ["fs", "net"] }
+@@ -75,3 +73,10 @@ tempfile = "3"
+ # tests' `AsyncReadExt`/`AsyncWriteExt`; the daemon itself never needs it.
+ # `test-util` for paused time, so the 5 s auth deadline is tested without a 5 s wait.
+ tokio = { version = "1.53", features = ["process", "io-util", "test-util"] }
++
++[target.'cfg(target_os = "linux")'.dependencies]
++# The relay confines itself after binding, without unsafe here.
++landlock = "0.4.7"
++
++[target.'cfg(target_os = "macos")'.dependencies]
++blake3 = { version = "1", features = ["pure"] }
+diff --git a/crates/lain-core/src/relay.rs b/crates/lain-core/src/relay.rs
+index efe804b4..4fc1a1c2 100644
+--- a/crates/lain-core/src/relay.rs
++++ b/crates/lain-core/src/relay.rs
+@@ -43,6 +43,7 @@ pub(crate) enum StartError {
+     NotASocket(PathBuf),
+     #[error("cannot bind {what}: {error}")]
+     Bind { what: String, error: io::Error },
++    #[cfg(target_os = "linux")]
+     #[error("cannot confine the relay: {0}")]
+     Confine(landlock::RulesetError),
+     #[error("this kernel enforces no Landlock ruleset, and the relay does not run unconfined")]
+@@ -60,7 +61,9 @@ impl StartError {
+             | Self::SocketInUse(_)
+             | Self::NotASocket(_)
+             | Self::Bind { .. } => crate::BIND_ERROR,
+-            Self::Confine(_) | Self::Unconfined => crate::CONFINE_ERROR,
++            #[cfg(target_os = "linux")]
++            Self::Confine(_) => crate::CONFINE_ERROR,
++            Self::Unconfined => crate::CONFINE_ERROR,
+         }
+     }
+ }
+@@ -211,6 +214,12 @@ fn clear_stale_socket(path: &Path) -> Result<(), StartError> {
+ /// for the calling thread and every thread it spawns after. The devices
+ /// directory is listed too, because every reread checks what it holds. A kernel that
+ /// enforces none of it is refused too: an unconfined relay is not one we run.
++#[cfg(not(target_os = "linux"))]
++pub(crate) fn confine(_: &Path, _: &Path) -> Result<(), StartError> {
++    Err(StartError::Unconfined)
++}
++
++#[cfg(target_os = "linux")]
+ pub(crate) fn confine(devices_dir: &Path, socket_dir: &Path) -> Result<(), StartError> {
+     use landlock::{
+         ABI, Access, AccessFs, Ruleset, RulesetAttr, RulesetCreatedAttr, RulesetStatus,
+@@ -1028,6 +1037,7 @@ mod tests {
+         );
+     }
+ 
++    #[cfg(target_os = "linux")]
+     #[test]
+     fn the_relay_confines_itself_to_its_devices_and_socket_directories() {
+         let dir = tempfile::tempdir().expect("a dir");
+diff --git a/crates/lain-fence/Cargo.toml b/crates/lain-fence/Cargo.toml
+index 403266b9..713d95f0 100644
+--- a/crates/lain-fence/Cargo.toml
++++ b/crates/lain-fence/Cargo.toml
+@@ -10,7 +10,7 @@ publish = false
+ name = "lain-fence"
+ path = "src/main.rs"
+ 
+-[dependencies]
++[target.'cfg(target_os = "linux")'.dependencies]
+ # landlock(7) without unsafe. Its best-effort default makes an older kernel drop
+ # the rights it lacks instead of refusing; the status line reports each drop.
+ landlock = "0.4.7"
+diff --git a/crates/lain-fence/tests/fence.rs b/crates/lain-fence/tests/fence.rs
+index 809e31a9..6f30fabd 100644
+--- a/crates/lain-fence/tests/fence.rs
++++ b/crates/lain-fence/tests/fence.rs
+@@ -1,3 +1,4 @@
++#![cfg(target_os = "linux")]
+ //! The fence binary, run for real against this kernel's Landlock.
+ //!
+ //! Whether to skip is decided from the kernel, never from the fence: asking
+diff --git a/crates/lain-fence/tests/memfd.rs b/crates/lain-fence/tests/memfd.rs
+index 62e792b0..7d40887a 100644
+--- a/crates/lain-fence/tests/memfd.rs
++++ b/crates/lain-fence/tests/memfd.rs
+@@ -1,3 +1,4 @@
++#![cfg(target_os = "linux")]
+ //! The fence's seccomp filter against memfd exec, run for real on this kernel.
+ //!
+ //! The fenced command is python3, the interpreter the memfd probe was written
+diff --git a/crates/lain-fence/tests/private_net.rs b/crates/lain-fence/tests/private_net.rs
+index c817e776..d9c5f875 100644
+--- a/crates/lain-fence/tests/private_net.rs
++++ b/crates/lain-fence/tests/private_net.rs
+@@ -1,3 +1,4 @@
++#![cfg(target_os = "linux")]
+ //! `--private-net`, run for real: refused on a netns with a host interface,
+ //! and inside `bwrap --unshare-net` TCP works on lo while seccomp still
+ //! refuses datagrams and nothing routes out.
+diff --git a/crates/lain-fence/tests/reap.rs b/crates/lain-fence/tests/reap.rs
+index 770a9202..dd670ad4 100644
+--- a/crates/lain-fence/tests/reap.rs
++++ b/crates/lain-fence/tests/reap.rs
+@@ -1,3 +1,4 @@
++#![cfg(target_os = "linux")]
+ //! The fence as a reaper only: `--reap-only` applies no domain, and on a stop
+ //! signal kills every process that descends from it.
+ //!
+diff --git a/crates/lain-fence/tests/sockets.rs b/crates/lain-fence/tests/sockets.rs
+index 525d276f..c7ed2664 100644
+--- a/crates/lain-fence/tests/sockets.rs
++++ b/crates/lain-fence/tests/sockets.rs
+@@ -1,3 +1,4 @@
++#![cfg(target_os = "linux")]
+ //! The fence's seccomp filter against every socket but Unix, netlink and
+ //! plain TCP, against TCP Fast Open, and against io_uring, run for real on
+ //! this kernel.
