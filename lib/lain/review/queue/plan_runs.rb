@@ -7,7 +7,8 @@ module Lain
       # that recorded a `base:` line is the one the executing skill started,
       # so no other state says which commits a run produced.
       class PlanRuns
-        BASED = "^base: [0-9a-f]{40}$"
+        # Any value: one that is not a sha is named in a note rather than dropped unseen.
+        BASED = "^base: [^[:space:]]+$"
         REASONS = { "done" => "plan done", "in-progress" => "plan in progress" }.freeze
         private_constant :BASED, :REASONS
 
@@ -17,28 +18,43 @@ module Lain
           # @param text [String]
           def self.parse(path, text)
             new(path:, title: text[/^# (.+)$/, 1], status: text[/^status:\s*(\S+)/, 1],
-                base: text[/^base: ([0-9a-f]{40})$/, 1], head: text[/^head: ([0-9a-f]{40})$/, 1])
+                base: text[/^base: (\S+)$/, 1], head: text[/^head: (\S+)$/, 1])
           end
         end
         private_constant :Plan
 
         # @param checkout [Isolation::Checkout] the repository whose plans are read
-        def initialize(checkout:)
+        # @param notes [#puts] where a plan a request refuses is named
+        # @param shell_out_factory [#call] builds the subprocess runner
+        def initialize(checkout:, notes:, shell_out_factory: Shell::Out.public_method(:new))
           @checkout = checkout
+          @listing = Listing.new(notes:, shell_out_factory:)
         end
 
         # @return [Array<Row>]
-        def call = plan_files.filter_map { |path| row(plan(path)) }
+        def call
+          @root = @listing.top_of(@checkout.dir)
+          plan_files.filter_map { |path| read(path)&.then { |plan| row(plan) } }
+        end
 
         private
 
         # --untracked finds plans not yet committed; ignored files stay out by default.
-        # Exit 1 is "no match", so only stdout is read.
+        # Exit 1 is "no match", so only stdout is read. quotePath off, or a
+        # non-ASCII name comes back quoted and octal-escaped.
         def plan_files
-          @checkout.run("grep", "--untracked", "-l", "-E", BASED, "--", "planning").stdout.lines(chomp: true)
+          found = @checkout.run("grep", "--untracked", "-l", "-E", BASED, "--", "planning",
+                                pins: ["core.quotePath=false"]).stdout
+          String.new(found, encoding: Encoding::UTF_8).lines(chomp: true)
         end
 
-        def plan(path) = Plan.parse(path, File.read(File.join(@checkout.dir, path)))
+        def read(path)
+          return @listing.skip("plan:#{path.scrub}", "its path is not UTF-8") unless path.valid_encoding?
+
+          Plan.parse(path, File.read(File.join(@checkout.dir, path)))
+        rescue SystemCallError => e
+          @listing.skip("plan:#{path}", e.message)
+        end
 
         def row(plan)
           reason = REASONS[plan.status]
@@ -50,9 +66,9 @@ module Lain
         def head_of(plan) = plan.status == "done" ? plan.head : plan.head || @checkout.out("rev-parse", "HEAD").strip
 
         def build(plan, reason, head)
-          Row.new(id: "plan:#{plan.path}", rank: :plan_run, reason: "#{reason}: #{plan.title}", head_sha: head,
-                  request: { "kind" => "range", "base" => plan.base, "head" => head,
-                             "repo_root" => File.realpath(@checkout.dir) })
+          @listing.row("plan:#{plan.path}",
+                       { "kind" => "range", "base" => plan.base, "head" => head, "repo_root" => @root },
+                       rank: :plan_run, reason: "#{reason}: #{plan.title}", head_sha: head)
         end
       end
     end

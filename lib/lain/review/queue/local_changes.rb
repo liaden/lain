@@ -10,16 +10,14 @@ module Lain
       # named by a digest of its status and is turned into a commit only when
       # a review of it opens.
       class LocalChanges
-        # What a row asks a review to open. `head` is nil for a dirty tree,
-        # which has no commit until it is snapshotted.
-        Request = Data.define(:kind, :repo_root, :base, :head)
-
-        # @param repo_root [String] the checkout to list
+        # @param repo_root [String] any directory inside the checkout to list
+        # @param notes [#puts] where a row a request refuses is named
         # @param since [String] how far back a commit still counts as recent
         # @param shell_out_factory [#call] builds the subprocess runner
-        def initialize(repo_root:, since: "1 day ago", shell_out_factory: Shell::Out.public_method(:new))
-          @root = File.expand_path(repo_root)
+        def initialize(repo_root:, notes:, since: "1 day ago", shell_out_factory: Shell::Out.public_method(:new))
           @since = since
+          @listing = Listing.new(notes:, shell_out_factory:)
+          @root = @listing.top_of(repo_root)
           @git = Isolation::Checkout.of(@root, shell_out_factory:)
         end
 
@@ -32,9 +30,13 @@ module Lain
 
         private
 
+        # Git answers in bytes; the request's wire form is UTF-8.
+        def utf8(text) = String.new(text).force_encoding(Encoding::UTF_8)
+
+        # lstrip=2 rather than short, which says heads/v1 when a tag v1 exists.
         def branches
-          @git.out("for-each-ref", *unmerged, "--format=%(refname:short)%09%(objectname)", "refs/heads")
-              .lines(chomp: true).map { |line| branch_row(*line.split("\t")) }
+          @git.out("for-each-ref", *unmerged, "--format=%(refname:lstrip=2)%09%(objectname)", "refs/heads")
+              .lines(chomp: true).filter_map { |line| branch_row(*utf8(line).split("\t")) }
         end
 
         def unmerged = @trunk ? ["--no-merged=#{@trunk}"] : []
@@ -45,8 +47,10 @@ module Lain
         end
 
         def branch_row(name, sha)
-          Row.new(id: "branch:#{@root}:#{name}", rank: :branch, reason: "unmerged branch #{name}",
-                  request: Request.new(kind: :branch, repo_root: @root, base: @trunk, head: name), head_sha: sha)
+          against = @trunk ? { "base" => @trunk } : {}
+          @listing.row("branch:#{@root}:#{name}",
+                       { "kind" => "branch", "branch" => name, "repo_root" => @root, **against },
+                       rank: :branch, reason: "unmerged branch #{name}", head_sha: sha)
         end
 
         def dirty(tip)
@@ -54,9 +58,8 @@ module Lain
                             env: { "GIT_OPTIONAL_LOCKS" => "0" })
           return [] if status.empty?
 
-          [Row.new(id: "dirty:#{@root}", rank: :dirty, reason: "uncommitted changes",
-                   request: Request.new(kind: :dirty, repo_root: @root, base: tip, head: nil),
-                   head_sha: fingerprint(tip, status))]
+          [@listing.row("dirty:#{@root}", { "kind" => "dirty", "repo_root" => @root },
+                        rank: :dirty, reason: "uncommitted changes", head_sha: fingerprint(tip, status))].compact
         end
 
         # Status alone cannot tell 2 edits of 1 file apart, and hashing every
@@ -78,24 +81,28 @@ module Lain
           paths
         end
 
+        # Status paths are bytes, so the join is in bytes: a UTF-8 root and a
+        # non-ASCII path would not concatenate.
         def stamp(path)
-          stat = File.lstat(File.join(@root, path))
+          stat = File.lstat(File.join(@root.b, path.b))
           [stat.mtime.to_i, stat.mtime.nsec, stat.size].join(":")
         rescue SystemCallError
           "gone"
         end
 
+        # A root commit has no parent to range from, so it gets no row.
         def commits
           log = @git.out("log", "--no-merges", "--since=#{@since}", "--format=%H%x09%P%x09%s", trunk_or_head)
-          log.lines(chomp: true).map { |line| commit_row(*line.split("\t", 3)) }
+          log.lines(chomp: true).map { |line| utf8(line).split("\t", 3) }.reject { |_, parents| parents.empty? }
+             .filter_map { |fields| commit_row(*fields) }
         end
 
         def trunk_or_head = @trunk || "HEAD"
 
         def commit_row(sha, parents, subject)
-          Row.new(id: "commit:#{@root}:#{sha}", rank: :commit, reason: "recent commit: #{subject}",
-                  request: Request.new(kind: :commit, repo_root: @root, base: parents.split.first, head: sha),
-                  head_sha: sha)
+          @listing.row("commit:#{@root}:#{sha}",
+                       { "kind" => "range", "base" => parents.split.first, "head" => sha, "repo_root" => @root },
+                       rank: :commit, reason: "recent commit: #{subject}", head_sha: sha)
         end
       end
     end

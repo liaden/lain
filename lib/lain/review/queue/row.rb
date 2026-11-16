@@ -4,7 +4,7 @@ module Lain
   module Review
     class Queue
       # @!attribute request
-      #   @return [Object] the review request the row stands for
+      #   @return [Request] the review request the row stands for
       Row = Data.define(:id, :rank, :reason, :request, :head_sha)
     end
   end
