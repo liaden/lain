@@ -7,7 +7,7 @@ require "socket"
 module Lain
   module CLI
     # The chat's end of the input rail when the human types somewhere else: a
-    # Unix socket the chat listens on and {Frontend::InputPane} connects to. It
+    # Unix socket the chat listens on and `Frontend::InputPane` connects to. It
     # is a rail PRODUCER like {Frontend::StdinPump} is, and the chat running one
     # reads no stdin at all.
     #
@@ -37,8 +37,10 @@ module Lain
     # names it completes against, since it holds no registry), `touch` is the
     # pane's answer to `untouched?`, and `closed` is the goodbye that tells a
     # clean shutdown from a kill. `cycle` is the approval key pressed in the
-    # pane ({Frontend::Intake#cycle}), and `offer` is a review the queue asks
-    # the human to open ({Frontend::Intake#offer}).
+    # pane (`Frontend::Intake#cycle`), and `offer` is a review the queue asks
+    # the human to open (`Frontend::Intake#offer`). `offered` answers an `offer`
+    # to its sender alone: `held`, `crowded`, `repeat`, or `refused` with the
+    # field, so the queue marks a row seen only when the chat took it.
     class InputSocket
       # What an `--input` option asks for. The name is the tmux session's, so
       # two cockpits on one project do not share a socket.
@@ -154,7 +156,7 @@ module Lain
       # @param header [#call] the line a pane draws above its editor, recomposed
       #   whenever it is asked -- {StatusFeed::Reading#hud} in a live chat
       # @param commands [#call] the `/command` names a pane completes against
-      # @param layers [#call] the {Frontend::InputPane::LAYERS} in force, which
+      # @param layers [#call] the `Frontend::InputPane::LAYERS` in force, which
       #   ride WITH the prompt rather than in a frame of their own: a `/mode`
       #   flip has to reach the editor's keymap at the next prompt and not a
       #   tick later
@@ -376,17 +378,22 @@ module Lain
         when "eof" then @rail << Frontend::Intake::Eof.new
         when "touch" then client.touched(frame["generation"].to_i, frame["untouched"] == true)
         when "cycle" then @rail.cycle
-        when "offer" then spawn { offered(frame["request"]) }
+        when "offer" then spawn { offered(client, frame["request"]) }
         end
       end
+
+      def reply(client, said) = deliver(client, Codec.dump({ "v" => "offered" }.merge(said)))
 
       def line_in(frame) = Frontend::Intake::Line.new(text: frame["text"].to_s, generation: frame["generation"].to_i)
 
       # On a thread of its own: the offer waits for an answer that arrives
       # through the very reader that heard it.
-      def offered(request)
-        @rail.offer(::Lain::Review::Queue::Request.load(request, checkouts: NO_CHECKOUTS))
+      def offered(client, request)
+        @rail.offer(::Lain::Review::Queue::Request.load(request, checkouts: NO_CHECKOUTS)) do |outcome|
+          reply(client, "outcome" => outcome.to_s)
+        end
       rescue ::Lain::Review::Queue::Request::Refused => e
+        reply(client, "outcome" => "refused", "field" => Utf8.escaped(e.field))
         @notice.call(format(OFFER_REFUSED, reason: Utf8.escaped(e.message)))
       ensure
         @lock.synchronize { @threads.delete(Thread.current) }

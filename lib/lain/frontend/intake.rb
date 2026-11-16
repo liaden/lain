@@ -128,9 +128,10 @@ module Lain
 
       UNCYCLED = -> {}
 
-      OFFERED_ALREADY = "lain queue: that review is already offered"
-      OFFER_WAITING = "lain queue: a review is already offered, so this one was dropped"
-      private_constant :OFFERED_ALREADY, :OFFER_WAITING
+      # Keyed by the outcome the sender is told, so the chat's note and the sender's reply cannot disagree.
+      TURNED_AWAY = { repeat: "lain queue: that review is already offered",
+                      crowded: "lain queue: a review is already offered, so this one was dropped" }.freeze
+      private_constant :TURNED_AWAY
 
       # An answer, including the answer nobody gave -- a `nil` text -- which is
       # why "not yet" needs a value of its own, and why a line that ended the
@@ -349,15 +350,18 @@ module Lain
       # with a note rather than queued behind a prompt the human may ignore.
       #
       # @param request [#review_line, #to_h] a {Review::Queue::Request}
+      # @yieldparam outcome [Symbol] `:held`, `:crowded` or `:repeat`, given once the chat decides and before
+      #   a held offer waits on the human, so a sender learns it without waiting for the answer
       # @return [String, nil] the line sent on as if typed, or nil when dropped
-      # @raise [Review::Queue::Request::Refused] when the line cannot be rebuilt, before anything is shown
-      def offer(request)
-        crowded = @lock.synchronize { @offered ? crowding(request) : (@offered = request.to_h) && nil }
-        @screen.render_note(crowded) if crowded
-        return if crowded
+      # @raise [Review::Queue::Request::Refused] when the line cannot be rebuilt, before anything is shown or yielded
+      def offer(request, &decided)
+        outcome = @lock.synchronize { admitted(request) }
+        return turned_away(outcome, &decided) unless outcome == :held
 
         begin
-          asked(Offer.new(request.review_line))
+          offered = Offer.new(request.review_line)
+          yield :held if block_given?
+          asked(offered)
         ensure
           @lock.synchronize { @offered = nil }
         end
@@ -365,7 +369,18 @@ module Lain
 
       private
 
-      def crowding(request) = @offered == request.to_h ? OFFERED_ALREADY : OFFER_WAITING
+      def admitted(request)
+        return @offered == request.to_h ? :repeat : :crowded if @offered
+
+        @offered = request.to_h
+        :held
+      end
+
+      def turned_away(outcome)
+        @screen.render_note(TURNED_AWAY.fetch(outcome))
+        yield outcome if block_given?
+        nil
+      end
 
       # Settled before the reader leaves the line, so the draft and the opened
       # line are both in place when the `you>` behind the offer comes back.

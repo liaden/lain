@@ -1535,6 +1535,50 @@ RSpec.describe Lain::Frontend::Intake do
       end
     end
 
+    # The sender is told what became of its offer as soon as the chat decides,
+    # while the offer itself still waits on the human.
+    context "when the caller asks what became of the offer" do
+      let(:outcomes) { Thread::Queue.new }
+
+      def offering(request) = reading { rail.offer(request) { |outcome| outcomes << outcome } }
+
+      it "says held before the offer waits on the human" do
+        offered = offering(request)
+
+        expect([outcomes.pop(timeout: 5), drawn(:human).text, offered.alive?]).to eq([:held, asking, true])
+      end
+
+      it "says held for an offer waiting behind a prompt already in front of the human" do
+        producer.untouched = false
+        reading { rail.read(:approval, "[y/N] ") }
+        drawn(:approval)
+        offering(request)
+
+        expect([outcomes.pop(timeout: 5), rail.published.kind]).to eq(%i[held approval])
+      end
+
+      it "says crowded for a second offer, and repeat for the same one again" do
+        offering(request)
+        drawn(:human)
+        rail.offer(changing("/review b")) { |outcome| outcomes << outcome }
+        rail.offer(request) { |outcome| outcomes << outcome }
+
+        expect(Array.new(3) { outcomes.pop(timeout: 5) }).to eq(%i[held crowded repeat])
+      end
+
+      it "says nothing for a request whose line cannot be rebuilt, which raises, and takes the next offer" do
+        refusing = Object.new.tap do |request|
+          def request.to_h = { "kind" => "dirty" }
+          def request.review_line = raise(Lain::Review::Queue::Request::Refused.new("repo_root", "has no changes"))
+        end
+
+        expect { rail.offer(refusing) { |outcome| outcomes << outcome } }
+          .to raise_error(Lain::Review::Queue::Request::Refused, /repo_root/)
+        offering(request)
+        expect([outcomes.pop(timeout: 5), outcomes.size]).to eq([:held, 0])
+      end
+    end
+
     %i[approval human].each do |kind|
       context "with #{kind == :human ? "a question" : "an approval"} waiting" do
         it "leaves the waiting prompt untouched and its typed text kept, and waits behind it, saying so" do

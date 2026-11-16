@@ -559,6 +559,7 @@ lain queue show "pr:acme/api#42"
 | `lain queue prs --all` | Also requests asked of a team of mine or of me as code owner. |
 | `lain queue prs --matches` | Also pull requests a configured keyword or path picks out. |
 | `lain queue pick [here\|local\|prs]` | Choose a row in fzf and open it. Enter opens it; Alt-Enter opens it with a critique focused on its reason; Escape opens nothing (exit 130), and a filter that matches nothing opens nothing (exit 0). Without fzf it prints the rows and exits 1. For `prs`, Ctrl-T toggles team requests and Ctrl-K toggles keyword and path matches; the prompt shows the state. |
+| `lain queue open ID [--critique FOCUS]` | Offer the row's review to the newest chat in its checkout that answers; the chat asks before it runs, and the other chats there are named. Marks the row seen only when that chat takes the offer. Exits 1 saying why when the chat is showing another offer, already shows this one, refuses a field, or no chat runs there; also when the chat takes the connection but sends no answer within 30 s, naming that chat, which may still show the offer. A pull request with no local clone opens in the browser as the configured GitHub account instead. `--critique FOCUS` works on pull request rows only, is cut to 80 printable ASCII characters (escape sequences dropped, accents folded), and is not used when the row opens in the browser. |
 
 `--json` on `here`, `local` and `prs` prints 1 JSON object per row instead.
 

@@ -66,12 +66,12 @@ module ChatFlags
   # `upstream`, `port` and `log` are gateway's own.
   #
   # An entry names a top-level command, or a `[Thor class, command]` pair for a
-  # subcommand's own flag (`queue`'s `json`, `all` and `matches`), since LainCLI.commands cannot see it.
+  # subcommand's own flag (`queue`'s `json`, `all`, `matches` and `critique`), since LainCLI.commands cannot see it.
   QUEUE_PRS = [[Lain::CLI::Queue, "prs"]].freeze
   ELSEWHERE = { session: %w[up watch], socket: %w[up], nvim_socket: %w[up], create: %w[up],
                 upstream: %w[gateway], port: %w[gateway], log: %w[gateway],
                 json: [[Lain::CLI::Queue, "here"], [Lain::CLI::Queue, "local"], *QUEUE_PRS],
-                all: QUEUE_PRS, matches: QUEUE_PRS }.freeze
+                all: QUEUE_PRS, matches: QUEUE_PRS, critique: [[Lain::CLI::Queue, "open"]] }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the

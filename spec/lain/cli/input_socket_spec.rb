@@ -586,6 +586,56 @@ RSpec.describe Lain::CLI::InputSocket do
       end
     end
 
+    describe "the reply to the sender" do
+      def offering(client, request)
+        send_frame(client, { "v" => "offer", "request" => request })
+        next_frame(client, of: "offered")
+      end
+
+      # What a client was sent within a short window, without blocking past it.
+      def frames_within(client, seconds)
+        deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + seconds
+        lines = Enumerator.produce { line_before(client, deadline) }.take_while(&:itself)
+        lines.map { |line| JSON.parse(line) }
+      end
+
+      def line_before(client, deadline)
+        left = deadline - Process.clock_gettime(Process::CLOCK_MONOTONIC)
+        client.wait_readable(left.clamp(0, nil)) ? client.gets : nil
+      end
+
+      it "is held as the offer is put to the human, sent to the sender alone, while it still waits" do
+        pane = connect
+        reply = offering(connect, { "kind" => "pr", "url" => url })
+
+        expect([reply, rail.published.kind]).to eq([{ "v" => "offered", "outcome" => "held" }, :human])
+        expect(frames_within(pane, 0.3).map { _1["v"] }).not_to include("offered")
+      end
+
+      it "is crowded for another request while 1 is offered, and repeat for the same request" do
+        offering(connect, { "kind" => "pr", "url" => url })
+
+        expect([offering(connect, { "kind" => "pr", "url" => "#{url}3" }),
+                offering(connect, { "kind" => "pr", "url" => url })])
+          .to eq([{ "v" => "offered", "outcome" => "crowded" }, { "v" => "offered", "outcome" => "repeat" }])
+      end
+
+      it "is refused naming the field, never its value, for a request that fails to load" do
+        expect(offering(connect, { "kind" => "pr", "url" => "#{url} --base \e[2Jx" }))
+          .to eq({ "v" => "offered", "outcome" => "refused", "field" => "url" })
+      end
+
+      it "is refused naming the field for a request whose line cannot be rebuilt" do
+        Dir.mktmpdir("lain-offer-clean") do |repo|
+          root = File.realpath(repo)
+          FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", root)
+
+          expect(offering(connect, { "kind" => "dirty", "repo_root" => root }))
+            .to eq({ "v" => "offered", "outcome" => "refused", "field" => "repo_root" })
+        end
+      end
+    end
+
     it "puts what was typed at the offer back in the pane as a draft, never sending it" do
       client = connect
       send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })

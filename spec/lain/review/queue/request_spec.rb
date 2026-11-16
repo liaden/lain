@@ -187,6 +187,27 @@ RSpec.describe Lain::Review::Queue::Request, :seam do
     end
   end
 
+  # A row's reason is free text from outside: cut to what a focus may be rather than refused for it.
+  describe ".focus" do
+    it "drops an escape sequence whole, so none of its bytes reach the line" do
+      expect(described_class.focus("cafe \e[31mred\e[0m \e]0;title\a")).to eq("cafe red")
+    end
+
+    it "folds an accent to its letter and anything else unprintable to 1 space" do
+      expect(described_class.focus("café\tmigration")).to eq("cafe migration")
+    end
+
+    it "cuts to 80 characters, which a pull request then loads as its focus" do
+      focus = described_class.focus("a b " * 40)
+
+      expect([focus.size, load({ "kind" => "pr", "url" => url, "focus" => focus }).to_h["focus"]]).to eq([79, focus])
+    end
+
+    it "is nil when nothing printable is left" do
+      expect(described_class.focus("\e[31m\u2713\e[0m")).to be_nil
+    end
+  end
+
   describe "anything else" do
     it "refuses an unknown kind, an unknown or missing field, a non-string value and a non-map" do
       fields = [{ "kind" => "shell", "repo_root" => @repo },

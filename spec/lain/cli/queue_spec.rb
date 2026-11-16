@@ -3,6 +3,8 @@
 require "tmpdir"
 require "fileutils"
 require "json"
+require "shellwords"
+require "socket"
 
 RSpec.describe Lain::CLI::Queue, :seam do
   let(:old) { { "GIT_AUTHOR_DATE" => "2020-01-01T00:00:00Z", "GIT_COMMITTER_DATE" => "2020-01-01T00:00:00Z" } }
@@ -42,6 +44,41 @@ RSpec.describe Lain::CLI::Queue, :seam do
     end
     [out.string, err.string]
   end
+
+  # A real run, with Thor's own exit, so a refusal's status is what a shell sees.
+  def run(*argv, dir: @repo)
+    out = StringIO.new
+    err = StringIO.new
+    saved = [$stdout, $stderr]
+    $stdout = out
+    $stderr = err
+    Dir.chdir(dir) { described_class.start(argv) }
+    [0, out.string, err.string]
+  rescue SystemExit => e
+    [e.status, out.string, err.string]
+  ensure
+    $stdout, $stderr = saved
+  end
+
+  # A live chat at `root`: a real input socket in front of a real Intake.
+  def chat(root, id: "chat", started_at: "2026-11-16T10:00:00Z")
+    rail = Lain::Frontend::Intake.new
+    path = Lain::CLI::InputSocket.path(cwd: root, name: id, paths: Lain::Paths.new)
+    sockets << Lain::CLI::InputSocket.new(rail:, path:).bind.start(nil)
+    live(id, root, path, started_at)
+    rail
+  end
+
+  def live(id, root, path, started_at = "2026-11-16T10:00:00Z")
+    writer = Lain::Liveness::Writer.current
+    Lain::LiveSessions.new(paths: Lain::Paths.new).enter(
+      Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start, host: writer.host, root:,
+                                     cwd: root, input_socket: path, journal: nil, attended: true,
+                                     started_at:)
+    )
+  end
+
+  def offered(rail) = wait_until(reason: "the offer drawn") { rail.published.kind == :human && rail.published.text }
 
   def finished_plan(title: "Ship it", name: "run")
     base = git("rev-parse", "HEAD")
@@ -127,6 +164,108 @@ RSpec.describe Lain::CLI::Queue, :seam do
       printed = capture("here").first.split("\t").first
 
       expect(capture("show", printed).first).to include("reason: plan done: Ship it")
+    end
+  end
+
+  describe "open" do
+    let(:sockets) { [] }
+    let(:servers) { [] }
+    let(:feature) { "branch:#{@repo}:feature" }
+
+    around do |example|
+      Dir.mktmpdir("lain-cli-queue-run") { |run| with_env("XDG_RUNTIME_DIR" => run) { example.run } }
+    ensure
+      sockets.each(&:stop)
+      servers.each { |server, thread| thread.kill.join && server.close }
+    end
+
+    before do
+      unmerged_branch("feature")
+      unmerged_branch("other")
+    end
+
+    # A listener that greets as a chat does, then answers an offer only with `reply`.
+    def stand_in(reply: nil)
+      path = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "stand-in.sock")
+      server = UNIXServer.new(path)
+      kept = []
+      thread = Thread.new do
+        Enumerator.produce { server.accept }.each do |io|
+          kept << io.tap { _1.puts(JSON.generate({ "v" => "context", "commands" => [] })) }
+          io.gets && reply && io.puts(JSON.generate(reply))
+        end
+      end
+      servers << [server, thread]
+      live("stand-in", @repo, path, "2026-11-16T11:00:00Z")
+    end
+
+    it "offers the row to the chat in its checkout, exits 0 and says so" do
+      rail = chat(@repo)
+
+      expect(run("open", feature)).to eq([0, "offered #{feature} to chat\n", ""])
+      expect(offered(rail)).to start_with("lain queue: /review refs/heads/feature")
+    end
+
+    it "names the other chats running in the checkout" do
+      chat(@repo, id: "nine", started_at: "2026-11-16T09:00:00Z")
+      chat(@repo, id: "ten", started_at: "2026-11-16T10:00:00Z")
+
+      expect(run("open", feature)).to eq([0, "offered #{feature} to ten\nalso running there: nine\n", ""])
+    end
+
+    it "exits 1 when the chat is showing another offer" do
+      chat(@repo)
+      run("open", "branch:#{@repo}:other")
+
+      expect(run("open", feature)).to eq([1, "", "the chat is showing another offer; try again when it is answered\n"])
+    end
+
+    it "exits 1 when the row is offered already" do
+      chat(@repo)
+      run("open", feature)
+
+      expect(run("open", feature)).to eq([1, "", "already offered\n"])
+    end
+
+    it "exits 1 naming the field the chat refused" do
+      stand_in(reply: { "v" => "offered", "outcome" => "refused", "field" => "repo_root" })
+
+      expect(run("open", feature)).to eq([1, "", "the chat refused the request's repo_root\n"])
+    end
+
+    it "exits 1 naming the chat that took the connection and never answered, which may still show it" do
+      stub_const("Lain::Review::Queue::Delivery::REPLY", 0.3)
+      chat(@repo)
+      stand_in
+
+      expect(run("open", feature)).to eq(
+        [1, "", "the chat stand-in has not answered the offer, and may still show it\nalso running there: chat\n"]
+      )
+    end
+
+    it "exits 1 when no chat runs in the checkout" do
+      expect(run("open", feature)).to eq([1, "", "no lain chat is running in #{@repo}\n"])
+    end
+
+    it "refuses a critique for a row that is not a pull request" do
+      chat(@repo)
+
+      expect(run("open", feature, "--critique", "x"))
+        .to eq([1, "", "a critique focus goes only with a pull request row\n"])
+    end
+
+    it "is what pick opens, with no stand-in for open" do
+      rail = chat(@repo)
+      bin = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "bin")
+      FileUtils.mkdir_p(bin)
+      File.write(File.join(bin, "chosen"), "\n#{capture("local").first.lines.find { _1.start_with?(feature) }}")
+      File.write(File.join(bin, "fzf"), "#!/bin/sh\ncat #{File.join(bin, "chosen")}\n")
+      File.chmod(0o755, File.join(bin, "fzf"))
+
+      status, out, = with_env("PATH" => "#{bin}:#{ENV.fetch("PATH")}") { run("pick", "local") }
+
+      expect([status, out]).to eq([0, "offered #{feature} to chat\n"])
+      expect(offered(rail)).to start_with("lain queue: /review refs/heads/feature")
     end
   end
 
@@ -216,6 +355,63 @@ RSpec.describe Lain::CLI::Queue, :seam do
     it "runs the keyword and path searches only with --matches" do
       expect(capture("prs").last).not_to include("matches are on")
       expect(capture("prs", "--matches").last).to include("matches are on")
+    end
+
+    context "with a clone of it under the configured roots" do
+      let(:sockets) { [] }
+      let(:clone) { File.join(@roots, "api") }
+
+      around do |example|
+        Dir.mktmpdir("lain-cli-queue-roots") do |roots|
+          @roots = File.realpath(roots)
+          Dir.mktmpdir("lain-cli-queue-home") do |home|
+            with_env("XDG_RUNTIME_DIR" => home, "XDG_CONFIG_HOME" => home) { example.run }
+          end
+        end
+      ensure
+        sockets.each(&:stop)
+      end
+
+      before do
+        FileUtils.mkdir_p(clone)
+        FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", clone)
+        SeedRepo.git(clone, "remote", "add", "origin", "https://github.com/acme/api.git")
+        paths = Lain::Paths.new
+        FileUtils.mkdir_p(File.dirname(paths.user_config))
+        File.write(paths.user_config, "github roots: [#{@roots.inspect}]\n")
+        Lain::Project::Trust.for_user(paths:).grant!
+      end
+
+      it "sends --critique cut to the focus rule: printable ASCII, at most 80 characters" do
+        rail = chat(clone)
+        focus = "café\tmigration safety #{"x" * 100}"
+
+        status, = run("open", "pr:acme/api#12", "--critique", focus)
+
+        clamped = "cafe migration safety #{"x" * 58}"
+        expect([status, offered(rail)]).to eq(
+          [0, "lain queue: /review https://github.com/acme/api/pull/12 --critique=#{Shellwords.escape(clamped)}  " \
+              "(Enter opens, x drops)"]
+        )
+      end
+
+      it "drops an escape sequence in the focus whole" do
+        rail = chat(clone)
+        run("open", "pr:acme/api#12", "--critique", "cafe \e[31mred\e[0m")
+
+        drawn = offered(rail)
+
+        expect(drawn).to include("--critique=cafe\\ red  (Enter")
+        expect(drawn).not_to include("[31m")
+      end
+    end
+
+    it "opens it in the browser with no local clone, saying the critique was not used" do
+      Dir.mktmpdir("lain-cli-queue-config") do |config|
+        expect(with_env("XDG_CONFIG_HOME" => config) { run("open", "pr:acme/api#12", "--critique", "x") }).to eq(
+          [0, "no local checkout of pr:acme/api#12; opened it in the browser, so --critique was not used\n", ""]
+        )
+      end
     end
 
     it "shows the reason, the pull request, its title, author and requested time" do

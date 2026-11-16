@@ -16,12 +16,13 @@ module Lain
 
       # A row as text: every field safe to print, whichever source wrote it.
       class Entry
-        ESCAPES = %r{\e\[[0-?]*[ -/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)?|\e.}m
         UNPRINTABLE = /[[:cntrl:]\p{Cf}\p{Zl}\p{Zp}\s]+/
 
         # @param text [Object] any text, including an escape sequence or a newline
         # @return [String] one line with no control character in it
-        def self.plain(text) = text.to_s.scrub.gsub(ESCAPES, "").gsub(UNPRINTABLE, " ").strip
+        def self.plain(text)
+          text.to_s.scrub.gsub(::Lain::Review::Queue::Request::ESCAPES, "").gsub(UNPRINTABLE, " ").strip
+        end
 
         # @param row [::Lain::Review::Queue::Row]
         # @param pull [Forge::Gh::ReviewRequest, nil] what GitHub said of a pull request row
@@ -125,7 +126,9 @@ module Lain
 
       EXE = File.expand_path("../../../exe/lain", __dir__)
       PICKABLE = %w[here local prs].freeze
-      private_constant :EXE, :PICKABLE
+      TURNED_AWAY = { crowded: "the chat is showing another offer; try again when it is answered",
+                      repeat: "already offered" }.freeze
+      private_constant :EXE, :PICKABLE, :TURNED_AWAY
 
       def self.exit_on_failure? = true
 
@@ -144,13 +147,14 @@ module Lain
       def prs = list { pr_sources }
 
       desc "show ID", "Why a row is queued, its range, and for a pull request who asked and when"
-      def show(id)
-        render(newline: false) do
-          sources = id.start_with?("pr:") ? [pull_requests] : [plan_runs, local_changes]
-          row = sources.flat_map(&:call).find { |candidate| Entry.plain(candidate.id) == Entry.plain(id) }
-          raise ::Thor::Error, "no queue row #{Entry.plain(id)}" unless row
+      def show(id) = render(newline: false) { lines(entry(row_for(id)).detail) }
 
-          lines(entry(row).detail)
+      desc "open ID", "Offer a row's review to the chat running in its checkout"
+      method_option :critique, type: :string, desc: "Run a critique focused on this text once the review opens"
+      def open(id)
+        render(newline: false) do
+          row = row_for(id)
+          said(delivery.call(row, critiqued(row, options[:critique])), row, options[:critique])
         end
       end
 
@@ -181,6 +185,58 @@ module Lain
 
       def open_row(id, critique:) = invoke(:open, [id], critique:)
 
+      def row_for(id)
+        sources = id.start_with?("pr:") ? [pull_requests] : [plan_runs, local_changes]
+        row = sources.flat_map(&:call).find { |candidate| Entry.plain(candidate.id) == Entry.plain(id) }
+        row || raise(::Thor::Error, "no queue row #{Entry.plain(id)}")
+      end
+
+      def critiqued(row, critique)
+        return row.request unless critique
+
+        fields = row.request.to_h
+        raise ::Thor::Error, "a critique focus goes only with a pull request row" unless fields["kind"] == "pr"
+
+        focus = ::Lain::Review::Queue::Request.focus(critique)
+        raise ::Thor::Error, "the critique focus has no printable ASCII in it" unless focus
+
+        ::Lain::Review::Queue::Request.load(fields.merge("focus" => focus), checkouts: pull_checkouts)
+      end
+
+      def said(result, row, critique)
+        case result.outcome
+        when :held then lines(["offered #{Entry.plain(row.id)} to #{session(result.chat)}", *also(result)])
+        when :browsed
+          lines(["no local checkout of #{Entry.plain(row.id)}; opened it in the browser" \
+                 "#{", so --critique was not used" if critique}"])
+        else raise ::Thor::Error, [refusal(result, row), *also(result)].join("\n")
+        end
+      end
+
+      def refusal(result, row)
+        case result.outcome
+        when :no_chat then "no lain chat is running in #{row.request.repo_root}"
+        when :refused then "the chat refused the request's #{Entry.plain(result.field)}"
+        when :silent then "the chat #{session(result.chat)} has not answered the offer, and may still show it"
+        else TURNED_AWAY.fetch(result.outcome)
+        end
+      end
+
+      def also(result)
+        [*("also running there: #{result.others.map { session(_1) }.join(", ")}" if result.others.any?),
+         *("did not answer: #{result.skipped.map { session(_1) }.join(", ")}" if result.skipped.any?)]
+      end
+
+      # A live record is a file any same-uid process can write.
+      def session(record) = Entry.plain(record.session_id)
+
+      def delivery
+        ::Lain::Review::Queue::Delivery.new(
+          live_sessions: LiveSessions.new(paths: Paths.new), log: ::Lain::Review::Queue::Log.new(paths: Paths.new),
+          account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:)
+        )
+      end
+
       def lines(texts) = texts.map { |text| "#{text}\n" }.join
 
       def entry(row) = Entry.new(row, row.request.to_h["kind"] == "pr" ? pulls.for(row.id) : nil)
@@ -205,16 +261,19 @@ module Lain
 
       def pull_source
         @pull_source ||= begin
-          config = Config.github(root: Project::Resolver.default_project.root)
+          config = github_config
           account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
           pulls = Pulls.new(Forge::Gh::Reads.new(cwd: Dir.pwd, account:))
-          checkouts = ::Lain::Review::Queue::Checkouts.new(roots: config.roots, notes:)
           scope = options[:all] ? :all : :mine
           [pulls,
-           ::Lain::Review::Queue::PullRequests.new(reads: pulls, config:, checkouts:, scope:,
+           ::Lain::Review::Queue::PullRequests.new(reads: pulls, config:, checkouts: pull_checkouts, scope:,
                                                    matches: options[:matches], notes:)]
         end
       end
+
+      def pull_checkouts = @pull_checkouts ||= ::Lain::Review::Queue::Checkouts.new(roots: github_config.roots, notes:)
+
+      def github_config = @github_config ||= Config.github(root: Project::Resolver.default_project.root)
     end
   end
 end

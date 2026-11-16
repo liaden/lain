@@ -26,10 +26,16 @@ module Lain
         # The fields a kind must carry, and the ones it may.
         Shape = Data.define(:required, :optional)
 
+        # Terminal escape sequences, CSI and OSC whole, so none of their bytes outlive the strip.
+        ESCAPES = %r{\e\[[0-?]*[ -/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)?|\e.}m
+
         SHA = /\A[0-9a-f]{40}\z/
         PULL = %r{\Ahttps://github\.com/(?<name>[A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*\z}
         # Printable ASCII only: a focus is spliced into a line the chat runs.
-        FOCUS = /\A[\x20-\x7E]{1,80}\z/
+        PRINTABLE = "\\x20-\\x7E"
+        FOCUS_LIMIT = 80
+        FOCUS = /\A[#{PRINTABLE}]{1,#{FOCUS_LIMIT}}\z/
+        UNFOCUSABLE = /[^#{PRINTABLE}]+/
         # Git takes these in a branch name, and each would show the human
         # something other than the bytes the chat runs.
         # A decomposed é (e + U+0301) is refused for its mark, since it looks
@@ -42,7 +48,19 @@ module Lain
           "dirty" => Shape.new(required: %w[repo_root], optional: []),
           "pr" => Shape.new(required: %w[url], optional: %w[since focus])
         }.freeze
-        private_constant :Shape, :SHA, :PULL, :FOCUS, :UNSEEN, :SHAPES
+        private_constant :Shape, :SHA, :PULL, :PRINTABLE, :FOCUS_LIMIT, :FOCUS, :UNFOCUSABLE, :UNSEEN, :SHAPES
+
+        # Free text, such as a row's reason, cut to what a focus may be rather
+        # than refused for it: an accent folds to its letter first, so a
+        # reason in another script keeps what it can.
+        #
+        # @param text [String]
+        # @return [String, nil] a focus {.load} takes, or nil when nothing printable is left
+        def self.focus(text)
+          plain = String.new(text.to_s).force_encoding(Encoding::UTF_8).scrub.gsub(ESCAPES, "")
+          cut = plain.unicode_normalize(:nfkd).gsub(UNFOCUSABLE, " ").squeeze(" ").strip[0, FOCUS_LIMIT].strip
+          cut if FOCUS.match?(cut)
+        end
 
         # @param hash [Hash{String => String}] the wire or file form
         # @param checkouts [Checkouts] finds a pull request's local clone
