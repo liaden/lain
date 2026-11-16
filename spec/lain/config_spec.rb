@@ -887,6 +887,47 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe ".github" do
+    around do |example|
+      Dir.mktmpdir("lain-github-config") do |tmp|
+        @tmp = tmp
+        example.run
+      end
+    end
+
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+    let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+
+    def write_user(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant!
+    end
+
+    it "lets env beat the project, and the project beat the user" do
+      write_user("github account: \"joel-fuze\"\n")
+      write_config(root, "github account: \"liaden\"\n", paths:)
+
+      expect(described_class.github(root:, paths:, env: {}).account).to eq("liaden")
+      expect(described_class.github(root:, paths:, env: { "LAIN_GH_ACCOUNT" => "other" }).account).to eq("other")
+    end
+
+    it "reads only the user file and env with no root" do
+      write_user("github account: \"joel-fuze\"\n")
+
+      write_config(root, "github account: \"project\"\n", paths:)
+
+      Dir.chdir(root) { expect(described_class.github(root: nil, paths:, env: {}).account).to eq("joel-fuze") }
+    end
+
+    it "has no account when nothing sets one" do
+      expect(described_class.github(root:, paths:, env: {}).account).to be_nil
+    end
+  end
+
   describe ".middleware with the user's config.rb" do
     around do |example|
       Dir.mktmpdir("lain-user-config") do |tmp|

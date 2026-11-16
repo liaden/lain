@@ -36,10 +36,12 @@ module Lain
       # provider tuning (concurrency, connect timeout, stream stall timeout,
       # stream debug toggle), the human's env pass list, the bootsnap switch
       # and cache path, and the load-path cache path, so a pane's children
-      # share one of each cache. Sorted.
+      # share one of each cache, and the GitHub account override, so a pane's lain acts as the
+      # account its parent did. Sorted.
       RUNTIME_ENV = %w[
-        LAIN_BOOTSNAP LAIN_BOOTSNAP_CACHE LAIN_CONNECT_TIMEOUT LAIN_ENV_PASS LAIN_LOAD_PATH_CACHE
-        LAIN_PROVIDER_CONCURRENCY LAIN_STREAM_DEBUG LAIN_STREAM_STALL_TIMEOUT LD_LIBRARY_PATH TMPDIR
+        LAIN_BOOTSNAP LAIN_BOOTSNAP_CACHE LAIN_CONNECT_TIMEOUT LAIN_ENV_PASS LAIN_GH_ACCOUNT
+        LAIN_LOAD_PATH_CACHE LAIN_PROVIDER_CONCURRENCY LAIN_STREAM_DEBUG LAIN_STREAM_STALL_TIMEOUT
+        LD_LIBRARY_PATH TMPDIR
       ].freeze
 
       # Names lain sets on ITSELF that a pane would be poisoned by.

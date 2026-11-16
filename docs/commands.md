@@ -1358,8 +1358,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 14 documented verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos`, `think`, `review`, `budget` and `remote`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 15 documented verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos`, `think`, `review`, `budget`, `remote` and `github`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -1521,7 +1521,7 @@ it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware`, `keys` and `theme` verbs and applies to every project. `keys approval_cycle:` names the
+accepts only the `middleware`, `keys`, `theme`, `attention` and `github` verbs and applies to every project. `keys approval_cycle:` names the
 [approval cycle key](#cycling-approval-from-the-keyboard), is refused in a project's file, and accepts only
 `"S-Tab"` today: every `C-<letter>` is held by lain or by the line editor. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes
@@ -1645,6 +1645,14 @@ only, after `lain trust --user`: how long to wait before interrupting belongs to
 project's `.lain/config.rb` that says `attention` is refused naming the file, the line and the user's config.rb.
 The value is a number of seconds, 0 or more, and defaults to 30. A negative or non-numeric value, or an unknown
 key, is refused by name.
+
+### github
+
+`github account: "liaden", orgs: %w[fuze], roots: %w[~/src], keywords: %w[perf sql], paths: [%r{\Adb/migrate/}], since_days: 14`
+sets the GitHub account lain's `gh` calls act as, and the filters the review queue uses. Either the user's
+config.rb or a project's may say it. `LAIN_GH_ACCOUNT` in the environment beats the project, which beats the user,
+field by field. Unset, the account is `gh`'s own and `since_days` is 14. An unknown key, or a value of the wrong
+type, is refused by name.
 
 ### todos
 

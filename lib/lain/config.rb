@@ -17,8 +17,8 @@ module Lain
   # crashing three call frames deep.
   #
   # The user's `$XDG_CONFIG_HOME/lain/config.rb` is read by {.middleware},
-  # {.keys}, {.theme} and {.attention}, under its own trust, and may declare
-  # nothing but middleware, keys, theme and attention.
+  # {.keys}, {.theme}, {.attention} and {.github}, under its own trust, and may declare
+  # nothing but middleware, keys, theme, attention and github.
   class Config
     # The evaluated file, memoised on its path and trusted bytes: a `lain chat`
     # startup asks the readers below for one file, and an edit is new
@@ -143,6 +143,21 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] naming the user's file and line
     def self.attention(paths: Paths.new) = user(paths).attention
+
+    # The GitHub account and review-request filters: the environment, then the
+    # project's file, then the user's, field by field. `root: nil` is a caller
+    # outside any project, and reads the user's file and the environment only.
+    #
+    # @param root [String, nil] a project root, or nil outside a project
+    # @param paths [Paths] where the user's config.rb lives
+    # @param env [Hash{String=>String}] read for `LAIN_GH_ACCOUNT`
+    # @return [Github] every field resolved, the account nil for gh's own
+    # @raise [Project::Trust::Untrusted] as {.load}, for either file
+    # @raise [Refusal] as {.load}, for either file
+    def self.github(root:, paths: Paths.new, env: ENV)
+      project = root ? built(root, paths:).github : Github.empty
+      Github.resolve(project:, user: user(paths).github, env:)
+    end
 
     # Where this project keeps its tests, which the layout guard holds a test
     # file's path to. With no table the layout falls back to the preset of a

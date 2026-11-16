@@ -23,6 +23,22 @@ RSpec.describe Lain::Config::Builder do
     end
   end
 
+  describe "the github verb" do
+    it "builds the account it names" do
+      expect(build("github account: \"liaden\"\n").github.account).to eq("liaden")
+    end
+
+    it "refuses being declared twice" do
+      expect { build("github account: \"a\"\ngithub account: \"b\"\n") }.to raise_error(Lain::Config::Refusal, /twice/)
+    end
+
+    it "is admitted in the user's file too" do
+      built = build("github account: \"a\"\n", verbs: described_class::USER_VERBS)
+
+      expect(built.github.account).to eq("a")
+    end
+  end
+
   describe "the budget verb" do
     it "builds a table whose rows replace the defaults it names" do
       table = build("budget iterations: { \"plan-epic\" => 80, default: 30 }\n").budget
@@ -158,6 +174,7 @@ RSpec.describe Lain::Config::Builder do
                                                        attention: Lain::Config::Attention.empty,
                                                        think: nil,
                                                        review: Lain::Config::Review.empty,
+                                                       github: Lain::Config::Github.empty,
                                                        budget: Lain::Budget::Table.new,
                                                        remote_relay: nil, remote_ntfy: nil)
     end
@@ -453,7 +470,7 @@ RSpec.describe Lain::Config::Builder do
     it "lists only the user's verbs as known" do
       expect { build_user("\nmiddlewear { }\n") }
         .to raise_error(Lain::Config::Refusal,
-                        /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme, attention\z/)
+                        /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme, attention, github\z/)
     end
 
     it "builds an attention table" do
