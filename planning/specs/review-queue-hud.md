@@ -1,6 +1,7 @@
 # Review queue, HUD count and review simplifications
 
-status: draft
+status: in-progress
+base: af8591cd98446be0cfb25f05f48b4d22c3ab6c5b
 commit-mode: orchestrator-commits
 language: ruby, rust (T1 only)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust seats for T1 (Raph Levien, Andrew Gallant)
@@ -1492,3 +1493,17 @@ The user ruled (2026-11-16) that the main session makes these changes. The work 
 - Push `main` to `origin`, then hand `planning/specs/lain-macos-bringup.md` to Claude on the Mac.
 
 ## Execution log
+
+### Setup (2026-11-16 09:27)
+
+- **Base:** `main` at `af8591cd98446be0cfb25f05f48b4d22c3ab6c5b`. Code under `lib/`, `spec/`, `exe/`, `crates/` is unchanged since the grounding SHA `6c9f57b1`, so Grounding holds.
+- **Worktrees at start:** the main checkout, `/home/tara/w/ir`, and 82 stale `tmp/worktrees/<id>` from earlier plans with `card/<id>` branches. This run uses `tmp/worktrees/rqh-T<id>` and `card/rqh-T<id>`.
+- **Pre-staged user work, unstaged for the run:** `.gitmodules`, `references/repos/cliffcompaction` (gitlink `b48d660a`), `references/repos/pi` (gitlink `36be9c61`). Re-stage at close-out with `git add .gitmodules references/repos/cliffcompaction references/repos/pi`, then check `git ls-files -s` against those SHAs.
+- **User edits in card files:** `.claude/skills/manual-qa/scripts/qa-sandbox.sh` (T8) and `planning/qa/README.md` (T30) carry unstaged user edits. Land those cards' hunks with `git apply --cached` plus `git apply`, never a whole-file copy or `git add` of the file.
+- **Hook:** pre-commit runs `bundle exec rake compile check` (rubocop on the whole repo plus `rake pspec`) on any Ruby or Rust file, the cargo fmt, clippy and test hooks on Rust, `yard-lint --staged`, `bin/lint-gherkin-docs` on staged plan docs, and `bin/lint-commit-msg` at commit-msg. A Ruby commit takes about 3 minutes. The suite cannot run beside other tests. A passing hook prints little, so the example count comes from `tmp/parallel_runtime_rspec.log` and the hook log.
+- **Agent checks on own paths:** `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`, `bin/lint-gherkin-docs <plan doc>`; for Rust, `cargo fmt -- --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test -p <crate>`.
+- **Ratchet specs:** every top-level `spec/*_spec.rb` (35 discipline scanners over `lib/`, `exe/` and docs), `spec/lain/landing_calls_spec.rb`, `spec/lain/isolation/checkout_calls_spec.rb`, `spec/lain/comment_census_spec.rb`, `spec/lain/cli_spec.rb`, `spec/lain/skill/shipped_skills_spec.rb`; plus `bin/zeitwerk-census --check` for a card that adds a constant.
+- **Build outputs a fresh worktree needs (copied at cut):** `lib/lain/lain.so`, `target/release/lain-fence`, `tmp/parallel_runtime_rspec.log`.
+- **Test-runner pattern for wait-quiet:** `rspec|parallel_rspec|rake (pspec|check)|cargo (test|clippy|build)`.
+- **Concurrency cap:** 15 GB RAM with another project's cargo build on the box, so 4 agents, with a landing counted as 1.
+- **Paths that need user approval:** none in the cards; the dotfiles steps D0 to D5 run in `~/.cfg` after T30.
