@@ -136,8 +136,11 @@ module Lain
         # editor, because that is a fact the human can act on.
         NO_EDITOR = "no editor is attached to this chat, so a changeset review would be drawn nowhere and " \
                     "no gesture could reach it -- start the cockpit with `lain up --nvim` (or " \
-                    "`lain chat --nvim <socket>`) and run /review there. `lain review open <target>` " \
-                    "renders one as text without an editor."
+                    "`lain chat --nvim <socket>`) and run /review there."
+
+        # Any word that is not a corpus: a changeset review is the other kind to
+        # {Lain::Review::Submit::Outbox#refuse_other!} whichever of its sources it opens over.
+        CHANGESET_SOURCE = "changeset"
 
         # The refusal a changeset review opened over an open SURVEY gets -- the
         # mirror of {Command::Survey::ALREADY_OPEN}: one chat has one set of
@@ -146,8 +149,7 @@ module Lain
         # rebinds, and `/review close` is the way past an open survey.
         SURVEY_OPEN = "%<target>s is already open in this chat, and one chat draws one review at a time -- " \
                       "a changeset review opened over it would rebind the gesture rails to a sidebar the " \
-                      "survey's marks cannot reach. Run `/review close` to let it go without a verdict, " \
-                      "or `lain review open <target>` for a text rendering outside this chat."
+                      "survey's marks cannot reach. Run `/review close` to let it go without a verdict."
 
         # @param outbox [Review::Submit::Outbox] the run's ONE open review, so
         #   the round this opens is reachable from `/review-submit`. Required
@@ -170,6 +172,7 @@ module Lain
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
+          @round = ReviewRound.new(outbox:)
           freeze
         end
 
@@ -199,8 +202,7 @@ module Lain
 
         # The banner a resumed chat owes a human reopening a target an earlier
         # session left open, or nil ({EarlierRounds}). PUBLIC because
-        # {Command::Survey} owes the same banner and reads it from here,
-        # {Survey.source_name}'s reason one command over. Asked before the new
+        # `ReviewRound` owes both commands the same banner and reads it from here. Asked before the new
         # round is journaled, so the answer is about the earlier sessions alone.
         #
         # @param env [Env] read for the chat's session file
@@ -238,34 +240,21 @@ module Lain
           raise Error, "--#{missing.first} takes #{NEEDS_VALUE.fetch(missing.first)} -- #{usage}" if missing.any?
         end
 
-        # The whole card: resolve, build, open, BIND, HOLD, draw.
+        # The whole card: refuse, resolve, then open the round with `ReviewRound`.
         #
-        # The bind comes before the draw because a human fast enough to answer
-        # between the two would send a verdict nothing could route; the HOLD is
-        # beside it for the same reason, which is why {#wired} is one step. The
-        # surface is checked before the round is journaled: a surface that cannot
-        # answer the port must not leave a round on record that nothing ever
-        # drew. A draw that refuses lets go of both again
-        # ({Lain::Review::Handover::Closing#drawing}).
+        # The surface is checked before the round is journaled: a surface that
+        # cannot answer the port must not leave a round on record that nothing ever
+        # drew. The HOLD comes before the draw, because a human fast enough to
+        # answer between the two would send a verdict nothing could route.
         #
-        # The FOCUS is last, and only if the draw returned: a review that raised
-        # on a ceiling is not one to put anybody in front of. It happens ONCE
-        # here and never on the render path, because a redraw follows every
-        # gesture and would move the human each time they marked a hunk. Its
-        # refusal is discarded -- nothing was lost, and the banner already says
-        # where the review is.
+        # The refusal over a survey comes before the target resolves, so a tree
+        # that is no repository answers the survey in the way, not the ref.
         def opened(parsed, env, policy:)
-          surface = env.replies.review_surface or raise Error, NO_EDITOR
-          refuse_over_survey!
+          env.replies.review_surface or raise Error, NO_EDITOR
+          @outbox.refuse_other!(CHANGESET_SOURCE, sentence: SURVEY_OPEN)
           refuse_over_held_notes!(env)
-          Lain::Review::Surface.check!(surface)
           scope = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
-          resolved = resolved_target(parsed)
-          banner = self.class.not_carried_over(env, target_of(resolved))
-          session = round(resolved, surface, env, policy:)
-          closing = closing_for(env, surface)
-          wired(resolved, session, env, handover(session, env, scope, surface, closing))
-          closing.drawing(session) { drawn(resolved, session, scope, banner) }.tap { surface.focus }
+          @round.open(opening(resolved_target(parsed), env, policy), env, scope:)
         end
 
         # `/review close`: whatever round the chat holds, let go without a
@@ -299,22 +288,6 @@ module Lain
 
         def resolved_target(parsed) = targets.resolve(parsed.target, base: parsed.base)
 
-        # The KIND is the question, not `open?`: a second `/review` over a
-        # `/review` rebinds, which is how a human takes a second look at a
-        # branch. What may not happen is a changeset review drawn over an open
-        # SURVEY, because the two share one set of gesture rails.
-        #
-        # The word is asked of {Command::Survey}, the one place it is derived. A
-        # SETTLED survey is not in the way: {SURVEY_OPEN}'s rationale is "a
-        # sidebar the survey's marks cannot reach", and marks handed back and
-        # judged have nowhere left to reach -- without that second half a chat
-        # that surveyed once could never review a branch again.
-        def refuse_over_survey!
-          return unless @outbox.held_source == Survey.source_name && @outbox.held_verdict.empty?
-
-          raise Error, format(SURVEY_OPEN, target: @outbox.target)
-        end
-
         # Notes the editor still holds are not on the journal, and a new round
         # would leave them with no review to be handed back to. Asked only over
         # an open round: a first review has nothing to strand.
@@ -325,22 +298,15 @@ module Lain
           raise Error, "#{held} #{"note".pluralize(held)} not handed back -- :LainNoteDone first" if held.positive?
         end
 
-        # Everything that must be complete before a human can touch the sidebar:
-        # the gesture rails, and the outbox a finished review leaves through.
-        #
-        # The number comes off the RESOLVED TARGET rather than out of the source,
-        # so a branch round is held with nowhere to post rather than not held at
-        # all -- a round that was never held would answer "no changeset review is
-        # open" about one that plainly is.
-        def wired(resolved, session, env, handover)
-          env.replies.bind_changeset_review(handover)
-          @outbox.hold(session:, number: resolved.number, label: resolved.label)
-        end
-
-        def round(resolved, surface, env, policy:)
-          Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source: resolved.source),
-                                     journal: env.chronicle.record_journal, source: resolved.name, surface:,
-                                     bounds: @bounds, policy:, target: target_of(resolved))
+        def opening(resolved, env, policy)
+          ReviewRound::Opening.new(
+            source: resolved.source, source_name: resolved.name, target: target_of(resolved), label: resolved.label,
+            number: resolved.number, bounds: @bounds, policy:, spawn: env.role_spawn,
+            headline: lambda { |session, scope|
+              format(Lain::Review::Target::HEADLINE, label: resolved.label, scope:,
+                                                     base: session.changeset.base_ref, head: session.changeset.head_ref)
+            }
+          )
         end
 
         # The TARGET journaled is the label the human reads -- `branch feature`,
@@ -352,53 +318,6 @@ module Lain
         # What `--permissive` means, asked of the class that owns both the word
         # and the rule it swaps -- the sentence offering the flag lives there.
         def policy_for(parsed) = Lain::Review::Verdict::Policy.strict_unless(permissive: parsed.permissive)
-
-        # The view comes off the SAME editor the surface did, and it has to: a
-        # rendering stamp is only resolvable by the view that issued it, so a
-        # gesture resolved against a second view is a silently wrong row rather
-        # than an error.
-        #
-        # No `baton:`: nobody is holding one for a review opened outside an epic.
-        # The DOCENT is assembled here from the three things only this object
-        # holds -- the round's changeset, the run's role spawn and the chat's own
-        # journal; {Review::Docent.for} decides whether there is one at all.
-        #
-        # `reviewing` is what makes `<CR>` open anything: the view's diff surface
-        # is built with the editor and holds no round. Sent HERE, beside the
-        # bind, because both are wiring that must be complete before the sidebar
-        # is drawn. The SCOPE rides along because a gesture that changed a row
-        # has to redraw, and the grouping on screen is the one thing that rail
-        # cannot ask anybody for -- a session takes it and forgets it.
-        def handover(session, env, scope, surface, closing)
-          view = env.replies.review_view
-          view.reviewing(session.changeset)
-          docent = Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn: env.role_spawn,
-                                            journal: env.chronicle.record_journal, supervisor: env.supervisor)
-          Lain::Review::Handover.new(session:, view:, docent:, closing:,
-                                     redraw: Lain::Review::Handover::Redraw.new(scope:))
-        end
-
-        # A String answer is the surface's REFUSAL (`spec/support/shared_examples/
-        # review_surface.rb`, law #5) and anything else means the editor took it.
-        # An editor that refused still gets the headline: the round IS open and
-        # the rails ARE bound.
-        #
-        # A view past a {Lain::Review::Bounds} ceiling is the other outcome and
-        # is NOT a String -- {Lain::Review::Session#present} raises -- which
-        # {Lain::Review::Handover::Closing#drawing} answers by letting the round
-        # go.
-        def drawn(resolved, session, scope, banner)
-          refusal = session.present(scope:)
-          [Lain::Review::OpenedBanner.call(headline(resolved, session, scope), sides: session.changeset.sides),
-           banner,
-           refusal.is_a?(String) ? refusal : nil].compact.join("\n")
-        end
-
-        def headline(resolved, session, scope)
-          format(Lain::Review::Target::HEADLINE, label: resolved.label, scope:,
-                                                 base: session.changeset.base_ref,
-                                                 head: session.changeset.head_ref)
-        end
 
         # Unchanged from {Lain::Review::Target}: PR-vs-branch, the ambiguity refusal
         # and `--base`'s two rules are already that object's and already tested,

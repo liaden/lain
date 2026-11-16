@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support/core_ext/string/inflections"
+
 module Lain
   module Review
     class Submit
@@ -43,6 +45,12 @@ module Lain
       class Outbox
         # A round opened on something that is not a pull request.
         class Nowhere < Error; end
+
+        # The word a corpus round journals under, derived once here for every
+        # caller: {Lain::Review::ChangesetOpened} validates the field for presence
+        # only, so a second spelling would drift with nothing downstream to catch it.
+        # It is also the one kind a changeset round may not share the rails with.
+        CORPUS = Lain::Review::Source::Corpus.name.split("::").last.underscore
 
         NOTHING_OPEN = "no changeset review is open in this chat, so there is nothing to post -- " \
                        "open one with `/review <pull-request>` first"
@@ -131,6 +139,21 @@ module Lain
 
         # @return [Boolean] whether a round is held at all
         def open? = !@held.nil?
+
+        # The 1-review rule, in one place: a chat has one set of gesture rails, so
+        # a corpus round and a changeset round cannot both be live, while a second
+        # round of the same kind rebinds them. Only a LIVE round is in the way --
+        # one a verdict has settled has nowhere left for marks to reach.
+        #
+        # @param source_name [String] the word the round about to open journals under
+        # @param sentence [String] a format taking `%<target>s`, the held round's label
+        # @return [void]
+        # @raise [Error] over a live round of the other kind
+        def refuse_other!(source_name, sentence:)
+          return unless open? && held_verdict.empty? && corpus?(held_source) != corpus?(source_name)
+
+          raise Error, format(sentence, target:)
+        end
 
         # WHAT the held round was opened over, in its source's own word --
         # `local_branch`, `github_pr`, `corpus`. Data, not a judgement: a chat has
@@ -223,6 +246,8 @@ module Lain
         # the three would come to tolerate different amounts of absence one edit
         # at a time.
         def held_session = @held&.session
+
+        def corpus?(source_name) = source_name == CORPUS
 
         # Every reason not to send, asked before a payload is built.
         def ready!

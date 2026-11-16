@@ -348,6 +348,48 @@ RSpec.describe Lain::Review::Submit::Outbox do
     end
   end
 
+  # The 1-review rule: a chat has one set of gesture rails, so a corpus round and
+  # a changeset round may not be live together, while a second round of the same
+  # kind rebinds.
+  describe "refusing a round of the other kind" do
+    let(:sentence) { "%<target>s is in the way" }
+
+    def corpus_round
+      Lain::Review::Session.open(changeset:, journal: Lain::Journal.new(io: StringIO.new), source: "corpus",
+                                 policy: Lain::Review::Verdict::Policy::Permissive.new)
+    end
+
+    it "refuses a changeset round over a live corpus round, naming what is held" do
+      outbox.hold(session: corpus_round, number: nil, label: "survey of /tmp/corpus")
+
+      expect { outbox.refuse_other!("github_pr", sentence:) }
+        .to raise_error(Lain::Error, "survey of /tmp/corpus is in the way")
+    end
+
+    it "refuses a corpus round over a live changeset round" do
+      held
+
+      expect { outbox.refuse_other!("corpus", sentence:) }
+        .to raise_error(Lain::Error, "pull request 4271 is in the way")
+    end
+
+    it "lets a round of the same kind rebind" do
+      held
+
+      expect { outbox.refuse_other!("local_branch", sentence:) }.not_to raise_error
+    end
+
+    it "lets a round open over a settled round of the other kind" do
+      outbox.hold(session: settled(corpus_round), number: nil, label: "survey of /tmp/corpus")
+
+      expect { outbox.refuse_other!("github_pr", sentence:) }.not_to raise_error
+    end
+
+    it "lets a round open with nothing held" do
+      expect { outbox.refuse_other!("corpus", sentence:) }.not_to raise_error
+    end
+  end
+
   describe "a review with nowhere to post" do
     it "refuses a branch round BY NAME rather than as an error, naming the branch and never posting" do
       held(number: nil, label: "branch feature/widget")

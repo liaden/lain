@@ -3,8 +3,6 @@
 require "stringio"
 require "tmpdir"
 
-RSpec::Matchers.define_negated_matcher :not_include, :include
-
 RSpec.describe Lain::Tools::EpicShow do
   around do |example|
     Dir.mktmpdir do |dir|

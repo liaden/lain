@@ -21,7 +21,7 @@ module Lain
       #
       # A chat holds one `outbox:` and one set of gesture rails, so a survey
       # over an open changeset review would rebind them to a sidebar that
-      # review's marks cannot reach -- {#refuse_second_surface!} refuses that.
+      # review's marks cannot reach -- {Lain::Review::Submit::Outbox#refuse_other!} refuses that.
       # There is no `/survey-submit`: a corpus has no pull request under it,
       # and {Lain::Review::Submit::Outbox::Nowhere} already models "a perfectly
       # good review with nowhere to post".
@@ -53,28 +53,17 @@ module Lain
         # editor, because that is a fact the human can act on.
         NO_EDITOR = "no editor is attached to this chat, so a survey would be drawn nowhere and no gesture " \
                     "could reach it -- start the cockpit with `lain up --nvim` (or `lain chat --nvim " \
-                    "<socket>`) and run /survey there. `lain survey <path>` renders one as text without " \
-                    "an editor."
+                    "<socket>`) and run /survey there."
 
         # The refusal a second review SURFACE gets, naming the one already open.
         ALREADY_OPEN = "%<target>s is already open in this chat, and one chat draws one review at a time -- " \
                        "a survey opened over it would rebind the gesture rails to a sidebar that review's " \
-                       "marks cannot reach. Run `/review close` to let it go without a verdict, or " \
-                       "`lain survey <path>` for a text rendering outside this chat."
+                       "marks cannot reach. Run `/review close` to let it go without a verdict."
 
         # A flag it DOES declare, whose value is missing or is itself a flag.
         # Apart from {UNKNOWN_FLAG} because the remedy is the opposite one: a
         # human told `--scope` is unreadable deletes the word they got right.
         NEEDS_VALUE = "%<flags>s takes a value, and the next word is another flag or nothing at all -- %<usage>s"
-
-        # The word this command's rounds are journaled under, and what
-        # {Command::Review} compares against to recognise an open survey.
-        # PUBLIC so that comparison reads one derivation rather than a second
-        # spelling of `corpus`: {Lain::Review::ChangesetOpened} validates this
-        # field for presence only, so nothing downstream would catch a drift.
-        #
-        # @return [String]
-        def self.source_name = Lain::Review::Source::Corpus.name.split("::").last.underscore
 
         # @param outbox [Lain::Review::Submit::Outbox] the run's ONE open
         #   review. Required rather than defaulted: an outbox nothing else
@@ -105,6 +94,7 @@ module Lain
           @bounds = bounds
           @sensitivity = sensitivity
           @projection = Lain::Survey::Projection.new(ledger:)
+          @round = ReviewRound.new(outbox:)
           freeze
         end
 
@@ -171,52 +161,26 @@ module Lain
             missing.any?
         end
 
-        # The whole card: refuse, resolve, walk, open, BIND, draw, HOLD.
+        # The whole card: refuse, resolve, walk, then open the round with `ReviewRound`.
         #
         # The scope resolves FIRST of the things that can fail on the tree:
         # resolution needs no collaborators, and a typo on an oversized tree must
         # answer the typo, not "narrow your tree".
         #
-        # BIND BEFORE DRAW, because a human fast enough to press `<CR>` between
-        # the two would send a gesture nothing could route. HOLD AFTER, because
-        # {#refuse_second_surface!} reads the hold: {Lain::Review::Session#present}
-        # can still raise, and a round held through that would lock `/review` out
-        # over a survey the human never saw. A draw that refuses lets go of the
-        # bind again ({Lain::Review::Handover::Closing#drawing}), and the outbox
-        # releases only that round -- which it never held -- so a settled review
-        # the chat still holds stays held.
+        # The HOLD is AFTER the draw: {Lain::Review::Session#present} can still
+        # raise, and a round held through that would lock `/review` out over a
+        # survey the human never saw. The outbox releases only that round -- which
+        # it never held -- so a settled review the chat still holds stays held.
         #
-        # FOCUS IS LAST and only if the draw returned: somebody yanked into a
-        # tabpage holding nothing is worse off than left reading the refusal. It
-        # happens ONCE here, never on the render path, because a redraw follows
-        # every gesture and would take the human out of the chat each time they
-        # marked a hunk. Its refusal is DISCARDED alone among this command's
-        # editor calls -- a single `gt` reaches the survey, and the banner already
-        # says where. Every refusal meaning work was LOST still travels.
+        # The focus is the round's, and its refusal is DISCARDED alone among this
+        # command's editor calls -- a single `gt` reaches the survey, and the banner
+        # already says where.
         def opened(parsed, env, ceilings:, policy:)
-          surface = env.replies.review_surface or raise Error, NO_EDITOR
-          refuse_second_surface!
-          Lain::Review::Surface.check!(surface)
-          # The flag's absence, not a second declaration of the vocabulary: the
-          # default is read out of the strategy registry, so a scope that stops
-          # shipping stops being the default, and it goes through `scope!` on
-          # this one line whether the human named it or not.
+          env.replies.review_surface or raise Error, NO_EDITOR
+          @outbox.refuse_other!(Lain::Review::Submit::Outbox::CORPUS, sentence: ALREADY_OPEN)
           scope = scope_of(parsed)
           walk = Lain::Survey::Walk.new(root: parsed.path, sensitivity: @sensitivity)
-          target = target_of(walk)
-          banner = Review.not_carried_over(env, target)
-          session = round(walk, ceilings, surface, env, policy:, target:)
-          closing = closing_for(env, surface)
-          # The gesture rails, complete before a human can touch the sidebar.
-          env.replies.bind_changeset_review(handover(session, env, scope, closing,
-                                                     docent_of(session, env, surface, walk)))
-          closing.drawing(session) { drawn_and_held(walk, session, scope, banner) }.tap { surface.focus }
-        end
-
-        # One method so it cannot be read as two independent steps: the hold
-        # happens only if the draw returned.
-        def drawn_and_held(walk, session, scope, banner)
-          drawn(walk, session, scope, banner).tap { held(walk, session) }
+          @round.open(opening(walk, env, ceilings, policy), env, scope:, hold_after_draw: true)
         end
 
         # What `--unbounded` means, asked of {Lain::CLI::Survey} rather than
@@ -230,19 +194,6 @@ module Lain
         # the refusal that named it.
         def policy_for(parsed) = Lain::Review::Verdict::Policy.strict_unless(permissive: parsed.permissive)
 
-        # Asked about the KIND and not merely `open?`: a survey reopened over a
-        # survey rebinds, which is how a human takes a second look at a tree, so
-        # only a round opened over something ELSE is a second surface. And asked
-        # of a LIVE round only -- {ALREADY_OPEN}'s rationale is "a sidebar that
-        # review's marks cannot reach", and marks handed back and judged have
-        # nowhere left to reach, so a chat that has settled a changeset review
-        # may survey again.
-        def refuse_second_surface!
-          return unless @outbox.open? && @outbox.held_verdict.empty? && @outbox.held_source != self.class.source_name
-
-          raise Error, format(ALREADY_OPEN, target: @outbox.target)
-        end
-
         # `named_from:` is the chat's CWD and never the surveyed tree, because a
         # name minted here is resolved elsewhere: the editor opens a row against
         # the directory it was started in, and a verdict's refusal is read by a
@@ -252,51 +203,20 @@ module Lain
         #
         # The TARGET journaled is the walk root's REALPATH, so `big`, `big/`,
         # `./big` and a link to it are the one tree they name.
-        def round(walk, ceilings, surface, env, policy:, target:)
+        def opening(walk, env, ceilings, policy)
           source = Lain::Review::Source::Corpus.new(walk:, projection: @projection, bounds: ceilings, named_from: @cwd)
-          Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:),
-                                     journal: env.chronicle.record_journal, source: self.class.source_name,
-                                     surface:, bounds: ceilings, policy:, target:)
+          target = target_of(walk)
+          ReviewRound::Opening.new(
+            source:, source_name: Lain::Review::Submit::Outbox::CORPUS, target:, label: "survey of #{walk.root}",
+            number: nil, bounds: ceilings, policy:, spawn: env.role_spawn.within(worker_env_at(target)),
+            headline: ->(session, scope) { headline(walk, session, scope) }, name_for: from_root_of(walk),
+            disclosure: disclosure(walk.withheld)
+          )
         end
 
         def target_of(walk) = File.realpath(walk.root)
 
-        # The round, where the rest of the chat can see it -- taken only once
-        # something was drawn, per {#opened}. `number:` is nil and always will
-        # be: there is no pull request under a corpus, which is what
-        # {Lain::Review::Submit::Outbox::Nowhere} says instead of "no changeset
-        # review is open" about one plainly open.
-        def held(walk, session) = @outbox.hold(session:, number: nil, label: label(walk))
-
-        def label(walk) = "survey of #{walk.root}"
-
-        # The view comes off the SAME editor the surface did: a rendering stamp
-        # is only resolvable by the view that issued it, so a gesture resolved
-        # against a second view is a silently wrong row rather than an error.
-        #
-        # The SCOPE rides along because a gesture that changed a row has to
-        # redraw, and the grouping on screen is the one thing the gesture rail
-        # cannot ask anybody for -- a session takes it and forgets it. The DOCENT
-        # is assembled here for the same reason: this is the one place holding
-        # the round's changeset, the run's role spawn and the chat's own journal.
-        def handover(session, env, scope, closing, docent)
-          view = env.replies.review_view
-          view.reviewing(session.changeset)
-          Lain::Review::Handover.new(session:, view:, docent:, closing:,
-                                     redraw: Lain::Review::Handover::Redraw.new(scope:))
-        end
-
         def scope_of(parsed) = Lain::Review::Session.scope!(parsed.scope || Lain::Review::Partition::DEFAULT_SCOPE)
-
-        def closing_for(env, surface)
-          Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
-        end
-
-        def docent_of(session, env, surface, walk)
-          spawn = env.role_spawn.within(worker_env_at(target_of(walk)))
-          Lain::Review::Docent.for(changeset: session.changeset, surface:, spawn:, name_for: from_root_of(walk),
-                                   journal: env.chronicle.record_journal, supervisor: env.supervisor)
-        end
 
         # Notes are named from the chat's cwd for the human; the docent's child stands in the surveyed tree.
         def from_root_of(walk)
@@ -307,15 +227,9 @@ module Lain
         # the docent's child works there.
         def worker_env_at(root) = Lain::WorkerEnv.new(cwd: root, env: {}, checkout: root)
 
-        def drawn(walk, session, scope, banner)
-          answer = session.present(scope:)
+        def headline(walk, session, scope)
           files = session.changeset.files
-          headline = format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:, count: files.size,
-                                                         noun: noun(files.size))
-          [Lain::Review::OpenedBanner.call(headline, sides: session.changeset.sides),
-           banner,
-           disclosure(walk.withheld),
-           answer.is_a?(String) ? answer : nil].compact.join("\n")
+          format(Lain::CLI::Survey::HEADLINE, root: walk.root, scope:, count: files.size, noun: noun(files.size))
         end
 
         # Nothing withheld says nothing, {Lain::CLI::Survey#disclosure}'s rule:

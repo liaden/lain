@@ -4,8 +4,6 @@ require "fileutils"
 require "tmpdir"
 
 RSpec.describe Lain::Review::Source::Diffed do
-  RSpec::Matchers.define_negated_matcher :not_include, :include
-
   let(:repo_root) { "/repo" }
   let(:secret_file) { "API_KEY=sk-live-0000000000000000\nplain line\n" }
 

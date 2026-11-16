@@ -241,6 +241,14 @@ RSpec.describe Lain::CLI::Command::Survey do
       expect { command.call(@root, env) }.to raise_error(Lain::Error, /--nvim/)
     end
 
+    it "names only the editor-attaching commands, not a text rendering" do
+      two_documents
+
+      expect { command.call(@root, env) }
+        .to raise_error(Lain::Error, a_string_including("lain up --nvim", "lain chat --nvim <socket>")
+                                       .and(not_include("lain survey")))
+    end
+
     # {Lain::Sensitivity::Ledger}'s rule 1, stated there as "a raise rather than
     # a note": a forgotten injection must be an ArgumentError at wiring time,
     # because the alternative is a SECOND ledger holding releases nobody ever
@@ -835,6 +843,13 @@ RSpec.describe Lain::CLI::Command::Survey do
       outbox.hold(session: changeset_round, number: 12, label: "pull request 12")
 
       expect { command.call(@root, env) }.to raise_error(Lain::Error, /pull request 12/)
+    end
+
+    it "words that refusal without a text command to run instead" do
+      attached
+      outbox.hold(session: changeset_round, number: 12, label: "pull request 12")
+
+      expect { command.call(@root, env) }.to raise_error(Lain::Error, not_include("lain survey"))
     end
 
     it "leaves the open review exactly where it was, since the refusal opened nothing" do

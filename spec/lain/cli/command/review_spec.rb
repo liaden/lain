@@ -267,6 +267,12 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
         .to raise_error(Lain::Error, /no editor/)
     end
 
+    it "names only the editor-attaching commands, not a text rendering" do
+      expect { command.call("feature", env) }
+        .to raise_error(Lain::Error, a_string_including("lain up --nvim", "lain chat --nvim <socket>")
+                                       .and(not_include("lain review")))
+    end
+
     it "refuses a flag it does not carry, rather than reading it as a branch name" do
       attached
 
@@ -586,11 +592,11 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   #
   # The survey is a double: this file's `around` builds a git repository and no
   # corpus, and the whole of what the guard reads off a held round is the two
-  # questions below. `source_name` is asked of {Lain::CLI::Command::Survey}
+  # questions below. the word is asked of {Lain::Review::Submit::Outbox::CORPUS}
   # rather than spelled, because that is the one place the word is derived.
   describe "a survey already open in the same chat" do
     def survey_round(verdict:)
-      instance_double(Lain::Review::Session, source: Lain::CLI::Command::Survey.source_name, verdict:)
+      instance_double(Lain::Review::Session, source: Lain::Review::Submit::Outbox::CORPUS, verdict:)
     end
 
     # The refusal from this side, and it is the one that shipped: asserted on
@@ -603,7 +609,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
 
       expect { command.call("feature", env) }
         .to raise_error(Lain::Error, a_string_including("survey of /tmp/corpus")
-                                       .and(include("the gesture rails")))
+                                       .and(include("the gesture rails")).and(not_include("lain review")))
       expect(editor.bound).to be_nil
     end
 

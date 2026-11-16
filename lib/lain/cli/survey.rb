@@ -163,14 +163,8 @@ module Lain
 
       def round(source, journal, surface, ceilings)
         Lain::Review::Session.open(changeset: Lain::Review::Changeset.new(source:), journal:,
-                                   source: source_name, surface:, bounds: ceilings)
+                                   source: Lain::Review::Submit::Outbox::CORPUS, surface:, bounds: ceilings)
       end
-
-      # {Review::Target::Resolved#name}'s derivation and its reason: a
-      # literal goes on naming `corpus` after the class it describes is
-      # renamed, and {Review::ChangesetOpened} validates this field for
-      # presence only, so nothing downstream would catch it.
-      def source_name = Lain::Review::Source::Corpus.name.split("::").last.underscore
 
       # The default surface renders into a buffer this object owns, so the two
       # are built together. Checked BEFORE the journal is opened: a surface that

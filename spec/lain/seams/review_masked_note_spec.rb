@@ -4,8 +4,6 @@ require "json"
 require "tmpdir"
 
 RSpec.describe "a note placed on a line holding a secret", :seam do
-  RSpec::Matchers.define_negated_matcher :not_include, :include
-
   let(:secret) { "API_KEY=sk-live-0000000000000000\n" }
   let(:journal) { [] }
 

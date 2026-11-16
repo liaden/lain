@@ -276,8 +276,8 @@ RSpec.describe Lain::CLI::Command::Introspect do
   end
 
   # THE TRIPWIRE UNDER THAT WORDING, and the reason it reads `lib/` rather than
-  # trusting prose: "none held by /review or /survey" is true only while those
-  # two are the only holders. A third command that holds a round, or a
+  # trusting prose: "none held by /review or /survey" is true only while the
+  # round those two open is the only holder. A third command that holds a round, or a
   # {Lain::Tools::RequestReview} that starts using the outbox, has to move this
   # sentence -- and would otherwise narrow it silently, which is the confident
   # false negative this whole section exists to prevent.
@@ -294,7 +294,7 @@ RSpec.describe Lain::CLI::Command::Introspect do
     # (`lain/review.rb` beside `lain/cli/command/review.rb`), so a basename
     # compare lets the call move between two same-named files and stay green.
     expect(holders.map { |path| Pathname(path).relative_path_from(lib).to_s })
-      .to contain_exactly("lain/cli/command/review.rb", "lain/cli/command/survey.rb")
+      .to contain_exactly("lain/cli/command/review_round.rb")
     expect(described_class::NO_REVIEW).to include("/review", "/survey")
     expect(File.read("#{lib}/lain/tools/request_review.rb")).not_to include("Outbox")
   end

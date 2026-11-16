@@ -46,8 +46,6 @@ class HistoryLiteralsSpecSpy
 end
 
 RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
-  RSpec::Matchers.define_negated_matcher :not_include, :include
-
   let(:root) { File.join(@base, "repo") }
   let(:policy) do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: File.join(@base, "home"), cwd: root,

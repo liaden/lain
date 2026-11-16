@@ -103,10 +103,11 @@ module DeletionMap
   VERIFIED_DELETIONS = "planning/specs/simplify-03-verified-deletions.md"
 
   # Every message BOTH review commands reach the outbox through, named once
-  # because the two rows below would otherwise drift apart one marker at a time
-  # -- which is the failure this whole map is written against. `/survey` adds
-  # `@outbox.open?` to it and nothing else does.
-  OUTBOX_REACH = %w[outbox: @outbox.hold @outbox.held_source @outbox.held_verdict @outbox.target].freeze
+  # because the rows below would otherwise drift apart one marker at a time
+  # -- which is the failure this whole map is written against. `/review` adds
+  # `@outbox.open?` to it, for the notes it would strand; the round they share
+  # holds the round, in its own row.
+  OUTBOX_REACH = %w[outbox: @outbox.refuse_other!].freeze
 
   # The rows. An `edits` marker is spelled as a literal because that is the only
   # thing that finds a site naming no constant -- a role symbol, a wire string,
@@ -135,13 +136,13 @@ module DeletionMap
       key: "docent", constants: %w[Docent],
       files: ["lib/lain/review/docent.rb", "lib/lain/prompt/templates/role/diff_docent.md",
               "spec/lain/review/docent_spec.rb"],
-      # The two review COMMANDS joined the row when the capability stopped being
-      # unreachable: each builds the docent off the editor's own surface, its
-      # answerer off the run's role spawn and its journal off the chat's
-      # chronicle, and each falls back to `Handover::Unattended` where the
-      # surface has no thread pane. Their specs come with them -- both drive the
-      # docent by name.
-      consumers: ["lib/lain/cli/command/review.rb", "lib/lain/cli/command/survey.rb",
+      # The round both review COMMANDS open joined the row when the capability
+      # stopped being unreachable: it builds the docent off the editor's own
+      # surface, its answerer off the run's role spawn and its journal off the
+      # chat's chronicle, and falls back to `Handover::Unattended` where the
+      # surface has no thread pane. The survey's spec comes with it -- it drives
+      # the docent by name.
+      consumers: ["lib/lain/cli/command/review_round.rb",
                   "lib/lain/cli/wiring/toolset_build.rb", "spec/lain/cli/command/survey_spec.rb",
                   "spec/lain/cli/wiring/toolset_build_spec.rb"],
       edits: {
@@ -162,24 +163,26 @@ module DeletionMap
               "spec/lain/cli/command/review_submit_spec.rb", "lib/lain/forge/gh/endpoint.rb"],
       consumers: ["lib/lain/forge/gh.rb", "lib/lain/forge/gh/recorded.rb", "lib/lain/forge/intent.rb",
                   "lib/lain/forge/journaled.rb", "lib/lain/forge/reconcile.rb", "spec/lain/forge/gh_spec.rb",
-                  "lib/lain/cli/command/surface.rb", "spec/lain/cli/command/review_spec.rb",
-                  "spec/lain/cli/command/survey_spec.rb", "spec/lain/seams/survey_subdirectory_spec.rb",
+                  "lib/lain/cli/command/surface.rb", "lib/lain/cli/command/survey.rb", "lib/lain/cli/survey.rb",
+                  "spec/lain/cli/command/review_spec.rb",
+                  "spec/lain/cli/command/survey_spec.rb", "spec/lain/cli/command/review_round_spec.rb",
+                  "spec/lain/seams/survey_subdirectory_spec.rb",
                   "spec/lain/forge/gh/recorded_spec.rb", "spec/support/shared_examples/gh_parity.rb",
                   "spec/lain/cli/command/introspect_spec.rb", "spec/lain/seams/critique_over_held_review_spec.rb",
                   "spec/lain/seams/docent_outside_root_spec.rb"],
       edits: {
         # FIVE sites the constant sweep is blind to: two spell the verb as the
         # wire STRING, one is the command set pinned as a LITERAL (the wiring
-        # examples beside it go too), and BOTH review commands reach the outbox
-        # through keywords and messages that name no constant at all. `/survey`
-        # is the heavier of the two -- it holds a round AND reads the held
-        # round's kind and VERDICT back to refuse a second review surface over a
-        # round still awaiting judgement -- and this list is checked for
-        # STALENESS only, never for completeness, so an omitted row stays green
-        # while leaving a human who deleted the capability with a file still
-        # talking to it.
-        "lib/lain/cli/command/review.rb" => OUTBOX_REACH,
-        "lib/lain/cli/command/survey.rb" => OUTBOX_REACH + ["@outbox.open?"],
+        # examples beside it go too), and the review commands and their shared
+        # round reach the outbox through keywords and messages that name no
+        # constant at all. The commands ask it to refuse a round of the other
+        # kind, and the round holds -- and this list is checked for STALENESS
+        # only, never for completeness, so an omitted row stays green while
+        # leaving a human who deleted the capability with a file still talking
+        # to it.
+        "lib/lain/cli/command/review.rb" => OUTBOX_REACH + ["@outbox.open?"],
+        "lib/lain/cli/command/survey.rb" => OUTBOX_REACH,
+        "lib/lain/cli/command/review_round.rb" => %w[outbox: @outbox.hold],
         # A THIRD outbox reader, and the only one that neither opens a round nor
         # posts one: `/introspect` REPORTS the held round at the prompt. It names
         # no constant of this capability in code, so the sweep is blind to it and
