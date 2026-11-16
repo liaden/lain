@@ -537,6 +537,28 @@ lain todos add 'tidy the README'
 `lain todos drain` exits `0` when every item landed or was researched, `1` when any failed, and `130`
 when interrupted. An interrupted item stays claimed, and the next drain takes it back.
 
+### lain queue
+
+Print what is waiting for review, 1 row per line as `<id>\t<reason>\t<summary>`, best reason
+first. Rows already opened (in the queue log) are hidden. Notes, such as a search that hit its
+cap, go to stderr. Text from outside (a plan title, a pull request title) is printed with tabs,
+newlines and control characters removed, so a row is always 1 line.
+
+```bash
+lain queue here
+lain queue prs --json
+lain queue show "pr:acme/api#42"
+```
+
+| Command | What it does |
+|---|---|
+| `lain queue here` | Plan runs in this repository, then its local changes. |
+| `lain queue local` | Local changes only. |
+| `lain queue prs` | Pull requests that request my review (my own requests; path and keyword matching off). |
+| `lain queue show ID` | The row's reason and range, and for a pull request its title, author and requested time. |
+
+`--json` prints 1 JSON object per row instead.
+
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No

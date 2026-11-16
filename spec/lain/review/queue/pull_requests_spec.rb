@@ -55,6 +55,12 @@ RSpec.describe Lain::Review::Queue::PullRequests, :seam do
     allow(checkouts).to receive(:for).and_return(nil)
   end
 
+  describe ".id_for" do
+    it "names a pull request the way its row is named" do
+      expect(described_class.id_for(asking(7, repo: "fuze/web"))).to eq("pr:fuze/web#7")
+    end
+  end
+
   describe "a direct and a team request" do
     let(:requests) { [asking(2, via: :team), asking(1)] }
 

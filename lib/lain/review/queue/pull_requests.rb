@@ -12,6 +12,10 @@ module Lain
         SCOPES = { mine: %i[direct], all: %i[direct team code_owner] }.freeze
         private_constant :REQUESTS, :MATCHES, :SCOPES
 
+        # @param pull [Forge::Gh::ReviewRequest]
+        # @return [String] the id of the row that stands for the pull request
+        def self.id_for(pull) = "pr:#{pull.repo}##{pull.number}"
+
         # @param reads [Forge::Gh::Reads]
         # @param config [Config::Github] orgs narrow requests and scope matches; the rest drive matches
         # @param checkouts [Checkouts] finds each pull request's local clone
@@ -80,9 +84,9 @@ module Lain
           fields = { "kind" => "pr", "url" => pull.url, **(since ? { "since" => since } : {}) }
           request = Request.load(fields, checkouts: @checkouts, shell_out_factory: @shell_out_factory)
           reason += ", no local checkout" unless request.repo_root
-          Row.new(id: "pr:#{pull.repo}##{pull.number}", rank:, reason:, request:, head_sha: pull.head_sha)
+          Row.new(id: self.class.id_for(pull), rank:, reason:, request:, head_sha: pull.head_sha)
         rescue Request::Refused => e
-          @notes.puts("skipped pr:#{pull.repo}##{pull.number}: #{e.message}")
+          @notes.puts("skipped #{self.class.id_for(pull)}: #{e.message}")
           nil
         end
 
