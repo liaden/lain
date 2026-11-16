@@ -3,7 +3,7 @@
 # environment, so a comparison between two builds differs only in the Ruby binary.
 #
 #   bin/with-ruby <ruby-bin-dir> <command...>
-#   bin/with-ruby ~/.local/share/mise/installs/ruby/4.0.6/bin bundle exec rspec spec/lain/canonical_spec.rb
+#   bin/with-ruby ~/.local/share/mise/installs/ruby/4.0.9/bin bundle exec rspec spec/lain/canonical_spec.rb
 #
 # Why not .envrc: it evals `mise env`, which puts mise's Ruby first on PATH and
 # would silently undo the choice. Everything .envrc sets that the suite needs is
@@ -18,7 +18,7 @@
 # A Ruby built from source for comparison, isolated from the project's own:
 #   MISE_DATA_DIR=~/tmp/lain/rubies/mise-jemalloc MISE_RUBY_COMPILE=true \
 #     RUBY_CONFIGURE_OPTS="--enable-yjit --enable-load-relative --without-gmp --with-jemalloc" \
-#     mise install ruby@4.0.6
+#     mise install ruby@4.0.9
 # then, under this script, `gem install bundler -v <lockfile's> --force` and
 # `BUNDLE_FROZEN=true bundle install`.
 set -euo pipefail

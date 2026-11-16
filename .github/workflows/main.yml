@@ -32,11 +32,11 @@ jobs:
     strategy:
       matrix:
         ruby:
-          # 4.0.6 is a FLOOR, not a preference: 4.0.5 aborts the VM
+          # 4.0.6 is the FLOOR, not a preference: 4.0.5 aborts the VM
           # intermittently under parallel specs (Bug #22072, "should have cvar
           # cache entry" -- rb_cvar_set drops the class-variable cache table in
           # a multi-Ractor process). Keep this in step with .ruby-version.
-          - '4.0.6'
+          - '4.0.9'
 
     steps:
       - uses: actions/checkout@v4
@@ -134,7 +134,7 @@ jobs:
         id: toolchain
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
-          ruby-version: '4.0.6'
+          ruby-version: '4.0.9'
           bundler-cache: true
           cargo-cache: false
           rubygems: '4.0.3'
@@ -212,7 +212,7 @@ jobs:
         id: toolchain
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
-          ruby-version: '4.0.6'
+          ruby-version: '4.0.9'
           cargo-cache: false
           rubygems: '4.0.3'
       - name: Install the WebKitGTK and xdo headers dioxus-desktop links
@@ -252,7 +252,7 @@ jobs:
       - name: Set up Ruby & Rust
         uses: oxidize-rb/actions/setup-ruby-and-rust@v1
         with:
-          ruby-version: '4.0.6'
+          ruby-version: '4.0.9'
           bundler-cache: true
           rubygems: '4.0.3'
       - uses: taiki-e/install-action@v2

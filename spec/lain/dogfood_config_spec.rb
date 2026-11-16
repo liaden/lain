@@ -17,9 +17,10 @@ RSpec.describe "the dogfood config tree" do
   it "ships an executable bin/verify that runs the toolchain, compile, then pspec" do
     script = File.join(repo, "bin/verify")
     body = File.read(script)
+    pinned = Regexp.escape(File.read(File.join(repo, ".ruby-version")).strip.delete_prefix("ruby-"))
 
     expect([File.executable?(script),
-            body]).to match([true, /mise env.*4\.0\.6.*LD_LIBRARY_PATH.*rake compile.*rake pspec/m])
+            body]).to match([true, /mise env.*#{pinned}.*LD_LIBRARY_PATH.*rake compile.*rake pspec/m])
   end
 
   it "ships an executable bin/dogfood-setup that links .lain and prints the trust command" do

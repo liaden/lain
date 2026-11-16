@@ -11,7 +11,7 @@ the cockpit republishes each turn, and the decision to version it is still open.
 `dogfood/lain/` so every clone gets the same bytes meanwhile. The setup script adds the `.lain` symlink to the
 checkout's git exclude file, since the ignore rule matches a directory only.
 
-`bin/verify` rebuilds the toolchain (mise ruby 4.0.6, `LD_LIBRARY_PATH`) because the fence scrubs the
+`bin/verify` rebuilds the toolchain (mise ruby 4.0.9, `LD_LIBRARY_PATH`) because the fence scrubs the
 environment, compiles the extension, and runs `rake pspec`. It exits with the suite's status.
 
 ## Draining a chore file overnight
