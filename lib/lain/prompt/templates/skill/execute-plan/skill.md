@@ -21,7 +21,8 @@ The plan's Grounding section names the files and behaviours it verified, with a 
 Re-verify the ones the first wave touches before spawning anything. If the code has diverged,
 do not silently adapt: either the divergence is absorbable (note it in the plan doc) or it
 invalidates the card (escalate to the user with the diff and 2–3 options). Mark the plan
-`in-progress` and check cards off in the doc itself as they land.
+`in-progress`, and write `base: <full sha of the base branch tip>` on the line after
+`status:` so a reviewer can later diff the whole run. Check cards off in the doc itself as they land.
 
 Keep the plan's Execution log as you go: one line per event (card started, landed with its
 sha, escalated, reviewed). It is the only memory that outlives your context, so a fresh
@@ -126,5 +127,6 @@ the plan says so or the user does.
 
 ## Phase 5 — Close out
 
-Run the plan's Integration checks, mark it `done`, and summarize: what landed, what the panel
+Run the plan's Integration checks, mark it `done`, write
+`head: <full sha of the base branch tip>` beside `status: done`, and summarize: what landed, what the panel
 caught, what was escalated, and any manual pass still owed the user.

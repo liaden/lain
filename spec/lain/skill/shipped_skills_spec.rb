@@ -276,6 +276,17 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "records the base sha beside status when a run starts and the head sha beside status: done when it ends" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("execute-plan")
+        phase_one = scaffold[/## Phase 1.*?(?=## Phase 2)/m]
+        close_out = scaffold[/## Phase 5.*/m]
+
+        expect(phase_one).to match(/`base: <full sha of the base branch tip>`.{0,80}after\s+`status:`/m)
+        expect(close_out).to match(/`head: <full sha of the base branch tip>`.{0,80}`status: done`/m)
+      end
+    end
+
     it "keeps an execution log, resumes from it, lands on a quiet box and nudges an idle child" do
       with_empty_project do |renderer|
         scaffold = renderer.render("execute-plan")
