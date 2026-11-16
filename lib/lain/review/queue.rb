@@ -10,7 +10,7 @@ module Lain
 
       # Best first. A row's rank is one of these, so a source cannot invent an
       # ordering the queue does not know how to place.
-      RANKS = %i[plan_run re_review direct team path].freeze
+      RANKS = %i[plan_run re_review direct team path branch dirty commit].freeze
 
       # @param sources [Array<#call>] each answers its rows
       # @param log [Log]

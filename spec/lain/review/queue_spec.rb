@@ -30,6 +30,12 @@ RSpec.describe Lain::Review::Queue do
       .to eq(%i[plan_run re_review direct team path].map { |rank| [rank, "because #{rank}"] })
   end
 
+  it "places the local rows: branch, then dirty, then commit" do
+    shuffled = %i[commit dirty branch].map { |rank| row("local:#{rank}", rank) }
+
+    expect(queue(*shuffled).map(&:rank)).to eq(%i[branch dirty commit])
+  end
+
   it "merges rows from every source" do
     sources = [-> { [row("a", :team)] }, -> { [row("b", :plan_run)] }]
 
