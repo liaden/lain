@@ -1,0 +1,375 @@
+{
+  "data": {
+    "viewer": {
+      "login": "me",
+      "organizations": {
+        "nodes": [
+          {
+            "login": "acme",
+            "member": {
+              "nodes": [
+                {
+                  "slug": "platform"
+                }
+              ]
+            },
+            "admin": {
+              "nodes": [
+                {
+                  "slug": "leads"
+                }
+              ]
+            }
+          },
+          {
+            "login": "globex",
+            "member": {
+              "nodes": []
+            },
+            "admin": {
+              "nodes": []
+            }
+          }
+        ]
+      }
+    },
+    "search": {
+      "nodes": [
+        {
+          "number": 11,
+          "title": "Direct ask",
+          "url": "https://github.com/acme/api/pull/11",
+          "isDraft": false,
+          "headRefOid": "aaa111",
+          "author": {
+            "login": "alice"
+          },
+          "repository": {
+            "nameWithOwner": "acme/api"
+          },
+          "files": {
+            "nodes": [
+              {
+                "path": "lib/a.rb"
+              },
+              {
+                "path": "spec/a_spec.rb"
+              }
+            ],
+            "totalCount": 2
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "createdAt": "2026-11-08T06:00:00Z",
+                "requestedReviewer": {
+                  "login": "me"
+                }
+              },
+              {
+                "createdAt": "2026-11-10T09:00:00Z",
+                "requestedReviewer": {
+                  "login": "bob"
+                }
+              },
+              {
+                "createdAt": "2026-11-11T10:30:00Z",
+                "requestedReviewer": {
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "User",
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": [
+              {
+                "author": {
+                  "login": "bob"
+                },
+                "commit": {
+                  "oid": "bob000"
+                }
+              },
+              {
+                "author": {
+                  "login": "me"
+                },
+                "commit": {
+                  "oid": "old000"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "number": 12,
+          "title": "Team ask",
+          "url": "https://github.com/acme/web/pull/12",
+          "isDraft": false,
+          "headRefOid": "bbb222",
+          "author": {
+            "login": "carol"
+          },
+          "repository": {
+            "nameWithOwner": "acme/web"
+          },
+          "files": {
+            "nodes": [
+              {
+                "path": "app/x.js"
+              }
+            ],
+            "totalCount": 1
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "createdAt": "2026-11-12T08:00:00Z",
+                "requestedReviewer": {
+                  "slug": "platform",
+                  "organization": {
+                    "login": "acme"
+                  }
+                }
+              },
+              {
+                "createdAt": "2026-11-15T08:00:00Z",
+                "requestedReviewer": {
+                  "slug": "platform",
+                  "organization": {
+                    "login": "globex"
+                  }
+                }
+              }
+            ]
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "Team",
+                  "slug": "platform",
+                  "organization": {
+                    "login": "globex"
+                  }
+                }
+              },
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "Team",
+                  "slug": "other",
+                  "organization": {
+                    "login": "acme"
+                  }
+                }
+              },
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "Team",
+                  "slug": "platform",
+                  "organization": {
+                    "login": "acme"
+                  }
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": []
+          }
+        },
+        {
+          "number": 13,
+          "title": "Code owner ask",
+          "url": "https://github.com/acme/api/pull/13",
+          "isDraft": false,
+          "headRefOid": "ccc333",
+          "author": {
+            "login": "dave"
+          },
+          "repository": {
+            "nameWithOwner": "acme/api"
+          },
+          "files": {
+            "nodes": [
+              {
+                "path": "CODEOWNERS"
+              }
+            ],
+            "totalCount": 1
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "createdAt": "2026-11-13T07:15:00Z",
+                "requestedReviewer": {
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": true,
+                "requestedReviewer": {
+                  "__typename": "User",
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": [
+              {
+                "author": {
+                  "login": "me"
+                },
+                "commit": null
+              }
+            ]
+          }
+        },
+        {
+          "number": 14,
+          "title": "Still a draft",
+          "url": "https://github.com/acme/api/pull/14",
+          "isDraft": true,
+          "headRefOid": "ddd444",
+          "author": {
+            "login": "erin"
+          },
+          "repository": {
+            "nameWithOwner": "acme/api"
+          },
+          "files": {
+            "nodes": [],
+            "totalCount": 0
+          },
+          "timelineItems": {
+            "nodes": []
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "User",
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": []
+          }
+        },
+        {
+          "number": 15,
+          "title": "Force-pushed after my review",
+          "url": "https://github.com/acme/api/pull/15",
+          "isDraft": false,
+          "headRefOid": "eee555",
+          "author": {
+            "login": "frank"
+          },
+          "repository": {
+            "nameWithOwner": "acme/api"
+          },
+          "files": {
+            "nodes": [
+              {
+                "path": "lib/b.rb"
+              }
+            ],
+            "totalCount": 1
+          },
+          "timelineItems": {
+            "nodes": [
+              {
+                "createdAt": "2026-11-14T12:00:00Z",
+                "requestedReviewer": {
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "User",
+                  "login": "me"
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": [
+              {
+                "author": {
+                  "login": "me"
+                },
+                "commit": {
+                  "oid": "gone999"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "number": 16,
+          "title": "Admin team ask",
+          "url": "https://github.com/acme/api/pull/16",
+          "isDraft": false,
+          "headRefOid": "fff666",
+          "author": {
+            "login": "gina"
+          },
+          "repository": {
+            "nameWithOwner": "acme/api"
+          },
+          "files": {
+            "totalCount": 0,
+            "nodes": []
+          },
+          "timelineItems": {
+            "nodes": []
+          },
+          "reviewRequests": {
+            "nodes": [
+              {
+                "asCodeOwner": false,
+                "requestedReviewer": {
+                  "__typename": "Team",
+                  "slug": "leads",
+                  "organization": {
+                    "login": "acme"
+                  }
+                }
+              }
+            ]
+          },
+          "latestReviews": {
+            "nodes": []
+          }
+        }
+      ]
+    }
+  }
+}

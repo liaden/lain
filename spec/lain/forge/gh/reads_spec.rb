@@ -34,6 +34,64 @@ RSpec.describe Lain::Forge::Gh::Reads do
     end
   end
 
+  describe "#review_requests" do
+    let(:fixture) { File.read("spec/fixtures/gh/review_requests.json") }
+    let(:answer) do
+      Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(fixture, "", 0)
+    end
+    let(:query) { "is:open is:pr review-requested:@me archived:false" }
+
+    it "parses the one response into requests, drafts dropped" do
+      expect(reads.review_requests(query:).map(&:number)).to eq([11, 12, 13, 15, 16])
+    end
+
+    it "keeps a request of a team I only administer, org-qualified" do
+      expect(reads.review_requests(query:).last).to have_attributes(number: 16, via: :team, team: "acme/leads")
+    end
+
+    it "runs exactly 1 gh process, a graphql call carrying the search as a variable" do
+      reads.review_requests(query:)
+
+      expect(calls.size).to eq(1)
+      argv, options = calls.first
+      expect(argv.first(3)).to eq(%w[gh api graphql])
+      expect(argv).to include("q=#{query}")
+      expect(options).to eq(cwd: "/work", timeout: 7, environment: { "GH_TOKEN" => "t0k" })
+    end
+
+    it "keeps the token out of argv" do
+      reads.review_requests(query:)
+
+      expect(calls.first.first.join).not_to include("t0k")
+    end
+
+    it "keeps the token out of a refusal" do
+      limited = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new("", "bad credentials", 1)
+      reads = described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { limited })
+
+      expect { reads.review_requests(query:) }.to raise_error(Lain::Forge::Gh::Reads::Refused) { |e|
+        expect(e.message).not_to include("t0k")
+      }
+    end
+
+    it "refuses with gh's own message when gh exits non-zero" do
+      limited = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }
+                    .new("", "GraphQL: API rate limit exceeded", 1)
+      reads = described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { limited })
+
+      expect { reads.review_requests(query:) }
+        .to raise_error(Lain::Forge::Gh::Reads::Refused, /rate limit exceeded/)
+    end
+
+    it "refuses when GraphQL answers with errors" do
+      errored = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }
+                    .new('{"errors":[{"message":"Bad credentials"}]}', "", 0)
+      reads = described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { errored })
+
+      expect { reads.review_requests(query:) }.to raise_error(Lain::Forge::Gh::Reads::Refused, /Bad credentials/)
+    end
+  end
+
   it "runs under the parent's environment when no account is configured" do
     described_class.new(cwd: "/work", account: Lain::Forge::Gh::Account::None.new,
                         shell_out_factory: factory).pr_diff(ref: "1")
