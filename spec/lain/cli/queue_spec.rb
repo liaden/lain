@@ -183,11 +183,39 @@ RSpec.describe Lain::CLI::Queue, :seam do
       expect(out).not_to match(/[\e\a]/)
     end
 
+    it "takes --all and --matches on prs alone" do
+      expect { capture("here", "--all") }.to raise_error(Thor::UnknownArgumentError, /--all/)
+      expect { capture("local", "--matches") }.to raise_error(Thor::UnknownArgumentError, /--matches/)
+      expect { capture("show", "pr:acme/api#12", "--json") }.to raise_error(Thor::UnknownArgumentError, /--json/)
+    end
+
     it "prints one JSON object per PR with --json" do
       out, = capture("prs", "--json")
 
       expect(out.lines.map { |line| JSON.parse(line) })
         .to match([include("id" => "pr:acme/api#12", "reason" => "direct, no local checkout")])
+    end
+
+    context "with a request that reached me through a team" do
+      let(:answer) do
+        super().tap do |body|
+          body["data"]["viewer"]["organizations"]["nodes"] =
+            [{ "login" => "acme", "member" => { "nodes" => [{ "slug" => "core" }] }, "admin" => { "nodes" => [] } }]
+          body["data"]["search"]["nodes"].first["reviewRequests"]["nodes"] =
+            [{ "asCodeOwner" => false, "requestedReviewer" => { "__typename" => "Team", "slug" => "core",
+                                                                "organization" => { "login" => "acme" } } }]
+        end
+      end
+
+      it "hides it by default and lists it with --all" do
+        expect(capture("prs").first).to eq("")
+        expect(capture("prs", "--all").first).to include("pr:acme/api#12\tteam: acme/core")
+      end
+    end
+
+    it "runs the keyword and path searches only with --matches" do
+      expect(capture("prs").last).not_to include("matches are on")
+      expect(capture("prs", "--matches").last).to include("matches are on")
     end
 
     it "shows the reason, the pull request, its title, author and requested time" do

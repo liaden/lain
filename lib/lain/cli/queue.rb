@@ -117,18 +117,31 @@ module Lain
       end
       private_constant :Notes
 
+      # Where the picker's rows go when there is no fzf: stdout, through Thor.
+      Printer = Struct.new(:cli) do
+        def puts(text) = cli.say(text, nil, false)
+      end
+      private_constant :Printer
+
+      EXE = File.expand_path("../../../exe/lain", __dir__)
+      PICKABLE = %w[here local prs].freeze
+      private_constant :EXE, :PICKABLE
+
       def self.exit_on_failure? = true
 
-      class_option :json, type: :boolean, default: false, desc: "One JSON object per row"
-
       desc "here", "Plan runs, then the local changes of this checkout"
-      def here = list { [plan_runs, local_changes] }
+      method_option :json, type: :boolean, default: false, desc: "One JSON object per row"
+      def here = list { here_sources }
 
       desc "local", "Unmerged branches, a dirty tree and recent commits of this checkout"
-      def local = list { [local_changes] }
+      method_option :json, type: :boolean, default: false, desc: "One JSON object per row"
+      def local = list { local_sources }
 
       desc "prs", "Pull requests that want my review"
-      def prs = list { [pull_requests] }
+      method_option :json, type: :boolean, default: false, desc: "One JSON object per row"
+      method_option :all, type: :boolean, default: false, desc: "Also requests asked of my teams or as code owner"
+      method_option :matches, type: :boolean, default: false, desc: "Also pull requests a keyword or path picks out"
+      def prs = list { pr_sources }
 
       desc "show ID", "Why a row is queued, its range, and for a pull request who asked and when"
       def show(id)
@@ -141,17 +154,32 @@ module Lain
         end
       end
 
-      no_commands do
-        def list
-          render(newline: false) do
-            sources = yield
-            queue = ::Lain::Review::Queue.new(sources:, log: ::Lain::Review::Queue::Log.new(paths: Paths.new))
-            lines(queue.map { |row| options[:json] ? JSON.generate(entry(row).to_h) : entry(row).line })
-          end
+      desc "pick [here|local|prs]", "Choose a row in fzf and open it; Alt-Enter opens it with a critique"
+      def pick(source = "here")
+        raise ::Thor::Error, "no queue source #{Entry.plain(source)}" unless PICKABLE.include?(source)
+
+        render(newline: false) do
+          picker = Picker.new(rows: rows(send("#{source}_sources")), source:, lain: [Gem.ruby, EXE],
+                              out: Printer.new(self), opener: method(:open_row))
+          exit 130 if picker.call == :cancelled
+          ""
+        rescue Picker::NoFzf => e
+          raise ::Thor::Error, e.message
         end
       end
 
+      no_commands do
+        def list = render(newline: false) { rows(yield) }
+      end
+
       private
+
+      def rows(sources)
+        queue = ::Lain::Review::Queue.new(sources:, log: ::Lain::Review::Queue::Log.new(paths: Paths.new))
+        lines(queue.map { |row| options[:json] ? JSON.generate(entry(row).to_h) : entry(row).line })
+      end
+
+      def open_row(id, critique:) = invoke(:open, [id], critique:)
 
       def lines(texts) = texts.map { |text| "#{text}\n" }.join
 
@@ -160,6 +188,12 @@ module Lain
       def notes = @notes ||= Notes.new(self)
 
       def checkout = Isolation::Checkout.of(Dir.pwd)
+
+      def here_sources = [plan_runs, local_changes]
+
+      def local_sources = [local_changes]
+
+      def pr_sources = [pull_requests]
 
       def plan_runs = ::Lain::Review::Queue::PlanRuns.new(checkout:, notes:)
 
@@ -175,7 +209,10 @@ module Lain
           account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
           pulls = Pulls.new(Forge::Gh::Reads.new(cwd: Dir.pwd, account:))
           checkouts = ::Lain::Review::Queue::Checkouts.new(roots: config.roots, notes:)
-          [pulls, ::Lain::Review::Queue::PullRequests.new(reads: pulls, config:, checkouts:, notes:)]
+          scope = options[:all] ? :all : :mine
+          [pulls,
+           ::Lain::Review::Queue::PullRequests.new(reads: pulls, config:, checkouts:, scope:,
+                                                   matches: options[:matches], notes:)]
         end
       end
     end

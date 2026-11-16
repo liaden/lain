@@ -556,8 +556,11 @@ lain queue show "pr:acme/api#42"
 | `lain queue local` | Local changes only. |
 | `lain queue prs` | Pull requests that request my review (my own requests; path and keyword matching off). |
 | `lain queue show ID` | The row's reason and range, and for a pull request its title, author and requested time. |
+| `lain queue prs --all` | Also requests asked of a team of mine or of me as code owner. |
+| `lain queue prs --matches` | Also pull requests a configured keyword or path picks out. |
+| `lain queue pick [here\|local\|prs]` | Choose a row in fzf and open it. Enter opens it; Alt-Enter opens it with a critique focused on its reason; Escape opens nothing (exit 130), and a filter that matches nothing opens nothing (exit 0). Without fzf it prints the rows and exits 1. For `prs`, Ctrl-T toggles team requests and Ctrl-K toggles keyword and path matches; the prompt shows the state. |
 
-`--json` prints 1 JSON object per row instead.
+`--json` on `here`, `local` and `prs` prints 1 JSON object per row instead.
 
 ### lain worktrees gc
 

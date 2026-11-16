@@ -65,10 +65,13 @@ module ChatFlags
   #
   # `upstream`, `port` and `log` are gateway's own.
   #
-  # An entry names a top-level command, or a Thor class for a subcommand whose
-  # flag lives on that class (`queue`'s `json`), since LainCLI.commands cannot see it.
+  # An entry names a top-level command, or a `[Thor class, command]` pair for a
+  # subcommand's own flag (`queue`'s `json`, `all` and `matches`), since LainCLI.commands cannot see it.
+  QUEUE_PRS = [[Lain::CLI::Queue, "prs"]].freeze
   ELSEWHERE = { session: %w[up watch], socket: %w[up], nvim_socket: %w[up], create: %w[up],
-                upstream: %w[gateway], port: %w[gateway], log: %w[gateway], json: [Lain::CLI::Queue] }.freeze
+                upstream: %w[gateway], port: %w[gateway], log: %w[gateway],
+                json: [[Lain::CLI::Queue, "here"], [Lain::CLI::Queue, "local"], *QUEUE_PRS],
+                all: QUEUE_PRS, matches: QUEUE_PRS }.freeze
 
   # Option reads whose key is not a literal, pinned with their reason. A
   # dynamic read is a hole in this guard -- the key cannot be resolved from the
@@ -196,7 +199,8 @@ RSpec.describe "lain chat's flag surface" do
     it "backs each allowlisted key with a command that really declares it" do
       ChatFlags::ELSEWHERE.each do |key, commands|
         commands.each do |name|
-          declared = name.is_a?(Class) ? name.class_options : LainCLI.commands.fetch(name).options
+          command = name.is_a?(Array) ? name.first.commands.fetch(name.last) : LainCLI.commands.fetch(name)
+          declared = command.options
           expect(declared.keys).to include(key)
         end
       end
