@@ -31,7 +31,7 @@ cat > "$QA/env.sh" <<EOF
 export QA="$QA"
 export LAIN_REPO="$REPO"
 export QA_SOCK="$SOCK"
-eval "\$(mise env -s bash ruby@4.0.6)"
+eval "\$(mise env -s bash ruby@4.0.9)"
 export XDG_CONFIG_HOME="\$QA/xdg/config"
 export XDG_STATE_HOME="\$QA/xdg/state"
 export XDG_CACHE_HOME="\$QA/xdg/cache"
@@ -39,12 +39,19 @@ export XDG_RUNTIME_DIR="\$QA/xdg/runtime"
 export TMPDIR="\$QA/tmp"
 export LAIN_NUM_BATCH=2048
 export PATH="\$QA/shim:/mnt/nvme/opt/ollama-0.34.4/bin:\$PATH"
+# An agent shell inside the operator's herdr inherits these, and a lain up then
+# links its plugin into the REAL herdr (round 29). A private TMUX_TMPDIR keeps a
+# command that drops --socket off the operator's default tmux server.
+unset HERDR_BIN_PATH HERDR_ENV HERDR_PANE_ID HERDR_SOCKET_PATH HERDR_TAB_ID HERDR_WORKSPACE_ID
+export TMUX_TMPDIR="\$QA/tmux"
 EOF
+mkdir -p "$QA/tmux"
+chmod 700 "$QA/tmux"
 
 # --- the shim: PANE_ENV forwards LAIN_* only, so carry the toolchain in here --
 cat > "$QA/shim/lain" <<EOF
 #!/usr/bin/env bash
-eval "\$(mise env -s bash ruby@4.0.6)"
+eval "\$(mise env -s bash ruby@4.0.9)"
 exec "$REPO/exe/lain" "\$@"
 EOF
 chmod +x "$QA/shim/lain"
@@ -604,7 +611,9 @@ W=$("$QA/nv.sh" expr "bufwinid(bufnr('lain://inbox'))")
 "$QA/nv.sh" send "<Esc>:call win_gotoid($W)<CR>"; sleep 0.3
 [ "$("$QA/nv.sh" expr 'bufname()')" = "lain://inbox" ] || { echo "focus failed"; exit 1; }
 "$QA/nv.sh" buf lain://inbox 1
-"$QA/nv.sh" send ":1<CR>:LainReply $1<CR>"; sleep 2
+# A typed :LainReply drops any answer holding && or <, so read it from a file.
+printf '%s\n' "$1" > "$QA/tmp/reply.txt"
+"$QA/nv.sh" expr "execute(['1', 'LainReply ' .. readfile('$QA/tmp/reply.txt')[0]])" >/dev/null; sleep 2
 "$QA/nv.sh" buf lain://inbox 1
 EOF
 
