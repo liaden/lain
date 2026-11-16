@@ -4158,6 +4158,16 @@ RSpec.describe Lain::CLI::Wiring do
       expect(Lain::CLI::Command::Surface).to have_received(:new).with(hash_including(gh_account: account))
     end
 
+    it "lends the bash backend the same GitHub account the command surface gets", :seam do
+      account = instance_double(Lain::Forge::Gh::Account)
+      allow(Lain::Forge::Gh::Account).to receive(:configured).and_return(account)
+      allow(Lain::CLI::ExecBackend).to receive(:launch).and_call_original
+
+      run_wiring
+
+      expect(Lain::CLI::ExecBackend).to have_received(:launch).once.with(anything, hash_including(lend: account))
+    end
+
     it "hands the StatusFeed the run's own Store, the only thing that lets inbox_count retire", :seam do
       wiring = run_wiring
 

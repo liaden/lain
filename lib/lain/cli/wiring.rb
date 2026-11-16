@@ -246,11 +246,11 @@ module Lain
       #   a spec hands in the lines its human types
       # @param arms [Arms] the bench arms the run runs; {ChatLaunch} lays the
       #   typed flags over a resumed session's recorded arms
+      # @param agent_states [AgentStates::Tracker, nil] the chat's tracker when a tee feeds it; its
+      #   notices then replace the notifier's own immediate sequence and feed entry
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
-      # @param agent_states [AgentStates::Tracker, nil] the chat's tracker when a tee feeds it; its
-      #   notices then replace the notifier's own immediate sequence and feed entry
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
                      project: Project::Resolver.default_project, herdr: HerdrBinding::Null.new,
                      conductor_opener: Lain::CLI::Conductor.public_method(:open), agent_states: nil,
@@ -368,7 +368,7 @@ module Lain
       # The process's one GitHub account, so every gh it runs asks for the token once. Read when
       # the command surface is built, while `.lain/config.rb` holds the bytes the launch trusted.
       def gh_account
-        @gh_account ||= Lain::Forge::Gh::Account.configured(root: project.root, paths: @paths, notes: @herdr.notes)
+        @gh_account ||= Lain::Forge::Gh::Account.configured(root: project.root, notes: @herdr.notes)
       end
 
       attr_reader :options, :chronicle, :run_clock, :paths
@@ -801,7 +801,7 @@ module Lain
       # Memoized: the toolset's exec and the resolver must come from one build.
       def exec_backend
         @exec_backend ||= ExecBackend.launch(options, env_pass: config.env_pass, root:, journal: durable_journal,
-                                                      paths: @paths, notice: @notice)
+                                                      paths: @paths, notice: @notice, lend: gh_account)
       end
 
       # Memoized: the bash tool and the approval ladder must resolve by one instance.
@@ -866,7 +866,7 @@ module Lain
       # one {Epic::Review} per slug, and a second mount would be a second guard
       # over one journal.
       #
-      # The splat of {ReviewSeams} is what turns the changeset half of
+      # The splat of `ReviewSeams` is what turns the changeset half of
       # `request_review` on. Passing only the bindings keyword left
       # `changesets:` and `surface:` nil, so the implementation stage refused in
       # every real process -- invisible to any spec, because a threaded but

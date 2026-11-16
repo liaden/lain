@@ -245,6 +245,115 @@ RSpec.describe Lain::CLI::ExecBackend do
     end
   end
 
+  # Real processes and a real account over a fake gh, because the claim is what a bash child sees.
+  describe "the GitHub account it lends" do
+    let(:token) { "ghp_lent0account0token0value" }
+    let(:gh) { GhParity::FakeGh.new { |argv| argv.last == "joel-fuze" ? granted : refused } }
+    let(:granted) { GhParity::FakeGhShellOut.new(0, "#{token}\n", "") }
+    let(:refused) { GhParity::FakeGhShellOut.new(1, "", "no oauth token found for github.com account nobody") }
+    let(:told) { [] }
+
+    def account(name, env: {})
+      github = Lain::Config::Github.resolve(project: Lain::Config::Github.from({ "account" => name }, path: nil),
+                                            user: Lain::Config::Github.empty, env: {})
+      Lain::Forge::Gh::Account.for(github, env:, shell_out_factory: gh, notes: Lain::Herdr::HeldNotes.new)
+    end
+
+    def launched(lend, env_pass: [])
+      described_class.launch({}, env_pass:, root: @bin, lend:, notice: told.method(:<<))
+    end
+
+    def gh_token(built, exported: nil)
+      with_env("GH_TOKEN" => exported) do
+        built.backend.call(command: "printenv GH_TOKEN", cwd: @bin, env: ENV.to_h, timeout: 10).stdout
+      end
+    end
+
+    it "hands bash the account's token, asked on the first command and not at launch" do
+      built = launched(account("joel-fuze"))
+      expect(gh.argvs).to be_empty
+
+      expect(gh_token(built)).to eq("#{token}\n")
+      expect(gh.argvs).to eq([%w[gh auth token --user joel-fuze]])
+    end
+
+    # Every masker is built before the first command, as a chat builds them, so none can learn the token by
+    # being asked after it resolved.
+    it "masks the token on the first command's live display and in its result, and egress refuses it" do
+      built = launched(account("joel-fuze"))
+      secrets = Lain::Sensitivity::Secrets::Source.new(child_env: built.child_env,
+                                                       history: Lain::Sensitivity::HistoryLiterals::Null)
+      channel = RecordingChannel.new
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:,
+                                              live_display: Lain::Sensitivity::Display.new(secrets:))
+      result = Lain::Tools::Bash.new(exec: built.backend).call({ command: "echo TOK=$GH_TOKEN", cwd: @bin },
+                                                               invocation)
+
+      expect(channel.events.map(&:bytes).join).to eq("TOK=<redacted:1>\n")
+      expect(Lain::Sensitivity::TextMask.text(result.content, secrets: secrets.for(nil))).not_to include(token)
+      expect(secrets.egress.refused).to include(token.b)
+    end
+
+    it "asks again on a later command once the human has logged in, and tells the chat the fix once" do
+      answers = [refused, granted]
+      gh = GhParity::FakeGh.new { answers.shift }
+      github = Lain::Config::Github.resolve(project: Lain::Config::Github.from({ "account" => "joel-fuze" }, path: nil),
+                                            user: Lain::Config::Github.empty, env: {})
+      built = launched(Lain::Forge::Gh::Account.for(github, env: {}, shell_out_factory: gh,
+                                                            notes: Lain::Herdr::HeldNotes.new))
+
+      expect([gh_token(built), gh_token(built), gh_token(built)]).to eq(["", "#{token}\n", "#{token}\n"])
+      expect([gh.argvs.size, told.size]).to eq([2, 1])
+    end
+
+    it "lends nothing to a docker client, and never asks gh" do
+      client = File.join(docker_on_path, "docker")
+      File.write(client, "#!/bin/sh\nprintf '%s' \"$GH_TOKEN\"\n")
+      built = described_class.launch({ exec: "docker" }, env_pass: [], root: @bin, path: @bin,
+                                                         lend: account("joel-fuze"), notice: told.method(:<<))
+
+      expect(with_env("PATH" => "#{@bin}:#{ENV.fetch("PATH")}") do
+        built.backend.call(command: "true", cwd: @bin, env: ENV.to_h, timeout: 10).stdout
+      end).to eq("")
+      expect(gh.argvs).to be_empty
+    end
+
+    it "runs bash without a token when no gh is installed, telling the chat once" do
+      absent = Class.new { define_method(:run_command) { raise Errno::ENOENT, "gh" } }.new
+      github = Lain::Config::Github.resolve(project: Lain::Config::Github.from({ "account" => "joel-fuze" }, path: nil),
+                                            user: Lain::Config::Github.empty, env: {})
+      built = launched(Lain::Forge::Gh::Account.for(github, env: {}, shell_out_factory: GhParity::FakeGh.new { absent },
+                                                            notes: Lain::Herdr::HeldNotes.new))
+
+      expect([gh_token(built), gh_token(built)]).to eq(["", ""])
+      expect(told.size).to eq(1)
+      expect(told.first).to include("gh was not found")
+    end
+
+    it "hands bash an exported token, the one lain's own gh runs as" do
+      expect(gh_token(launched(account("joel-fuze", env: { "GH_TOKEN" => "exported-token" })),
+                      exported: "exported-token")).to eq("exported-token\n")
+      expect(gh.argvs).to be_empty
+    end
+
+    it "hands bash no token without an account, even an exported one" do
+      expect(gh_token(launched(Lain::Forge::Gh::Account::None.new), exported: "exported-token")).to eq("")
+    end
+
+    it "runs bash without a token for an unknown account, telling the chat the fix once" do
+      built = launched(account("nobody"))
+
+      2.times { expect(gh_token(built)).to eq("") }
+      expect(told.size).to eq(1)
+      expect(told.first).to include("nobody").and include("gh auth login")
+    end
+
+    it "still refuses a pass list naming GH_TOKEN" do
+      expect { launched(account("joel-fuze"), env_pass: %w[GH_TOKEN]) }
+        .to raise_error(Lain::Exec::ChildEnv::Refused, /GH_TOKEN/)
+    end
+  end
+
   describe "what it holds for the launch" do
     it "reads back the child env, journal, paths and notice it was given" do
       child_env = Lain::Exec::ChildEnv.new(pass: %w[DATABASE_URL])

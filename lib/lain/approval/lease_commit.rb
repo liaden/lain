@@ -55,12 +55,12 @@ module Lain
       # @param sensitivity [#confinement, #executables, #environment, #run_file] the `cwd -> #classify`
       #   factory, on {ComposedTerm}'s terms; its confinement says where the call runs, its executables what
       #   git runs, its environment what the call is lent and its run file how a file git reads is classed
-      # @param child_env [Lain::Exec::ChildEnv] what a bash child inherits and is lent
+      # @param child_env [Lain::Exec::ChildEnv] what a bash child inherits; lain's own git asks are lent nothing
       # @param leases [#enclosing, #tampered] which clone lain cut a directory lies in, and what was planted there
       def initialize(sensitivity:, child_env: Exec::ChildEnv::DEFAULT, leases: Isolation::Clone::Guard)
         super()
         @sensitivity = sensitivity
-        @child_env = child_env
+        @child_env = child_env.unlent
         @leases = leases
         freeze
       end

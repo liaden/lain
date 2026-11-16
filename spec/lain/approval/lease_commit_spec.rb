@@ -42,7 +42,8 @@ RSpec.describe Lain::Approval::LeaseCommit, :seam do
   # under the workspace arm the rule is built for. Freshness is by write record alone, so a file is fresh only
   # where an example says it was written. HOME and the XDG config dir are the example's own, and the process
   # env the child env inherits is `inherited`, empty unless an example says otherwise.
-  def chain(root, cwd: root, written: [], remembered: [], env: {}, inherited: {}, pass: [])
+  def chain(root, cwd: root, written: [], remembered: [], env: {}, inherited: {}, pass: [],
+            lend: Lain::Exec::ChildEnv::Lend::None)
     fresh = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written:, stat: Lain::Shell::Executable::Stat.new)
     resolver = Lain::Shell::Executable::Resolver.new(root:, fresh:)
     lent = { "PATH" => "/usr/bin", "HOME" => @home, "XDG_CONFIG_HOME" => File.join(@home, "xdg") }.merge(env)
@@ -50,7 +51,7 @@ RSpec.describe Lain::Approval::LeaseCommit, :seam do
       home: @home, cwd:, root:, confinement: Lain::Approval::Root.new(root), resolver:,
       worker_env: Lain::WorkerEnv.new(cwd:, env: lent)
     )
-    child_env = Lain::Exec::ChildEnv.new(pass:, env: inherited)
+    child_env = Lain::Exec::ChildEnv.new(pass:, env: inherited, lend:)
     Lain::Approval::Escalation::Rules.ladder(Lain::CLI::Wiring::BoardBuild.approving(remembered, factory,
                                                                                      workspace: true, child_env:))
   end
@@ -208,6 +209,35 @@ RSpec.describe Lain::Approval::LeaseCommit, :seam do
 
     expect(decided(lease, "git commit -m chore", env: { "PATH" => "#{bin}:/usr/bin" })).to be_nil
     expect(decided(lease, "git commit -m chore", env: { "PATH" => bin })).to have_attributes(verdict: :allow)
+  end
+
+  describe "beside a lend to bash children" do
+    let(:account) do
+      Class.new do
+        attr_reader :asks
+
+        define_method(:initialize) { @asks = 0 }
+        define_method(:environment) { (@asks += 1) && { "GH_TOKEN" => "lent-token-value" } }
+      end.new
+    end
+    let(:lend) { Lain::Exec::ChildEnv::Lend.new(account) }
+
+    it "approves without asking the lend's source" do
+      expect(decided(cut(main), "git commit -m chore", lend:)).to have_attributes(verdict: :allow)
+      expect(account.asks).to eq(0)
+    end
+
+    it "runs lain's own git asks without the lent token, even once a command has been lent it" do
+      lease = cut(main)
+      seen = File.join(@base, "seen-token")
+      bin = File.join(@home, "bin").tap { FileUtils.mkdir_p(_1) }
+      File.write(File.join(bin, "git"), "#!/bin/sh\nprintf '%s' \"$GH_TOKEN\" >> #{seen}\nexec /usr/bin/git \"$@\"\n")
+      File.chmod(0o755, File.join(bin, "git"))
+      lend.lent
+
+      expect(decided(lease, "git commit -m chore", env: { "PATH" => bin }, lend:)).to have_attributes(verdict: :allow)
+      expect(File.read(seen)).to eq("")
+    end
   end
 
   it "never reads again a commit the session's verdict refused" do

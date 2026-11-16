@@ -9,6 +9,7 @@ module Lain
       class Share
         USAGE = "/share -- publish this session's masked export as a secret gist"
         FORMAT = :html
+        FALLBACK = "`lain export` writes a local copy"
 
         # Only the spawn raises it, so a session file that vanished is not read as a missing gh.
         class GhMissing < StandardError
@@ -65,7 +66,9 @@ module Lain
           @journal.record(Telemetry::SessionShared.new(url:, format: FORMAT, masked:))
           "#{notice(file)}\n#{url} (#{regions(masked)} masked)"
         rescue GhMissing
-          "gh is needed to share a session; `lain export` writes a local copy"
+          "gh is needed to share a session; #{FALLBACK}"
+        rescue Forge::Gh::Account::Refused => e
+          "#{e.message}; #{FALLBACK}"
         end
 
         def notice(file) = "shared the model's masked view of #{File.basename(file)} as a secret gist"

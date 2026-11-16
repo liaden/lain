@@ -28,12 +28,27 @@ module Lain
       def sinks(invocation)
         return Null::SINKS if invocation.channel.is_a?(Channel::Null)
 
-        mask = TextMask.new(secrets: @secrets.for(invocation.context))
-        ordinals = (1..).each
+        streams = Streams.new { TextMask.new(secrets: @secrets.for(invocation.context)) }
         %i[stdout stderr].to_h do |stream|
           adapter = Sink::IOAdapter.new(invocation.channel, tool_use_id: invocation.tool_use_id, stream:)
-          [:"#{stream}_sink", MaskedSink.new(adapter, mask.stream(ordinals:))]
+          [:"#{stream}_sink", MaskedSink.new(adapter, streams)]
         end
+      end
+
+      # The masks of one call's 2 streams, built on the first chunk either shows rather than with the
+      # sinks: a value lent to the command, such as an account's token, is resolved only as its child is
+      # built, after the tool has asked for its sinks.
+      class Streams
+        # @yieldreturn [TextMask] the call's mask, built once
+        def initialize(&mask)
+          @mask = mask
+          @built = nil
+          @ordinals = (1..).each
+          @guard = Mutex.new
+        end
+
+        # @return [TextMask::Stream] numbered from the count both streams share
+        def open = @guard.synchronize { (@built ||= @mask.call).stream(ordinals: @ordinals) }
       end
 
       # Shows nothing, whatever the channel: the default for an interpreter
@@ -60,10 +75,12 @@ module Lain
         NOTE = "[the live display stopped here; the result is bounded as before]\n"
 
         # @param sink [#<<] where the masked text goes
-        # @param stream [TextMask::Stream]
-        def initialize(sink, stream)
+        # @param streams [#open] opens this sink's {TextMask::Stream} on its first chunk
+        def initialize(sink, streams)
           @sink = sink
-          @stream = stream
+          @streams = streams
+          @stream = nil
+          @stopped = false
           @seen = 0
         end
 
@@ -72,8 +89,8 @@ module Lain
         def <<(chunk)
           @seen += chunk.bytesize
           if @seen <= CAP
-            @sink << (@stream << chunk)
-          elsif @stream
+            @sink << (stream << chunk)
+          elsif !@stopped
             stop
           end
           self
@@ -92,9 +109,12 @@ module Lain
 
         private
 
+        def stream = @stream ||= @streams.open
+
         def stop
-          rest = @stream.finish
+          rest = stream.finish
           @stream = nil
+          @stopped = true
           @sink << rest
           @sink << (rest.empty? || rest.end_with?("\n") ? NOTE : "\n#{NOTE}")
         end

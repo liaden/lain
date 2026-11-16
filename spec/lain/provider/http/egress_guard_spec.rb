@@ -466,6 +466,23 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
     end
   end
 
+  describe "over a child env that lends a token" do
+    let(:token) { "ghp_lent0account0token0value" }
+    let(:account) { Class.new { define_method(:environment) { { "GH_TOKEN" => "ghp_lent0account0token0value" } } }.new }
+    let(:child_env) { Lain::Exec::ChildEnv.new(env: {}, lend: Lain::Exec::ChildEnv::Lend.new(account)) }
+    let(:literals) do
+      Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null)
+    end
+
+    it "refuses a body carrying the token once a child has been handed it" do
+      sent = stub_request(:post, url).to_return(ok)
+      child_env.call({})
+
+      expect(refusal_of(body("my token is #{token}"))).to be_a(described_class::Refused)
+      expect(sent).not_to have_been_requested
+    end
+  end
+
   describe "ordinary chat history" do
     let(:literals) { source_of(%w[hunter2 dev]) }
 

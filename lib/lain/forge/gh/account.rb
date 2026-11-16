@@ -27,6 +27,12 @@ module Lain
         UNKNOWN = "gh has no token for the GitHub account %<account>s; " \
                   "run `gh auth login` for it, or change `github account:` in the lain config"
 
+        ABSENT = "gh was not found, so there is no token for the GitHub account %<account>s; " \
+                 "install gh and run `gh auth login`, or change `github account:` in the lain config"
+
+        UNRUNNABLE = "gh could not be run (%<reason>s), so there is no token for the GitHub account %<account>s; " \
+                     "fix gh, or change `github account:` in the lain config"
+
         EXPORTED_WINS = "%<variable>s is exported, so gh runs as that token rather than " \
                         "the configured GitHub account %<account>s"
 
@@ -44,12 +50,11 @@ module Lain
         # The account the config names for a project, or for no project with a nil root.
         #
         # @param root [String, nil] the project whose `.lain/config.rb` is read
-        # @param paths [Paths] finds the user's config
         # @param notes [#puts]
         # @param shell_out_factory [#call]
         # @return [Account, None]
-        def self.configured(root:, paths:, notes:, shell_out_factory: Shell::Out.public_method(:new))
-          self.for(Config.github(root:, paths:), shell_out_factory:, notes:)
+        def self.configured(root:, notes:, shell_out_factory: Shell::Out.public_method(:new))
+          self.for(Config.github(root:), shell_out_factory:, notes:)
         end
 
         # @param name [String] the account gh is asked for a token of
@@ -65,8 +70,11 @@ module Lain
           @environment = nil
         end
 
-        # @return [Hash{String=>String}] `GH_TOKEN` set to the account's token, or empty when a
-        #   token is exported; resolved once and then memoised
+        # The `GH_TOKEN` a child should carry. A child that inherits the process's environment
+        # already holds an exported one, but a bash child is handed only what is lent to it.
+        #
+        # @return [Hash{String=>String}] `GH_TOKEN` set to the exported token when one is
+        #   exported, else to the account's; resolved once and then memoised
         # @raise [Refused] naming the account and the fix; a refusal is not memoised, so a login
         #   made since is picked up on the next call
         def environment = @guard.synchronize { @environment ||= resolved }
@@ -80,22 +88,26 @@ module Lain
 
         def resolved
           exported = EXPORTED.find { |variable| !@env[variable].to_s.empty? }
-          return told(exported) if exported
-
-          { "GH_TOKEN" => token }.freeze
+          told(exported) if exported
+          { "GH_TOKEN" => exported ? @env[exported] : token }.freeze
         end
 
-        def told(variable)
-          @notes.puts(format(EXPORTED_WINS, variable:, account: @name))
-          {}.freeze
-        end
+        def told(variable) = @notes.puts(format(EXPORTED_WINS, variable:, account: @name))
 
         def token
-          shell = @shell_out_factory.call("gh", "auth", "token", "--user", @name).run_command
+          shell = asked
           token = shell.stdout.to_s.strip
           raise Refused, format(UNKNOWN, account: @name) unless Shell::Out.ok?(shell) && !token.empty?
 
           token
+        end
+
+        def asked
+          @shell_out_factory.call("gh", "auth", "token", "--user", @name).run_command
+        rescue Errno::ENOENT
+          raise Refused, format(ABSENT, account: @name)
+        rescue SystemCallError => e
+          raise Refused, format(UNRUNNABLE, reason: e.message, account: @name)
         end
       end
     end

@@ -25,6 +25,16 @@ RSpec.describe Lain::Sensitivity::Literals do
     expect(literals({ "API_TOKEN" => "t" * 20 }, lent: { "DB_PASSWORD" => "t" * 20 })).to eq(["t" * 20])
   end
 
+  it "lists a token a lend resolved for a child, and nothing before it was asked" do
+    account = Class.new { define_method(:environment) { { "GH_TOKEN" => "ghp_lent0account0token0value" } } }.new
+    child_env = Lain::Exec::ChildEnv.new(env: {}, lend: Lain::Exec::ChildEnv::Lend.new(account))
+    listed = -> { described_class.new(child_env:).to_a }
+
+    expect(listed.call).to be_empty
+    child_env.call({})
+    expect(listed.call).to eq(["ghp_lent0account0token0value"])
+  end
+
   it "returns a frozen list" do
     expect(literals({ "API_TOKEN" => "t" * 20 })).to be_frozen
   end

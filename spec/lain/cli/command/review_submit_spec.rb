@@ -292,10 +292,6 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
       end
     end
 
-    let(:paths) do
-      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
-                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
-    end
     let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
     let(:notes) { Lain::Herdr::HeldNotes.new }
     let(:chronicle) { Lain::CLI::Chronicle::Null.new }
@@ -316,7 +312,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
     end
 
     # The account as Wiring builds it for the process.
-    def gh_account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:)
+    def gh_account = Lain::Forge::Gh::Account.configured(root:, notes:)
 
     def herdr
       Struct.new(:reporter, :window_surface, :notes).new(Lain::Herdr::Reporter::Null.new, Lain::CLI::TmuxSurface.new,
@@ -344,7 +340,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
     def options_of(subcommand) = factory.argvs.zip(factory.options).select { |argv, _| argv[1] == subcommand }
 
     it "lends the account's token to the review POST and the gist, asking gh for it once" do
-      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n")
       held_round
 
       typed("/review-submit")
@@ -357,7 +353,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
     end
 
     it "refuses an account gh does not know, naming the fix, with no gh run under another account" do
-      write_config(root, "github account: \"nobody\"\n", paths:)
+      write_config(root, "github account: \"nobody\"\n")
       held_round
 
       expect { typed("/review-submit") }.to raise_error(Lain::Error) { |error|
@@ -367,7 +363,7 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
     end
 
     it "leaves an exported token alone and tells the chat once" do
-      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n")
       said = []
       notes.bind(->(line) { said << line })
       held_round
@@ -377,7 +373,8 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
         typed("/share")
       end
 
-      expect(options_of("api") + options_of("gist")).to all(satisfy { |_, options| options[:environment] == {} })
+      expect((options_of("api") + options_of("gist")).map { |_, options| options[:environment] })
+        .to all(eq("GH_TOKEN" => "exported"))
       expect(said.grep(/#{GhParity::ACCOUNT}/o).size).to eq(1)
       expect(token_asks).to eq(0)
     end

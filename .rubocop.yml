@@ -192,8 +192,8 @@ Metrics/ParameterLists:
 # `exec_backend` as a 2-line endless memo. 306 on 2026-11-04, for Wiring again: it now
 # builds the phone's remote surface, one more collaborator the chat is handed. Inlining
 # that call into `repl_over` trips AbcSize there. 309 on 2026-11-16, for Wiring again: it
-# now builds the process's one GitHub account and hands it to the command surface, so
-# the token is asked for once.
+# now builds the process's one GitHub account and hands it to the command surface and
+# the bash backend, so the token is asked for once.
 Metrics/ClassLength:
   Max: 309
 

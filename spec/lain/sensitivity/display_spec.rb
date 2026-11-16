@@ -94,6 +94,32 @@ RSpec.describe Lain::Sensitivity::Display do
       expect(shown(:stdout).join).to eq("#{placeholder(1)}\n")
     end
 
+    # The lend resolves while the first child's environment is built, after the tool has asked for its sinks.
+    it "masks a token lent to the first command, which no one knew when the sinks were built" do
+      lent = "lentaccounttokenvalueQ7"
+      account = Class.new { define_method(:environment) { { "GH_TOKEN" => lent } } }.new
+      lending = Lain::Exec::ChildEnv.new(env: environment, lend: Lain::Exec::ChildEnv::Lend.new(account))
+      display = described_class.new(secrets: source_over(lending))
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: environment))
+      tool = Lain::Tools::Bash.new(exec: Lain::Exec::Local.new(child_env: lending))
+      tool.call({ command: "echo TOK=$GH_TOKEN" },
+                Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel:, live_display: display))
+
+      expect(shown(:stdout).join).to eq("TOK=#{placeholder(1)}\n")
+    end
+
+    it "reads the secret set once for a command that writes to both streams" do
+      reads = 0
+      source = source_over(child_env)
+      counting = Class.new { define_method(:for) { |context| (reads += 1) && source.for(context) } }.new
+      display = described_class.new(secrets: counting)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: environment))
+      invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: session, channel:, live_display: display)
+      masked_tool.call({ command: %(sh -c 'echo out; echo err 1>&2') }, invocation)
+
+      expect([shown(:stdout).join, shown(:stderr).join, reads]).to eq(["out\n", "err\n", 1])
+    end
+
     it "numbers stdout and stderr from one count, each on its own stream" do
       run_masked(%(sh -c 'printf "%s\\n" "$FOO"; printf "%s\\n" "$FOO" 1>&2'))
 

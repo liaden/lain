@@ -4,7 +4,7 @@ module Lain
   module CLI
     # Turns `--exec <name>` into the {Lain::Exec} backend a run's commands
     # become processes through -- the seam {IsolationBackend} is for
-    # `--isolation` and {Backend} for `--provider`. {BACKENDS} is the single
+    # `--isolation` and `Backend` for `--provider`. {BACKENDS} is the single
     # authority both the resolution and the flag's help text read, so the two
     # cannot drift.
     #
@@ -53,14 +53,26 @@ module Lain
       # @param options [Hash] the parsed flags
       # @param env_pass [Array<String>] the project's `env pass:` names
       # @param root [String] the project root, as in {#initialize}
+      # @param lend [#environment, nil] what every command is lent, such as the
+      #   configured GitHub account; asked on the first command, not here
+      # @param notice [#call] as in {#initialize}; also told when the lend is refused
       # @param rest [Hash] the remaining {#initialize} keywords
       # @option options [String] :exec the `--exec` value
       # @option options [String] :exec_image the `--exec-image` value
       # @return [ExecBackend]
-      def self.launch(options, env_pass:, root:, **rest)
-        new(options[:exec], image: options[:exec_image], root:,
-                            child_env: Exec::ChildEnv.from(ENV, pass: env_pass), **rest)
+      def self.launch(options, env_pass:, root:, lend: nil, notice: ->(_text) {}, **rest)
+        child_env = Exec::ChildEnv.from(ENV, pass: env_pass, lend: lending(options[:exec], lend, notice))
+        new(options[:exec], image: options[:exec_image], root:, child_env:, notice:, **rest)
       end
+
+      # A container is handed only the names {Exec::Docker::CROSSES} admits, and no lent name is
+      # among them, so a docker launch lends nothing and never makes the source answer.
+      def self.lending(name, source, notice)
+        return Exec::ChildEnv::Lend::None if source.nil? || name == "docker"
+
+        Exec::ChildEnv::Lend.new(source, notice:)
+      end
+      private_class_method :lending
 
       # @param name [String, nil] the `--exec` value; nil means {DEFAULT}
       # @param image [String, nil] the `--exec-image` value; nil means

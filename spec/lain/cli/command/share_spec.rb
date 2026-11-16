@@ -51,6 +51,19 @@ RSpec.describe Lain::CLI::Command::Share do
     expect(spawned.first.last).to include(environment: { "GH_TOKEN" => "t0k" })
   end
 
+  it "falls back to `lain export` when the configured account has no gh to ask" do
+    github = Lain::Config::Github.resolve(project: Lain::Config::Github.from({ "account" => "joel-fuze" }, path: nil),
+                                          user: Lain::Config::Github.empty, env: {})
+    absent = Class.new { define_method(:run_command) { raise Errno::ENOENT, "gh" } }.new
+    account = Lain::Forge::Gh::Account.for(github, env: {}, shell_out_factory: GhParity::FakeGh.new { absent },
+                                                   notes: Lain::Herdr::HeldNotes.new)
+
+    reply = described_class.new(exports: ->(_file) { export }, shell: gh, journal:, account:).call("", env)
+
+    expect(reply).to include("gh was not found").and end_with("; `lain export` writes a local copy")
+    expect(spawned).to be_empty
+  end
+
   it "spawns the gist under the parent's environment unchanged when no account is configured" do
     command.call("", env)
 

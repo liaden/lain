@@ -36,7 +36,7 @@ RSpec.describe Lain::Forge::Gh::Account do
     it "wins over the account, and the chat is told once, by account name" do
       account = account_for("joel-fuze", env: { "GH_TOKEN" => "exported-secret" })
 
-      2.times { expect(account.environment).to eq({}) }
+      2.times { expect(account.environment).to eq("GH_TOKEN" => "exported-secret") }
       expect(factory.argvs).to be_empty
       expect(said.size).to eq(1)
       expect(said.first).to include("joel-fuze").and include("GH_TOKEN")
@@ -46,7 +46,7 @@ RSpec.describe Lain::Forge::Gh::Account do
     it "counts GITHUB_TOKEN as exported, which gh also reads" do
       account = account_for("joel-fuze", env: { "GITHUB_TOKEN" => "exported-secret" })
 
-      expect(account.environment).to eq({})
+      expect(account.environment).to eq("GH_TOKEN" => "exported-secret")
       expect(said.first).to include("GITHUB_TOKEN")
     end
   end
@@ -67,6 +67,25 @@ RSpec.describe Lain::Forge::Gh::Account do
 
       expect(factory.argvs.size).to eq(2)
     end
+  end
+
+  it "refuses when no gh is installed, saying gh was not found" do
+    absent = Class.new { define_method(:run_command) { raise Errno::ENOENT, "gh" } }.new
+    account = described_class.for(github("joel-fuze"), env: {}, shell_out_factory: GhParity::FakeGh.new { absent },
+                                                       notes:)
+
+    expect { account.environment }.to raise_error(described_class::Refused, /gh was not found/)
+  end
+
+  it "refuses when gh cannot be run, saying why rather than that it is missing" do
+    denied = Class.new { define_method(:run_command) { raise Errno::EACCES, "gh" } }.new
+    account = described_class.for(github("joel-fuze"), env: {}, shell_out_factory: GhParity::FakeGh.new { denied },
+                                                       notes:)
+
+    expect { account.environment }.to raise_error(described_class::Refused) { |error|
+      expect(error.message).to include("gh could not be run (Permission denied - gh)").and include("joel-fuze")
+      expect(error.message).not_to include("not found")
+    }
   end
 
   it "refuses an empty token rather than lending one" do
@@ -125,22 +144,18 @@ RSpec.describe Lain::Forge::Gh::Account do
       end
     end
 
-    let(:paths) do
-      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
-                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
-    end
     let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
 
     it "builds the account a project's config names" do
-      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n")
 
-      account = described_class.configured(root:, paths:, notes:, shell_out_factory: factory)
+      account = described_class.configured(root:, notes:, shell_out_factory: factory)
 
       expect(account.environment).to eq("GH_TOKEN" => GhParity::TOKEN)
     end
 
     it "is None when no config names one" do
-      account = described_class.configured(root:, paths:, notes:, shell_out_factory: factory)
+      account = described_class.configured(root:, notes:, shell_out_factory: factory)
 
       expect(account).to be_a(described_class::None)
     end

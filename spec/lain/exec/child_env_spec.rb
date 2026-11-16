@@ -101,6 +101,89 @@ RSpec.describe Lain::Exec::ChildEnv do
     end
   end
 
+  describe "what a lend adds to every child" do
+    let(:told) { [] }
+
+    # Answers `environment` the way an account does, counting each ask.
+    def source(answer = { "GH_TOKEN" => "lent-token-value" })
+      Class.new do
+        attr_reader :asks
+
+        define_method(:initialize) { @asks = 0 }
+        define_method(:environment) { (@asks += 1) && (answer.is_a?(Exception) ? raise(answer) : answer) }
+      end.new
+    end
+
+    def lending(from, env: parent)
+      described_class.new(env:, lend: described_class::Lend.new(from, notice: told.method(:<<)))
+    end
+
+    it "hands each child the lent value, asking the source once" do
+      from = source
+      env = lending(from)
+
+      2.times { expect(env.call(parent)).to include("GH_TOKEN" => "lent-token-value") }
+      expect(from.asks).to eq(1)
+    end
+
+    it "hands a lent value the parent also holds, which the allowlist alone would withhold" do
+      exported = parent.merge("GH_TOKEN" => "exported-token")
+
+      expect(lending(source("GH_TOKEN" => "exported-token"), env: exported).call(exported))
+        .to include("GH_TOKEN" => "exported-token")
+    end
+
+    it "asks nothing until a child is built, so #environment and construction stay quiet" do
+      from = source
+      env = lending(from)
+
+      expect(env.environment).not_to have_key("GH_TOKEN")
+      expect(from.asks).to eq(0)
+    end
+
+    it "names a resolved lent value in #environment, so masking and egress learn it" do
+      env = lending(source)
+      env.call({})
+
+      expect(env.environment).to include("GH_TOKEN" => "lent-token-value")
+    end
+
+    it "degrades a refused lend to no value and 1 notice, asking again on each child" do
+      from = source(Lain::Error.new("gh has no token for nobody; run `gh auth login`"))
+      env = lending(from, env: parent.merge("GH_TOKEN" => "exported-token"))
+
+      2.times { expect(env.call({})).to include("GH_TOKEN" => nil) }
+      expect([told, from.asks]).to eq([["gh has no token for nobody; run `gh auth login`"], 2])
+      expect(env.environment).to include("GH_TOKEN" => "exported-token")
+    end
+
+    it "lends the value once a source that refused answers, and remembers it from then on" do
+      answers = [Lain::Error.new("run `gh auth login`"), { "GH_TOKEN" => "lent-token-value" }]
+      from = Class.new do
+        define_method(:environment) { answers.first.is_a?(Exception) ? raise(answers.shift) : answers.first }
+      end.new
+      env = lending(from)
+
+      expect(Array.new(3) { env.call({})["GH_TOKEN"] }).to eq([nil, "lent-token-value", "lent-token-value"])
+      expect(told.size).to eq(1)
+    end
+
+    it "answers a child env free of the lend, which neither asks the source nor carries what it lent" do
+      from = source
+      env = lending(from)
+      env.call({})
+      own = env.unlent
+
+      expect([own.environment.key?("GH_TOKEN"), own.call({}).key?("GH_TOKEN"), from.asks]).to eq([false, false, 1])
+    end
+
+    it "lends nothing by default, so an exported token is withheld" do
+      exported = parent.merge("GH_TOKEN" => "exported-token")
+
+      expect(described_class.new(env: exported).call(exported)).to include("GH_TOKEN" => nil)
+    end
+  end
+
   describe "names the human passes" do
     let(:parent) { { "RAILS_ENV" => "test", "JAVA_HOME" => "/opt/jdk", "EDITOR" => "vim" } }
 

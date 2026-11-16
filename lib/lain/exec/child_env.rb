@@ -20,6 +20,53 @@ module Lain
       # The human named a secret-shaped variable to pass to every child.
       class Refused < Lain::Error; end
 
+      # Values every child is lent, such as the configured GitHub account's token, asked of their
+      # source on the first child built and never at launch: a chat that runs no command must not
+      # wait on gh. Only an answer is kept. A refusal is asked again on the next child, so a login
+      # the human made since is picked up, and its notice is told once.
+      class Lend
+        # Lends nothing and holds no lock, so the process default stays shareable.
+        module None
+          EMPTY = {}.freeze
+
+          # @return [Hash] always empty
+          def self.lent = EMPTY
+
+          # @return [Hash] always empty
+          def self.known = EMPTY
+        end
+
+        # @param source [#environment] the values to lend; it may raise a {Lain::Error}
+        # @param notice [#call] told a refusal's message
+        def initialize(source, notice: ->(_text) {})
+          @source = source
+          @notice = notice
+          @guard = Mutex.new
+          @lent = nil
+          @told = false
+        end
+
+        # @return [Hash{String=>String}] the lent values, asked of the source until it answers
+        def lent
+          @guard.synchronize do
+            @lent ||= @source.environment
+          rescue Lain::Error => e
+            refused(e.message)
+          end
+        end
+
+        # @return [Hash{String=>String}] the lent values once the source has answered, else empty
+        def known = @lent || None::EMPTY
+
+        private
+
+        def refused(message)
+          @notice.call(message) unless @told
+          @told = true
+          None::EMPTY
+        end
+      end
+
       # Names the child always gets from the process, each a toolchain fact a
       # command needs to find its tools, its home or its git config. The
       # DOCKER_ and CONTAINER_ names are how a client reaches a remote or
@@ -45,20 +92,25 @@ module Lain
 
       # @param env [#[], #to_h] the process environment the child would inherit
       # @param pass [Array<String>] the names a project's `env pass:` lists
+      # @param lend [Lend, Lend::None] what every child is lent
       # @return [ChildEnv] passing those and the names {PASS_VARIABLE} lists
       # @raise [Refused] when one of them is secret-shaped
-      def self.from(env, pass: []) = new(pass: pass + Listed.comma(env.fetch(PASS_VARIABLE, "")), env:)
+      def self.from(env, pass: [], lend: Lend::None)
+        new(pass: pass + Listed.comma(env.fetch(PASS_VARIABLE, "")), env:, lend:)
+      end
 
       # @param pass [Array<String>] names to keep from the process beyond {KEEP}
       # @param env [#[], #to_h] the process environment the child would
       #   inherit, read on every call so a later change is seen
+      # @param lend [Lend, Lend::None] what every child is lent whatever the allowlist says
       # @raise [Refused] when a passed name is secret-shaped
-      def initialize(pass: [], env: ENV)
+      def initialize(pass: [], env: ENV, lend: Lend::None)
         refused = pass.grep(SECRET)
         raise Refused, format(REFUSAL, names: refused.join(", ")) if refused.any?
 
         @pass = pass.to_set.freeze
         @env = env
+        @lend = lend
         freeze
       end
 
@@ -71,16 +123,29 @@ module Lain
       #
       # @param lent [Hash] the caller's environment ({WorkerEnv#env})
       # @return [Hash] lent values for names the caller added or changed or that
-      #   are kept, and nil for every other inherited or scrubbed name
+      #   are kept, the {Lend}'s values, and nil for every other inherited or
+      #   scrubbed name
       def call(lent)
         inherited = @env.to_h
         passed = lent.select { |name, value| inherited[name] != value || keep?(name) }
         withheld = inherited.keys.reject { |name| passed.key?(name) || keep?(name) }
-        passed.merge(removed(withheld)).merge(removed((lent.keys + inherited.keys).grep(SCRUB)))
+        passed.merge(removed(withheld), @lend.lent, removed((lent.keys + inherited.keys).grep(SCRUB)))
       end
 
-      # @return [Hash] the parent environment as it is now
-      def environment = @env.to_h
+      # A lent value appears here only once {#call} has resolved it, while the
+      # first child's environment is built and before that child starts. A
+      # reader that asked earlier, as the live display does when it hands a
+      # tool its sinks, must ask again once output arrives.
+      #
+      # @return [Hash] the parent environment as it is now, with the lent values
+      def environment = @env.to_h.merge(@lend.known)
+
+      # What lain's own children see, such as the git it asks while approving
+      # a call: the same allowlist with nothing lent, so they neither carry a
+      # lent value nor make the source answer.
+      #
+      # @return [ChildEnv]
+      def unlent = self.class.new(pass: @pass.to_a, env: @env)
 
       # @param name [String] a variable name
       # @return [Boolean] whether the pass list names it

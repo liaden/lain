@@ -517,7 +517,7 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       end
 
       expect(notes.string.lines.grep(/#{GhParity::ACCOUNT}/o).size).to eq(1)
-      expect(verbs.map { |_, options| options[:environment] }).to all(eq({}))
+      expect(verbs.map { |_, options| options[:environment] }).to all(eq("GH_TOKEN" => "exported"))
     end
   end
 
