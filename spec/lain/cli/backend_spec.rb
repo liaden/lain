@@ -3160,7 +3160,7 @@ RSpec.describe Lain::CLI::Backend do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
       profile = with_env("LAIN_PROVIDER" => "ollama", "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil) do
-        LainCLI::ModelFlags.profile(options)
+        Lain::CLI::Exe::ModelFlags.profile(options)
       end
       request = Lain::CLI::ChatLaunch.new(options, profile:).backend
                                      .context.render(timeline:, toolset: Lain::Toolset.new)
@@ -3336,7 +3336,7 @@ RSpec.describe Lain::CLI::Backend do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse([])
       profile = with_env("LAIN_PROVIDER" => "ollama") do
-        LainCLI::ModelFlags.profile(options)
+        Lain::CLI::Exe::ModelFlags.profile(options)
       end
       request = Lain::CLI::ChatLaunch.new(options, profile:).backend
                                      .context.render(timeline:, toolset: Lain::Toolset.new)

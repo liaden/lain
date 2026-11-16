@@ -17,7 +17,7 @@ module Lain
       # improvements recorded yet" line -- so a typo would report an EMPTY
       # STORE for a store that is not empty. Per the error-taxonomy
       # convention it subclasses {Lain::Error} beside the object that raises
-      # it, so `LainCLI::Boundary#render` maps it to a clean nonzero exit with
+      # it, so `Lain::CLI::Exe::Boundary#render` maps it to a clean nonzero exit with
       # no backtrace.
       class UnknownKind < Error; end
 
@@ -86,7 +86,7 @@ module Lain
 
       private
 
-      # Echoes {Improvement}'s own write-path wording, so the
+      # Echoes {Lain::Improvement}'s own write-path wording, so the
       # kind a `improvement_write` refused and the kind this report refuses
       # read as one vocabulary rather than two.
       def assert_known_kind!(kind)
@@ -225,7 +225,7 @@ module Lain
         digests.empty? ? "no evidence" : "evidence: #{digests.join(", ")}"
       end
 
-      # {Improvement} always writes a list of digest Strings here, so anything
+      # {Lain::Improvement} always writes a list of digest Strings here, so anything
       # else was damaged after it was written. The element check is not
       # fussiness: `is_a?(Array)` alone let `[nil]` render as `(evidence: )`
       # and `[{"a" => 1}]` render as inspected Ruby inside the bullet -- both
@@ -250,7 +250,7 @@ module Lain
           "Repair or delete that line in #{@paths.improvements_path}."
       end
 
-      # A note is free-form model/user prose (see {Improvement}'s own comment
+      # A note is free-form model/user prose (see {Lain::Improvement}'s own comment
       # on `note`) -- nothing stops it carrying `\n`/`\r\n`. This report's
       # bullet format is one record per physical line, so an embedded
       # newline is flattened to a space rather than left to split one

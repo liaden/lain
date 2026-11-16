@@ -143,7 +143,9 @@ RSpec.describe LainCLI do
     it "resolves a flagless chat's provider to anthropic" do
       options = Thor::Options.new(described_class.commands.fetch("chat").options).parse([])
 
-      expect(with_env("LAIN_PROVIDER" => nil) { LainCLI::ModelFlags.profile(options).provider }).to eq("anthropic")
+      expect(with_env("LAIN_PROVIDER" => nil) do
+        Lain::CLI::Exe::ModelFlags.profile(options).provider
+      end).to eq("anthropic")
     end
   end
 
@@ -553,14 +555,14 @@ RSpec.describe LainCLI do
   end
 
   # Ctrl-C reaching a REPORT command -- `epic submit` among them, every
-  # command built on {LainCLI::Boundary#render} -- rather than `watch`'s own
-  # {LainCLI::Boundary#exit_status}. Driven against a throwaway Thor class on
+  # command built on {Lain::CLI::Exe::Boundary#render} -- rather than `watch`'s own
+  # {Lain::CLI::Exe::Boundary#exit_status}. Driven against a throwaway Thor class on
   # the same rule `probe_class` below uses: the claim is about the shared
   # `render` shape, not about any one command's own assembly.
   describe "Ctrl-C during a report command" do
     def interrupting_class
       Class.new(Thor) do
-        include LainCLI::Boundary
+        include Lain::CLI::Exe::Boundary
 
         def self.exit_on_failure? = true
         desc "go", "raises Interrupt, standing in for a Ctrl-C mid-report"
@@ -580,7 +582,7 @@ RSpec.describe LainCLI do
   describe "a report command that says no" do
     def refusing_class(status)
       Class.new(Thor) do
-        include LainCLI::Boundary
+        include Lain::CLI::Exe::Boundary
 
         def self.exit_on_failure? = true
         desc "go", "answers with words and a status"
@@ -607,7 +609,7 @@ RSpec.describe LainCLI do
   # THE PROPERTY, not Thor's phrasing. This used to assert an ARITY error --
   # `was called with arguments` -- because `check_unknown_options!` was declared
   # nowhere and Thor read a stray switch on a zero-arity command as a surplus
-  # POSITIONAL. {LainCLI::Boundary} declares it now, so the same argv is refused
+  # POSITIONAL. {Lain::CLI::Exe::Boundary} declares it now, so the same argv is refused
   # as the unknown switch it is. Three things were ever being asserted, and all
   # three survive the change: refused, nonzero, and the flag named back.
   describe "the removed --yolo flag" do
@@ -676,7 +678,7 @@ RSpec.describe LainCLI do
   # name registered through `subcommand` (thor.rb:363-380), so a declaration
   # here would be inert for exactly the four commands a stray switch was really
   # reaching: `survey`, `review`, `bench` and `epic` are separate `< Thor`
-  # classes dispatched by name. {LainCLI::Boundary} is where every one of them
+  # classes dispatched by name. {Lain::CLI::Exe::Boundary} is where every one of them
   # already shares its argv policing, so that is where the declaration lives and
   # `include Boundary` is what carries it.
   describe "unknown switches, on every command class" do
@@ -778,7 +780,7 @@ RSpec.describe LainCLI do
   # maps HELP_MAPPINGS only as argv's FIRST token, so a leaf command declared on
   # LainCLI never routed help: an arity error before `check_unknown_options!`,
   # and `Unknown switches "--help"` after it -- a sentence that tells a human a
-  # gesture they type constantly is not a thing. {LainCLI::Help} answers it the
+  # gesture they type constantly is not a thing. {Lain::CLI::Exe::Help} answers it the
   # way Thor's own `subcommand` wrapper already answers it one layer down.
   describe "--help after a command name" do
     # Every LEAF command declared on this class, from `commands` rather than a
@@ -1341,7 +1343,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
 
   # The run profile the exe resolves from what Thor parsed, read under the same
   # environment the parse ran in.
-  def profile_under(env, argv) = with_env(env) { LainCLI::ModelFlags.profile(options_under(env, argv)) }
+  def profile_under(env, argv) = with_env(env) { Lain::CLI::Exe::ModelFlags.profile(options_under(env, argv)) }
 
   # A throwaway Thor whose only command records what Thor parsed. `seen` is
   # closed over rather than assigned to a global, which the cop forbids and
@@ -1349,7 +1351,7 @@ RSpec.describe LainCLI, "endpoint flags from the environment" do
   def probe_class(seen)
     Class.new(Thor) do
       def self.exit_on_failure? = true
-      LainCLI::ModelFlags.declare(self)
+      Lain::CLI::Exe::ModelFlags.declare(self)
       desc "probe", "capture parsed options"
       define_method(:probe) { seen << options }
     end

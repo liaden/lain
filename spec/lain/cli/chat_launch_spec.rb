@@ -1208,7 +1208,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "fork and btw flags" do
     recorded = { "provider" => "ollama", "model" => "qwen3:4b" }
     resolver = instance_double(Lain::CLI::Resume, locate: "/sessions/parent.ndjson", recorded_header: recorded)
     options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(%w[--resume])
-    profile = with_env("LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil) { LainCLI::ModelFlags.profile(options) }
+    profile = with_env("LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil) { Lain::CLI::Exe::ModelFlags.profile(options) }
     timeline = CoreGraph.timeline.commit(role: :user, content: [{ "type" => "text",
                                                                   "text" => "hi" }])
 

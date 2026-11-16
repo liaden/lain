@@ -3304,12 +3304,12 @@ RSpec.describe LainCLI, "naming a project on the command line" do
     # shell's directory. Both spellings of the trap, both refused by name.
     it "refuses a value-taking flag that took its value from past the `--`" do
       expect { run_up(["up", "/tmp", "--nvim-socket", "--", "--provider", "ollama"]) }
-        .to raise_error(LainCLI::Argv::SwallowedFlag, /--nvim-socket=SOCKET/)
+        .to raise_error(Lain::CLI::Exe::Argv::SwallowedFlag, /--nvim-socket=SOCKET/)
     end
 
     it "refuses it for a flag whose value would silently become the session name" do
       expect { run_up(["up", "/tmp", "--session", "--", "--provider", "ollama"]) }
-        .to raise_error(LainCLI::Argv::SwallowedFlag, /--session=NAME/)
+        .to raise_error(Lain::CLI::Exe::Argv::SwallowedFlag, /--session=NAME/)
     end
 
     # The remedy the refusal teaches has to actually work, or the message sends

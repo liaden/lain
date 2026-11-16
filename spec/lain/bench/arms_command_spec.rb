@@ -49,7 +49,7 @@ module ArmsCommand
   # exe's own declarer populates, so this list cannot drift from the band.
   def self.band
     probe = Class.new(Thor) do
-      LainCLI::ModelFlags.declare(self)
+      Lain::CLI::Exe::ModelFlags.declare(self)
       desc "probe", "the band alone"
       define_method(:probe) { nil }
     end

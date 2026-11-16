@@ -26,7 +26,8 @@ RSpec.describe "endpoint env isolation" do
   # exe is the one place that names them all.
   it "covers every LAIN_ variable exe/lain reads a default from" do
     # The bootsnap and load-path variables name a cache, not an endpoint, and spec children need the cache path kept.
-    read = File.read(File.expand_path("../exe/lain", __dir__)).scan(/"(LAIN_[A-Z_]+)"/).flatten.uniq
+    sources = [File.expand_path("../exe/lain", __dir__), *Dir[File.expand_path("../lib/lain/cli/exe/**/*.rb", __dir__)]]
+    read = sources.flat_map { |path| File.read(path).scan(/"(LAIN_[A-Z_]+)"/).flatten }.uniq
     read = read.grep_v(/\ALAIN_(?:BOOTSNAP|LOAD_PATH_CACHE)/)
     expect(read).not_to be_empty
     expect(EndpointEnv::LEAKS).to include(*read)

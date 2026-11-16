@@ -66,231 +66,9 @@ end
 # lib/ is (see CLAUDE.md), so nothing here decides anything -- Middleware::Gate,
 # Tool, and TTY already carry the logic and already carry the specs.
 class LainCLI < Thor
-  # The Thor-boundary conventions every command shares: map the lib's own
-  # errors (all Lain::Error) onto Thor's exit contract -- clean message to
-  # stderr, nonzero exit, no backtrace -- and police trailing argv. One named
-  # home rather than a copy per command.
-  #
-  # `include Boundary` carries a CLASS-level effect as well as these instance
-  # methods: {included} declares Thor's `check_unknown_options!` on whatever
-  # includes it. That is the same responsibility rather than a second one --
-  # policing argv is the half of this module's job that {#refuse_strays!}
-  # already does for positionals, and the declaration is what does it for
-  # switches. It has to arrive by the `include` because Thor's own
-  # `check_unknown_options?` answers false for a registered subcommand NAME, so
-  # every nested Thor class needs its own; see {included} for the whole account.
-  module Boundary
-    # An unknown switch is an unknown switch, on every command class that
-    # includes this -- which is the whole CLI, and has to be.
-    #
-    # Thor's own `check_unknown_options?` answers FALSE for any name registered
-    # through `subcommand` (thor.rb:363-380), so one declaration on {LainCLI}
-    # would be INERT for `epic`, `review`, `survey` and `bench` -- the four
-    # commands a stray switch was actually reaching, because each is a separate
-    # `< Thor` class dispatched by name. Undeclared, Thor left the switch in the
-    # POSITIONAL remainder: `lain survey PATH --permissive` became an arity
-    # error naming `survey open`, a verb the human never typed and which only
-    # exists because `default_command :open` lets Thor compose one.
-    #
-    # The hook rather than a line per class, for the reason this module exists
-    # at all: policing trailing argv is already its job ({#refuse_strays!}), and
-    # five copies of one declaration is how the fifth subcommand class ships
-    # without it.
-    #
-    # `up`'s post-`--` splat is exempt STRUCTURALLY and needs no `except:`:
-    # `Thor::Options#check_unknown!` inspects only the extras collected before
-    # the separator index, so a forwarded chat flag is not an unknown switch
-    # here. `spec/lain/cli_spec.rb` drives that invocation.
-    def self.included(base) = base.check_unknown_options!
+  include Lain::CLI::Exe::Boundary
 
-    # The one command-body shape every read-only report command shares: say
-    # the String the block returns, mapping Lain::Error onto Thor's contract.
-    #
-    # Ctrl-C ends a report with a clean word and status 130 (128 + SIGINT), the
-    # shell's own convention for "this process died to a signal", never a
-    # backtrace over a signal the operator sent on purpose. {#exit_status}
-    # differs on purpose: Ctrl-C is how a `watch` tail ends, so it exits 0.
-    def render(newline: true, &block)
-      newline ? say(yield) : say(yield, nil, false)
-    rescue Interrupt
-      say "interrupted"
-      exit 130
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
-    end
-
-    # A gate that said no is a failure to a script, so the command's own
-    # status follows the words; a zero status leaves Thor's normal return.
-    # The command is built inside render because building it can raise a
-    # Lain::Error, which render maps onto Thor's contract.
-    def render_failing(build)
-      said = nil
-      render { (said = yield(build.call)).text }
-      exit said.status unless said.status.zero?
-    end
-
-    # For commands that OWN their exit status (watch): pass the block's
-    # integer through exit, with the same Lain::Error mapping; Ctrl-C ends a
-    # tail of a SIGKILL'd (never-closed) session -- clean exit, no backtrace.
-    def exit_status(&block)
-      exit yield
-    rescue Interrupt
-      exit 0
-    rescue Lain::Error => e
-      raise Thor::Error, e.message
-    end
-
-    # tmux follows $TMUX from inside a pane, so no -L is passed.
-    def adopt_input_pane
-      return unless ENV["TMUX_PANE"]
-
-      waiting_on = options[:socket] ? nil : derived_input_socket
-      reason = Lain::CLI::Up.adopt_input(ENV.fetch("TMUX_PANE"), chat_socket: waiting_on)
-      warn("lain input: #{reason}") if reason
-    rescue Lain::CLI::Up::Error => e
-      warn("lain input: #{e.message}")
-    end
-
-    # The input socket this directory's chat binds. Derived rather than passed
-    # because the path carries no pid: both panes name it from the project and
-    # the session alone, before either process exists.
-    def derived_input_socket
-      project = project_override.fetch(:project_factory) { -> { Lain::Project::Resolver.default_project } }.call
-      Lain::CLI::InputSocket.path(name: options[:name], cwd: project.cwd)
-    end
-
-    # The one journal-pass shape `consolidate` and `improve` share: `--dry-run`
-    # picks the METHOD, so the flag stops at the boundary that parsed it instead
-    # of travelling into the pass as a boolean that changes what #report means.
-    def journal_pass(pass)
-      options[:dry_run] ? pass.dry_report : pass.report
-    end
-
-    # Positionals a command has no use for. `up` forwards trailing args to the
-    # chat window ONLY from past a `--` separator, which {Argv} has already
-    # split off by the time this is asked -- so anything still here is a typo,
-    # and `lain up /tmp/repo typo` stays a loud error rather than silent
-    # pass-through to chat.
-    #
-    # UNCONDITIONAL, and that is a fix rather than a tidy: this used to return
-    # early whenever the invocation carried a `--` ANYWHERE, so
-    # `lain up /tmp/repo typo -- --provider x` forwarded "typo" to the chat
-    # pane, where it died inside tmux after the session already existed. The
-    # `--` gate belonged here only while nothing else knew where the separator
-    # was; {Argv#split_forwarded} knows exactly, so this can be absolute.
-    def refuse_strays!(strays)
-      return if strays.empty?
-
-      raise Thor::Error, "unexpected arguments #{strays.inspect} -- pass chat flags after `--`"
-    end
-  end
-
-  include Boundary
-
-  # Which project the command line names, as opposed to which one the shell
-  # happens to be standing in: `up`'s PATH positional and `chat`'s
-  # `--root`/`--cwd`. One home rather than a helper apiece, because both are
-  # the same translation and both refuse the same way -- a path a user TYPED,
-  # expanded against the shell's directory, and named in its own refusal.
-  module ProjectFlags
-    # Declared through a module method rather than inline, the way {ModelFlags}
-    # and {CompactionFlags} already are: Thor accumulates `method_option` onto
-    # the command declared NEXT, so this call goes immediately before
-    # `def chat`.
-    def self.declare(thor)
-      thor.method_option :root, type: :string, banner: "PATH",
-                                desc: "Treat PATH as this run's project root, instead of detecting one " \
-                                      "by walking up from the working directory"
-      thor.method_option :cwd, type: :string, banner: "PATH",
-                               desc: "Run as if the working directory were PATH; must lie under the root, " \
-                                     "and defaults to it"
-    end
-
-    # `up`'s two arguments, cut out of one positional list.
-    #
-    # PATH shares an argv slot with the first `--`-forwarded flag, because Thor
-    # drops the separator before the command method is entered.
-    # {LainCLI.split_forwarded} puts it back from what argv really said.
-    #
-    # The two halves are then treated separately and absolutely: `forwarded` is
-    # forwarded, and every own positional past the first is refused. Adding
-    # them together -- which this did -- threw away the one thing the split
-    # knows for certain, and `lain up /tmp/repo typo -- --provider x` shipped
-    # "typo" to the chat pane to die inside tmux, after the session existed.
-    def up_argv(path, chat_args)
-      own, forwarded = self.class.split_forwarded([path, *chat_args].compact)
-      refuse_strays!(own.drop(1))
-      { path: own.first, chat_args: forwarded }
-    end
-
-    # What `--root`/`--cwd` change about `chat`, or NOTHING. Nothing is the
-    # point of the empty Hash: an unflagged `lain chat` keeps
-    # {Lain::CLI::ChatLaunch}'s own default factory --
-    # `Lain::Project::Resolver.default_project`, the one place a run resolves
-    # its own project -- rather than routing the ordinary case through a second
-    # construction of the same resolver.
-    #
-    # `--cwd` DEFAULTS TO THE ROOT, because "open that project" is what
-    # `--root PATH` alone means and the shell's directory is almost never
-    # inside it. Left to `Resolver#call`'s own `cwd: Dir.pwd`, the common
-    # invocation built a Project whose cwd lies outside its root, which
-    # {Lain::Project}'s guard refuses with an `ArgumentError` -- not a
-    # {Lain::Error}, so nothing between here and Thor rendered it and the flag
-    # whose whole design is about naming a path in its own refusal answered
-    # with a fourteen-frame backtrace.
-    def project_override
-      root = directory!(options[:root], "--root")
-      cwd = directory!(options[:cwd], "--cwd")
-      return {} if root.nil? && cwd.nil?
-
-      { project_factory: -> { resolved_project(root:, cwd: cwd || root) } }
-    end
-
-    def trust_root(path) = directory!(path, "PATH") || Lain::Project::Resolver.default_project.root
-
-    # A path the user typed, expanded against the shell's directory and refused
-    # BY NAME when it is not a directory. The resolver would take a regular file
-    # as a root perfectly happily -- it asks realpath, and a file has one -- and
-    # a project rooted at a file is a typo, never an intent.
-    #
-    # A BLANK flag is no flag: `--root ""` is a truthy String, so it would reach
-    # rung 1 and die inside `realpath("")`. An empty shell variable expanding to
-    # nothing is the ordinary way that happens, and "an empty flag means no
-    # flag" is the friendlier reading of it.
-    def directory!(value, flag)
-      return nil if value.nil? || value.empty?
-
-      File.expand_path(value).tap do |path|
-        raise Thor::Error, "#{flag} #{value} is not a directory" unless File.directory?(path)
-      end
-    end
-
-    # The catch-all is the point, not the `UnusableHome` rename above it. This
-    # lambda runs deep inside {Lain::CLI::ChatLaunch}, and only a
-    # {Lain::Error} is rendered from there -- so every OTHER way resolution can
-    # fail on a path a user TYPED (the `ArgumentError` a cwd outside its root
-    # raises, an unreadable ancestor, a `.lain/config.rb` that will not run)
-    # reached the terminal as a backtrace. Naming both flags and their values is
-    # what makes the message actionable, since either one can be the wrong half.
-    #
-    # rubocop:disable Style/EnvHome -- {Lain::Project::Resolver.default_project}'s
-    # own note, and this is the explicit-flag twin of it: `Dir.home` falls
-    # through to getpwuid with HOME unset and raises a bare ArgumentError, which
-    # is neither a Lain::Error this file can render nor a named refusal. `nil`
-    # reaches Resolver::Home, which refuses it by name -- renamed here to the
-    # same refusal `default_project` gives, so which flag was typed cannot
-    # change what an unusable HOME says.
-    def resolved_project(root:, cwd:)
-      Lain::Project::Resolver.new(home: ENV.fetch("HOME", nil)).call(cwd:, root:).project
-    rescue Lain::Project::Resolver::UnusableHome => e
-      raise Lain::Project::Resolver::UnresolvableProject, e
-    rescue StandardError => e
-      raise Thor::Error, "cannot open --root #{root.inspect} at --cwd #{cwd.inspect}: #{e.message}"
-    end
-    # rubocop:enable Style/EnvHome
-  end
-
-  include ProjectFlags
+  include Lain::CLI::Exe::ProjectFlags
 
   # Turns the chat flags into the two collaborators the Agent needs a CHOICE
   # about -- which Provider backend, and the Context carrying the model and the
@@ -305,285 +83,16 @@ class LainCLI < Thor
   # message and exit nonzero, instead of Thor's legacy exit-0 default.
   def self.exit_on_failure? = true
 
-  # What the REAL argv said, kept because Thor's parsed `options` cannot say
-  # it. `extend`ed rather than written as `def self.` so this class's own body
-  # stays the commands (`Metrics/ClassLength`); `super` still reaches Thor's
-  # `start`, which sits behind this module in the singleton ancestry.
-  module Argv
-    # A flag written before `--` that took its value from PAST the separator.
-    # Its own class because the answer is a sentence about argv, not about
-    # anything the command does -- the shape `Up::Cockpit::SwallowedFlag` used
-    # to name, retargeted: `--nvim` no longer takes a value, but the socket did
-    # not stop existing, it moved to `--nvim-socket`, which does and which sits
-    # in the same slot. The guard's reason outlived its subject.
-    class SwallowedFlag < Thor::Error
-      def initialize(written, delivered)
-        super("`--` did not forward what it looks like it forwards: #{written.inspect} follows the " \
-              "separator, but #{delivered.inspect} is what would reach `chat`. A value-taking `up` flag " \
-              "written LAST before `--` takes the first forwarded token as its own value, and the PATH " \
-              "you typed is what gets forwarded in its place. Write that flag with an `=` -- " \
-              "`--nvim-socket=SOCKET`, `--session=NAME` -- so its value cannot come from past `--`.")
-      end
-    end
+  extend Lain::CLI::Exe::Argv
 
-    # Thor swallows the "--" separator before a command method sees its argv,
-    # so remember what followed it. `up` forwards trailing args to the chat
-    # window ONLY from past `--`; anything else is a stray positional
-    # {Boundary#refuse_strays!} turns into a loud error.
-    #
-    # The TOKENS, not merely their count. Thor leaves everything after `--`
-    # unparsed and hands it over as ordinary positionals -- verified against
-    # this bundle's Thor, flags `up` itself declares included -- so `lain up --
-    # --provider ollama` reaches `def up(path = nil, *chat_args)` with
-    # "--provider" sitting in PATH's own slot, and only what was really in argv
-    # puts it back.
-    #
-    # A count alone is not enough, and the first edition of this used one. Thor
-    # SKIPS the separator when the flag before it still wants a value, so
-    # `lain up /tmp --nvim-socket -- --provider ollama` hands over
-    # `["/tmp", "ollama"]` -- two positionals for two forwarded tokens, so the
-    # arithmetic still balances while the PATH the user typed has silently
-    # become a chat flag. Comparing the delivered tail against the written
-    # tokens is what tells those two apart; see {SwallowedFlag}.
-    def start(given_args = ARGV, config = {})
-      separator = given_args.index("--")
-      @forwarded = separator ? given_args[(separator + 1)..] : []
-      super
-    end
-
-    # A command's positionals, cut back into its OWN and the ones argv's `--`
-    # forwarded.
-    #
-    # @param positionals [Array<String>]
-    # @return [Array(Array<String>, Array<String>)]
-    # @raise [SwallowedFlag] when the tail Thor delivered is not the tail argv wrote
-    def split_forwarded(positionals)
-      forwarded = @forwarded || []
-      return [positionals, []] if forwarded.empty?
-
-      tail = positionals.last(forwarded.length)
-      raise SwallowedFlag.new(forwarded, tail) unless tail == forwarded
-
-      [positionals[0...-forwarded.length], tail]
-    end
-  end
-
-  extend Argv
-
-  # `--help` written AFTER a command name, which Thor routes for a SUBCOMMAND
-  # class and not for a command declared here. `map HELP_MAPPINGS => :help`
-  # (thor.rb:660) only ever matches argv's FIRST token, so `lain chat --help`
-  # reached the option parser as an ordinary switch: an arity error before
-  # {Boundary} declared `check_unknown_options!`, and `Unknown switches
-  # "--help"` after it. The second is the worse sentence of the two -- it tells
-  # a human that a gesture they type constantly is not a thing, while
-  # `lain help chat` answers perfectly well.
-  #
-  # Not a courtesy invented here: Thor's own `subcommand` wrapper already does
-  # it one layer down (`invoke_args.unshift "help" if opts.delete("--help") ||
-  # opts.delete("-h")`, thor.rb:337), which is exactly why `lain survey --help`
-  # worked while `lain chat --help` did not. This gives the commands declared on
-  # THIS class the same answer, off the same HELP_MAPPINGS.
-  #
-  # In `dispatch` and deliberately NOT in {Argv#start}: the forwarded tail is
-  # that module's whole subject, and nothing about help may perturb it. Only the
-  # span BEFORE `--` is read here, so `lain up -- --help` still forwards
-  # `--help` to the chat window verbatim.
-  module Help
-    def dispatch(meth, given_args, given_opts, config)
-      super(meth, help_instead(meth, given_args) || given_args, given_opts, config)
-    end
-
-    # The `help COMMAND` argv an invocation is really asking for, or nothing.
-    #
-    # A nil command name is what says this is argv's own dispatch: `invoke`
-    # names the command it wants, and its arguments do not begin with one.
-    #
-    # @param meth [String, nil]
-    # @param given_args [Array<String>]
-    # @return [Array<String>, nil]
-    def help_instead(meth, given_args)
-      return nil unless meth.nil?
-
-      asked = given_args[0...(given_args.index("--") || given_args.length)]
-      name = asked.first.to_s
-      return nil unless all_commands.key?(name) && !subcommands.include?(name)
-
-      ["help", name] if Thor::HELP_MAPPINGS.intersect?(asked.drop(1))
-    end
-  end
-
-  extend Help
-
-  # WHO answers a turn, and how it samples: the provider, its endpoint, the
-  # model, the token ceiling, the two sampler knobs that ride `Request#extra`,
-  # and the two ollama runner knobs. Its own module on {CompactionFlags}' rule
-  # -- one question, flags that only make sense read together, and one object in
-  # lib that already owns the whole resolution ({Lain::CLI::Backend}), so this
-  # band and that object have the same boundary.
-  #
-  # ONE band for every command that asks a model -- chat, `bench record`,
-  # `bench arms`, `epic submit`, `consolidate` and `improve` -- declared above
-  # the subcommand classes so each of them can reach it. A command that read
-  # its own subset of these dropped the rest in silence: `bench arms` never
-  # sent LAIN_NUM_BATCH, and every one of its requests reloaded a runner the
-  # chat beside it had just loaded.
-  #
-  # Thor accumulates `method_option` onto the command declared NEXT, so each
-  # `.declare` sits immediately above the command it belongs to.
-  module ModelFlags
-    # The rule a chat's profile flags state: an untyped one takes what the
-    # resumed or forked session's header recorded, ahead of the environment.
-    RECORDED = "a resumed or forked chat defaults to what its session recorded"
-
-    # The same rule for a pass over a recorded session.
-    REVIEWED = "defaults to what the session under review recorded"
-
-    # WHICH endpoint answers, HOW it samples, the runner it keys, and how long
-    # that runner stays loaded: one question per method.
-    #
-    # @param thor [Class] the Thor class the flags accumulate onto
-    # @param max_tokens [Integer, nil] this command's default ceiling; nil takes the model's own
-    # @param ceiling [String, nil] why this command's ceiling is the one it is
-    # @param recorded [String, nil] where an untyped profile flag's default comes
-    #   from before the environment, for a command that reads one
-    def self.declare(thor, max_tokens: nil, ceiling: nil, recorded: nil)
-      endpoint(thor, recorded)
-      sampling(thor, max_tokens, ceiling)
-      throughput(thor, recorded)
-      residency(thor)
-      reasoning(thor)
-      price_tier(thor)
-      effort(thor)
-    end
-
-    def self.effort(thor)
-      thor.method_option :effort, type: :string, enum: %w[low medium high xhigh max],
-                                  desc: "Effort sent as output_config.effort (Anthropic); unset sends none " \
-                                        "and the model's own default applies"
-    end
-
-    # Every command that builds a Backend can reach an Anthropic client, so
-    # each one says what happens at a price tier. Only chat can ask.
-    def self.price_tier(thor)
-      thor.method_option :confirm_price_tier, type: :string, enum: %w[ask allow refuse], default: "ask",
-                                              desc: "Before a request crosses its model's prompt-size price " \
-                                                    "tier: ask the human, allow, or refuse. Where no human " \
-                                                    "is attached, ask refuses"
-    end
-
-    # The six {Lain::CLI::RunProfile} flags carry NO Thor `default:`. A default
-    # makes a typed `--provider anthropic` and silence the same parse, and a
-    # resumed or forked chat must know which fields the human typed before it
-    # lets the recorded profile answer the rest. {profile} supplies the
-    # environment's answer instead, under the same variable names, so a
-    # project still pins its endpoint in a direnv `.envrc`.
-    # See EnvDefaults for what is deliberately NOT env-configurable, and why.
-    def self.endpoint(thor, recorded)
-      thor.method_option :provider, type: :string,
-                                    desc: "Model provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")} " \
-                                          "#{help("$LAIN_PROVIDER, else #{Lain::CLI::RunProfile::DEFAULT_PROVIDER}",
-                                                  recorded)}"
-      thor.method_option :api_base, type: :string,
-                                    desc: "Override the Ollama API base (ollama arms only; https " \
-                                          "required on ollama-cloud) #{help("$LAIN_API_BASE", recorded)}"
-      thor.method_option :model, type: :string,
-                                 desc: "Model id; defaults to the selected provider's own default when unset " \
-                                       "#{help("$LAIN_MODEL", recorded)}"
-    end
-
-    # The run's profile: what was typed, then the environment, then the
-    # built-in provider. A resumed or forked chat, and a pass over a recorded
-    # session, lays this over the profile that session recorded, which is why
-    # the typed fields travel with it.
-    #
-    # @param options [Hash] Thor's parse of a command declaring this band
-    # @return [Lain::CLI::RunProfile]
-    def self.profile(options)
-      Lain::CLI::RunProfile.from_options(options).with_defaults(
-        provider: Lain::CLI::EnvDefaults.string("LAIN_PROVIDER", Lain::CLI::RunProfile::DEFAULT_PROVIDER),
-        api_base: Lain::CLI::EnvDefaults.string("LAIN_API_BASE"),
-        model: Lain::CLI::EnvDefaults.string("LAIN_MODEL"),
-        num_ctx: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_CTX"),
-        num_batch: Lain::CLI::EnvDefaults.numeric("LAIN_NUM_BATCH")
-      )
-    end
-
-    def self.sampling(thor, max_tokens, ceiling)
-      thor.method_option :max_tokens, type: :numeric, default: max_tokens,
-                                      desc: "max_tokens per model turn#{"; #{ceiling}" if ceiling} " \
-                                            "[default #{max_tokens || "the model's own ceiling"}]"
-      thor.method_option :temperature, type: :numeric,
-                                       desc: "Sampler temperature, threaded into Request#extra (ollama honors it)"
-      thor.method_option :seed, type: :numeric,
-                                desc: "Sampler seed, threaded into Request#extra (ollama honors it)"
-    end
-
-    # Both are profile flags, so neither has a Thor `default:` ({endpoint}
-    # says why), and {profile} reads their variables. The property that
-    # reading must hold: they RESOLVE TO nil when the variable is unset.
-    # {Lain::CLI::Backend}'s sampler loop keeps `num_ctx` only when its value
-    # is non-nil, so an unset `--num-ctx`/`LAIN_NUM_CTX` still leaves the
-    # payload byte-identical. `num_batch` no longer holds that property, on
-    # purpose: {Lain::CLI::Backend::DEFAULT_NUM_BATCH} fills it in at 2048
-    # when this resolves to nil, because ollama's own server default costs
-    # prefill time measurably and nothing should have to opt into not paying
-    # it. `backend_spec.rb`'s and `cli_spec.rb`'s num_ctx-only no-options
-    # examples are what fail if `num_ctx`'s half stops holding.
-    def self.throughput(thor, recorded)
-      thor.method_option :num_batch, type: :numeric,
-                                     desc: "Ollama prompt batch size; ollama's own default of 512 costs ~1.31x " \
-                                           "prefill on this box, 2048 is the measured setting. A local-SERVER " \
-                                           "knob: it is sent on ollama-cloud too, where its effect is " \
-                                           "unmeasured #{help("$LAIN_NUM_BATCH", recorded)}"
-      thor.method_option :num_ctx, type: :numeric,
-                                   desc: "Ollama context length for the request; unset serves the model's own. " \
-                                         "A local-SERVER knob: it is sent on ollama-cloud too, where its effect " \
-                                         "is unmeasured; a value above the model's trained maximum is " \
-                                         "refused there as well #{help("$LAIN_NUM_CTX", recorded)}"
-    end
-
-    # Residency rather than throughput: how long ollama keeps the runner loaded
-    # once it has answered, which changes nothing about the answer. A profile
-    # flag on {endpoint}'s rule, so no Thor `default:` -- and the only RUNNER
-    # knob whose value is not a number, since `-1`, `0` and `5m` are one knob
-    # with two JSON types ({Lain::CLI::Backend} sorts out which).
-    #
-    # It takes no `recorded`: it is the one profile flag a resumed or forked
-    # chat does NOT inherit, because a pin is server state that outlives the
-    # process and re-pinning with no flag typed is not a default anyone chose.
-    # {Lain::CLI::RunProfile::HEADER_FIELDS} excludes it for that reason, and
-    # `cli_spec` fails if this help line claims otherwise.
-    def self.residency(thor)
-      thor.method_option :keep_alive, type: :string,
-                                      desc: "How long ollama keeps the model loaded after a turn: -1 pins it " \
-                                            "resident, 0 releases it as soon as the turn is answered, otherwise " \
-                                            "a duration such as 5m or 90s. Unset leaves ollama's own 5m timer " \
-                                            "alone. A 30B reload costs 16-20s and discards the prefix cache with " \
-                                            "it. The pin OUTLIVES this process -- the model stays resident after " \
-                                            "lain exits until `ollama stop` releases it -- and a resumed or " \
-                                            "forked chat does not inherit it. A local-SERVER knob: it is sent on " \
-                                            "ollama-cloud too, where its effect is unmeasured"
-    end
-
-    # Checked against the model's own `/api/show` list at launch, so no Thor
-    # `default:` or `enum:` names levels here; unset leaves the project's `think`.
-    def self.reasoning(thor)
-      thor.method_option :think, type: :string,
-                                 desc: "Reasoning level to send, such as low or high; refused at launch unless " \
-                                       "the model lists it. Unset uses the config.rb `think`, else the model's own"
-    end
-
-    # A flag's defaults, in the order they answer.
-    def self.help(variable, recorded) = "[#{[variable, recorded].compact.join("; ")}]"
-  end
+  extend Lain::CLI::Exe::Help
 
   # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
   # resolves the home, folds the Journal, and returns a String; this class parses
   # argv, `say`s what comes back, and presents the lib's own refusals -- all
   # Lain::Error -- as Thor::Error, message to stderr, nonzero exit, no backtrace.
   class Epic < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -630,11 +139,11 @@ class LainCLI < Thor
     method_option :digest, type: :string, desc: "The changeset content address -- implementation only"
     method_option :wave, type: :numeric, desc: "A wave of issue plans, asked about together -- issue_plan only"
     # The adjudication pair's backend, built only when some stage is configured adjudicated.
-    ModelFlags.declare(self)
+    Lain::CLI::Exe::ModelFlags.declare(self)
     desc "submit STAGE [SLUG]", "Put a stage's artifact in front of its gate and journal the verdict"
     def submit(stage, slug = nil)
       build = lambda do
-        Lain::CLI::EpicSubmit.from_options(options, profile: ModelFlags.profile(options),
+        Lain::CLI::EpicSubmit.from_options(options, profile: Lain::CLI::Exe::ModelFlags.profile(options),
                                                     input: $stdin, output: $stdout)
       end
       render_failing(build) do |command|
@@ -668,7 +177,7 @@ class LainCLI < Thor
   # Lain::CLI::Worktrees finds the repository, runs the reaper and returns a
   # String; this class says it.
   class Worktrees < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -682,7 +191,7 @@ class LainCLI < Thor
   # 130 interrupted, and 64 when the id, the repository or the branch is
   # refused. A malformed command line is Thor's usage error and exits 1.
   class Land < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -724,7 +233,7 @@ class LainCLI < Thor
   # drains, reports and appends. `drain` owns its exit status: 0 when every item
   # landed or was researched, 1 otherwise, 130 when interrupted.
   class Todos < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -765,7 +274,7 @@ class LainCLI < Thor
   # the escape. `default_command` is what keeps `lain review feature/foo` working
   # for every target that does not collide.
   class Review < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -797,7 +306,7 @@ class LainCLI < Thor
   # as a path and nothing else; the reservation is the exe's problem, so the exe
   # carries the escape.
   class Survey < Thor
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     def self.exit_on_failure? = true
 
@@ -820,275 +329,6 @@ class LainCLI < Thor
     end
   end
 
-  # WHERE a shell command becomes a process -- the {Lain::Exec} seam's two
-  # selectable backends, and the image the container one starts from. A
-  # declarer of their own on {SurfaceFlags}' rule: two flags naming one idea
-  # are an object, and the Thor class has no Metrics/ClassLength headroom to
-  # spend on a second `method_option`.
-  #
-  # ⚠️ NEITHER FLAG IS A SAFETY CONTROL. `--exec docker` changes which
-  # toolchain a command finds, never what the command is permitted to do: the
-  # container runs as the calling user on a read-write mount of the project,
-  # and {Lain::Exec::Docker}'s class doc says so at length. Tier-3 approval is
-  # the boundary for every value of this flag. Help text that started
-  # promising confinement would be the defect, not the feature.
-  module ExecFlags
-    # Constants rather than inline strings, because the two `method_option`
-    # calls plus their prose ran this declarer past Metrics/MethodLength --
-    # and the sentences are the part a reader of `--help` actually reads.
-    BACKEND = "How a shell command becomes a process " \
-              "(#{Lain::CLI::ExecBackend::BACKENDS.join(", ")}): in this process, or one `docker run --rm` " \
-              "per command with the project mounted. It selects a toolchain, never a confinement -- tier-3 " \
-              "approval is still the boundary. `docker` takes one argv, so a pipeline it cannot " \
-              "reconstruct falls back to the model's own string, run as `sh -c` INSIDE the container; " \
-              "crosses a fixed set (LAIN_*, LANG/LC_*, TZ, TERM, NO_COLOR, CI) by NAME on the command " \
-              "line, values kept off it; and is refused at launch for a missing client, before a session " \
-              "record exists -- but the daemon is not probed until the first command, so one that is down " \
-              "surfaces then".freeze
-
-    IMAGE = "The image `--exec docker` starts each container from " \
-            "(default #{Lain::Exec::Docker::DEFAULT_IMAGE}, which carries `sh` and little else -- name " \
-            "your project's own)".freeze
-
-    ARM_CONFINE = "Bash confinement (#{Lain::CLI::Arms::CONFINE.join(", ")}; " \
-                  "default #{Lain::CLI::Arms::DEFAULT.confine}): workspace " \
-                  "runs a command the judge, a rule or bypass approved in the workspace sandbox, reader runs " \
-                  "it traced and unconfined; both run a read-only command in the reader sandbox, and a call you " \
-                  "approve yourself runs traced and unconfined, except one that reads secrets: a plain y runs " \
-                  "that one contained, without network, in the sandbox, though under workspace a build tool's " \
-                  "fetch keeps its ports and the prompt names them, and only the network answer runs it " \
-                  "unconfined".freeze
-    BENCH_CONFINE = "How far bash is confined in each arm (#{Lain::Bench::CLI::CONFINES.join(", ")}; " \
-                    "default #{Lain::Bench::CLI::DEFAULT_CONFINE}). " \
-                    "reader runs a read-only command whose paths stay in the checkout in the reader sandbox; " \
-                    "any other command runs traced and unconfined, or in the workspace sandbox under " \
-                    "workspace. A command whose paths cannot be read is refused in a lease".freeze
-    ARM_JUDGE_FACTS = "Bench arm: what the auto judge is told about a command " \
-                      "(#{Lain::CLI::Arms::JUDGE_FACTS.join(", ")}; default #{Lain::CLI::Arms::DEFAULT.judge_facts})".freeze
-    ARM_JUDGE_DENIALS = "Bench arm: what a judge's refusal does under auto approval: applied, handed to a human " \
-                        "(escalate_only), or counted until #{Lain::Approval::DenialBreaker::IN_A_ROW} in a row or " \
-                        "#{Lain::Approval::DenialBreaker::PER_SESSION} in a session stop the judge being asked " \
-                        "about that requester (breaker) " \
-                        "(#{Lain::CLI::Arms::JUDGE_DENIALS.join(", ")}; default #{Lain::CLI::Arms::DEFAULT.judge_denials})".freeze
-    ARM_TRIPWIRE = "Binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; " \
-                   "default #{Lain::CLI::Arms::DEFAULT.tripwire}). " \
-                   "stop fails closed on the seeded signals, honest calls included: a stopped agent's next calls " \
-                   "are refused, and a paused main's go to a human, or are refused when nobody can be asked; the " \
-                   "rest stay observe-only".freeze
-    ARM_ROUND_BUDGET = "What one tool round's results may cost together " \
-                       "(#{Lain::CLI::Arms::ROUND_BUDGET.join(", ")}; default #{Lain::CLI::Arms::DEFAULT.round_budget})".freeze
-
-    ARM_ROUND_DEDUP = "Answer a repeated tool result by naming the first " \
-                      "(#{Lain::CLI::Arms::ROUND_DEDUP.join(", ")}; default #{Lain::CLI::Arms::DEFAULT.round_dedup})".freeze
-
-    # @param thor [Class] the Thor class to declare on
-    # @return [void]
-    def self.declare(thor)
-      thor.method_option :exec, type: :string, default: Lain::CLI::ExecBackend::DEFAULT, desc: BACKEND
-      thor.method_option :exec_image, type: :string, banner: "IMAGE", desc: IMAGE
-      thor.method_option :confine, type: :string, banner: "ARM", desc: ARM_CONFINE
-      thor.method_option :judge_facts, type: :string, banner: "ARM", desc: ARM_JUDGE_FACTS
-      thor.method_option :judge_denials, type: :string, banner: "ARM", desc: ARM_JUDGE_DENIALS
-      thor.method_option :tripwire, type: :string, banner: "ARM", desc: ARM_TRIPWIRE
-      thor.method_option :round_budget, type: :string, banner: "ARM", desc: ARM_ROUND_BUDGET
-      thor.method_option :round_dedup, type: :string, banner: "ARM", desc: ARM_ROUND_DEDUP
-    end
-
-    # The launch-time half of the flag, in a module method rather than inline in
-    # `#chat` on {ModelFlags}' rule -- and because four reads of the options hash
-    # spent the last of that method's Metrics/AbcSize budget, which is the cop
-    # asking for the object this module already is.
-    #
-    # Refused AHEAD of {Lain::CLI::ChatLaunch}, so an `--exec` name this box
-    # cannot run costs the operator nothing: no project resolved, no journal
-    # opened, no session file on disk. The backend it builds is DROPPED, which
-    # is what makes `root: Dir.pwd` the honest value here -- the question asked
-    # is "can this box run that flag?", never "what would it mount?". The
-    # backend a run actually uses is resolved by
-    # {Lain::CLI::Wiring::ToolsetBuild} from the resolved Project's root.
-    #
-    # @param options [Hash] the parsed chat flags
-    # @return [void]
-    # @raise [Lain::Error] an unknown name, or docker with no client on PATH
-    def self.refuse_unusable!(options)
-      Lain::CLI::Arms.from(options)
-      Lain::CLI::ExecBackend.resolve(options[:exec], image: options[:exec_image], root: Dir.pwd)
-    end
-  end
-
-  # The compaction band of `chat`'s flag surface: whether to compact at all, the
-  # three byte knobs, what happens when no cut can make room, and the summarizer
-  # TIER. Its own module because it is its own question -- "how does this run
-  # manage a growing history", answered by eight flags that only make sense read
-  # together, and `lain help chat` is where an operator meets them as a group.
-  #
-  # It stays in the exe rather than lib/ for a hard reason: the library does not
-  # depend on Thor, and a lib object calling `method_option` would make it.
-  #
-  # Every default names its authority in lib -- Backend's constants, the oracle's
-  # ceiling -- rather than restating a number, so `lain help chat` and the wiring
-  # cannot come to disagree about what an unset flag means.
-  #
-  # The five --compact-* flags below carry NO Thor `default:`, and that is
-  # load-bearing: Thor would materialize the key, so an unset flag could not be
-  # told from a typed one and a resume could never inherit the recorded arm.
-  # Unset reaches {Lain::CLI::Backend} as nil, and its constants answer.
-  module CompactionFlags
-    INHERITED = "a resumed or forked chat inherits what the session recorded"
-
-    # Thor's `method_option` accumulates onto the command declared NEXT, so this
-    # runs from the class body where the band belongs: after chat's other flags,
-    # before `def chat`.
-    def self.declare(thor)
-      history(thor)
-      fallback(thor)
-      schedule(thor)
-      strategy(thor)
-      pipeline(thor)
-      summarizer(thor)
-    end
-
-    # No Thor default: an untyped run still compacts, but only a typed value may override what a resume recorded.
-    def self.history(thor)
-      thor.method_option :compact, type: :boolean,
-                                   desc: "Summarize the history's head as it grows; --no-compact opts out"
-      thor.method_option :compact_bytes, type: :numeric,
-                                         desc: "Droppable-head bytes above which a compaction is warranted " \
-                                               "(default #{Backend::DEFAULT_BYTE_THRESHOLD}; #{INHERITED})"
-      thor.method_option :compact_trigger, type: :string, enum: Lain::CLI::CompactionProfile::TRIGGERS,
-                                           desc: "Count only the droppable head (default) or the whole request " \
-                                                 "against --compact-bytes (#{INHERITED})"
-      thor.method_option :compact_cap, type: :numeric,
-                                       desc: "History bytes that force a compaction even while the cache is warm " \
-                                             "(default #{Backend::DEFAULT_HARD_CAP}; #{INHERITED})"
-      thor.method_option :compact_keep, type: :numeric,
-                                        desc: "Trailing messages a compaction leaves verbatim " \
-                                              "(default #{Backend::DEFAULT_KEEP_LAST}; #{INHERITED})"
-    end
-
-    # What happens when no cut can make room, apart from {#history} only to
-    # keep each method to one band of knobs.
-    def self.fallback(thor)
-      thor.method_option :compact_fallback, type: :string,
-                                            desc: "What happens when no cut can make room " \
-                                                  "(#{Backend::COMPACT_FALLBACKS.join(", ")}): handoff replaces " \
-                                                  "the history before the current ask with one state document " \
-                                                  "and answers the ask, after a refusal; early-handoff does the " \
-                                                  "same at a clean break past half the window, before one; " \
-                                                  "none lets the refusal stand " \
-                                                  "(default #{Backend::DEFAULT_COMPACT_FALLBACK}; #{INHERITED})"
-    end
-
-    # NO `default:`, for the strategy flag's reason below: an unset schedule
-    # must reach {Lain::CLI::CompactionProfile} as nil so a resume inherits it.
-    def self.schedule(thor)
-      profile = Lain::CLI::CompactionProfile
-      thor.method_option :compact_schedule, type: :string,
-                                            desc: "When a compaction runs (#{profile::SCHEDULES.join(", ")}): " \
-                                                  "idle prepares the cut while the human is away, turn " \
-                                                  "compacts at the next ask " \
-                                                  "(default #{profile::DEFAULT_SCHEDULE}; #{INHERITED})"
-    end
-
-    # HOW a compacted span collapses, its own method for the same reason
-    # {#history} and {#summarizer} already are one each: three questions that
-    # only make sense read on their own. Names
-    # {Lain::CLI::CompactionStrategy::STRATEGIES} rather than restating the
-    # set, the rule the compact knobs and `--isolation` both follow: the
-    # flag's help text and the resolver cannot come to disagree about what a
-    # strategy name means.
-    # NO `default:`, and that is load-bearing rather than an omission.
-    # {Lain::CLI::CompactionStrategy}'s own header says the fallback is that
-    # class's DEFAULT constant and "not a Thor default" -- and a Thor default
-    # here does not merely duplicate it, it makes the flag's OFF STATE
-    # unreachable: Thor materializes the key, so `options[:compact_strategy]`
-    # is never nil in a real run, and {Lain::CLI::Backend::SpanSummarizer}'s
-    # "no flag named a strategy" branch becomes dead code from the CLI. The
-    # eager tier -- the control arm every `--compact-strategy` run is measured
-    # against -- would then be selectable only from an options Hash the
-    # executable cannot produce. Unset must reach the reader as nil.
-    def self.strategy(thor)
-      thor.method_option :compact_strategy, type: :string,
-                                            desc: "How a compacted span collapses " \
-                                                  "(#{Lain::CLI::CompactionStrategy::STRATEGIES.join(", ")}; " \
-                                                  "unset keeps the eager tool-result tier; #{INHERITED})"
-      thor.method_option :compact_provenance, type: :string, enum: %w[on off],
-                                              desc: "Check a summary's claims about the user against the " \
-                                                    "user's own turns (needs --compact-strategy; #{INHERITED})"
-    end
-
-    # Beside `--compact-strategy` because it is the other render-strategy arm,
-    # and with NO `default:` for that flag's reason above: a Thor default
-    # materializes the key, so the unset arm -- the Context every recorded
-    # session already renders under, whose header names no pipeline -- could
-    # never reach {Lain::CLI::ContextPipeline.named} as nil. Names
-    # {Lain::CLI::ContextPipeline::PIPELINES} rather than restating the set.
-    def self.pipeline(thor)
-      thor.method_option :context_pipeline, type: :string,
-                                            desc: "Which context pipeline renders each request " \
-                                                  "(#{Lain::CLI::ContextPipeline::PIPELINES.keys.join(", ")}, " \
-                                                  "or several joined by +, applied left to right). A word " \
-                                                  "REPLACES the default: prune alone sends no reminders and " \
-                                                  "no cache breakpoints, prune+default keeps both. Unset " \
-                                                  "renders the default and records no name"
-    end
-
-    # A TIER, chosen independently of the chat model: a frontier chat can
-    # summarize locally for free, and a local chat can buy better summaries.
-    # Ahead of both sits the deterministic tier of `.lain/summarizers.rb`, which
-    # costs no tokens and takes no flag -- these three only decide what handles
-    # what it declines.
-    #
-    # --summarizer-model carries no Thor default on purpose: like --model it
-    # resolves to the SELECTED provider's own default, which is not knowable
-    # until --summarizer-provider is parsed.
-    # Split on {ModelFlags}' own rule: WHICH endpoint summarizes, then how big
-    # a summary it may write.
-    def self.summarizer(thor)
-      summarizer_endpoint(thor)
-      summarizer_budget(thor)
-    end
-
-    def self.summarizer_endpoint(thor)
-      thor.method_option :summarizer_provider, type: :string,
-                                               desc: "Provider for the compaction summarizer; defaults to " \
-                                                     "--provider: #{Lain::CLI::Backend::PROVIDERS.join(", ")}"
-      thor.method_option :summarizer_model, type: :string,
-                                            desc: "Model id for the compaction summarizer; defaults to the " \
-                                                  "chat's --model when both tiers name one provider, else to " \
-                                                  "the summarizer provider's own default"
-    end
-
-    def self.summarizer_budget(thor)
-      thor.method_option :summarizer_max_tokens, type: :numeric,
-                                                 default: Lain::Oracle::Model::DEFAULT_MAX_TOKENS,
-                                                 desc: "max_tokens per summary; a truncated summary REPLACES the " \
-                                                       "result it compressed, so this is sized for a paragraph"
-    end
-  end
-
-  # `bench compaction-sweep --live`'s options. The terminal is the exe's to read, so the prompt
-  # is built here, over the command's own `say` and `yes?`.
-  module LiveSweep
-    # @param thor [Bench] the running command
-    # @return [Hash] empty without --live, so an offline sweep hands over exactly what it always did
-    def self.options(thor)
-      options = thor.options
-      return {} unless options[:live]
-
-      confirm = prompt(thor)
-      backend = thor.model_backend(nil, options.merge("provider" => "anthropic", "model" => options[:live]))
-      { live: options[:live], confirm:, live_backend: backend }
-    end
-
-    # @param thor [Bench] the running command
-    # @return [Lain::Bench::CompactionSweep::Live::Prompt] the confirmation both priced sweeps ask
-    def self.prompt(thor)
-      Lain::Bench::CompactionSweep::Live::Prompt.new(yes: thor.options[:yes], terminal: $stdin.tty?,
-                                                     say: thor.method(:say), ask: thor.method(:yes?))
-    end
-  end
-
   # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
   # assembles everything and returns Strings; this class parses flags, `say`s
   # what comes back, and presents the lib's own errors -- all Lain::Error:
@@ -1099,7 +339,7 @@ class LainCLI < Thor
     # The SAME Thor-boundary home the outer class uses: `render` says the
     # block's String and maps Lain::Error onto Thor's contract, so each
     # report subcommand is one line with no repeated rescue.
-    include Boundary
+    include Lain::CLI::Exe::Boundary
 
     # One sentence for both paid commands: what a run's memory view starts
     # from. Written once so `record` and `arms` cannot advertise it differently.
@@ -1125,7 +365,7 @@ class LainCLI < Thor
     # NO Thor `default:`: unset and `empty` are the same answer, and the
     # library says so once rather than the flag and the library each saying it.
     method_option :memory, type: :string, desc: MEMORY_DESC
-    ModelFlags.declare(self, max_tokens: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
+    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
     # One `say` of the newline-joined paths, through the SAME Boundary#render
     # every other bench subcommand sits on. The Backend is built INSIDE the
     # block so a refusal from its own construction presents the same way.
@@ -1183,7 +423,7 @@ class LainCLI < Thor
     method_option :journal, type: :string, banner: "DIR",
                             desc: "where a live run writes <scale>.ndjson (default: a timestamped directory " \
                                   "under the state home's lain/bench)"
-    ModelFlags.declare(self, max_tokens: 512)
+    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: 512)
     def judge_scale
       render do
         backend = model_backend(512) unless options[:recorded]
@@ -1258,14 +498,14 @@ class LainCLI < Thor
     method_option :yes, type: :boolean, default: false,
                         desc: "accept the --live preflight without asking, as a run with no terminal must"
     # Only the model flags that reach a summarizer: its endpoint and runner knobs, then its own band.
-    ModelFlags.endpoint(self, nil)
-    ModelFlags.throughput(self, nil)
-    CompactionFlags.summarizer(self)
+    Lain::CLI::Exe::ModelFlags.endpoint(self, nil)
+    Lain::CLI::Exe::ModelFlags.throughput(self, nil)
+    Lain::CLI::Exe::CompactionFlags.summarizer(self)
     def compaction_sweep(*journals)
       render do
         backend = model_backend if options[:summarizer] == "local"
         Lain::Bench::CLI.new.compaction_sweep_report(journals:, **compaction_sweep_knobs, backend:,
-                                                     **LiveSweep.options(self))
+                                                     **Lain::CLI::Exe::LiveSweep.options(self, input: $stdin))
       end
     end
 
@@ -1273,20 +513,21 @@ class LainCLI < Thor
                                  "-- spends API money with a live model"
     method_option :yes, type: :boolean, default: false,
                         desc: "accept the priced preflight without asking, as a run with no terminal must"
-    ModelFlags.endpoint(self, nil)
+    Lain::CLI::Exe::ModelFlags.endpoint(self, nil)
     def memory_sweep(fixture)
       render do
         backend = model_backend(nil, options.merge("provider" => "anthropic"))
         Lain::Bench::CLI.new.memory_sweep_report(fixture_path: fixture, provider: backend.provider,
-                                                 model: backend.model, confirm: LiveSweep.prompt(self))
+                                                 model: backend.model,
+                                                 confirm: Lain::CLI::Exe::LiveSweep.prompt(self, input: $stdin))
       end
     end
 
     desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
                          "-- spends real API money"
-    ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
-                             ceiling: "higher than record's, because an arm task answers with whole file " \
-                                      "bodies and a ceiling hit ends the run")
+    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
+                                             ceiling: "higher than record's, because an arm task answers with " \
+                                                      "whole file bodies and a ceiling hit ends the run")
     method_option :system, type: :string,
                            desc: "System prompt for every arm. Unset teaches the FILE/END " \
                                  "trajectory format the grader parses; a blank value counts as " \
@@ -1331,7 +572,7 @@ class LainCLI < Thor
                                  "failed attempt failed; label is one of environment, reasoning, grader, prompt"
     # Of the chat's exec and arm flags only this one means something to a bench; `classes` is a chat's
     # approval arm and would change nothing here.
-    method_option :confine, type: :string, enum: Lain::Bench::CLI::CONFINES, banner: "ARM", desc: ExecFlags::BENCH_CONFINE
+    method_option :confine, type: :string, enum: Lain::Bench::CLI::CONFINES, banner: "ARM", desc: Lain::CLI::Exe::ExecFlags::BENCH_CONFINE
     # The Backend is built INSIDE `render`, as `record` does: a refusal from its
     # own construction is a Lain::Error like any other, and outside the block
     # nothing would map it to Thor's contract. The `ensure` below tolerates a
@@ -1359,7 +600,7 @@ class LainCLI < Thor
       # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
       # @param options [Hash] the options it resolves; the command's own unless a caller overrides some
       def model_backend(ceiling_default = nil, options = self.options)
-        Lain::CLI::Backend.headless(options, profile: ModelFlags.profile(options), ceiling_default:,
+        Lain::CLI::Backend.headless(options, profile: Lain::CLI::Exe::ModelFlags.profile(options), ceiling_default:,
                                              root: Lain::Project::Resolver.default_project.root)
       end
 
@@ -1442,85 +683,8 @@ class LainCLI < Thor
        "(variance, record, sweep, plan-sweep, arms)"
   subcommand "bench", Bench
 
-  # WHAT this chat is asked, and whether anyone is there to be asked back --
-  # two flags naming one idea, so a declarer of their own on {SurfaceFlags}'
-  # rule (the second one pushed the Thor class past Metrics/ClassLength, and
-  # the rule is extract, never loosen).
-  #
-  # They are ORTHOGONAL and the pairing is not a coupling: `--prompt` alone
-  # seeds a chat that then reads the terminal exactly as an unseeded one does,
-  # which is what the `/btw` child is built on, and its exit status is
-  # deliberately unchanged. `--non-interactive` is what says nobody will type
-  # the next line -- so it NEEDS a seeded question ({CLI::ChatLaunch} refuses
-  # the pair up front) and, having no human, it denies every gated call,
-  # refuses `ask_human` by name, and finally makes the process exit status mean
-  # something.
-  module AskingFlags
-    # The description is data, not computation, and hoisting it out of the
-    # method is what keeps the paragraph an operator needs from arguing with
-    # Metrics/MethodLength -- {Lain::Tools::AskHuman::DESCRIPTION}'s idiom, for
-    # the same reason.
-    HEADLESS = "Run --prompt's question and stop, reading nothing from the terminal: a gated tool call the " \
-               "rules leave open is refused under ask, decided by the judge under auto (a call it is unsure " \
-               "of is refused), and approved under bypass; ask_human refuses by name (no human is attached), a " \
-               "request that would cross its model's price tier is refused unless --confirm-price-tier allow, and " \
-               "the process exits non-zero when a turn could not finish. Needs --prompt. Run it " \
-               "DIRECTLY, not through `lain up` -- that puts the chat in a tmux pane whose exit status " \
-               "nothing reads, which is the whole of what this flag adds"
-
-    # @param thor [Class] the Thor class to declare on
-    # @return [void]
-    def self.declare(thor)
-      thor.method_option :prompt, type: :string,
-                                  desc: "Seed the first question (the /btw child's side-question); the chat " \
-                                        "then reads the terminal as usual"
-      thor.method_option :non_interactive, type: :boolean, default: false, desc: HEADLESS
-      thor.method_option :approval, type: :string, default: "auto", enum: %w[ask auto bypass],
-                                    desc: "Who decides a gated call the rules left open: ask parks it for " \
-                                          "a human, auto asks a model judge first, bypass approves it"
-      thor.method_option :max_cost, type: :numeric, banner: "DOLLARS",
-                                    desc: "Stop the run once its priced turns, children included, have cost this " \
-                                          "many dollars; a model with no price counts nothing against it"
-    end
-  end
-
-  # The opt-in surface that answers a PARKED approval beside the human: a
-  # meta-agent racing the person the queue is already asking. Grouped into a
-  # declarer of its own on {ModelFlags}' rule, because the Thor class has no
-  # Metrics/ClassLength headroom for another `method_option`.
-  #
-  # The secret oracle judges only pendings that would release something
-  # sensitive ({Approval::Parked::SecretSurface} filters structurally).
-  module SurfaceFlags
-    SECRET_ORACLE = "Wire an extra approval surface: a model triages parked reads that WOULD release sensitive " \
-                    "regions, racing the human's own surfaces. It is shown the path and the region count, never " \
-                    "the file's contents. local asks the local ollama, never a remote provider whatever " \
-                    "--provider says; cloud asks a hosted model only through the lain gateway --gateway names"
-    SECRET_ORACLE_MODEL = "The secret oracle's model: #{Lain::Provider::Ollama::DEFAULT_MODEL} by default for " \
-                          "local, required for cloud. A local tier refuses a cloud model name".freeze
-    GATEWAY = "The URL `lain gateway` printed, http://127.0.0.1:<port> with no token; the chat reads the token " \
-              "from the file the gateway left under the state home. Required by --secret-oracle cloud, which " \
-              "proves the gateway at launch and before every question"
-    SUPERVISE_EGRESS = "Hold outbound model requests for the human: all parks each one, oracle parks only the " \
-                       "secret oracle's, showing who sends it, its endpoint, size and digest, never its body. Not " \
-                       "held: the local ollama server's model metadata probe at launch, and the secret oracle's " \
-                       "gateway identity probe, which carries only a nonce. With nobody attached, a held request " \
-                       "is refused"
-
-    # @param thor [Class] the Thor class to declare on
-    # @return [void]
-    def self.declare(thor)
-      thor.method_option :secret_oracle, type: :string, enum: %w[off local cloud], default: "off",
-                                         desc: SECRET_ORACLE
-      thor.method_option :secret_oracle_model, type: :string, banner: "NAME", desc: SECRET_ORACLE_MODEL
-      thor.method_option :gateway, type: :string, banner: "URL", desc: GATEWAY
-      thor.method_option :supervise_egress, type: :string, enum: %w[off oracle all], default: "off",
-                                            desc: SUPERVISE_EGRESS
-    end
-  end
-
   desc "chat", "Start an interactive Lain session"
-  ModelFlags.declare(self, recorded: ModelFlags::RECORDED)
+  Lain::CLI::Exe::ModelFlags.declare(self, recorded: Lain::CLI::Exe::ModelFlags::RECORDED)
   method_option :journal, type: :boolean, default: true,
                           desc: "Write a durable, replayable session journal (fsync'd); --no-journal opts out"
   method_option :resume, type: :string, banner: "[SESSION]", lazy_default: "",
@@ -1535,7 +699,7 @@ class LainCLI < Thor
   # statement rather than three: this class sits AT Metrics/ClassLength, and a
   # declarer that only forwards is not worth a line of that budget -- the flags
   # themselves live in the modules, whose bodies the cop discounts.
-  [AskingFlags, SurfaceFlags, ExecFlags].each { |flags| flags.declare(self) }
+  [Lain::CLI::Exe::AskingFlags, Lain::CLI::Exe::SurfaceFlags, Lain::CLI::Exe::ExecFlags].each { |flags| flags.declare(self) }
   method_option :nvim, type: :string,
                        desc: "Attach a Neovim frontend to this --listen socket (live lain:// views)"
   # WHICH epic this chat may hand documents to the human from. Unset resolves to
@@ -1574,8 +738,8 @@ class LainCLI < Thor
   # (Lain::Project::Resolver's `:flag`, exempt from the refusal set, so
   # `--root $HOME` is intent rather than inference); `--cwd` is where the run
   # sits INSIDE that root.
-  ProjectFlags.declare(self)
-  CompactionFlags.declare(self)
+  Lain::CLI::Exe::ProjectFlags.declare(self)
+  Lain::CLI::Exe::CompactionFlags.declare(self)
   default_task :chat
 
   # The lifecycle bracket (resolve --resume, open the journal, run the
@@ -1589,8 +753,9 @@ class LainCLI < Thor
   # scripted one has no such reader, so the status is the only place a torn
   # turn can still be seen.
   def chat
-    ExecFlags.refuse_unusable!(options)
-    launch = Lain::CLI::ChatLaunch.new(options, profile: ModelFlags.profile(options), **project_override)
+    Lain::CLI::Exe::ExecFlags.refuse_unusable!(options)
+    launch = Lain::CLI::ChatLaunch.new(options, profile: Lain::CLI::Exe::ModelFlags.profile(options),
+                                                **project_override)
     launch.call { |notice| say notice }
     exit launch.exit_status if options[:non_interactive]
   rescue Lain::Error => e
@@ -1623,7 +788,7 @@ class LainCLI < Thor
   method_option :name, type: :string, default: Lain::CLI::InputSocket::DEFAULT_NAME,
                        desc: "The chat's input socket, by name, derived under this project"
   def input
-    adopt_input_pane
+    adopt_input_pane(err: $stderr)
     exit_status { Lain::Frontend::InputPane.open(path: options[:socket] || derived_input_socket).run }
   end
 
@@ -1679,28 +844,16 @@ class LainCLI < Thor
     exit_status { Lain::CLI::Gateway.new(options, console:).run }
   end
 
-  # What both JOURNAL PASSES declare: the model flag band, whose profile flags
-  # default to what the session under review recorded, and a `--dry-run` that
-  # says what THIS pass would do instead of doing it.
-  module JournalPassFlags
-    # @param thor [Class] the Thor class the flags accumulate onto
-    # @param dry_run [String] what THIS pass would do instead of doing it
-    def self.declare(thor, dry_run:)
-      thor.method_option :dry_run, type: :boolean, default: false, desc: dry_run
-      ModelFlags.declare(thor, recorded: ModelFlags::REVIEWED)
-    end
-  end
-
   desc "consolidate SESSION", "Court-clerk pass: distill a session's completed subagent lineages into memory"
-  JournalPassFlags.declare(self, dry_run: "Report what would be clerked, no spawn, no API key")
+  Lain::CLI::Exe::JournalPassFlags.declare(self, dry_run: "Report what would be clerked, no spawn, no API key")
   def consolidate(selector)
-    render { journal_pass(Lain::CLI::Consolidate.from_options(options, selector:, profile: ModelFlags.profile(options))) }
+    render { journal_pass(Lain::CLI::Consolidate.from_options(options, selector:, profile: Lain::CLI::Exe::ModelFlags.profile(options))) }
   end
 
   desc "improve SESSION", "Harness-improver pass: record what would make lain itself better, into the dogfood queue"
-  JournalPassFlags.declare(self, dry_run: "Report what would spawn, no provider, no API key")
+  Lain::CLI::Exe::JournalPassFlags.declare(self, dry_run: "Report what would spawn, no provider, no API key")
   def improve(selector)
-    render { journal_pass(Lain::CLI::Improve.from_options(options, selector:, profile: ModelFlags.profile(options))) }
+    render { journal_pass(Lain::CLI::Improve.from_options(options, selector:, profile: Lain::CLI::Exe::ModelFlags.profile(options))) }
   end
 
   # `lain up`'s chat pre-flight, run in a fork of this already-loaded process

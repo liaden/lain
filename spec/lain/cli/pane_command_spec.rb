@@ -270,10 +270,13 @@ RSpec.describe Lain::CLI::PaneCommand do
     # PANE_ENV is a hand-maintained list against a set that grows in ANOTHER
     # file, and the failure is silent: a new env-backed flag simply stops
     # reaching panes, which looks exactly like the direnv bug this fixes. So
-    # re-derive the truth from exe/lain rather than trusting the copy.
-    it "lists every name EnvDefaults actually reads -- no drift against exe/lain" do
-      declared = File.read(File.expand_path("../../../exe/lain", __dir__))
-                     .scan(/EnvDefaults\.(?:string|numeric)\(\s*"(LAIN_[A-Z_]+)"/).flatten.uniq
+    # re-derive the truth from exe/lain and the flag modules it includes under
+    # lib/lain/cli/exe/ rather than trusting the copy.
+    it "lists every name EnvDefaults actually reads -- no drift against exe/lain or its flag modules" do
+      sources = [File.expand_path("../../../exe/lain", __dir__),
+                 *Dir[File.expand_path("../../../lib/lain/cli/exe/**/*.rb", __dir__)]]
+      reads = /EnvDefaults\.(?:string|numeric)\(\s*"(LAIN_[A-Z_]+)"/
+      declared = sources.flat_map { |path| File.read(path).scan(reads) }.flatten.uniq
 
       expect(declared).not_to be_empty
       expect(described_class::PANE_ENV).to match_array(declared)

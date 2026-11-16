@@ -1054,7 +1054,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
                         body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
                                                "message" => { "role" => "assistant", "content" => "APPROVE" })}\n")
       options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
-      profile = with_env("LAIN_NUM_BATCH" => "2048") { LainCLI::ModelFlags.profile(options) }
+      profile = with_env("LAIN_NUM_BATCH" => "2048") { Lain::CLI::Exe::ModelFlags.profile(options) }
 
       described_class.from_options(options, profile:, input: tty, output: StringIO.new, root:, paths:,
                                             config: config(adjudicating)).submit("research")
@@ -1072,7 +1072,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
 
       with_env("SPEC_SERVICE_TOKEN" => "qwen3:4b") do
-        described_class.from_options(options, profile: LainCLI::ModelFlags.profile(options), input: tty,
+        described_class.from_options(options, profile: Lain::CLI::Exe::ModelFlags.profile(options), input: tty,
                                               output: StringIO.new, root:, paths:, config: config(adjudicating))
                        .submit("research")
       end
@@ -1121,7 +1121,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
       load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
       options = Thor::Options.new(LainCLI::Epic.commands.fetch("submit").options).parse(%w[--provider ollama])
 
-      described_class.from_options(options, profile: LainCLI::ModelFlags.profile(options), input: tty,
+      described_class.from_options(options, profile: Lain::CLI::Exe::ModelFlags.profile(options), input: tty,
                                             output: StringIO.new, root:, paths:, config: config(adjudicating))
                      .submit("research")
 

@@ -1225,7 +1225,7 @@ RSpec.describe Lain::SessionRecord, ".header" do
       argv = %w[--provider ollama --api-base http://127.0.0.1:11434 --num-batch 2048]
       options = Thor::Options.new(LainCLI.commands.fetch("chat").options).parse(argv)
       profile = with_env("LAIN_NUM_CTX" => "8192", "LAIN_PROVIDER" => nil, "LAIN_API_BASE" => nil) do
-        LainCLI::ModelFlags.profile(options)
+        Lain::CLI::Exe::ModelFlags.profile(options)
       end
 
       expect(launched_header(profile.to_options))

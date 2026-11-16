@@ -12,7 +12,7 @@ load File.expand_path("../../../exe/lain", __dir__)
 # Mechanical guard: a flag the run READS must be a flag the CLI DECLARES.
 #
 # This exists because the gap it closes used to be silent in both directions.
-# One of them is loud now: {LainCLI::Boundary} declares `check_unknown_options!`,
+# One of them is loud now: {Lain::CLI::Exe::Boundary} declares `check_unknown_options!`,
 # so `lain chat --isolation worktree` against code that read `options[:isolation]`
 # without declaring it is refused by name at the door, where it once ran the
 # whole session with Isolation::Null and said nothing.
@@ -40,7 +40,9 @@ module ChatFlags
   ROOT = Pathname.new(File.expand_path("../../..", __dir__))
 
   # The CLI subtree: every object a command hands its parsed options hash to.
-  SOURCES = ROOT.glob("lib/lain/cli/**/*.rb").sort.freeze
+  # exe/ is the Thor layer itself, reading flags of commands other than chat, as
+  # it did while it lived in the executable this glob never saw.
+  SOURCES = ROOT.glob("lib/lain/cli/**/*.rb").reject { |path| path.to_s.include?("/lib/lain/cli/exe/") }.sort.freeze
 
   # Keys read under lib/lain/cli/ that `chat` deliberately does not declare,
   # mapped to the commands that do. An entry is a CLAIM, and the examples below
@@ -152,7 +154,7 @@ RSpec.describe "lain chat's flag surface" do
       with_env(env) do
         probe = Class.new(Thor) do
           def self.exit_on_failure? = true
-          LainCLI::ModelFlags.declare(self)
+          Lain::CLI::Exe::ModelFlags.declare(self)
           desc "probe", "capture parsed options"
           define_method(:probe) { seen << options }
         end
@@ -530,7 +532,7 @@ RSpec.describe "lain chat's flag surface" do
     # Backend: the five profile flags parse to nothing unless typed.
     def resolved(*argv)
       options = parse(*argv)
-      options.merge(LainCLI::ModelFlags.profile(options).to_options)
+      options.merge(Lain::CLI::Exe::ModelFlags.profile(options).to_options)
     end
 
     def source_from(*argv, **overrides)
