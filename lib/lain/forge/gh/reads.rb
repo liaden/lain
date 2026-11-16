@@ -13,36 +13,47 @@ module Lain
         # it and stays up.
         class Refused < Error; end
 
-        REVIEW_REQUESTS = <<~GRAPHQL
-          query($q: String!) {
-            viewer { login
-              organizations(first: 100) { nodes { login
-                member: teams(first: 100, role: MEMBER) { nodes { slug } }
-                admin: teams(first: 100, role: ADMIN) { nodes { slug } } } } }
-            search(query: $q, type: ISSUE, first: 50) {
-              nodes {
-                ... on PullRequest {
-                  number title url isDraft headRefOid
-                  author { login }
-                  repository { nameWithOwner }
-                  files(first: 100) { totalCount nodes { path } }
-                  timelineItems(itemTypes: REVIEW_REQUESTED_EVENT, last: 30) {
-                    nodes { ... on ReviewRequestedEvent {
-                      createdAt
-                      requestedReviewer { ... on User { login } ... on Team { slug organization { login } } }
-                    } }
+        MY_TEAMS = <<~GRAPHQL.tr("\n", " ").squeeze(" ").strip
+          organizations(first: 100) { nodes { login
+            member: teams(first: 100, role: MEMBER) { nodes { slug } }
+            admin: teams(first: 100, role: ADMIN) { nodes { slug } } } }
+        GRAPHQL
+
+        def self.search_query(viewer_fields)
+          <<~GRAPHQL
+            query($q: String!) {
+              viewer { login #{viewer_fields} }
+              search(query: $q, type: ISSUE, first: 50) {
+                issueCount
+                nodes {
+                  ... on PullRequest {
+                    number title url isDraft headRefOid
+                    author { login }
+                    repository { nameWithOwner }
+                    files(first: 100) { totalCount nodes { path } }
+                    timelineItems(itemTypes: REVIEW_REQUESTED_EVENT, last: 30) {
+                      nodes { ... on ReviewRequestedEvent {
+                        createdAt
+                        requestedReviewer { ... on User { login } ... on Team { slug organization { login } } }
+                      } }
+                    }
+                    reviewRequests(first: 20) {
+                      nodes { asCodeOwner
+                        requestedReviewer { __typename ... on User { login }
+                          ... on Team { slug organization { login } } } }
+                    }
+                    latestReviews(first: 20) { nodes { author { login } commit { oid } } }
                   }
-                  reviewRequests(first: 20) {
-                    nodes { asCodeOwner
-                      requestedReviewer { __typename ... on User { login }
-                        ... on Team { slug organization { login } } } }
-                  }
-                  latestReviews(first: 20) { nodes { author { login } commit { oid } } }
                 }
               }
             }
-          }
-        GRAPHQL
+          GRAPHQL
+        end
+        private_class_method :search_query
+
+        REVIEW_REQUESTS = search_query(MY_TEAMS)
+        # A match never reads my teams, so its query does not fetch them.
+        MATCHES = search_query("")
 
         # The `--json` fields the review reads, and nothing else.
         PR_FIELDS = %w[baseRefName baseRefOid headRefOid].freeze
@@ -80,10 +91,19 @@ module Lain
         # @raise [Refused] with gh's own message when gh exits non-zero or GraphQL answers errors
         # @raise [Account::Refused] when gh has no token for the configured account
         def review_requests(query:)
-          shell = run("api", "graphql", "-f", "query=#{REVIEW_REQUESTS}", "-f", "q=#{query}")
-          raise Refused, shell.stderr.to_s.strip unless shell.exitstatus.zero?
+          search(REVIEW_REQUESTS, query) { |node, viewer, teams| ReviewRequest.from_node(node, viewer:, teams:) }
+        end
 
-          parse(shell.stdout)
+        # Every open pull request a search names, asked of me or not, in the same 1 GraphQL call and
+        # window as {#review_requests}.
+        #
+        # @param query [String] a GitHub issue search
+        # @param notes [#puts] told when the search matched more pull requests than the 50 it returns
+        # @return [Array<ReviewRequest>] each with `via: :match`; drafts dropped
+        # @raise [Refused] with gh's own message when gh exits non-zero or GraphQL answers errors
+        # @raise [Account::Refused] when gh has no token for the configured account
+        def matches(query:, notes: Sink::Null.new)
+          search(MATCHES, query, notes:) { |node, viewer, _teams| ReviewRequest.from_match(node, viewer:) }
         end
 
         # The token stays out of every inspect: the account's own inspect names no token.
@@ -91,15 +111,29 @@ module Lain
 
         private
 
-        def parse(body)
+        def search(graphql, query, notes: Sink::Null.new, &block)
+          shell = run("api", "graphql", "-f", "query=#{graphql}", "-f", "q=#{query}")
+          raise Refused, shell.stderr.to_s.strip unless shell.exitstatus.zero?
+
+          parse(shell.stdout, notes, &block)
+        end
+
+        def parse(body, notes)
           answer = JSON.parse(body)
           errors = answer["errors"]
           raise Refused, errors.map { |error| error["message"] }.join("; ") if errors
 
           viewer = answer.dig("data", "viewer")
           teams = my_teams(viewer)
-          answer.dig("data", "search", "nodes")
-                .filter_map { |node| ReviewRequest.from_node(node, viewer: viewer["login"], teams:) }
+          nodes = answer.dig("data", "search", "nodes")
+          note_unshown(answer.dig("data", "search", "issueCount").to_i, nodes.size, notes)
+          nodes.filter_map { |node| yield(node, viewer["login"], teams) }
+        end
+
+        def note_unshown(total, shown, notes)
+          return unless total > shown
+
+          notes.puts("search matched #{total} pull requests and showed #{shown}; #{total - shown} not shown")
         end
 
         def my_teams(viewer)

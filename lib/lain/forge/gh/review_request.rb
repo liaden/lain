@@ -11,7 +11,9 @@ module Lain
       # One open pull request asking for my review, read from a single GraphQL search node.
       #
       # `via` says how the ask reached me: named directly, through a team of mine (`team` is its
-      # organization-qualified slug, "org/slug"), or as a code owner. `my_last_review` is the commit
+      # organization-qualified slug, "org/slug"), as a code owner, or `:match` for a PR that asks
+      # nothing of me and was found by a search (`team` and `requested_at` are then nil).
+      # `my_last_review` is the commit
       # of my latest review, or nil when I have none or GitHub no longer knows its commit.
       # `paths_truncated` is true when the PR changes more files than `paths` holds.
       #
@@ -26,6 +28,16 @@ module Lain
 
           ask = ask_of(node, viewer, teams) or return nil
           build(node, viewer, ask)
+        end
+
+        # @param node [Hash] one `PullRequest` node of the same query
+        # @param viewer [String, nil] the login the query ran as
+        # @return [ReviewRequest, nil] nil for a draft; any other PR, whether or not it asks for my review
+        def self.from_match(node, viewer:)
+          return nil if node["isDraft"]
+
+          new(**identity(node), paths: paths(node), paths_truncated: truncated?(node), requested_at: nil,
+                                via: :match, team: nil, my_last_review: my_last_review(node, viewer))
         end
 
         # @api private

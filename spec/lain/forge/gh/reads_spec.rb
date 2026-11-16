@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "stringio"
+
 RSpec.describe Lain::Forge::Gh::Reads do
   let(:account) { instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" }) }
   let(:calls) { [] }
@@ -89,6 +91,61 @@ RSpec.describe Lain::Forge::Gh::Reads do
       reads = described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { errored })
 
       expect { reads.review_requests(query:) }.to raise_error(Lain::Forge::Gh::Reads::Refused, /Bad credentials/)
+    end
+  end
+
+  describe "#matches" do
+    let(:fixture) { File.read("spec/fixtures/gh/review_requests.json") }
+    let(:answer) do
+      Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(fixture, "", 0)
+    end
+    let(:query) { "is:open is:pr archived:false org:acme" }
+
+    it "returns every open PR the search names, asked of me or not, as a match" do
+      found = reads.matches(query:)
+
+      expect(found.map(&:number)).to eq([11, 12, 13, 15, 16])
+      expect(found.map(&:via).uniq).to eq([:match])
+    end
+
+    it "runs exactly 1 gh process carrying the search as a variable" do
+      reads.matches(query:)
+
+      expect(calls.map { |argv, _| argv.first(3) }).to eq([%w[gh api graphql]])
+      expect(calls.first.first).to include("q=#{query}")
+    end
+
+    it "does not fetch my organizations and teams, which a match never reads" do
+      reads.matches(query:)
+      reads.review_requests(query:)
+
+      sent = calls.map { |argv, _| argv.find { |arg| arg.start_with?("query=") } }
+      expect([sent.first.include?("organizations("), sent.last.include?("organizations(")]).to eq([false, true])
+    end
+
+    it "notes how many matches the search cap hid" do
+      capped = JSON.parse(fixture).tap { |doc| doc["data"]["search"]["issueCount"] = 120 }
+      shell = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(JSON.dump(capped), "", 0)
+      notes = StringIO.new
+      described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { shell }).matches(query:, notes:)
+
+      expect(notes.string).to eq("search matched 120 pull requests and showed 6; 114 not shown\n")
+    end
+
+    it "notes nothing when the search showed every match" do
+      full = JSON.parse(fixture).tap { |doc| doc["data"]["search"]["issueCount"] = 6 }
+      shell = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new(JSON.dump(full), "", 0)
+      notes = StringIO.new
+      described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { shell }).matches(query:, notes:)
+
+      expect(notes.string).to eq("")
+    end
+
+    it "refuses with gh's own message when gh exits non-zero" do
+      limited = Data.define(:stdout, :stderr, :exitstatus) { def run_command = self }.new("", "rate limited", 1)
+      reads = described_class.new(cwd: "/work", account:, shell_out_factory: ->(*, **) { limited })
+
+      expect { reads.matches(query:) }.to raise_error(Lain::Forge::Gh::Reads::Refused, /rate limited/)
     end
   end
 

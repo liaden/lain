@@ -85,6 +85,24 @@ RSpec.describe Lain::Forge::Gh::ReviewRequest do
     end
   end
 
+  describe ".from_match" do
+    let(:unasked) { nodes.first.merge("reviewRequests" => { "nodes" => [] }) }
+    let(:match) { described_class.from_match(unasked, viewer: "me") }
+
+    it "names a PR that asks nothing of me, with no team or request time and my review kept" do
+      expect(match).to have_attributes(number: 11, via: :match, team: nil, requested_at: nil,
+                                       my_last_review: "old000", paths: %w[lib/a.rb spec/a_spec.rb])
+    end
+
+    it "drops a draft" do
+      expect(described_class.from_match(nodes.fetch(3), viewer: "me")).to be_nil
+    end
+
+    it "is deeply frozen" do
+      expect(Ractor.shareable?(match)).to be(true)
+    end
+  end
+
   it "is deeply frozen" do
     expect(Ractor.shareable?(requests.first)).to be(true)
   end
