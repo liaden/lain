@@ -29,7 +29,7 @@ module Lain
       def self.preflight?(env = ENV) = env[PREFLIGHT_ENV].to_s.strip == "1"
 
       # @param options [Hash] the exe's parsed chat flags. Most pass through
-      #   whole to {Backend}, {LiveViews} and {Wiring} rather than being read
+      #   whole to {Backend}, LiveViews and {Wiring} rather than being read
       #   here: this object owns the bracket's ORDER, not the meaning of any
       #   one flag.
       # @param profile [RunProfile] the backend the command line and the
@@ -52,6 +52,7 @@ module Lain
       #   spawner
       # @param middleware_reader [#call] reads the configured middleware for a
       #   `root:`; called once per launch, ahead of the record
+      # @param paths [Paths] names the state home the live record is filed under
       # @param env [#[]] the environment, read for $TMUX by
       #   {#refuse_windows_outside_tmux!}
       # @option options [Boolean] :journal whether the run records one
@@ -74,6 +75,7 @@ module Lain
                        Lain::StatusFeed.new(run_clock:, context_window:, agent_states:)
                      },
                      middleware_reader: Config.public_method(:middleware),
+                     paths: Paths.new,
                      env: ENV)
         @options = options
         @typed_profile = profile
@@ -87,6 +89,8 @@ module Lain
         @status_feed_factory = status_feed_factory
         @gc_schedule_factory = gc_schedule_factory
         @middleware_reader = middleware_reader
+        @live_sessions = LiveSessions.new(paths:)
+        @paths = paths
         @env = env
       end
 
@@ -110,6 +114,7 @@ module Lain
         resumed = resumed_run(backend)
         schedule_gc
         open_chronicle
+        enter_live_session
         converse(backend:, resumed:, &notice)
       rescue StandardError => e
         note_crash(e)
@@ -339,6 +344,7 @@ module Lain
 
       def close_session
         @herdr_reporter&.release
+        @live_handle&.leave
         close_record
         # Last-resort release of a held capped-overflow notice: the closers
         # land in the RAW journal, not the tee, so a failure path may never
@@ -357,6 +363,29 @@ module Lain
         (@wiring&.conductor || chronicle).close(**close_fields)
       rescue StandardError
         raise unless @crash
+      end
+
+      # Before `converse` because the wiring writes the header and then blocks
+      # for the whole chat, so nothing of this object runs once it has.
+      def enter_live_session
+        writer = Liveness::Writer.current
+        @live_handle = @live_sessions.enter(
+          LiveSessions::Record.new(session_id:, pid: writer.pid, start: writer.start, host: writer.host,
+                                   root: project.root, cwd: project.cwd, input_socket:, journal: chronicle.journal_path,
+                                   attended: attended?, started_at: Time.now.utc.iso8601(6))
+        )
+      end
+
+      def attended? = !@options[:non_interactive]
+
+      def session_id
+        journal = chronicle.journal_path
+        journal ? File.basename(journal, ".ndjson") : "pid-#{Process.pid}-#{Liveness::Writer.current.start}"
+      end
+
+      def input_socket
+        name = attended? && InputSocket.named(@options[:input])
+        InputSocket.path(name:, paths: @paths, cwd: project.cwd) if name
       end
 
       def close_fields

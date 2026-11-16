@@ -453,7 +453,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     end
 
     it "falls back to the chronicle when the raise landed before wiring existed" do
-      chronicle = instance_spy(Lain::CLI::Chronicle)
+      chronicle = instance_spy(Lain::CLI::Chronicle, journal_path: nil)
       instance = launch({ journal: true },
                         chronicle_factory: ->(**) { chronicle },
                         wiring_factory: ->(**) { raise Lain::Error, "wiring never built" })
@@ -2040,5 +2040,73 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
   it "refuses a pre-flight outside a repository" do
     expect { launch(journal: false).preflight { |_notice| nil } }
       .to raise_error(Lain::CLI::IsolationBackend::NotARepository, /--isolation worktree/)
+  end
+end
+
+RSpec.describe Lain::CLI::ChatLaunch, "the live record" do
+  def launch(options, **factories) = described_class.new(options, **factories)
+
+  around do |example|
+    Dir.mktmpdir("lain-chat-live") do |dir|
+      @dir = File.realpath(dir)
+      example.run
+    end
+  end
+
+  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => @dir }) }
+  let(:live_dir) { File.join(paths.state_home, "live") }
+  let(:seen) { [] }
+
+  def recording_wiring
+    instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0).tap do |wiring|
+      allow(wiring).to receive(:run) do
+        seen.concat(Dir.glob(File.join(live_dir, "*.json")).map { JSON.parse(File.read(_1)) })
+      end
+    end
+  end
+
+  def launch_chat(options)
+    wiring = recording_wiring
+    project = throwaway_project(@dir)
+    factories = { wiring_factory: ->(**) { wiring }, project_factory: -> { project }, paths:,
+                  chronicle_factory: ->(**kw) { Lain::CLI::Chronicle.for(**kw, paths:) },
+                  profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
+                  gc_schedule_factory: ->(**) { instance_spy(Lain::CLI::GcSchedule) } }
+    launch({ journal: true, nvim: false, windows: false }.merge(options), **factories).call { |_notice| nil }
+  end
+
+  it "holds an attended socket chat's record while it runs and removes it at close" do
+    launch_chat({ input: "socket:chat" })
+
+    expect(seen.size).to eq(1)
+    expect(seen.first).to include("pid" => Process.pid, "attended" => true, "root" => File.realpath(@dir),
+                                  "input_socket" => end_with("-chat.sock"))
+    expect(seen.first.fetch("journal")).to end_with("#{seen.first.fetch("session_id")}.ndjson")
+    expect(Dir.glob(File.join(live_dir, "*.json"))).to be_empty
+  end
+
+  it "marks a headless chat unattended with no input socket" do
+    launch_chat({ non_interactive: true, prompt: "x" })
+
+    expect(seen.first).to include("attended" => false, "input_socket" => nil)
+  end
+
+  it "names a --no-journal chat pid-<pid>-<start> with no journal" do
+    launch_chat({ journal: false })
+
+    expect(seen.first).to include("session_id" => start_with("pid-#{Process.pid}-"), "journal" => nil)
+  end
+
+  it "writes nothing in the pre-flight, though the same flags launched for real do" do
+    launch_chat({ input: "socket:chat" })
+    expect(seen).not_to be_empty
+    seen.clear
+    FileUtils.rm_rf(live_dir)
+    allow(described_class).to receive(:preflight?).and_return(true)
+
+    launch_chat({ input: "socket:chat" })
+
+    expect(seen).to be_empty
+    expect(Dir.exist?(live_dir)).to be(false)
   end
 end
