@@ -3,7 +3,7 @@
 module Lain
   module CLI
     # The ONE file a user's selector names, and the ONE refusal when nothing
-    # answers to it. `lain friction`, `lain consolidate` and `lain improve` all
+    # answers to it. `qa-lain friction`, `lain consolidate` and `lain improve` all
     # take a session the way a user has it to hand -- copied out of
     # `lain sessions`, tab-completed off disk, or typed without its suffix --
     # and a user-facing contract kept in three copies (which shorthands work,
@@ -14,12 +14,12 @@ module Lain
     #
     # {Resume::Selector#chosen} PREFIX matches within the session dir, refuses
     # an ambiguous prefix, filters headerless files, and has no explicit-path
-    # arm -- so `--resume 20260721` resumes a session `lain friction 20260721`
+    # arm -- so `--resume 20260721` resumes a session `qa-lain friction 20260721`
     # refuses. The asymmetry is intended: resuming continues the session you
     # were in, reporting reads the file you named, and a report that guessed
     # between two candidates would attribute one session's friction to another.
     #
-    # {SessionJournals} stays separate for the same kind of reason: it folds
+    # SessionJournals stays separate for the same kind of reason: it folds
     # EVERY journal in a directory and may never miss one, where this picks the
     # SINGLE file a selector names, which means deliberately skipping
     # candidates. Opposite invariants.

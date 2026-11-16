@@ -125,7 +125,7 @@ ALTITUDE_CLI_SUITE = <<~YAML.freeze
       prompt: "net the invoice"
 YAML
 
-# Bench::CLI is ALL of `exe/lain bench`'s assembly: exe/lain only parses flags,
+# Bench::CLI is ALL of `bin/qa-lain bench`'s assembly: bin/qa-lain only parses flags,
 # calls these methods, and `say`s the returned Strings. Every refused input is
 # a {Lain::Error} -- {CLI::Refusal} for the user's own mistakes, with the path
 # context only this layer still holds, plus Session::Corrupt and the key gate
@@ -149,7 +149,7 @@ RSpec.describe Lain::Bench::CLI do
     expect(described_class::CONFINES).to include(described_class::DEFAULT_CONFINE)
   end
 
-  # The whole point of the taxonomy: exe/lain rescues Lain::Error only, so a
+  # The whole point of the taxonomy: bin/qa-lain rescues Lain::Error only, so a
   # refusal must BE one, and a bare ArgumentError must stay a loud bug.
   it "classes every bench refusal under Lain::Error" do
     expect(described_class::Refusal).to be < Lain::Error
@@ -1111,7 +1111,7 @@ RSpec.describe Lain::Bench::CLI do
     end
 
     # The ONE object record now takes for its provider and its Context, built the
-    # way exe/lain and every other Backend spec build it: from the flag hash.
+    # way bin/qa-lain and every other Backend spec build it: from the flag hash.
     # `max_tokens` is spelled out because Context requires it (`Integer(nil)`
     # raises) and RECORD_DEFAULTS is where the exe's flag reads its own default
     # from, so this is the same number a run gets.

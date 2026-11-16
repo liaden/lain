@@ -159,7 +159,7 @@ RSpec.describe Lain::Bench::Variance do
       expect(other_columns.join).not_to include("0.000000")
     end
 
-    it "is reported by `lain bench variance` rather than refused" do
+    it "is reported by `qa-lain bench variance` rather than refused" do
       Dir.mktmpdir do |dir|
         2.times do |index|
           File.write(File.join(dir, "#{index}.ndjson"),

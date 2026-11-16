@@ -3,7 +3,7 @@
 # plan is overhead; a LARGE task spans several files and carries an ordering
 # dependency between them, which is the work a plan -- or a whole epic -- is
 # supposed to buy its way into. Where on that axis each arm starts winning is
-# the question `lain bench altitude` exists to answer.
+# the question `qa-lain bench altitude` exists to answer.
 #
 # Each task names:
 #

@@ -5,7 +5,7 @@ The default provider, and the only one with two implementations on the same seam
 | | `Provider::Anthropic` | `Provider::AnthropicReference` |
 |---|---|---|
 | Transport | vendored Faraday + SSE (`lib/lain/provider/http/`) | the official `anthropic` gem (`net/http`, `connection_pool`) |
-| Role | the default path for `lain chat` and `lain bench record` | the correctness oracle |
+| Role | the default path for `lain chat` and `qa-lain bench record` | the correctness oracle |
 | Capabilities | `streaming`, `prompt_caching`, `strict_tools`, `thinking`, `parallel_tool_use` | the same 5, plus `structured_output` |
 
 Both share `AnthropicEncoding`, so `#encode` produces byte-identical kwargs and the dry

@@ -49,7 +49,7 @@ module Lain
     # `fix-off-by-one-loop`, because that task's `excludes:` check passes
     # vacuously against a file nobody wrote, which is the grader's hole and not
     # this seam's. The default is coalesced in {#taught} rather than declared as
-    # the keyword's value because `exe/lain` reads the flag off an options hash:
+    # the keyword's value because `bin/qa-lain` reads the flag off an options hash:
     # an unset `--system` arrives as an explicit nil, which a keyword default
     # never sees.
     #

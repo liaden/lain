@@ -2,7 +2,7 @@
 
 module Lain
   module Bench
-    # All of `exe/lain bench`'s assembly, behind returned values: the exe parses
+    # All of `bin/qa-lain bench`'s assembly, behind returned values: the exe parses
     # flags, calls these methods, and `say`s the Strings -- nothing here prints.
     # Every refused input is a {Lain::Error} -- {Refusal} with the path context
     # only this layer still holds, {Session::Corrupt} on a bad file,
@@ -352,7 +352,7 @@ module Lain
 
       # The live arm comparison, ASSEMBLED: the entry point `bench arms` sits
       # on. Everything {#arm_report} needs is built here from plain values, so
-      # `exe/lain` stays a flag parser and never names an Arm, a Grader, or a
+      # `bin/qa-lain` stays a flag parser and never names an Arm, a Grader, or a
       # Provider itself.
       #
       # THIS SPENDS REAL API MONEY per run: every arm asks a real provider once

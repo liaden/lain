@@ -171,7 +171,7 @@ module Lain
       #
       # It RAISES on a usage-less record where {Pairing} declines, and the two
       # are not in tension: `Pairing` walks a whole journal a user handed to
-      # `lain friction`, where one torn record must not destroy the report; this
+      # `qa-lain friction`, where one torn record must not destroy the report; this
       # answers about a single record the caller has just observed, where a
       # malformed one is a bug in the writer.
       #
@@ -224,7 +224,7 @@ module Lain
         #
         # Anything that cannot BE a capability name is dropped, which is wider
         # than nil: {Capability::DegradedSet} maps `to_sym` over its members, and
-        # `lain friction` reads whatever journal a user points it at, so a number
+        # `qa-lain friction` reads whatever journal a user points it at, so a number
         # or an object there raised straight out of the report. That is the
         # decline-never-crash doctrine {#call_for} applies to a usage-less record
         # -- where {Bench::Session::Loader} `fetch`es instead, because a bench

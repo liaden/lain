@@ -246,19 +246,6 @@ device. The relay rereads the file on its own, so neither verb restarts it, and 
 connection closes at that reread. Any other verb, or a missing `NAME`, is refused by name. The
 phone surface itself is switched on by the [`remote` config verb](#remote).
 
-### lain usage
-
-```bash
-lain usage SESSION
-```
-
-What a session spent, read offline from its `turn_usage` records: a table of `COMMAND`, `ROLE`, `INPUT` and `OUTPUT` tokens,
-one row per command and role pair, sorted by those 2 columns. A turn is counted under the command current when it ran, and a
-child takes the command current when it was spawned, so a skill's reviewers count toward that skill. A turn with no command
-shows `-`. The approval judge's spend is shown as `auto_approver`, with a note under the table that it is not split by command.
-Nothing is counted twice, and a session recorded before this record carried a command reads as before, under `-`. `SESSION` is a
-selector as `lain export` takes it.
-
 ### lain input
 
 The pane a human types into, feeding a `lain chat --input socket:NAME`. `lain up` runs it for
@@ -353,13 +340,6 @@ lain watch 9f3c --session 20260725-1a2b.ndjson
 `--session` defaults to this project's newest. This is what `lain chat --windows` opens per
 subagent spawn. It owns its exit status, and Ctrl-C on a SIGKILL'd session exits clean.
 
-### lain friction
-
-Knob guidance from one session's friction signals. Offline, deterministic, no API key.
-
-Reads the journal back and tells you which knobs the run was fighting: approval churn,
-compaction thrash, iteration ceilings.
-
 ### lain export
 
 ```
@@ -374,10 +354,10 @@ to the model is refused unless `--include-released` is given.
 
 `--jsonl` is a LOCAL record, not for sharing: the applied record stream, one record per line, each
 byte for byte as the file holds it, so it keeps the system prompt, absolute paths and approval records.
-It drops a retreat line whose turn never landed, so the chain links no longer close and `lain verify`
+It drops a retreat line whose turn never landed, so the chain links no longer close and `qa-lain verify`
 on the export will flag it. `--html` and `--jsonl` are exclusive.
 
-`SESSION` resolves the way `lain friction`'s does. Without `--out` the document goes to stdout; with it
+`SESSION` resolves the way `qa-lain friction`'s does. Without `--out` the document goes to stdout; with it
 the file is written with mode 0600, an existing path is refused unless `--force`, and the path is printed.
 
 ### lain trust
@@ -594,83 +574,9 @@ This is the only command that writes to herdr's configuration, and it does so by
 records a link to the plugin folder this lain ships, so an upgrade of lain is picked up without
 linking again. A herdr not on `PATH` exits 1 saying so, and nothing is written.
 
-### lain bench variance
-
-Report determinism, divergence, and distribution across recorded sessions. Offline.
-
-```bash
-lain bench variance sessions/          # a directory
-lain bench variance a.ndjson b.ndjson  # explicit files
-```
-
-### lain bench record
-
-Record N live runs of a task file, one prompt per line. **Spends real API money.**
-
-```bash
-lain bench record tasks.txt --out runs/ --n 10 --provider ollama --temperature 0
-```
-
-`--out` is required. `--n` defaults to `Bench::CLI::RECORD_DEFAULTS[:runs]`. Also takes
-`--model`, `--max-tokens`, `--system`, `--provider`, `--api-base`, `--temperature`, `--seed`.
-
-### lain bench sweep
-
-Deterministic 5-arm retrieval eval, recall@k over the gold corpus. Offline, no API.
-
-`-k` / `--k` sets retrieval depth.
-
-### lain bench plan-sweep
-
-Shape x density sweep over a fixture plan's scripted runs. Offline, deterministic.
-
-Both `--plan` (fixture plan markdown, P1 format) and `--runs` (scripted runs YAML) are required.
-
-### lain bench judge-scale
-
-Compare the judge's answer shapes (`unit`, `binary`, `three`, `deduction`) on findings with known
-labels. Per scale it prints n, accuracy, false findings that survived with the one-sided 95% upper
-bound, and Brier. Brier is printed for `unit` only; the other scales' scores are not probabilities,
-and the report says so. The fixture is synthetic.
-
-```bash
-lain bench judge-scale --findings spec/fixtures/grader/findings/labelled.jsonl --recorded runs/  # offline
-lain bench judge-scale --findings labelled.jsonl --model qwen3:4b --scales unit,binary           # asks the model
-```
-
-`--recorded` is a directory holding one `<scale>.ndjson` of verdict records per scale. A live run
-writes that directory (`--journal DIR`, default a timestamped one under `$XDG_STATE_HOME/lain/bench/`,
-printed in the report), so it can be re-scored offline. A row whose label is not true or false is
-refused naming its line. Also takes the model flags (`--model`, `--provider`, `--api-base`).
-
-### lain bench oracle-calibration
-
-Score the secret oracle on 150 secret-bearing and 150 benign synthetic paths, each with a distinct
-basename, 30 of the benign ones secret-adjacent (`.env.example`, `id_rsa.pub`, `token_spec.rb`). It
-states wrong approves out of 150 secret paths with the one-sided 95% upper bound, the same bound
-over distinct basenames, approves out of 150 benign paths and out of the hard negatives separately,
-Brier over approve and deny answers only, the defers per label, and the count per verdict. It says
-PASS only at 0 wrong approves; confidence never enters the gate, and a set with no secret paths fails.
-
-```bash
-lain bench oracle-calibration --recorded run.ndjson --oracle local   # offline, from oracle_answer records
-lain bench oracle-calibration --oracle local --model qwen3:4b        # asks the local ollama; journals every answer
-lain bench oracle-calibration --oracle cloud --model MODEL --gateway http://127.0.0.1:PORT
-```
-
-`--oracle` is `local` (default) or `cloud`; a recording is read at that tier's address. A live run
-builds its judge through the chat's own secret-oracle wiring, so it is sampled and guarded as in a chat (it calibrates the default configuration: it does not take the chat's ollama
-runner options, such as num_ctx, num_batch or keep_alive from `LAIN_PROVIDER` and `LAIN_NUM_CTX`),
-and writes its answers to `--journal PATH` (default a timestamped file under `$XDG_STATE_HOME/lain/bench/`,
-printed in the report); give that file to `--recorded` to re-score it. `--gateway`
-and `--model` follow `--secret-oracle cloud`: the gateway is proven first, its token is read from
-its token file and never from the URL, and a cloud run needs both. `--paths` names another set of
-the same shape (default `spec/fixtures/oracle/paths.yml`).
-
-
 ## qa-lain
 
-Text-mode review commands, run from `bin/qa-lain` (the QA sandbox puts it on `PATH`). They are not part of `lain`.
+Text-mode review commands and the offline bench and session readers (`bench`, `usage`, `friction`, `verify`), run from `bin/qa-lain` (the QA sandbox puts it on `PATH`). They are not part of `lain`.
 
 ### qa-lain review
 
@@ -692,7 +598,7 @@ way through. Every target that does not collide works without it.
 
 | Flag | Default | What it does |
 |---|---|---|
-| `--scope` | unset — the round opens at `cumulative` | `cumulative`, `commits`, or `by_directory`: which grouping the sidebar opens on. The enum is read off the registered partition strategies rather than written out in `exe/lain`, so a scope the registry serves cannot be refused before the registry is asked. |
+| `--scope` | unset — the round opens at `cumulative` | `cumulative`, `commits`, or `by_directory`: which grouping the sidebar opens on. The enum is read off the registered partition strategies rather than written out in `bin/qa-lain`, so a scope the registry serves cannot be refused before the registry is asked. |
 | `--base` | unset | Override the base ref the changeset is cut against. |
 
 An unresolvable target is refused by name, and names the repository it looked in:
@@ -750,6 +656,99 @@ the ceiling with --unbounded
 The decision is made from a file count alone, when the corpus is built — **before any `--scope`
 is applied**. So no scope lifts it: `--scope by_directory` groups the same file set and refuses
 with the same sentence. The two remedies the refusal names are the only two there are.
+
+### qa-lain usage
+
+```bash
+qa-lain usage SESSION
+```
+
+What a session spent, read offline from its `turn_usage` records: a table of `COMMAND`, `ROLE`, `INPUT` and `OUTPUT` tokens,
+one row per command and role pair, sorted by those 2 columns. A turn is counted under the command current when it ran, and a
+child takes the command current when it was spawned, so a skill's reviewers count toward that skill. A turn with no command
+shows `-`. The approval judge's spend is shown as `auto_approver`, with a note under the table that it is not split by command.
+Nothing is counted twice, and a session recorded before this record carried a command reads as before, under `-`. `SESSION` is a
+selector as `lain export` takes it.
+
+### qa-lain friction
+
+Knob guidance from one session's friction signals. Offline, deterministic, no API key.
+
+Reads the journal back and tells you which knobs the run was fighting: approval churn,
+compaction thrash, iteration ceilings.
+
+### qa-lain bench variance
+
+Report determinism, divergence, and distribution across recorded sessions. Offline.
+
+```bash
+qa-lain bench variance sessions/          # a directory
+qa-lain bench variance a.ndjson b.ndjson  # explicit files
+```
+
+### qa-lain bench record
+
+Record N live runs of a task file, one prompt per line. **Spends real API money.**
+
+```bash
+qa-lain bench record tasks.txt --out runs/ --n 10 --provider ollama --temperature 0
+```
+
+`--out` is required. `--n` defaults to `Bench::CLI::RECORD_DEFAULTS[:runs]`. Also takes
+`--model`, `--max-tokens`, `--system`, `--provider`, `--api-base`, `--temperature`, `--seed`.
+
+### qa-lain bench sweep
+
+Deterministic 5-arm retrieval eval, recall@k over the gold corpus. Offline, no API.
+
+`-k` / `--k` sets retrieval depth.
+
+### qa-lain bench plan-sweep
+
+Shape x density sweep over a fixture plan's scripted runs. Offline, deterministic.
+
+Both `--plan` (fixture plan markdown, P1 format) and `--runs` (scripted runs YAML) are required.
+
+### qa-lain bench judge-scale
+
+Compare the judge's answer shapes (`unit`, `binary`, `three`, `deduction`) on findings with known
+labels. Per scale it prints n, accuracy, false findings that survived with the one-sided 95% upper
+bound, and Brier. Brier is printed for `unit` only; the other scales' scores are not probabilities,
+and the report says so. The fixture is synthetic.
+
+```bash
+qa-lain bench judge-scale --findings spec/fixtures/grader/findings/labelled.jsonl --recorded runs/  # offline
+qa-lain bench judge-scale --findings labelled.jsonl --model qwen3:4b --scales unit,binary           # asks the model
+```
+
+`--recorded` is a directory holding one `<scale>.ndjson` of verdict records per scale. A live run
+writes that directory (`--journal DIR`, default a timestamped one under `$XDG_STATE_HOME/lain/bench/`,
+printed in the report), so it can be re-scored offline. A row whose label is not true or false is
+refused naming its line. Also takes the model flags (`--model`, `--provider`, `--api-base`).
+
+### qa-lain bench oracle-calibration
+
+Score the secret oracle on 150 secret-bearing and 150 benign synthetic paths, each with a distinct
+basename, 30 of the benign ones secret-adjacent (`.env.example`, `id_rsa.pub`, `token_spec.rb`). It
+states wrong approves out of 150 secret paths with the one-sided 95% upper bound, the same bound
+over distinct basenames, approves out of 150 benign paths and out of the hard negatives separately,
+Brier over approve and deny answers only, the defers per label, and the count per verdict. It says
+PASS only at 0 wrong approves; confidence never enters the gate, and a set with no secret paths fails.
+
+```bash
+qa-lain bench oracle-calibration --recorded run.ndjson --oracle local   # offline, from oracle_answer records
+qa-lain bench oracle-calibration --oracle local --model qwen3:4b        # asks the local ollama; journals every answer
+qa-lain bench oracle-calibration --oracle cloud --model MODEL --gateway http://127.0.0.1:PORT
+```
+
+`--oracle` is `local` (default) or `cloud`; a recording is read at that tier's address. A live run
+builds its judge through the chat's own secret-oracle wiring, so it is sampled and guarded as in a chat (it calibrates the default configuration: it does not take the chat's ollama
+runner options, such as num_ctx, num_batch or keep_alive from `LAIN_PROVIDER` and `LAIN_NUM_CTX`),
+and writes its answers to `--journal PATH` (default a timestamped file under `$XDG_STATE_HOME/lain/bench/`,
+printed in the report); give that file to `--recorded` to re-score it. `--gateway`
+and `--model` follow `--secret-oracle cloud`: the gateway is proven first, its token is read from
+its token file and never from the URL, and a cloud run needs both. `--paths` names another set of
+the same shape (default `spec/fixtures/oracle/paths.yml`).
 
 ---
 
@@ -1522,7 +1521,7 @@ object to each attempt, so an edit made in place repeats on every retry.
 its arguments are each refused naming `config.rb:LINE` of the line that registered it.
 
 **Scope.** `lain chat` and `lain up` read the middleware once, before the session opens, and apply
-it to the chat and to every subagent it spawns. `lain bench`, `lain consolidate`, `lain improve`
+it to the chat and to every subagent it spawns. `qa-lain bench`, `lain consolidate`, `lain improve`
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)

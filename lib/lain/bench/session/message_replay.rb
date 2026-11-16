@@ -139,7 +139,7 @@ module Lain
 
         # DEFAULTED, never fetched: no key IS the empty set. Fetching instead
         # made the gate below raise {KeyError} before it could answer -- and
-        # KeyError is no {Lain::Error}, so `exe/lain`'s rescue misses it and an
+        # KeyError is no {Lain::Error}, so `bin/qa-lain`'s rescue misses it and an
         # operator gets a raw backtrace. Absence is not silently lossy: a record
         # that really carried an edge fails its content address without one.
         def cited(record) = record.fetch("causal_parents", [])

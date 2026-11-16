@@ -516,7 +516,7 @@ tr '\0' '\n' < /proc/$(pgrep -P "$(pgrep -x ollama | head -1)" | head -1)/cmdlin
 ```
 
 **And a driver's OTHER lain commands can manufacture it for everyone, for as long as they run (round
-18, P41).** `LAIN_NUM_BATCH` is read by `lain chat` alone. `lain bench arms`, `lain epic submit`'s
+18, P41).** `LAIN_NUM_BATCH` is read by `lain chat` alone. `qa-lain bench arms`, `lain epic submit`'s
 adjudication, `lain consolidate` and `lain improve` send no `num_batch`. Run beside a chat that does,
 each re-keys the one runner the other just loaded. Round 18 ran `bench arms` beside a `rails-blog`
 cockpit, and ollama reloaded `qwen3-coder` alternately at `-b 512` and `-b 2048` roughly every 30 s for
@@ -1028,12 +1028,12 @@ several.
    no bound fired. *(This is the chunk's own integration check 5, which cannot be performed as
    written; recorded here so the next round does not re-derive it.)*
 2. **`Provider::Mock` reports all-zero cache fields.** Anything reading `cache_read_input_tokens` or
-   `cache_creation_input_tokens` — cache waste, cold detection, `lain friction`'s dollars — passes
+   `cache_creation_input_tokens` — cache waste, cold detection, `qa-lain friction`'s dollars — passes
    vacuously against a mock, a `--dry-run`, or a recorded fixture built from one. **Cache readings
    need a real session against a real endpoint**, and the figure to sanity-check them against is
    `turn_usage.usage`, which is nested (see above).
 3. **There is no `lain ledger` command.** The corrected price table (T1) is reachable from
-   `lain friction SESSION`, from `lain bench arms`' cost column, and from `/ruby` inside a live
+   `qa-lain friction SESSION`, from `qa-lain bench arms`' cost column, and from `/ruby` inside a live
    session — nowhere else. A step written against `lain ledger` fails as an unknown command, which
    reads like a broken sandbox.
 

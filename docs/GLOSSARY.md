@@ -414,7 +414,7 @@ handle plus content addressing, not from a HAMT.
 
 `Lain::Ext::Bm25` wraps the `bm25` crate in-process, since it is pure in-memory data-structure work
 with no I/O. It is deterministic on purpose (fxhash, no parallelism feature), and equal-score ties
-break by build-batch insertion order. `lain bench sweep` scores retrieval by recall@k over a gold
+break by build-batch insertion order. `qa-lain bench sweep` scores retrieval by recall@k over a gold
 corpus, and `Grader::Recall` is the grader behind it.
 
 ## Program structure
@@ -705,5 +705,5 @@ operational mitigation is an actor's explicit stop.
 
 `Compare` folds n runs into a per-metric distribution and raises on fewer than 2, with the message
 "one run is not a distribution". A single A/B tells you nothing about whether an observed difference
-is the tactic or the noise, which is why the bench reports distributions and `lain bench variance`
+is the tactic or the noise, which is why the bench reports distributions and `qa-lain bench variance`
 exists at all. Score is only reportable when every run in the comparison was graded.

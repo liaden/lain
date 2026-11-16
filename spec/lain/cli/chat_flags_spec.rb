@@ -172,7 +172,8 @@ RSpec.describe "lain chat's flag surface" do
     end
 
     it "leaves bench record on its own default" do
-      record = LainCLI::Bench.commands.fetch("record").options.fetch(:max_tokens)
+      load File.expand_path("../../../bin/qa-lain", __dir__) unless defined?(QALain::Bench)
+      record = QALain::Bench.commands.fetch("record").options.fetch(:max_tokens)
       expect(record.default).to eq(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
     end
   end

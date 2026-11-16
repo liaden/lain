@@ -740,7 +740,7 @@ a full directory does not read as completeness:
 
 - **`Toolset::Disclosure`, both arms.** `Upfront` vs `Deferred` (+ the `tool_search` tool) is a
   headline context-strategy axis and `Bench::DisclosureSweep` exists to compare them — but **there is
-  no `lain bench disclosure-sweep` subcommand**, and no chat flag selects an arm. It is library-only,
+  no `qa-lain bench disclosure-sweep` subcommand**, and no chat flag selects an arm. It is library-only,
   so nothing a driver can type reaches it. Same for `Bench::DeciderSweep`. A scenario here is blocked
   on a CLI entry point, not on writing.
 - **`Context` strategies other than `compact`/`reminder`/`cache_breakpoints`.** `pinned_messages`,

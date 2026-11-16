@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    # `lain verify SESSION`: resolves a session through {CLI::SessionFile} and says
+    # `qa-lain verify SESSION`: resolves a session through {CLI::SessionFile} and says
     # whether its record chain holds, offline. The words are for a person, and the
     # status for a script: 1 only when something was edited, inserted or removed,
     # or the last line fails a tip kept elsewhere. A file that predates chaining

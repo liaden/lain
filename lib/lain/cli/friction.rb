@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    # `lain friction <session>`: resolves a session identifier through
+    # `qa-lain friction <session>`: resolves a session identifier through
     # {CLI::SessionFile} -- a name as `lain sessions` printed it, with or without
     # its suffix, or an explicit path -- and prints {Friction::Report}'s
     # rendering. `lain consolidate` and `lain improve` read through the same
@@ -20,7 +20,7 @@ module Lain
       #
       # @param selector [String] an explicit path, a bare filename, or a
       #   filename missing its ".ndjson" suffix -- all resolved under this
-      #   project's session dir ({CLI::Sessions}' `dir` accessor, the same
+      #   project's session dir (CLI::Sessions' `dir` accessor, the same
       #   `Paths#sessions_dir` root)
       # @return [String] the rendered friction report
       # @raise [SessionFile::SessionNotFound]

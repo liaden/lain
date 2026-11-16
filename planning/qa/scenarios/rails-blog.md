@@ -442,14 +442,14 @@ the compaction reading means.
 
 ### 5. What the broken cache cost, in dollars
 
-`lain friction SESSION` gained a fourth analyzer this chunk, and **this is the only scenario that
+`qa-lain friction SESSION` gained a fourth analyzer this chunk, and **this is the only scenario that
 can exercise it honestly**: `Provider::Mock` reports all-zero cache fields, so a mock-backed or
 `--dry-run` reading passes while asserting nothing (`method.md`). It needs a real session against a
 real endpoint, and it needs one that broke its prefix — which a long compacting run does by
 construction.
 
 ```bash
-lain friction "$JOURNAL"
+qa-lain friction "$JOURNAL"
 ```
 
 Read the `cache_waste` line, and read it as a *pair of figures*, never as one:
@@ -500,7 +500,7 @@ the `none -- no prefix break was re-billed` sentence this section used to expect
 shape to look for when driving §5 today; a driver still expecting the two-shape table above will
 read a correctly-working fix as a regression. **The exact wording above is descriptive, not a
 literal quote** — `lib/lain/friction/cache_waste.rb` and `report.rb` do not carry T11's change on
-this repo's `main` as of this note, so check the actual string `lain friction` prints once T11
+this repo's `main` as of this note, so check the actual string `qa-lain friction` prints once T11
 lands rather than grepping for these words verbatim.
 
 **Then grep the report for anything it must not contain.** It is built from journal records and may

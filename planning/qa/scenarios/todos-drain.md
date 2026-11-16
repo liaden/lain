@@ -132,7 +132,7 @@ When the drain exits:
 - The objects reach upstream earlier than the branch does, under a `refs/lain/worker/*` anchor, at the fold-back fetch
   (`git -C $QA/repo for-each-ref refs/lain`). That is not a failure. The claim is about `main`, not about objects.
 - The file's line reads `- [x] create notes/hello.txt ... <!-- landed <sha> <session path> -->`, the session path exists, and
-  `lain verify <path>` accepts it.
+  `qa-lain verify <path>` accepts it.
 - `$QA/feed.log` holds 1 record: argv `[lain] [create notes/hello.txt containing the word hello]` and a body equal to the
   line's note (`landed <sha> <session path>`). The feed is told once per item, after the line is written.
 - The lease is released: its directory is gone, or `lain worktrees gc` reaps it (`lain worktrees gc` prints what it did).

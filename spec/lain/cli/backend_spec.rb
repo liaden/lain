@@ -207,7 +207,7 @@ RSpec.describe Lain::CLI::Backend do
   end
 
   # The arm is selected by a PROVIDER NAME rather than by a boolean `--cloud`,
-  # and that is what makes it reachable from `lain bench arms` / `lain bench
+  # and that is what makes it reachable from `qa-lain bench arms` / `qa-lain bench
   # record`: both build their Backend from the model flag band, whose profile
   # carries `provider` and has no field a boolean could ride in on. These
   # examples drive the same seam that band does.

@@ -525,7 +525,7 @@ RSpec.describe Lain::Arm::Driver do
   # one-line refusal carrying the Ledger's own message -- which already names
   # the fix -- and every other section renders.
   #
-  # This is not a hypothetical: `lain bench arms FIXTURE --provider ollama`,
+  # This is not a hypothetical: `qa-lain bench arms FIXTURE --provider ollama`,
   # with no further flags, resolves `qwen3:4b`, which `PriceBook::DEFAULTS`
   # (opus/sonnet/haiku only) cannot price. `--model claude-fable-5` is the same
   # shape, and this chunk's own Open decision 7 leaves that model unpriced on

@@ -485,7 +485,7 @@ predicates 13 to 15; `Shell::Reading`). Not yet driven; rebuild the probe above 
 
 Also check the shell reading: `cd lib && cat foo.rb | head -5` (plain quoting, leading `cd`, `|` and `&&` only) can now approve
 where the verdict itself abstains, and a command a shell could read differently, such as one with a glob, `$VAR` or `;`, must
-still abstain. The bench scores the same table: `lain bench approval-replay` reads the recorded verdicts and the hazard file
+still abstain. The bench scores the same table: `qa-lain bench approval-replay` reads the recorded verdicts and the hazard file
 (which gained the `rg` hazards).
 
 **Two roots approve nothing at all, whatever the command.** A session rooted at `$HOME` (or above

@@ -62,7 +62,7 @@ module Lain
       # How a record damaged in a key it is rebuilt from refuses, and how the
       # refusal names and quotes it. A journal is bytes, so a key can simply be
       # GONE -- torn mid-write, or hand-edited -- and a bare `fetch` then
-      # raises KeyError, which is no {Lain::Error}: `exe/lain`'s rescue misses
+      # raises KeyError, which is no {Lain::Error}: `bin/qa-lain`'s rescue misses
       # it and the three doors that read a session file rescue {Corrupt}, so an
       # operator got a raw backtrace where every other kind of rot names
       # itself. {MessageReplay} and {ChainFold} had each written that argument

@@ -143,7 +143,7 @@ RSpec.describe Lain::Bench::Session::ChainFold do
 
   # The same argument as causal_parents above, for a field that is GONE rather
   # than malformed: `role`, `content` and `digest` were bare-fetched, so a torn
-  # record escaped as a KeyError -- no Lain::Error, so exe/lain's rescue misses
+  # record escaped as a KeyError -- no Lain::Error, so bin/qa-lain's rescue misses
   # it and the three doors that read this format rescue Corrupt and not
   # KeyError. Worse for `role`: the rescue that names the record re-read the
   # field INSIDE its own handler, so a role-less record raised from the code

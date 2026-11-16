@@ -6,9 +6,9 @@ require "tmpdir"
 
 # The `bench memory-sweep` door, real Thor parser and real entry point, with the Anthropic API behind
 # WebMock: nothing leaves.
-load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Bench)
+load File.expand_path("../../../bin/qa-lain", __dir__) unless defined?(QALain::Bench)
 
-RSpec.describe "lain bench memory-sweep" do
+RSpec.describe "qa-lain bench memory-sweep" do
   let(:fixture) { File.expand_path("../../fixtures/bench/memory_sweep/fixture.yml", __dir__) }
   let!(:counted) do
     stub_request(:post, "https://api.anthropic.com/v1/messages/count_tokens")
@@ -25,7 +25,7 @@ RSpec.describe "lain bench memory-sweep" do
     $stderr = err
     $stdin = StringIO.new
     exited = begin
-      with_env("ANTHROPIC_API_KEY" => "sk-command-spec") { LainCLI::Bench.start(["memory-sweep", *argv]) }
+      with_env("ANTHROPIC_API_KEY" => "sk-command-spec") { QALain::Bench.start(["memory-sweep", *argv]) }
       nil
     rescue SystemExit => e
       e

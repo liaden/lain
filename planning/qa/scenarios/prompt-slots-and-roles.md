@@ -51,7 +51,7 @@ Confirm two things, neither needing a model call:
   run_recorder.rb`) and read back by `Bench::Session::Loader`; nothing on the ordinary chat path
   writes it. A driver who counts `slot_fills` after `lain chat` reads 0 and either files a false
   defect or passes vacuously. Reach for it only when the session under test was produced by
-  `lain bench`.
+  `qa-lain bench`.
 
   For a plain chat session, the override's landing is visible on the **`session`** record, whose
   `system` field carries the fully rendered prompt — the shipped default with the override appended

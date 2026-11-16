@@ -343,8 +343,8 @@ Two launch-level checks, both free:
   (`rails-blog.md` 1b drives it with a real handoff).
 - **The header records `compact_schedule` whenever compaction is on, typed or not.** This is the one
   exception to the bullet above: the schedule that runs is always written (`idle` for an unflagged
-  launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its schedule is identical to `--compact-schedule turn`'s, but the header also writes `"compact": false`, and only a run with compaction off writes that key (a26-2 fixed, T58). A resume of such a session now runs with compaction off and says `running without compaction, as recorded (pass --compact to compact)`; a typed `--compact` wins with `recorded with --compact false; continuing with true (the current flags win)`. `lain bench variance` refuses to pool a compaction-off recording with a compaction-on one: `cannot compare runs where one ran without compaction: compaction off vs compaction on` (T59). A header with no key at all predates the field, and those runs compacted on
-  the turn. `lain bench variance` refuses recordings made under different schedules, ending
+  launch, `turn` when typed so), so a reader can tell the two arms apart. `--no-compact` writes `compact_schedule: "turn"` (`UNCOMPACTED_SCHEDULE`), so its schedule is identical to `--compact-schedule turn`'s, but the header also writes `"compact": false`, and only a run with compaction off writes that key (a26-2 fixed, T58). A resume of such a session now runs with compaction off and says `running without compaction, as recorded (pass --compact to compact)`; a typed `--compact` wins with `recorded with --compact false; continuing with true (the current flags win)`. `qa-lain bench variance` refuses to pool a compaction-off recording with a compaction-on one: `cannot compare runs where one ran without compaction: compaction off vs compaction on` (T59). A header with no key at all predates the field, and those runs compacted on
+  the turn. `qa-lain bench variance` refuses recordings made under different schedules, ending
   `cannot compare runs that differ in compaction schedule: idle vs turn` (exit 1); a recording
   without the key counts as `turn`. a28-1, open: a `--no-compact` run against a compacting one is refused as the schedule (`idle (1) vs turn (2)`), never naming compaction off (seen again in round 28's bench run).
 - **The header also records which STRATEGY ran, as `compact_strategy` — present only when
@@ -352,7 +352,7 @@ Two launch-level checks, both free:
   all rather than a default value; a reader normalizes that absence to the eager control arm
   (`Telemetry::Compaction::EAGER_CONTROL_ARM`, `"eager"`) rather than confusing it with a stated
   `"summarizing"` or similar — the same absent-versus-default distinction §9 draws for
-  `context_pipeline`. And `lain bench variance` refuses to compare two recordings whose headers
+  `context_pipeline`. And `qa-lain bench variance` refuses to compare two recordings whose headers
   name different strategies, ending `cannot compare runs that differ in compaction arm: elide vs
   summarizing` (exit 1); a recording with no key compares fine against one explicitly naming the
   eager arm, because both ran the same arm.
@@ -400,8 +400,8 @@ Step 4 needs a prepare that actually takes a summary. A head of tool rounds is e
 ## 8 — The price table, and the lint that keeps it honest
 
 **No model call, and no `lain ledger` — that command does not exist.** The corrected table (Opus was
-3× overstated until 2026-08-18) is reachable three ways: `/ruby` in a live session, `lain friction`
-over a recorded one, and `lain bench arms`' cost column. Read it here through `/ruby`, which asks the
+3× overstated until 2026-08-18) is reachable three ways: `/ruby` in a live session, `qa-lain friction`
+over a recorded one, and `qa-lain bench arms`' cost column. Read it here through `/ruby`, which asks the
 process under test rather than the source file:
 
 ```bash
@@ -587,13 +587,13 @@ reaching the model" has found the documented arm, not a defect — `prune+defaul
 
 ### 9b — the recorded name survives replay
 
-`lain bench variance` reloads each recording and re-resolves its header's name, and it **refuses to
+`qa-lain bench variance` reloads each recording and re-resolves its header's name, and it **refuses to
 compare recordings whose pipelines render different stages**, because a pipeline difference would
 otherwise be reported as the model's variance. Using the sessions §9 just wrote:
 
 ```bash
-lain bench variance <the prune session> <the unset session>; echo "exit=$?"
-lain bench variance <the unset session> <the default session>
+qa-lain bench variance <the prune session> <the unset session>; echo "exit=$?"
+qa-lain bench variance <the unset session> <the default session>
 ```
 
 Verified 2026-09-14: the first exits **1**, no backtrace, ending
@@ -664,7 +664,7 @@ cleared, R never parked.
 
 **10c: what a resume and a fork do with it.** `lain chat --resume P` prints `parked: waiting on review` as the first notice;
 `lain chat --resume Q` and `--resume R` print none. A fork of P keeps the note. A replay of a session with 2 notes reads the
-later one. **The bench's session loader** (`Bench::Session::Loader`, reached by `lain bench` over a sessions directory holding P) must read P without error: a record type it does
+later one. **The bench's session loader** (`Bench::Session::Loader`, reached by `qa-lain bench` over a sessions directory holding P) must read P without error: a record type it does
 not know is skipped, never refused, so a bench round with a parked session in its directory still loads. **Wrong looks like:** a
 `reentry_note` that turns a session into "unknown record" in `lain sessions` or the bench loader.
 

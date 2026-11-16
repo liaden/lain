@@ -249,7 +249,7 @@ RSpec.describe Lain::Friction::CacheWaste do
       )
     end
 
-    # PriceBook raises UnknownModel rather than guessing, and `lain friction`
+    # PriceBook raises UnknownModel rather than guessing, and `qa-lain friction`
     # must not die on a journal it was handed. Reported in TOKENS, never priced
     # at zero: "a silently-free model is a lie" (price_book.rb:48-50).
     it "still counts the tokens" do
@@ -624,7 +624,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
   end
 
-  # Review fix (Jeremy). `lain friction` is a reader of whatever journal a user
+  # Review fix (Jeremy). `qa-lain friction` is a reader of whatever journal a user
   # points it at, and `Capability::DegradedSet` maps `to_sym` over every member.
   # Any non-nil value that does not answer it raised NoMethodError straight out
   # of the report -- the crash `Pairing`'s decline-never-crash doctrine exists to
@@ -877,7 +877,7 @@ RSpec.describe Lain::Friction::CacheWaste do
     end
 
     # The upper-bound reasoning and the main-agent scoping are both argued
-    # in the source, where nobody running `lain friction SESSION` sees them.
+    # in the source, where nobody running `qa-lain friction SESSION` sees them.
     it "puts the error direction and the scope in the sentence a user reads" do
       rendered = render([request_sent([[0, "blake3:a"]]), turn_usage(creation: 20_000),
                          request_sent([[0, "blake3:a-EDITED"]]), turn_usage(creation: 12_000)])

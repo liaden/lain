@@ -5,7 +5,7 @@
 chain, `Memory::JournalMemoryRoot` (the `memory_root` record beside every `turn_usage`),
 `Telemetry::MemoryLoaded` (the store version a session opened on), the memory manifest riding
 every Request through `Workspace`, `lain consolidate`, `lain improve`, `improvement_write`,
-`lain improvements`, and `lain bench sweep` — the offline five-arm retrieval eval.
+`lain improvements`, and `qa-lain bench sweep` — the offline five-arm retrieval eval.
 
 **Round 18 made memory durable and project-wide, which changes what this scenario expects.**
 Before it, each chat kept its own index and nothing survived the process that wrote it; the
@@ -356,18 +356,18 @@ yet` (F120). *Driven 2026-09-14*: over a store holding three `doc` notes,
 looked for <XDG_STATE_HOME>/lain/improvements.ndjson`; and `--kind nonsense` exits 1 with
 `--kind must be one of ["knob", "bug", "missing-feature", "doc"], got "nonsense"`.
 
-## 6 — `lain bench sweep`: the offline retrieval eval
+## 6 — `qa-lain bench sweep`: the offline retrieval eval
 
 Five arms — manifest, bm25, vector, hybrid, graph — ranked by recall@k with a tokens-on-recall
 column. **Zero network by construction**: the vector arm reads committed fixture embeddings, never a
 live embedder.
 
 ```bash
-lain bench sweep
-lain bench sweep -k 1
-lain bench sweep -k 20
-lain bench sweep -k 0        # must refuse
-lain bench sweep -k -3       # must refuse
+qa-lain bench sweep
+qa-lain bench sweep -k 1
+qa-lain bench sweep -k 20
+qa-lain bench sweep -k 0        # must refuse
+qa-lain bench sweep -k -3       # must refuse
 ```
 
 Deterministic, so run it twice and `diff`. (Round 17's numbers were identical to round 15's, which is
@@ -377,8 +377,8 @@ of either would lie:
 - **`StaleEmbeddings`** — the committed embeddings were recorded under a different model than the
   sweep asks for. A silent stale fixture measures the wrong model's geometry. The refusal must name
   **both** ids. **⚠️ There is no way to provoke it from the CLI.** This line used to say "provoke it
-  by asking for a model the fixture was not recorded under"; round 10 found `lain bench sweep` takes
-  **no `--model` flag** (`ERROR: "lain bench sweep" was called with arguments ["--model", ...]`), so
+  by asking for a model the fixture was not recorded under"; round 10 found `qa-lain bench sweep` takes
+  **no `--model` flag** (`ERROR: "qa-lain bench sweep" was called with arguments ["--model", ...]`), so
   `StaleEmbeddings` is unreachable from any command a driver can type and still rests on specs
   alone. Either that is a feature gap worth filing, or this bullet is asking for something the
   surface cannot do — settle which before spending turns here.

@@ -2,7 +2,7 @@
 
 module Lain
   module CLI
-    # `lain usage SESSION`: what a session spent, by the command and role that paid it, read offline
+    # `qa-lain usage SESSION`: what a session spent, by the command and role that paid it, read offline
     # from its turn_usage records.
     class Usage
       HEADER = %w[COMMAND ROLE INPUT OUTPUT].freeze

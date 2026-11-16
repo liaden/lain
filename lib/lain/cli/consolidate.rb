@@ -3,7 +3,7 @@
 module Lain
   module CLI
     # `lain consolidate <session> [--dry-run]`: resolves a session identifier
-    # through {CLI::SessionFile} -- the same three resolutions `lain friction`
+    # through {CLI::SessionFile} -- the same three resolutions `qa-lain friction`
     # and `lain improve` accept, and NOT `lain chat --resume`'s, which is a
     # different contract (see {CLI::SessionFile}) -- and runs the
     # {Lain::Consolidation} court-clerk pass over it. Returns a String; only the

@@ -187,7 +187,7 @@ class AltitudeSpecSink
   def record(said) = @log << [:said, said]
 end
 
-# `lain bench altitude` compares the four decomposition arms over a suite whose
+# `qa-lain bench altitude` compares the four decomposition arms over a suite whose
 # tasks sit on a SIZE axis, and reports each arm's distribution PER SIZE -- which
 # is the whole question: where on that axis does entering higher up the ladder
 # start paying for itself?

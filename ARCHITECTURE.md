@@ -1136,7 +1136,7 @@ The arms, recorded in the session header's `arms` key when on (`CLI::Arms`):
 
 `Arms::SETS` is the one table of arms and values; `OFF` and `UNSET` derive from it, and callers ask predicates (`workspace?`, `sandboxed?`, `tripwire_stops?`, `judge_requests?`) rather than compare values.
 
-`lain bench arms` defaults `--confine` to `off` (it takes `off`, `reader` or `workspace`) and always runs `--tripwire off`.
+`qa-lain bench arms` defaults `--confine` to `off` (it takes `off`, `reader` or `workspace`) and always runs `--tripwire off`.
 Resolution and the env scrub are not arms: they run in every session.
 
 ## The secret boundary
@@ -1780,7 +1780,7 @@ safety-critical:
 backend and constructs `Worktree` (`:126`), `DbIndex` (`:164`), and `Compose` (`:173`),
 decorating by need. `lain chat` declares the flag at `exe/lain:378` and `CLI::Wiring`
 (`cli/wiring.rb:150`) hands the resolved backend to the `Supervisor` it builds at `:122`;
-`lain bench arms` declares it at `exe/lain:182` and resolves through `Bench::CLI#arm_isolation`
+`qa-lain bench arms` declares it at `bin/qa-lain` and resolves through `Bench::CLI#arm_isolation`
 (`bench/cli.rb:247`).
 
 What is still short of a consumer is the **reach on the chat side**: only an actor-mode subagent
@@ -1999,7 +1999,7 @@ the free monoid on the combinator set. Distinct descriptions can name the same s
 description space, but descriptions are what a bench *can* enumerate: fix a generator list,
 bound the length, and the words are walkable mechanically. `--context-pipeline` is the first door
 onto that space — a `+`-joined word over a fixed list of five stages — but **no command walks the
-words**. `lain bench sweep` (`bench/sweep.rb`) is the offline recall@k *retrieval* eval over the
+words**. `qa-lain bench sweep` (`bench/sweep.rb`) is the offline recall@k *retrieval* eval over the
 committed gold corpus — five retrieval arms, no combinator. So the enumerable space is what the
 algebra buys the bench, and spending it is unwritten work rather than shipped work.
 

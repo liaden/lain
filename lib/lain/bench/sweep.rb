@@ -25,7 +25,7 @@ module Lain
     # Zero network by construction: the vector arm reads COMMITTED fixture
     # embeddings through {Embeddings}, never a live embedder. The gold corpus
     # and its embeddings ship WITH THE GEM rather than living under spec/ --
-    # the eval is bound to exactly that gold set, and a `lain bench sweep` run
+    # the eval is bound to exactly that gold set, and a `qa-lain bench sweep` run
     # in an installed gem has no spec/ tree.
     class Sweep
       DEFAULT_K = 5
@@ -74,7 +74,7 @@ module Lain
         def abstention? = gold_ids.empty?
       end
 
-      # A committed text => vector map standing in for a live {Embedder}. Keyed
+      # A committed text => vector map standing in for a live {Lain::Embedder}. Keyed
       # on the SAME text the arm embeds, resolved through each item's content
       # digest so the committed JSON stays addressable and a corpus edit that
       # changes a body misses loudly rather than scoring against a stale vector.
@@ -132,7 +132,7 @@ module Lain
           freeze
         end
 
-        # The {Embedder} duck: one vector per text, in order. A text absent from
+        # The {Lain::Embedder} duck: one vector per text, in order. A text absent from
         # the committed fixture is a stale fixture, never a silent zero vector.
         def embed(texts)
           texts.map do |text|

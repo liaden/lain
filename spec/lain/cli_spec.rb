@@ -385,12 +385,6 @@ RSpec.describe LainCLI do
 
       expect(described_class.commands.fetch("chat").options.fetch(:judge_denials).description).to include(said)
     end
-
-    it "names the judge-denials arms from Arms in approval-replay's help" do
-      option = LainCLI::Bench.commands.fetch("approval_replay").options.fetch(:judge_denials)
-
-      expect(option.banner).to eq(Lain::CLI::Arms::JUDGE_DENIALS.join("|"))
-    end
   end
 
   describe "chat's --exec flag" do
@@ -677,7 +671,7 @@ RSpec.describe LainCLI do
   # this class alone. Thor's own `check_unknown_options?` answers FALSE for any
   # name registered through `subcommand` (thor.rb:363-380), so a declaration
   # here would be inert for exactly the four commands a stray switch was really
-  # reaching: `survey`, `review`, `bench` and `epic` are separate `< Thor`
+  # reaching: `epic`, `worktrees`, `land` and `todos` are separate `< Thor`
   # classes dispatched by name. {Lain::CLI::Exe::Boundary} is where every one of them
   # already shares its argv policing, so that is where the declaration lives and
   # `include Boundary` is what carries it.
@@ -691,9 +685,8 @@ RSpec.describe LainCLI do
     end
 
     it "finds them all at all, so an empty sweep cannot pass vacuously" do
-      expect(thor_classes).to contain_exactly(described_class, described_class::Bench,
-                                              described_class::Epic, described_class::Worktrees, described_class::Todos,
-                                              described_class::Land)
+      expect(thor_classes).to contain_exactly(described_class, described_class::Epic, described_class::Worktrees,
+                                              described_class::Todos, described_class::Land)
     end
 
     # BEHAVIOUR, not merely the declaration, because `subcommands.include?(name)`
@@ -705,7 +698,6 @@ RSpec.describe LainCLI do
       "chat" => %w[chat --nope],
       "sessions" => %w[sessions --nope],
       "epic status" => %w[epic status --nope],
-      "bench variance" => %w[bench variance /tmp --nope],
       "worktrees gc" => %w[worktrees gc --nope],
       "land status" => %w[land status --nope],
       "todos status" => %w[todos status --nope],
@@ -716,22 +708,6 @@ RSpec.describe LainCLI do
         expect { described_class.start(argv, debug: true) }
           .to raise_error(Thor::UnknownArgumentError, /--nope/)
       end
-    end
-
-    it "sends the default window of 24 hours when --window is omitted" do
-      report = instance_double(Lain::Bench::CLI, variance_report: "report")
-      allow(Lain::Bench::CLI).to receive(:new).and_return(report)
-      expect { described_class.start(%w[bench variance /tmp], debug: true) }.to output("report\n").to_stdout
-      expect(report).to have_received(:variance_report).with(["/tmp"], window_hours: 24)
-    end
-
-    it "hands `bench variance --window` to the report as hours" do
-      report = instance_double(Lain::Bench::CLI, variance_report: "report")
-      allow(Lain::Bench::CLI).to receive(:new).and_return(report)
-      expect do
-        described_class.start(%w[bench variance /tmp --window 720], debug: true)
-      end.to output("report\n").to_stdout
-      expect(report).to have_received(:variance_report).with(["/tmp"], window_hours: 720)
     end
 
     # The other direction, and the one a refusal can silently break: every
@@ -930,65 +906,6 @@ RSpec.describe LainCLI do
     end
   end
 
-  # `--cheap-model` names a model, not a Lain::CLI::Backend field, so it reaches
-  # `Bench::CLI#arms_report` the way `--system`/`--isolation`/`--journal` do:
-  # read literally off `options`, never through the model flag band.
-  describe "bench arms --cheap-model" do
-    it "declares the flag and forwards it to arms_report literally" do
-      entry = instance_double(Lain::Bench::CLI)
-      calls = []
-      allow(Lain::Bench::CLI).to receive(:new).and_return(entry)
-      allow(entry).to receive(:arms_report) { |**kwargs|
-        calls << kwargs
-        "the report"
-      }
-
-      expect { described_class::Bench.start(%w[arms suite/tasks.yml --cheap-model qwen3:4b], debug: true) }
-        .to output("the report\n").to_stdout
-
-      expect(described_class::Bench.commands.fetch("arms").options).to have_key(:cheap_model)
-      expect(calls.last).to include(cheap_model: "qwen3:4b")
-    end
-  end
-
-  # The servability check, through the whole exe path with only the wire faked:
-  # the server's own 404 for the model is the refusal, and it comes before a
-  # single chat request.
-  describe "bench arms --cheap-model a model the server has not got" do
-    around { |example| Dir.mktmpdir("lain-arms-cheap") { |dir| (@dir = dir) && example.run } }
-
-    it "refuses naming the model, and sends no chat request" do
-      stub_request(:post, "http://localhost:11434/api/show")
-        .to_return(status: 404, headers: { "Content-Type" => "application/json" },
-                   body: JSON.generate("error" => "model 'nonesuch:1b' not found"))
-      chat = stub_request(:post, "http://localhost:11434/api/chat")
-      allow(Lain::Arm::Driver).to receive(:new).and_raise("the arms ran, so the check came after the spend")
-      fixture = File.expand_path("../fixtures/arms/tasks.yml", __dir__)
-      argv = ["arms", fixture, "--provider", "ollama", "--model", "qwen3:4b", "--cheap-model", "nonesuch:1b",
-              "--isolation", "worktree", "--journal", File.join(@dir, "arms.ndjson")]
-
-      expect { with_env("LAIN_PROVIDER" => nil) { described_class::Bench.start(argv, debug: true) } }
-        .to raise_error(Thor::Error, /nonesuch:1b/)
-      expect(chat).not_to have_been_requested
-    end
-  end
-
-  # The bench's backend is built with no board, so it binds the environment's
-  # secrets itself. The model id stands in for a value the environment names
-  # as a secret, because every request certainly carries it.
-  describe "the bench's model backend" do
-    it "refuses a request that carries a secret from the command's environment" do
-      chat = stub_request(:post, "http://localhost:11434/api/chat")
-      backend = described_class::Bench.new([], { provider: "ollama", model: "qwen3:4b" }).send(:model_backend)
-      request = Lain::Request.new(model: "qwen3:4b", max_tokens: 64, stream: false,
-                                  messages: [{ role: "user", content: "hi" }])
-
-      expect { with_env("SPEC_SERVICE_TOKEN" => "qwen3:4b") { backend.provider.complete(request) } }
-        .to raise_error(Lain::Provider::HTTP::EgressGuard::Refused, /known secret/)
-      expect(chat).not_to have_been_requested
-    end
-  end
-
   # A dry run builds no backend, and still refuses a provider name that is not one.
   describe "consolidate --dry-run --provider olama" do
     around { |example| Dir.mktmpdir("lain-consolidate-typo") { |dir| (@dir = dir) && example.run } }
@@ -1032,9 +949,7 @@ RSpec.describe LainCLI do
   # cannot be one another command silently drops.
   describe "the model flag band on every model-calling command" do
     band = %i[provider api_base model max_tokens temperature seed num_batch num_ctx]
-    commands = { "bench record" => -> { described_class::Bench.commands.fetch("record") },
-                 "bench arms" => -> { described_class::Bench.commands.fetch("arms") },
-                 "epic submit" => -> { described_class::Epic.commands.fetch("submit") },
+    commands = { "epic submit" => -> { described_class::Epic.commands.fetch("submit") },
                  "consolidate" => -> { described_class.commands.fetch("consolidate") },
                  "improve" => -> { described_class.commands.fetch("improve") } }
 
@@ -1045,55 +960,6 @@ RSpec.describe LainCLI do
         expect(options.keys.map(&:to_sym)).to include(*band)
         expect(Lain::CLI::RunProfile::FIELDS.map { |field| options.fetch(field).default }).to all(be_nil)
       end
-    end
-
-    # The Backend a bench command builds, captured at the one Bench::CLI call
-    # it is handed to.
-    def bench_backend(argv, method, env)
-      entry = instance_double(Lain::Bench::CLI)
-      seen = []
-      allow(Lain::Bench::CLI).to receive(:new).and_return(entry)
-      allow(entry).to receive(method) { |**kwargs| (seen << kwargs.fetch(:backend)) && ["done"] }
-      expect { with_env(env) { described_class::Bench.start(argv, debug: true) } }.to output.to_stdout
-      seen.fetch(0)
-    end
-
-    def encoded_options(backend)
-      timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store).commit(role: :user,
-                                                                                     content: [{
-                                                                                       "type" => "text", "text" => "hi"
-                                                                                     }])
-      Lain::Provider::Ollama.new.encode(backend.context.render(timeline:, toolset: Lain::Toolset.new))[:options]
-    end
-
-    it "sends LAIN_NUM_BATCH on every ollama request `bench arms` encodes" do
-      backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
-                              "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
-
-      expect(encoded_options(backend).except(:num_predict)).to eq(num_batch: 2048)
-    end
-
-    it "sends LAIN_NUM_BATCH on every ollama request `bench record` encodes" do
-      backend = bench_backend(%w[record task.txt --out runs --provider ollama], :record,
-                              "LAIN_NUM_BATCH" => "2048", "LAIN_PROVIDER" => nil)
-
-      expect(encoded_options(backend).except(:num_predict)).to eq(num_batch: 2048)
-    end
-
-    it "takes the provider from LAIN_PROVIDER when `bench arms` is given none" do
-      backend = bench_backend(%w[arms suite/tasks.yml], :arms_report, "LAIN_PROVIDER" => "ollama")
-
-      expect(backend.run_profile.provider).to eq("ollama")
-    end
-
-    # The generation cap shares the object and answers to no flag, so what a
-    # flagless run proves is that no TYPED sampler knob was invented for it --
-    # num_batch is the one exception, defaulting in regardless of a flag.
-    it "sends only the num_batch default from a flagless ollama `bench arms`" do
-      backend = bench_backend(%w[arms suite/tasks.yml --provider ollama], :arms_report,
-                              "LAIN_NUM_BATCH" => nil, "LAIN_NUM_CTX" => nil)
-
-      expect(encoded_options(backend)).to eq(num_predict: 4096, num_batch: 2048)
     end
   end
 end

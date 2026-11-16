@@ -11,7 +11,7 @@ module Lain
       # grader bound to that lease runs THAT project's own suite.
       #
       # Without it an unleased arm works wherever the process happens to stand,
-      # which for `lain bench altitude` is lain's own repository -- an arm
+      # which for `qa-lain bench altitude` is lain's own repository -- an arm
       # editing the bench that is measuring it, graded on a suite that is not the
       # subject's. That is the one thing a decomposition bench must never do.
       #
@@ -21,8 +21,8 @@ module Lain
       # the next run.
       #
       # Its own file because a nested class's lines count toward the enclosing
-      # class's `Metrics/ClassLength` -- {ArmSweep} splits {ArmSweep::Recordings}
-      # and {ArmSweep::Report} out for the same reason.
+      # class's `Metrics/ClassLength` -- ArmSweep splits ArmSweep::Recordings
+      # and ArmSweep::Report out for the same reason.
       class Subject
         # @param project [String] the subject project to copy, already resolved
         #   to an absolute path

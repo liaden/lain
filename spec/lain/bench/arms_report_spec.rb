@@ -4,8 +4,8 @@
 # ONE resolved Lain::CLI::Backend the flags built, and an optional isolation
 # NAME -- assembles the arms, the ArmTasks suite, that suite's per-task gold
 # grader and the live SpawnSeam, and hands all four to #arm_report, returning
-# the report String. exe/lain therefore stays a flag parser (its boundary rule
-# at exe/lain:80-85).
+# the report String. bin/qa-lain therefore stays a flag parser (its boundary rule
+# at bin/qa-lain).
 #
 # Every example here is driven through Provider::Mock: this entry point spends
 # real money in production, so its specs must never resolve a live provider.
@@ -45,7 +45,7 @@ RSpec.describe Lain::Bench::CLI do
     end
   end
 
-  # The backend the flags build, spelled the way exe/lain and every other Backend
+  # The backend the flags build, spelled the way bin/qa-lain and every other Backend
   # spec spell it. `max_tokens` is explicit because Context requires it
   # (`Integer(nil)` raises), and the number is the `bench arms` flag's own
   # declared default.
@@ -157,7 +157,7 @@ RSpec.describe Lain::Bench::CLI do
     # HANDED, through the real assembly, because the offline sweep's fixture is
     # hand-authored to satisfy the parser and hid this completely.
     #
-    # `system: nil` EXPLICITLY, because that is production's shape: exe/lain
+    # `system: nil` EXPLICITLY, because that is production's shape: bin/qa-lain
     # reads the flag off an options hash, so an unset `--system` arrives here as
     # a nil value rather than as an absent keyword. Omitting the keyword would
     # pass against a default that only fires on omission -- the counterfactual

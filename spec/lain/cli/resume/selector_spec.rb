@@ -90,7 +90,7 @@ RSpec.describe Lain::CLI::Resume::Selector do
       expect(picked).to eq("20260728T090000-222.ndjson")
     end
 
-    # `lain bench record` sets a run it could not finish aside under this
+    # `qa-lain bench record` sets a run it could not finish aside under this
     # name: a header and a partial run, never a chat to continue.
     it "never answers with a bench run set aside as failed" do
       session("20260727T090000-111.ndjson", at: "2026-07-27T09:00:00Z")

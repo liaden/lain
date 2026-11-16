@@ -334,7 +334,7 @@ module Lain
       # One metric across one arm's runs -- or, where the arm's own PriceBook
       # cannot answer, a named refusal instead of a Distribution.
       #
-      # The refusal must never escape as a raise. `lain bench arms FIXTURE
+      # The refusal must never escape as a raise. `qa-lain bench arms FIXTURE
       # --provider ollama` reaches an unpriceable model with NO further flags
       # (`qwen3:4b` against a DEFAULTS of opus/sonnet/haiku), and a raise here
       # takes the WHOLE report down -- score, tokens and wall-time included --

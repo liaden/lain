@@ -3,7 +3,7 @@
 require "fileutils"
 require "tmpdir"
 
-# The single-selector half of session discovery, owned once. `lain friction`,
+# The single-selector half of session discovery, owned once. `qa-lain friction`,
 # `lain consolidate` and `lain improve` each ask the same question -- "which ONE
 # file does this selector name?" -- and each answered it with its own
 # byte-identical `resolve`/`dir`/`SessionNotFound` triple, so three copies of a

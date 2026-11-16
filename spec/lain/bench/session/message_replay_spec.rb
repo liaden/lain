@@ -222,7 +222,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
 
       # Panel fix round (Evans). The gate fetched the field to inspect it and
       # so raised KeyError before it could answer -- and KeyError is not a
-      # Lain::Error, so exe/lain's rescue misses it and an operator gets a raw
+      # Lain::Error, so bin/qa-lain's rescue misses it and an operator gets a raw
       # backtrace from all three doors. ChainFold#cited_parents has defaulted
       # this fetch since it was written ("no key IS the empty set", the same
       # tolerance `meta` has), and not matching it was the very asymmetry this
@@ -263,7 +263,7 @@ RSpec.describe Lain::Bench::Session::MessageReplay do
     # field announces its rot through a check it then fails; a field that is
     # GONE reached none -- the rebuild bare-fetched five keys and the digest
     # comparison a sixth, so a torn record escaped as a raw KeyError from
-    # nineteen frames down. KeyError is no Lain::Error, so exe/lain's rescue
+    # nineteen frames down. KeyError is no Lain::Error, so bin/qa-lain's rescue
     # misses it and all three doors that read this format rescue Corrupt and
     # not KeyError: an operator got a backtrace instead of a refusal. No
     # writer emits a record missing a key; a hand-edited or truncated journal

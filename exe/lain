@@ -32,7 +32,7 @@ class LainCLI < Thor
   # sampler params (temperature/seed) that ride Request#extra. A plain object,
   # not a bag of methods on LainCLI: the provider/model resolution is then
   # unit-testable without a Thor instance. It lives in lib (Lain::CLI::Backend)
-  # so `bench record` resolves providers through the identical object; the exe
+  # so `qa-lain bench record` resolves providers through the identical object; the exe
   # keeps the alias and maps its Lain error to Thor's.
   Backend = Lain::CLI::Backend
 
@@ -44,7 +44,7 @@ class LainCLI < Thor
 
   extend Lain::CLI::Exe::Help
 
-  # The epic subcommands, on the same thin-wiring rule as bench: Lain::CLI::Epic
+  # The epic subcommands, on the same thin-wiring rule as qa-lain's bench: Lain::CLI::Epic
   # resolves the home, folds the Journal, and returns a String; this class parses
   # argv, `say`s what comes back, and presents the lib's own refusals -- all
   # Lain::Error -- as Thor::Error, message to stderr, nonzero exit, no backtrace.
@@ -220,331 +220,6 @@ class LainCLI < Thor
     end
   end
 
-  # The bench subcommands, on the same thin-wiring rule as chat: Bench::CLI
-  # assembles everything and returns Strings; this class parses flags, `say`s
-  # what comes back, and presents the lib's own errors -- all Lain::Error:
-  # Bench::CLI::Refusal, Session::Corrupt, the ANTHROPIC_API_KEY gate -- as
-  # Thor::Error, message to stderr, nonzero exit, no backtrace. Anything else
-  # (a bare ArgumentError included) is a bug and keeps its backtrace.
-  class Bench < Thor
-    # The SAME Thor-boundary home the outer class uses: `render` says the
-    # block's String and maps Lain::Error onto Thor's contract, so each
-    # report subcommand is one line with no repeated rescue.
-    include Lain::CLI::Exe::Boundary
-
-    # One sentence for both paid commands: what a run's memory view starts
-    # from. Written once so `record` and `arms` cannot advertise it differently.
-    MEMORY_DESC = "What each run's memory view starts from " \
-                  "(#{Lain::Bench::CLI::MEMORIES.join(", ")}). Unset is empty, which is what makes two " \
-                  "sweeps comparable. project starts every run from this project's own memory store AND " \
-                  "APPENDS each run's memory_write to it permanently, so a sweep changes what your next " \
-                  "chat remembers".freeze
-    private_constant :MEMORY_DESC
-
-    def self.exit_on_failure? = true
-
-    desc "variance DIR_OR_FILES...", "Report determinism/divergence/distribution across recorded sessions"
-    method_option :window, type: :numeric, default: Lain::Bench::Variance::DEFAULT_WINDOW_HOURS,
-                           desc: "hours the recordings' start times may span; wider is refused"
-    def variance(*sources) = render { Lain::Bench::CLI.new.variance_report(sources, window_hours: options[:window]) }
-
-    desc "record TASKFILE", "Record N live runs of a task file (one prompt per line) -- spends real API money"
-    method_option :n, type: :numeric, default: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:runs),
-                      desc: "how many runs"
-    method_option :out, type: :string, required: true, desc: "directory the session files land in"
-    method_option :system, type: :string, desc: "system prompt"
-    # NO Thor `default:`: unset and `empty` are the same answer, and the
-    # library says so once rather than the flag and the library each saying it.
-    method_option :memory, type: :string, desc: MEMORY_DESC
-    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
-    # One `say` of the newline-joined paths, through the SAME Boundary#render
-    # every other bench subcommand sits on. The Backend is built INSIDE the
-    # block so a refusal from its own construction presents the same way.
-    def record(taskfile)
-      render do
-        backend = model_backend(Lain::Bench::CLI::RECORD_DEFAULTS.fetch(:max_tokens))
-        Lain::Bench::CLI.new.record(taskfile:, backend:, out: options[:out],
-                                    runs: options[:n], system: options[:system],
-                                    memory: options[:memory]).join("\n")
-      end
-    end
-
-    desc "plan-sweep", "Shape x density sweep over a fixture plan's scripted runs -- offline, deterministic"
-    method_option :plan, type: :string, required: true, desc: "the fixture plan markdown (P1 format, seams visible)"
-    method_option :runs, type: :string, required: true, desc: "the scripted runs YAML"
-    def plan_sweep
-      render { Lain::Bench::CLI.new.plan_sweep_report(plan_path: options[:plan], runs_path: options[:runs]) }
-    end
-
-    desc "faults", "Grade planted fault trajectories with the arms grader and report where it disagrees"
-    method_option :fixture_dir, type: :string, required: true, desc: "a directory of fault classes"
-    def faults = render { Lain::Bench::CLI.new.fault_report(fixture_dir: options[:fixture_dir]) }
-
-    desc "sweep", "Deterministic five-arm retrieval eval (recall@k over the gold corpus) -- offline, no API"
-    method_option :k, type: :numeric, default: Lain::Bench::Sweep::DEFAULT_K,
-                      aliases: "-k", desc: "retrieval depth (recall@k)"
-    method_option :split, type: :string, default: "dev", desc: "dev or test"
-    def sweep = render { Lain::Bench::CLI.new.sweep_report(k: options[:k], split: options[:split]) }
-
-    desc "oracle-calibration", "Score the secret oracle on a labelled path set -- offline from --recorded"
-    method_option :oracle, type: :string, enum: Lain::Bench::CLI::ORACLES, default: "local", desc: "which tier"
-    method_option :model, type: :string, banner: "NAME", desc: "the judge's model; required with --oracle cloud"
-    method_option :gateway, type: :string, banner: "URL",
-                            desc: "http://127.0.0.1:<port> of a lain gateway, no token; required with --oracle cloud"
-    method_option :recorded, type: :string, banner: "PATH", desc: "a journal of oracle_answer records to score offline"
-    method_option :journal, type: :string, banner: "PATH",
-                            desc: "where a live run writes its answers, so --recorded can re-score it " \
-                                  "(default: a timestamped file under the state home's lain/bench)"
-    method_option :paths, type: :string, default: Lain::Bench::OracleCalibration::DEFAULT_PATHS,
-                          desc: "the labelled path set (YAML)"
-    def oracle_calibration
-      render do
-        Lain::Bench::CLI.new.oracle_calibration_report(oracle: options[:oracle], model: options[:model],
-                                                       gateway: options[:gateway], recorded: options[:recorded],
-                                                       journal: options[:journal], paths: options[:paths])
-      end
-    end
-
-    desc "judge-scale", "Compare judge scale shapes on labelled findings -- offline from --recorded"
-    method_option :findings, type: :string, required: true, banner: "PATH",
-                             desc: "JSONL of finding, label (true or false) and synthetic rows"
-    method_option :scales, type: :string, default: Lain::Bench::JudgeScale::DEFAULT_SCALES.join(","),
-                           desc: "comma-separated, from #{Lain::Bench::JudgeScale::DEFAULT_SCALES.join(", ")}"
-    method_option :recorded, type: :string, banner: "DIR", desc: "a directory of <scale>.ndjson verdict journals"
-    method_option :journal, type: :string, banner: "DIR",
-                            desc: "where a live run writes <scale>.ndjson (default: a timestamped directory " \
-                                  "under the state home's lain/bench)"
-    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: 512)
-    def judge_scale
-      render do
-        backend = model_backend(512) unless options[:recorded]
-        Lain::Bench::CLI.new.judge_scale_report(findings: options[:findings], scales: options[:scales],
-                                                recorded: options[:recorded], backend:, journal: options[:journal])
-      end
-    end
-
-    desc "approval-replay SESSIONS...", "Re-decide journaled gated calls through the real approval stack " \
-                                        "-- offline: runs nothing, asks no model, reads only the sessions"
-    method_option :approval, type: :string, repeatable: true, banner: "ask|auto|bypass",
-                             desc: "an approval level to replay under; repeat for more (default: ask)"
-    method_option :rules, type: :string, repeatable: true, banner: "CONFIG_RB",
-                          desc: "a config.rb whose approval table is the rule set; it is run as Ruby, as a " \
-                                "trusted .lain/config.rb is, so name only a file you trust. Repeat to diff rule sets"
-    method_option :approver, type: :string, enum: Lain::Bench::ApprovalReplay::APPROVERS.map(&:to_s),
-                             default: "recorded",
-                             desc: "who answers a parked call: the session's own human, one approving everything " \
-                                   "(approve_all), or one answering by label (perfect, needs --labels)"
-    method_option :labels, type: :string, banner: "LABELS_JSONL",
-                           desc: "a call-label sidecar (digest, label harmful|sensitive|routine, source); " \
-                                 "scores each arm against it"
-    method_option :judge_denials, type: :string, repeatable: true, banner: Lain::CLI::Arms::JUDGE_DENIALS.join("|"),
-                                  desc: "what a judge's refusal does under auto; repeat for more (default: off)"
-    method_option :tripwire, type: :boolean, default: false,
-                             desc: "end the report with what the tripwire would have done to the sessions, " \
-                                   "and its false-trip rate when --labels is given"
-    method_option :tripwire_rules, type: :string, repeatable: true, banner: "KEY=VALUE,...",
-                                   desc: "rules for the tripwire replay as overrides of the default " \
-                                         "(hard_stop, strong, medium, weak); repeat for a row each. Implies --tripwire"
-    method_option :composed_term, type: :string, banner: "TABLE_RB",
-                                  desc: "score a candidate PROGRAMS table against SESSIONS and --hazards; it is " \
-                                        "run as Ruby, so name only a file you trust"
-    method_option :hazards, type: :string, banner: "HAZARDS_NDJSON", desc: "the hazard corpus for --composed-term"
-    def approval_replay(*sessions)
-      render do
-        Lain::Bench::CLI.new.approval_replay_report(sessions:, approvals: options[:approval] || %w[ask],
-                                                    rules: options[:rules] || [], approver: options[:approver],
-                                                    labels: options[:labels],
-                                                    denials: options[:judge_denials] || %w[off],
-                                                    tripwire: options[:tripwire],
-                                                    tripwire_rules: options[:tripwire_rules] || [],
-                                                    composed_term: options[:composed_term],
-                                                    hazards: options[:hazards])
-      end
-    end
-
-    desc "compaction-sweep JOURNALS...", "replay recorded sessions under each compaction arm, offline"
-    method_option :arms, type: :string, default: Lain::Bench::CompactionSweep::DEFAULT_ARMS.join(","),
-                         desc: "comma-separated compaction arms to replay"
-    method_option :placement, type: :string, default: "framed", banner: "framed,bare",
-                              desc: "how a summary reaches the model; bare drops the recap frame"
-    method_option :price_as, type: :string, default: Lain::Bench::CompactionSweep::DEFAULT_PRICE_AS,
-                             banner: "MODEL", desc: "the model each simulated cache write is priced as"
-    method_option :summarizer, type: :string, enum: Lain::Bench::CLI::CompactionSweepFlags::SUMMARIZERS,
-                               default: "recorded",
-                               desc: "recorded answers only, or ask the local summarizer for every span " \
-                                     "(a long job on a big journal)"
-    method_option :budget, type: :numeric, default: Lain::Bench::CompactionSweep::DEFAULT_BUDGET, banner: "BYTES",
-                           desc: "head bytes past the held cut that fire a cut"
-    method_option :planted, type: :string, banner: "DIR",
-                            desc: "a planted-claim corpus to sweep too; its claims fill the kept columns"
-    method_option :journal, type: :string, banner: "FILE",
-                            desc: "where a local summarizer's answers are written; --recorded FILE replays " \
-                                  "them (default: a timestamped file under the state home's lain/bench)"
-    method_option :recorded, type: :string, banner: "PATH",
-                             desc: "comma-separated journals of oracle_answer records to answer from, such as " \
-                                   "a local run's --journal"
-    method_option :live, type: :string, banner: "MODEL",
-                         desc: "send every arm to this Anthropic model, which spends money; a priced preflight " \
-                               "is shown and confirmed first"
-    method_option :yes, type: :boolean, default: false,
-                        desc: "accept the --live preflight without asking, as a run with no terminal must"
-    # Only the model flags that reach a summarizer: its endpoint and runner knobs, then its own band.
-    Lain::CLI::Exe::ModelFlags.endpoint(self, nil)
-    Lain::CLI::Exe::ModelFlags.throughput(self, nil)
-    Lain::CLI::Exe::CompactionFlags.summarizer(self)
-    def compaction_sweep(*journals)
-      render do
-        backend = model_backend if options[:summarizer] == "local"
-        Lain::Bench::CLI.new.compaction_sweep_report(journals:, **compaction_sweep_knobs, backend:,
-                                                     **Lain::CLI::Exe::LiveSweep.options(self, input: $stdin))
-      end
-    end
-
-    desc "memory-sweep FIXTURE", "Memory arms (on, off, eager-write) over a staleness fixture " \
-                                 "-- spends API money with a live model"
-    method_option :yes, type: :boolean, default: false,
-                        desc: "accept the priced preflight without asking, as a run with no terminal must"
-    Lain::CLI::Exe::ModelFlags.endpoint(self, nil)
-    def memory_sweep(fixture)
-      render do
-        backend = model_backend(nil, options.merge("provider" => "anthropic"))
-        Lain::Bench::CLI.new.memory_sweep_report(fixture_path: fixture, provider: backend.provider,
-                                                 model: backend.model,
-                                                 confirm: Lain::CLI::Exe::LiveSweep.prompt(self, input: $stdin))
-      end
-    end
-
-    desc "arms FIXTURE", "Compare the four orchestration arms live over an ArmTasks fixture " \
-                         "-- spends real API money"
-    Lain::CLI::Exe::ModelFlags.declare(self, max_tokens: Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS,
-                                             ceiling: "higher than record's, because an arm task answers with " \
-                                                      "whole file bodies and a ceiling hit ends the run")
-    method_option :system, type: :string,
-                           desc: "System prompt for every arm. Unset teaches the FILE/END " \
-                                 "trajectory format the grader parses; a blank value counts as " \
-                                 "unset, since an untaught arm scores near zero"
-    # Read LITERALLY, like --system/--isolation/--journal below: it names a
-    # model id, not a Lain::CLI::Backend field, so the model flag band does not
-    # carry it.
-    # Unset on a Claude --model the router keeps its own claude-haiku-4-5;
-    # unset on any other backend, or equal to --model, the roster refuses
-    # rather than guessing (LiveArms.refuse_unroutable!).
-    method_option :cheap_model, type: :string,
-                                desc: "Model id the routing arm sends single-file tasks to. Required " \
-                                      "for any --provider but Anthropic's, whose own claude-haiku-4-5 " \
-                                      "default answers when this is unset; refused when equal to --model"
-    # NO Thor `default:`, deliberately, and NOT chat's declaration copied over
-    # (which sets `default: IsolationBackend::DEFAULT`). A default materializes
-    # the key, so `options[:isolation]` would never be nil -- and unset is not
-    # `none`: unset leaves Arm::Driver's own Arm::NoIsolation, which leases
-    # nothing at all, while `none` resolves a real backend over the shared
-    # process environment. Bench::CLI#arm_isolation preserves that distinction,
-    # and a default here would collapse it silently. BACKENDS in the help text
-    # only, so the flag's advertised set and the resolver cannot disagree.
-    method_option :isolation, type: :string,
-                              desc: "Isolation backend every arm leases its workers from " \
-                                    "(#{Lain::CLI::IsolationBackend::BACKENDS.join(", ")}); only " \
-                                    "#{Lain::Bench::CLI::CONTAINING_BACKENDS.join("|")} contains where the tools " \
-                                    "write, so a run with the tool floor requires one. Unset leases nothing -- " \
-                                    "not the same as none, and toolless runs only"
-    method_option :journal, type: :string,
-                            desc: "NDJSON file this run's grade records and isolation lease telemetry " \
-                                  "are recorded into; --isolation leases the workers, and refuses " \
-                                  "without somewhere to record them"
-    method_option :memory, type: :string, desc: MEMORY_DESC
-    method_option :attempts, type: :numeric, default: 1,
-                             desc: "Fresh runs of each task per arm; above 1 adds pass^k, rounds to pass " \
-                                   "and cost per solved task"
-    method_option :subset_of, type: :string,
-                              desc: "Name of the larger suite this one is a cut of; the report says its gap " \
-                                    "was not measured"
-    method_option :labels, type: :string,
-                           desc: "JSONL sidecar, one {\"digest\",\"label\",\"by\"} object per line, saying why a " \
-                                 "failed attempt failed; label is one of environment, reasoning, grader, prompt"
-    # Of the chat's exec and arm flags only this one means something to a bench; `classes` is a chat's
-    # approval arm and would change nothing here.
-    method_option :confine, type: :string, enum: Lain::Bench::CLI::CONFINES, banner: "ARM", desc: Lain::CLI::Exe::ExecFlags::BENCH_CONFINE
-    # The Backend is built INSIDE `render`, as `record` does: a refusal from its
-    # own construction is a Lain::Error like any other, and outside the block
-    # nothing would map it to Thor's contract. The `ensure` below tolerates a
-    # raise from either side of `lease_journal`.
-    def arms(fixture)
-      refuse_journal_without_isolation!
-      journal = lease_journal
-      render do
-        backend = model_backend(Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS)
-        Lain::Bench::CLI.new.arms_report(fixture_path: fixture, backend:, journal:, **arms_knobs,
-                                         arms: Lain::CLI::Arms.from(confine: options[:confine] || Lain::Bench::CLI::DEFAULT_CONFINE,
-                                                                    tripwire: "off", round_budget: "off",
-                                                                    round_dedup: "off"))
-      end
-    ensure
-      # Closing is what discards a journal this run created and never wrote to,
-      # so a refusal leaves no zero-byte artifact -- the rule the chat path keeps.
-      journal&.close
-    end
-
-    no_commands do
-      # The backend the model flag band resolves: what was typed, then the
-      # environment, then the built-in provider.
-      # Bound to the environment's secrets here, since no board exists out of chat.
-      # @param ceiling_default [Integer, nil] the `--max-tokens` default this command declares
-      # @param options [Hash] the options it resolves; the command's own unless a caller overrides some
-      def model_backend(ceiling_default = nil, options = self.options)
-        Lain::CLI::Backend.headless(options, profile: Lain::CLI::Exe::ModelFlags.profile(options), ceiling_default:,
-                                             root: Lain::Project::Resolver.default_project.root)
-      end
-
-      def compaction_sweep_knobs
-        { arms: options[:arms], placements: options[:placement], price_as: options[:price_as],
-          summarizer: options[:summarizer], budget: options[:budget], planted: options[:planted],
-          journal: options[:journal], recorded: options[:recorded] }
-      end
-
-      def arms_knobs
-        { system: options[:system], isolation: options[:isolation], cheap_model: options[:cheap_model],
-          memory: options[:memory], attempts: options[:attempts], subset_of: options[:subset_of],
-          labels: options[:labels] }
-      end
-
-      # The argv door in front of Bench::CLI#arm_isolation's deliberate CRASH.
-      # A journal with no isolation name to resolve it against raises a bare
-      # ArgumentError there -- it refuses to silently drop an option the caller
-      # asked for -- and that is right for the library, whose caller is a
-      # programmer. It rested on nothing in argv being able to reach it, and
-      # --journal is what broke that premise. So this closes the door in FRONT
-      # of that refusal, which stays exactly as it is and stays the authority:
-      # two flags in a defensible combination get a sentence, not a backtrace
-      # (the rule at the top of this file -- every Lain::Error presents clean,
-      # anything else is a bug and keeps its trace).
-      #
-      # {CLI::ChatLaunch#refuse_windows_without_journal!} is the same shape one
-      # layer down, for the same reason: refuse the PAIR at the door.
-      def refuse_journal_without_isolation!
-        return unless options[:journal] && options[:isolation].nil?
-
-        raise Thor::Error, "--journal records this run's grades AND the isolation leases it takes, and " \
-                           "nothing leases without --isolation: drop --journal, or add --isolation " \
-                           "#{Lain::Bench::CLI::CONTAINING_BACKENDS.join("|")} to record both. Naming a " \
-                           "backend that does not contain is refused separately, once the tools are known"
-      end
-
-      # A SET --isolation REQUIRES a journal, and Bench::CLI is what refuses the
-      # pair: IsolationBackend decorates BY NEED, so an unjournalled resolve hands
-      # back a bare backend emitting no Telemetry::IsolationLease at all -- an
-      # isolated, paid run nothing can observe. That refusal names the missing
-      # journal, and the flag it asks for is right here in the same help output.
-      #
-      # ITS OWN FD, on the operator's own path. Not stderr, which Journal's
-      # contract forbids outright and which `render` fills with this command's
-      # error message anyway -- one such line and the record stops parsing, which
-      # is the wound output discipline exists for. Not Journal.open's DEFAULT
-      # path either: that lands in Paths#sessions_dir, which `lain sessions` and
-      # --resume enumerate, and a header-less bench journal is not a session.
-      def lease_journal = options[:journal] && Lain::Journal.open(options[:journal])
-    end
-  end
-
   desc "epic SUBCOMMAND ...ARGS", "The epic tier: artifact home, issue graph, and sign-off queue"
   subcommand "epic", Epic
 
@@ -559,11 +234,6 @@ class LainCLI < Thor
 
   desc "todos SUBCOMMAND", "the chore file: drain runs the open items, status and add read and extend it"
   subcommand "todos", Todos
-
-  desc "bench SUBCOMMAND ...ARGS",
-       "Bench drivers over recorded sessions, and the live arm comparison " \
-       "(variance, record, sweep, plan-sweep, arms)"
-  subcommand "bench", Bench
 
   desc "chat", "Start an interactive Lain session"
   Lain::CLI::Exe::ModelFlags.declare(self, recorded: Lain::CLI::Exe::ModelFlags::RECORDED)
@@ -678,14 +348,8 @@ class LainCLI < Thor
   method_option :session, type: :string, desc: "Session file to tail; defaults to this project's newest"
   def watch(selector) = exit_status { Lain::CLI::Watch.new(selector:, path: options[:session], sink: $stdout).run }
 
-  desc "usage SESSION", "Tokens by command and role from a session"
-  def usage(selector) = exit_status { Lain::CLI::Usage.new(selector:, sink: $stdout).run }
-
   desc "remote VERB NAME", "Pair or revoke a phone for the relay (VERB = pair or revoke)"
   def remote(verb, name = nil) = exit_status { Lain::CLI::Remote.new(verb:, name:, sink: $stdout).run }
-
-  desc "friction SESSION", "Knob guidance from a session's friction signals (offline, deterministic)"
-  def friction(selector) = render { Lain::CLI::Friction.new.report(selector) }
 
   desc "export SESSION", "Share a session as HTML (default), or write its local JSONL record (not for sharing)"
   method_option :html, type: :boolean, desc: "HTML of the conversation, home and project paths rewritten (the default)"
@@ -702,11 +366,6 @@ class LainCLI < Thor
                   include_released: options[:include_released] || false, force: options[:force] || false)
     end
   end
-
-  desc "verify SESSION",
-       "Check a session file's record chain: names the first edited, inserted or removed line (offline)"
-  method_option :tip, type: :string, desc: "A tip a previous verify printed; checks the last line against it"
-  def verify(selector) = exit_status { Lain::CLI::JournalVerify.new(sink: $stdout).run(selector, tip: options[:tip]) }
 
   desc "improvements", "Cross-project dogfood notes accumulated via the improvement_write tool"
   method_option :project, type: :string,

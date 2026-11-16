@@ -270,7 +270,7 @@ of which record set the damage landed in. Drive the same damaged file through ea
 |---|---|---|
 | `--fork` | `lain chat --fork SESSION@DIGEST` | `cannot fork <session>: …` |
 | `--resume` | `lain chat --resume SESSION` | `cannot resume <session>: …` |
-| the bench | `lain bench variance <the damaged file>` | `<path>: <the same refusal>` (the file must be CLOSED: over an open session, such as a live cockpit's copy, it is never replayed and reads `never closed ...` then `needs at least two recordings`) |
+| the bench | `qa-lain bench variance <the damaged file>` | `<path>: <the same refusal>` (the file must be CLOSED: over an open session, such as a live cockpit's copy, it is never replayed and reads `never closed ...` then `needs at least two recordings`) |
 | the supervisor | a supervised restart whose replay reads it | `cannot restart "<role>" from its session record: …` |
 
 All four exit 1 with **no backtrace frames** — `Bench::Session::Corrupt` is a `Lain::Error`, so the
@@ -322,7 +322,7 @@ endpoint and have it `SO_LINGER 0`-close (a hard RST) after N bytes of response,
 `--api-base` at it. Deterministic where killing a service is a timing race, and it leaves the
 operator's model server untouched — which matters on a shared machine.
 
-`lain bench record <taskfile> -n 1 --out <dir>` is the non-interactive vehicle. **Always take a
+`qa-lain bench record <taskfile> -n 1 --out <dir>` is the non-interactive vehicle. **Always take a
 control run against the real endpoint in the same session**, because the whole finding is the gap
 between them (this is how a 1.9s control vs >400s hang was found; a bare "kill the server" would
 almost certainly not have).

@@ -15,7 +15,7 @@ module Lain
     # file loads -- a cost the eager load charges every boot, for a roster only
     # `bench arms` asks for.
     #
-    # Each arm keeps its own DEFAULT (real, monotonic) clock. {ArmSweep} zeroes
+    # Each arm keeps its own DEFAULT (real, monotonic) clock. ArmSweep zeroes
     # its clock because a replayed mock has no parallelism to time; a live run
     # has real fan-out, and zeroing it here would erase the measurement the
     # live path exists to take.
@@ -76,7 +76,7 @@ module Lain
 
       # A backend this roster's own router cannot route on. Its own error rather
       # than {CLI::Refusal} only in WHERE it is raised: the policy that knows
-      # what is routable lives here, and `exe/lain` presents every {Lain::Error}
+      # what is routable lives here, and `bin/qa-lain` presents every {Lain::Error}
       # as a sentence, so an operator still meets a sentence and not a trace.
       class UnroutableBackend < Lain::Error; end
 
@@ -242,7 +242,7 @@ module Lain
         end
       end
 
-      # The DECOMPOSITION comparison `lain bench altitude` runs: the same work
+      # The DECOMPOSITION comparison `qa-lain bench altitude` runs: the same work
       # entered at four different heights on {Arm::Ladder}, lowest rung first, so
       # the report reads from the cheapest entry to the richest.
       #

@@ -81,7 +81,7 @@ module Lain
       def file = @file ||= SessionFile.resolve(@selector, paths: @paths, project: @project)
 
       # The html and its counts read every file of the chain: a resumed session's turns and
-      # released reads sit in the earlier files, and the jsonl stays the one file `lain verify` checks.
+      # released reads sit in the earlier files, and the jsonl stays the one file `qa-lain verify` checks.
       def chain_lines
         @chain_lines ||= Resume::ChainWalk.new(paths: @paths, dir: File.dirname(file)).entries(file).map(&:chomp)
       rescue Errno::ENOENT => e

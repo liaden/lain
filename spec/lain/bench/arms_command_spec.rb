@@ -5,11 +5,11 @@ require "stringio"
 require "tmpdir"
 
 # The `bench arms` door onto Bench::CLI#arms_report. The command is a FLAG
-# PARSER -- it names no Arm, no Grader and no Provider (exe/lain:80-85) -- so
+# PARSER -- it names no Arm, no Grader and no Provider (bin/qa-lain) -- so
 # what is under test here is the wiring: which flags are declared, which of
 # them reach the entry point, and what the entry point is handed for a journal.
 #
-# exe/lain is a script, not a lib file: it ends in `LainCLI.start(ARGV)` guarded
+# bin/qa-lain is a script, not a lib file: it ends in `QALain.start(ARGV)` guarded
 # by `$PROGRAM_NAME == __FILE__`, so `load` defines the Thor classes WITHOUT
 # parsing rspec's ARGV or touching the network -- the seam spec/lain/cli_spec.rb
 # and spec/lain/cli/chat_flags_spec.rb already use. Guarded, because those two
@@ -20,7 +20,8 @@ require "tmpdir"
 # (four arms x N tasks against a real provider), so every example either stops
 # at the Bench::CLI seam with a double, or -- for the three that must drive the
 # real assembly -- injects a Provider::Mock through it.
-load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Bench)
+load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+load File.expand_path("../../../bin/qa-lain", __dir__) unless defined?(QALain::Bench)
 
 # The mechanical half of this spec: a flag the executable READS must be a flag
 # it DECLARES, and a flag it DECLARES must be one that something reads.
@@ -39,7 +40,7 @@ load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Ben
 # reason: a manifest of expected flags is the same class of artifact that
 # already drifted.
 module ArmsCommand
-  EXE = File.expand_path("../../../exe/lain", __dir__)
+  EXES = [File.expand_path("../../../exe/lain", __dir__), File.expand_path("../../../bin/qa-lain", __dir__)].freeze
 
   # One invocation of the command: what it said, and how it ended.
   Captured = Struct.new(:stdout, :stderr, :exited)
@@ -110,10 +111,10 @@ module ArmsCommand
     end
   end
 
-  # @return [Array<Read>] every option read in exe/lain
+  # @return [Array<Read>] every option read in exe/lain and bin/qa-lain
   def self.reads
     scanner = Scanner.new
-    Prism.parse_file(EXE).value.accept(scanner)
+    EXES.each { |path| Prism.parse_file(path).value.accept(scanner) }
     scanner.reads
   end
 
@@ -126,7 +127,7 @@ module ArmsCommand
     # The REAL Thor parser over the real command, so the argv spelling
     # (`--max-tokens`), the type coercion, and the exit contract are exercised
     # together; a plain options hash would prove none of the three.
-    def run(*argv) = capturing { LainCLI::Bench.start(argv) }
+    def run(*argv) = capturing { QALain::Bench.start(argv) }
 
     # Thor's shell reads $stdout/$stderr at call time, so swapping the globals is
     # what captures it.
@@ -166,10 +167,10 @@ module ArmsCommand
   end
 end
 
-RSpec.describe "lain bench arms" do
+RSpec.describe "qa-lain bench arms" do
   include ArmsCommand::Invocation
 
-  let(:command) { LainCLI::Bench.commands.fetch("arms") }
+  let(:command) { QALain::Bench.commands.fetch("arms") }
   let(:declared) { command.options.keys.to_set }
 
   # Scenario: the subcommand is discoverable and declares its cost.
@@ -212,7 +213,7 @@ RSpec.describe "lain bench arms" do
     end
 
     # THE TRAP THIS CARD IS WRITTEN AROUND. chat declares `--isolation` with
-    # `default: IsolationBackend::DEFAULT` (exe/lain:257-261); the same line here
+    # `default: IsolationBackend::DEFAULT` (`chat` in exe/lain); the same line here
     # would make options[:isolation] never nil, and the unset-vs-"none"
     # distinction Bench::CLI#arm_isolation preserves would be gone -- every run
     # leasing a real backend, the Driver's own no-lease default unreachable from
@@ -231,7 +232,7 @@ RSpec.describe "lain bench arms" do
     # spelling in one subcommand family, so each help line states its own.
     it "states its own max_tokens ceiling, which is not record's" do
       ceiling = Lain::Bench::SpawnSeam::DEFAULT_MAX_TOKENS
-      record = LainCLI::Bench.commands.fetch("record").options.fetch(:max_tokens)
+      record = QALain::Bench.commands.fetch("record").options.fetch(:max_tokens)
 
       expect(command.options.fetch(:max_tokens)).to have_attributes(default: ceiling)
       expect(command.options.fetch(:max_tokens).description).to include("default #{ceiling}", "whole file bodies")
@@ -248,7 +249,7 @@ RSpec.describe "lain bench arms" do
     # lag the executable it claims to cover -- it read `options[:reason]` from a
     # class the list did not name, and the miss looked like an undeclared flag.
     let(:declared_anywhere) do
-      classes = [LainCLI, *LainCLI.subcommand_classes.values]
+      classes = [LainCLI, *LainCLI.subcommand_classes.values, QALain, *QALain.subcommand_classes.values]
       classes.flat_map { |klass| klass.commands.values }.flat_map { |cmd| cmd.options.keys }.to_set
     end
 
@@ -265,7 +266,7 @@ RSpec.describe "lain bench arms" do
     # accepted on the command line, and silently dropped.
     it "declares the whole model flag band, and reads every other flag it declares" do
       %w[arms record].each do |name|
-        options = LainCLI::Bench.commands.fetch(name).options.keys
+        options = QALain::Bench.commands.fetch(name).options.keys
         expect(ArmsCommand.band - options).to eq([])
         expect(options - ArmsCommand.band - literal).to eq([])
       end
@@ -648,7 +649,7 @@ end
 #
 # NOTHING HERE SPENDS MONEY: the entry point is a double, so no Backend#provider
 # call and no key gate is ever reached.
-RSpec.describe "lain bench record" do
+RSpec.describe "qa-lain bench record" do
   include ArmsCommand::Invocation
 
   let(:calls) { [] }

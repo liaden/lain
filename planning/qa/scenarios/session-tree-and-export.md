@@ -121,7 +121,7 @@ the current directory, so from elsewhere `<project>` is not written and `lain ex
 | Do | Expect |
 |---|---|
 | `lain export $S > $QA/s.html` | one self-contained page: a `<section class="turn">` per turn of the chain the head ends on, with `<h3>` role and a `<pre>` per block |
-| `lain export <basename without .ndjson>` | the same bytes; the selector resolves as `lain friction`'s does |
+| `lain export <basename without .ndjson>` | the same bytes; the selector resolves as `qa-lain friction`'s does |
 | `lain export nosuch` | refuses `no session found for "nosuch" -- looked at <every path tried>` |
 | `lain export $S --html --jsonl` | refuses `--html and --jsonl are exclusive` |
 | `--out $QA/s.html` twice | the first prints the path and `stat -c %a` reads `600`; the second refuses `<path> exists; pass --force to overwrite it`; with `--force` it succeeds |
@@ -137,7 +137,7 @@ as the shape, and file it only if a card says otherwise.
 turns from before the resume and the turns after it, in order: count the `<section class="turn">` elements, and expect the sum of
 the two files' turns. The footer's masked and released counts also read the whole chain, so a read released in the first file
 refuses the export of the second as it refuses the first (below), and a region masked there is counted in the footer. `lain
-export <second file> --jsonl` still prints only that one file, byte for byte, because the JSONL is the record `lain verify`
+export <second file> --jsonl` still prints only that one file, byte for byte, because the JSONL is the record `qa-lain verify`
 checks and the chain is a view over several. Delete the first file and export the second as html: it refuses `an earlier file of
 the resume chain is missing (<path>), so the released count cannot be read across the chain; nothing was exported or shared`
 and writes nothing, and the `--jsonl` export still works. A page with only the second file's turns is the defect.
@@ -178,8 +178,8 @@ the `read_released` record itself: without it the model did not read the file an
 
 **The JSONL.** Use a second session that never rewound (the §0 session did, in §2): `lain export $S2 --jsonl | diff - $S2`
 prints nothing. After a rewind whose
-turn never landed it drops that retreat line, so `lain verify` on the export flags the chain, as `docs/commands.md` says.
-Run `lain verify $S` as the control: it passes.
+turn never landed it drops that retreat line, so `qa-lain verify` on the export flags the chain, as `docs/commands.md` says.
+Run `qa-lain verify $S` as the control: it passes.
 
 ## 6: `/share`
 
@@ -215,14 +215,14 @@ server between modes.
 A secret gist is unlisted, not private (`docs/commands.md`). The scenario never checks that a real gist is unreadable,
 because it never makes one.
 
-## 7: `lain usage` *(round 3, free, offline)*
+## 7: `qa-lain usage` *(round 3, free, offline)*
 
-`lain usage SESSION` folds a session's `turn_usage` records into input and output tokens per command and role. Run it over a session
+`qa-lain usage SESSION` folds a session's `turn_usage` records into input and output tokens per command and role. Run it over a session
 that used a skill with reviewers (`/plan-epic` with `epic_review`) and over one recorded before this change. Expect a table headed
 `COMMAND  ROLE  INPUT  OUTPUT`, sorted by command then role; the reviewers' tokens under the skill's command, not under `-`; a turn
 with no command under `-` (every row of an old session); and, when the approval judge spent anything, an `auto_approver` row and
 a note that its spend is not split by command. The totals equal the sum of the session's `turn_usage` records (read them with
-the `ruby -rjson` one-liner in `failure-injection.md` §7), so nothing is counted twice, and `lain usage nosuch` fails by naming
+the `ruby -rjson` one-liner in `failure-injection.md` §7), so nothing is counted twice, and `qa-lain usage nosuch` fails by naming
 the selector. **Wrong looks like:** a judge turn counted under a command, or a child's turns under `-` when the parent ran a skill.
 
 ## What this scenario cannot answer

@@ -1950,11 +1950,11 @@ RSpec.describe Lain::CLI::ChatLaunch, "reading configured middleware" do
   # An untrusted user file would refuse any read, so an empty value here also
   # says nothing was read: a bench arm must not change with the home directory.
   it "leaves the bench's backend without configured middleware" do
-    load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI)
+    load File.expand_path("../../../bin/qa-lain", __dir__) unless defined?(QALain::Bench)
     write_config(root, declaring_model_and_http)
     untrusted_user_config
 
-    backend = Dir.chdir(root) { LainCLI::Bench.new([], { provider: "ollama" }).model_backend }
+    backend = Dir.chdir(root) { QALain::Bench.new([], { provider: "ollama" }).model_backend }
 
     expect(%i[model tool turn repl].map { |area| backend.middleware.members(area) } << backend.middleware.http_entries)
       .to all(be_empty)

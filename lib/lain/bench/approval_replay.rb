@@ -235,7 +235,7 @@ module Lain
       end
       private_class_method :current_header
 
-      # The replay `lain bench approval-replay` asks for: every approval level under every rule set.
+      # The replay `qa-lain bench approval-replay` asks for: every approval level under every rule set.
       #
       # @param sessions [Array<String>] session files
       # @param approvals [Array<String, Symbol>] levels out of {LEVELS}

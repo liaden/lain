@@ -2,11 +2,11 @@
 
 require "tmpdir"
 
-# The end-to-end record path: `lain bench record` against the REAL API, twice,
+# The end-to-end record path: `qa-lain bench record` against the REAL API, twice,
 # into a tmpdir -- then the same variance path the fixtures exercise offline.
 # Real money on every run, so it is :live-gated (LAIN_LIVE=1 + a key) exactly
 # like the other live differentials; spec/support/tags.rb skips it otherwise.
-RSpec.describe "lain bench record, live", :live do
+RSpec.describe "qa-lain bench record, live", :live do
   it "records two live sessions of a one-line echo task that load and report variance" do
     Dir.mktmpdir do |tmp|
       taskfile = File.join(tmp, "task.txt")

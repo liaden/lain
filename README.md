@@ -60,8 +60,8 @@ Everything below is optional, and lain runs without any of it.
 | **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
 | **`rake core:build`** | `bash` runs in-process. | `crates/lain-core`, the out-of-process msgpack-RPC wire seed (answers `ping` only), and the one `:core` spec that drives it. |
 
-Without an API key the offline paths still run: dry replay, the sweeps, `lain friction`,
-`lain bench variance`, and local Ollama.
+Without an API key the offline paths still run: dry replay, the sweeps, `qa-lain friction`,
+`qa-lain bench variance`, and local Ollama.
 
 ## Usage
 
@@ -112,7 +112,7 @@ Offline and deterministic unless noted.
 * [lain up](docs/commands.md#lain-up): create or reattach to the tmux cockpit.
 * [lain sessions](docs/commands.md#lain-sessions): this project's recorded sessions, newest first.
 * [lain watch](docs/commands.md#lain-watch): read-only live tail of one actor's lineage.
-* [lain friction](docs/commands.md#lain-friction): knob guidance from a session's friction signals.
+* [qa-lain friction](docs/commands.md#qa-lain-friction): knob guidance from a session's friction signals.
 * [lain trust](docs/commands.md#lain-trust): let lain run this project's `.lain/*.rb`, once you have read them.
 * [lain consolidate](docs/commands.md#lain-consolidate): distill completed subagent lineages into memory.
 * [lain improve](docs/commands.md#lain-improve): record what would make lain itself better.
@@ -120,10 +120,10 @@ Offline and deterministic unless noted.
 * [lain epic](docs/commands.md#lain-epic): the epic tier: artifact home, issue graph, sign-off queue, landing and `show` to read a document.
 * [lain land](docs/commands.md#lain-land): queue a commit for the merge coordinator, wait on it, see who is draining.
 * [lain worktrees gc](docs/commands.md#lain-worktrees-gc): reap worker checkouts and anchors whose work is safe elsewhere.
-* [lain bench variance](docs/commands.md#lain-bench-variance): determinism and divergence across recorded runs.
-* [lain bench sweep](docs/commands.md#lain-bench-sweep): 5-arm retrieval eval, [recall@k](docs/GLOSSARY.md#bm25-recallk) over the gold corpus.
-* [lain bench plan-sweep](docs/commands.md#lain-bench-plan-sweep): shape x density sweep over a fixture plan.
-* [lain bench record](docs/commands.md#lain-bench-record): N live runs of a task file. Spends real API money.
+* [qa-lain bench variance](docs/commands.md#qa-lain-bench-variance): determinism and divergence across recorded runs.
+* [qa-lain bench sweep](docs/commands.md#qa-lain-bench-sweep): 5-arm retrieval eval, [recall@k](docs/GLOSSARY.md#bm25-recallk) over the gold corpus.
+* [qa-lain bench plan-sweep](docs/commands.md#qa-lain-bench-plan-sweep): shape x density sweep over a fixture plan.
+* [qa-lain bench record](docs/commands.md#qa-lain-bench-record): N live runs of a task file. Spends real API money.
 
 ### The turn lifecycle
 
@@ -252,7 +252,7 @@ Knobs: `--no-compact`, `--compact-bytes` (default 262144, roughly 64k tokens), `
 left verbatim), and `--compact-strategy` (below — it swaps the collapse policy, not compaction
 itself). The window that triggers a compaction follows the live model, re-derived each turn, so
 switching to a larger-window model mid-session widens the runway instead of leaving the old ceiling
-in force. `lain friction SESSION` reads a finished journal back and tells you which of these the run
+in force. `qa-lain friction SESSION` reads a finished journal back and tells you which of these the run
 was fighting.
 
 ### Two lineages, one render path
@@ -562,7 +562,7 @@ and a journal.
 | HUD freezes, `lain watch` stops updating, tools stop overlapping | Something is blocking the reactor. See [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor). |
 | Ollama output differs run to run at `--temperature 0` | On the **local** arm this is a defect worth chasing — and on this repo's own reference box it currently REPRODUCES, measured 2026-08-24 at HEAD and at the pre-chunk commit alike, so it is open rather than hypothetical: greedy decoding is necessary, not sufficient, and first-run-after-load divergence and GPU float non-associativity both perturb it; see [docs/providers/ollama.md](docs/providers/ollama.md#determinism-the-honest-version). On **`--provider ollama-cloud` it is expected** — measured 2026-08-24, three warm same-seed runs gave three distinct completions ([references/ollama/cloud.md](references/ollama/cloud.md)). Nothing is wrong; the arm is not reproducible. |
 
-`lain friction SESSION` reads a finished session back and reports which knobs the run was fighting.
+`qa-lain friction SESSION` reads a finished session back and reports which knobs the run was fighting.
 It is offline, deterministic, and needs no API key.
 
 ## Components
@@ -852,7 +852,7 @@ Running the cloud arm needs a key:
 ```bash
 export OLLAMA_API_KEY=...                  # create one at https://ollama.com/settings/keys
 exe/lain chat --provider ollama-cloud      # defaults to gpt-oss:20b-cloud
-exe/lain bench arms --provider ollama-cloud FIXTURE
+bin/qa-lain bench arms --provider ollama-cloud FIXTURE
 ```
 
 With `OLLAMA_API_KEY` unset the arm refuses before it constructs anything, and the refusal names
@@ -924,7 +924,7 @@ Two replay modes, and conflating them is the mistake to avoid:
   recorded timeline. Free, instant, deterministic, byte-diffable. This is the unit test for context
   strategies.
 - **Live replay** re-runs against the API. It costs money and is nondeterministic. This is the
-  experiment, and [`lain bench variance`](docs/commands.md#lain-bench-variance) is how you tell a
+  experiment, and [`qa-lain bench variance`](docs/commands.md#qa-lain-bench-variance) is how you tell a
   real difference from noise.
 
 Five sweeps ship: retrieval (recall@k over a gold corpus), arm, decider, disclosure, and plan.

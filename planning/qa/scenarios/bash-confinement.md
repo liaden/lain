@@ -178,7 +178,7 @@ Narrowing them is incremental work, driven by what the QA rounds measure:
 
 - collect session journals under `--tripwire observe`, the default, across ordinary work;
 - label their calls in a labels file;
-- run `lain bench approval-replay --tripwire --labels FILE SESSIONS...` over them;
+- run `qa-lain bench approval-replay --tripwire --labels FILE SESSIONS...` over them;
 - report the false-trip rate per shape, and any `STOPPING` signal above 1 in 100 sessions.
 
 ## 3c: A command lain cannot read withdraws the next build grant

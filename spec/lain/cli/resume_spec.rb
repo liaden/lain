@@ -213,7 +213,7 @@ RSpec.describe Lain::CLI::Resume do
     end
   end
 
-  # `lain bench record` writes through the same Scribe a chat does, so its
+  # `qa-lain bench record` writes through the same Scribe a chat does, so its
   # files are sessions a chat can continue.
   describe "a session written by bench record" do
     let(:recorded) do

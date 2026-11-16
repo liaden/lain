@@ -4,9 +4,9 @@
 #
 # There are TWO rosters here and they answer different questions, which is why
 # they are separate builders rather than one list that grew. `.build` is the
-# ORCHESTRATION comparison `lain bench arms` runs -- single-thread against three
+# ORCHESTRATION comparison `qa-lain bench arms` runs -- single-thread against three
 # richer topologies over one flat task suite. `.altitude` is the DECOMPOSITION
-# comparison `lain bench altitude` runs -- the same work entered at four
+# comparison `qa-lain bench altitude` runs -- the same work entered at four
 # different heights on {Lain::Arm::Ladder}.
 RSpec.describe Lain::Bench::LiveArms do
   # The seams the altitude arms need and the orchestration arms do not: a
@@ -95,7 +95,7 @@ RSpec.describe Lain::Bench::LiveArms do
     end
   end
 
-  # The orchestration roster is a DIFFERENT question, and `lain bench arms` and
+  # The orchestration roster is a DIFFERENT question, and `qa-lain bench arms` and
   # its report spec pin it. Adding the altitude arms to it would silently change
   # what that command compares and what it costs to run.
   describe ".build — the orchestration roster" do

@@ -16,15 +16,15 @@ module Lain
     # The Driver folds ONE flat task list into its own fixed metrics and has no
     # second axis. This report needs both a size breakdown and two metrics only a
     # gated topology has (rework and round-trips), which is precisely the
-    # reasoning {ArmSweep::Report} records for not being a Driver either. It
+    # reasoning ArmSweep::Report records for not being a Driver either. It
     # reuses the pieces that do fit -- {Compare::ArmFold}, {Compare::Distribution}
     # and {Compare::Table} -- so the cell order every bench report shares is
     # still owned in one place.
     #
     # {Suite} and {Subject} are separate FILES rather than nested classes,
     # because a nested class's lines count as the enclosing class's own under
-    # Metrics/ClassLength -- the split {ArmSweep} already makes for
-    # {ArmSweep::Recordings} and its Report.
+    # Metrics/ClassLength -- the split ArmSweep already makes for
+    # ArmSweep::Recordings and its Report.
     class Altitude
       # A checkout or packaging mistake, never user input to refuse.
 
@@ -51,7 +51,7 @@ module Lain
       # Said to the operator BEFORE the first arm runs, never written into the
       # report: a report is pasted into an issue, where a spend warning would
       # read as a property of the experiment rather than of the command.
-      COST_WARNING = "lain bench altitude spends real API money: %<arms>d arms over %<tasks>d tasks, " \
+      COST_WARNING = "qa-lain bench altitude spends real API money: %<arms>d arms over %<tasks>d tasks, " \
                      "each arm asking a real provider for every task, and the epic arms driving a whole " \
                      "epic per task. Budget accordingly."
 

@@ -273,7 +273,7 @@ module Lain
         # "at most", because the figure IS an upper bound: a call that both
         # broke its prefix and appended new messages has its whole cache write
         # counted (see {Friction::CacheWaste}). That reasoning lives in the
-        # source, where nobody running `lain friction SESSION` sees it -- two
+        # source, where nobody running `qa-lain friction SESSION` sees it -- two
         # words put the error's DIRECTION in the number itself.
         def rebilled
           "at most #{@waste.rebilled_tokens} tokens re-billed across " \

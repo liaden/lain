@@ -13,7 +13,7 @@
 RSpec.describe Lain::Bench::SpawnSeam do
   subject(:seam) { described_class.new(backend:, provider:, tools:) }
 
-  # The one object the seam now takes, built the way exe/lain and every other
+  # The one object the seam now takes, built the way bin/qa-lain and every other
   # Backend spec build it: from the flag hash. `max_tokens` is spelled out
   # because Context requires it (`Integer(nil)` raises) -- the ceiling is the
   # backend's now, and DEFAULT_MAX_TOKENS is what the `bench arms` flag declares
@@ -244,7 +244,7 @@ RSpec.describe Lain::Bench::SpawnSeam do
       expect(Lain::Bench::ArmSweep::FileBlocks.parse(rendered)).to include("lib/example.rb")
     end
 
-    # exe/lain reads `--system` off an options hash, so an UNSET flag arrives here
+    # bin/qa-lain reads `--system` off an options hash, so an UNSET flag arrives here
     # as an explicit nil rather than an omitted keyword -- a default that only
     # fired on omission would leave the live path exactly as broken as it was.
     it "teaches the same contract when the unset flag arrives as an explicit nil" do

@@ -7,11 +7,11 @@ require "tmpdir"
 
 # The `bench compaction-sweep` door onto Bench::CLI#compaction_sweep_report. The command is a flag
 # parser, so what is under test is which flags it declares and what each one hands the entry point.
-# exe/lain is loaded, not run, the way spec/lain/bench/arms_command_spec.rb loads it.
-load File.expand_path("../../../exe/lain", __dir__) unless defined?(LainCLI::Bench)
+# bin/qa-lain is loaded, not run, the way spec/lain/bench/arms_command_spec.rb loads it.
+load File.expand_path("../../../bin/qa-lain", __dir__) unless defined?(QALain::Bench)
 
-RSpec.describe "lain bench compaction-sweep" do
-  let(:command) { LainCLI::Bench.commands.fetch("compaction_sweep") }
+RSpec.describe "qa-lain bench compaction-sweep" do
+  let(:command) { QALain::Bench.commands.fetch("compaction_sweep") }
   let(:calls) { [] }
   let(:entry) { instance_double(Lain::Bench::CLI) }
 
@@ -33,7 +33,7 @@ RSpec.describe "lain bench compaction-sweep" do
     $stdout = out
     $stderr = err
     exited = begin
-      LainCLI::Bench.start(["compaction-sweep", *argv])
+      QALain::Bench.start(["compaction-sweep", *argv])
       nil
     rescue SystemExit => e
       e
