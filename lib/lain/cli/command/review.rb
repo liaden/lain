@@ -395,17 +395,17 @@ module Lain
         end
 
         def headline(resolved, session, scope)
-          format(Lain::CLI::Review::HEADLINE, label: resolved.label, scope:,
-                                              base: session.changeset.base_ref,
-                                              head: session.changeset.head_ref)
+          format(Lain::Review::Target::HEADLINE, label: resolved.label, scope:,
+                                                 base: session.changeset.base_ref,
+                                                 head: session.changeset.head_ref)
         end
 
-        # Unchanged from {Lain::CLI::Review}: PR-vs-branch, the ambiguity refusal
+        # Unchanged from {Lain::Review::Target}: PR-vs-branch, the ambiguity refusal
         # and `--base`'s two rules are already that object's and already tested,
         # and a second resolver here would be a second set of answers.
         def targets
-          Lain::CLI::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory,
-                                        ledger: @ledger)
+          Lain::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory,
+                                   ledger: @ledger)
         end
       end
     end

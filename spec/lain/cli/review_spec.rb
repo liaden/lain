@@ -199,7 +199,7 @@ RSpec.describe Lain::CLI::Review, :seam do
       run_git("branch", number.to_s, "feature")
 
       expect { command.present(number.to_s) }
-        .to raise_error(described_class::Ambiguous,
+        .to raise_error(Lain::Review::Target::Ambiguous,
                         %r{refs/heads/#{number}.*/pull/#{number}}m)
     end
 
@@ -246,69 +246,8 @@ RSpec.describe Lain::CLI::Review, :seam do
     it "journals nothing for a target it refused, so a refusal opens no round" do
       run_git("branch", number.to_s, "feature")
 
-      expect { command.present(number.to_s) }.to raise_error(described_class::Ambiguous)
+      expect { command.present(number.to_s) }.to raise_error(Lain::Review::Target::Ambiguous)
       expect(opened_records).to be_empty
-    end
-  end
-
-  # The run's ONE ledger has to reach the source a note's evidence is read
-  # from, or a region the human released journals as masked forever.
-  describe "the region ledger a resolved target reads its evidence through" do
-    let(:secret_line) { "API_KEY=sk-live-0000000000000000" }
-    let(:ledger) { Lain::Sensitivity::Ledger.new }
-    let(:targets) { described_class::Target.new(repo_root: @repo, shell_out_factory: factory, ledger:) }
-
-    before do
-      File.write(File.join(@repo, "app.env"), "#{secret_line}\n")
-      run_git("add", "-A")
-      run_git("commit", "-q", "-m", "add the env file")
-    end
-
-    def evidence = anchor_text_for(targets.resolve("feature", base: nil).source)
-
-    def anchor_text_for(source)
-      Lain::Review::Changeset.new(source:).anchor(path: "app.env", side: :new, line: 1).anchor_text
-    end
-
-    it "masks the line while nothing is released" do
-      expect(evidence).to eq("API_KEY=<redacted:1>")
-    end
-
-    it "journals the released text once the run's ledger holds the release" do
-      ledger.release(File.join(File.realpath(@repo), "app.env"), Lain::Sensitivity::Regions.detect("#{secret_line}\n"))
-
-      expect(evidence).to eq(secret_line)
-    end
-  end
-
-  # WHERE a review of this target can be posted, decided by the two methods
-  # that already know which of the two they resolved. Recorded on the resolution
-  # rather than asked of the source afterwards, so nothing downstream type-tests
-  # a source to find out whether a review of it has anywhere to go.
-  describe "the pull request a resolved target can be posted to" do
-    let(:targets) { described_class::Target.new(repo_root: @repo, shell_out_factory: factory) }
-
-    it "carries the pull request's own number, which is what a review POST is addressed by" do
-      resolved = targets.resolve(number.to_s, base: nil)
-
-      expect(resolved.number).to eq(number)
-      expect(resolved.label).to eq("pull request #{number}")
-    end
-
-    it "reads the number out of a URL spelling too, since both name one pull request" do
-      resolved = targets.resolve("https://github.com/owner/repo/pull/#{number}", base: nil)
-
-      expect(resolved.number).to eq(number)
-    end
-
-    # The refusal {Lain::Review::Submit::Outbox::Nowhere} turns into words
-    # begins here: a branch review is a review with no pull request under it,
-    # and this is where that is recorded rather than guessed at later.
-    it "carries no number for a branch, because a branch review has nowhere to post" do
-      resolved = targets.resolve("feature", base: nil)
-
-      expect(resolved.number).to be_nil
-      expect(resolved.label).to eq("branch feature")
     end
   end
 

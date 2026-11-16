@@ -197,10 +197,10 @@ module DeletionMap
       key: "github_pr",
       constants: %w[GithubPr],
       files: ["lib/lain/review/source/github_pr.rb", "spec/lain/review/source/github_pr_spec.rb"],
-      # The CLI owns a whole pull-request LEG -- two refusals of its own, the
-      # spelling probe, and the git call the ambiguity refusal needs -- and is
-      # the only thing that ever builds one of these.
-      consumers: ["lib/lain/cli/review.rb"],
+      # The target resolver owns a whole pull-request LEG -- two refusals of its
+      # own, the spelling probe, and the git call the ambiguity refusal needs --
+      # and is the only thing that ever builds one of these.
+      consumers: ["lib/lain/review/target.rb", "spec/lain/review/target_spec.rb"],
       edits: {
         # The spec drives that leg through the COMMAND, naming the source only
         # in prose, so the constant sweep is blind to eight examples that stop

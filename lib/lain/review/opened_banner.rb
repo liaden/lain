@@ -53,7 +53,7 @@ module Lain
       # becomes a real choice rather than an arbitrary one.
       #
       # @param headline [String] the caller's own -- {CLI::Survey::HEADLINE} or
-      #   {CLI::Review::HEADLINE}, already resolved -- so this class describes
+      #   {Review::Target::HEADLINE}, already resolved -- so this class describes
       #   the GESTURE only and never restates what tree or changeset is under
       #   review
       # @param sides [Array<String>] what the round presents, off

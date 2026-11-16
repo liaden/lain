@@ -217,7 +217,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   # works and is registered, against a line a human actually types. `/review
   # 4821` and `/review .../pull/12` both have to survive {Skill::Invocation}'s
   # grammar with their target intact -- a bare number and a URL are the two
-  # spellings {Lain::CLI::Review::Target} exists to tell apart, and a dispatcher
+  # spellings {Lain::Review::Target} exists to tell apart, and a dispatcher
   # that swallowed either would hand this command an empty line and get its
   # usage back, looking for all the world like the human mistyped.
   describe "the line a human types, through the registry that dispatches it" do
@@ -317,7 +317,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
         .to raise_error(Lain::Error, /--base was given more than once/)
     end
 
-    # {Lain::CLI::Review::Target}'s own refusals, reached rather than restated:
+    # {Lain::Review::Target}'s own refusals, reached rather than restated:
     # this command resolves through that object unchanged, which is what makes
     # the card cheap, and an unresolvable ref must say so in ITS words.
     it "hands back the target resolver's own refusal for a ref that names nothing" do

@@ -59,7 +59,7 @@ module Lain
       HEADLINE = "surveying %<root>s at %<scope>s scope: %<count>d %<noun>s"
 
       # The disclosure's heading; each withheld path follows on its own
-      # {Survey::Withheld#to_s} line, indented. Every part of it is a name the
+      # line, indented. Every part of it is a name the
       # survey was asked about and never a byte of a file, so it is as safe in
       # a prompt as it is on a screen.
       WITHHELD = "withheld %<count>d %<noun>s, not surveyed:"
@@ -166,7 +166,7 @@ module Lain
                                    source: source_name, surface:, bounds: ceilings)
       end
 
-      # {CLI::Review::Target::Resolved#name}'s derivation and its reason: a
+      # {Review::Target::Resolved#name}'s derivation and its reason: a
       # literal goes on naming `corpus` after the class it describes is
       # renamed, and {Review::ChangesetOpened} validates this field for
       # presence only, so nothing downstream would catch it.
