@@ -33,6 +33,17 @@ module Lain
           end
         end
 
+        # A draft the chat hands back is typed into the editor as keys, so no
+        # byte of it may act as one: a control is written out, and a line end
+        # rides in a paste, where no prompt takes it for Enter.
+        #
+        # @param text [#to_s] a `draft` frame's text
+        # @return [String]
+        def self.typed_back(text)
+          plain = Utf8.escaped(text, keep: "\n")
+          plain.include?("\n") ? "#{PASTE_OPEN}#{plain}#{PASTE_CLOSE}" : plain
+        end
+
         # @param keys [Keys] the approval key and the read's pattern
         # @param seen [Boolean] whether the terminal was uncooked, so that what
         #   is typed is the pane's to echo and the draft is the input row

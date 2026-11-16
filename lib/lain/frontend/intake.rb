@@ -128,6 +128,10 @@ module Lain
 
       UNCYCLED = -> {}
 
+      OFFERED_ALREADY = "lain queue: that review is already offered"
+      OFFER_WAITING = "lain queue: a review is already offered, so this one was dropped"
+      private_constant :OFFERED_ALREADY, :OFFER_WAITING
+
       # An answer, including the answer nobody gave -- a `nil` text -- which is
       # why "not yet" needs a value of its own, and why a line that ended the
       # drawing it came from is told apart from one that did not.
@@ -172,6 +176,7 @@ module Lain
         @published = Unpublished
         @generation = 0
         @sink = CLI::Signals::NULL
+        @offered = nil
       end
 
       # A producer's value. A signal is delivered on the producer's stack; a
@@ -235,7 +240,7 @@ module Lain
 
       # A producer, which is asked what was typed while nothing was drawn and
       # whether anything has been typed at a prompt it draws (`untouched?`,
-      # `typed?`), and
+      # `typed?`), given back a draft for its `you>` line (`keep`), and
       # told whenever what is published changes. It says when it has opened a
       # read at a prompt ({#opened}).
       #
@@ -319,13 +324,16 @@ module Lain
       # @param header [String] what a producer draws above the prompt's line
       # @param keys [Hash] single keys a producer may answer a `countdown` with,
       #   each naming one of {SIGNALS}
-      # @return [String, nil]
+      # @yieldparam answer [String, nil] given before this reader leaves the line, so a line the block holds is
+      #   there for the prompt behind it
+      # @return [String, nil] the answer, or the block's value when one is given
       def read(kind, text, header: "", keys: {})
         turn = Turn.new(Thread::Queue.new, kind, text, false, false)
         enter(turn)
         asked = Prompt.new(kind:, text: text.respond_to?(:stamped) ? text.stamped : text, header:, keys:, generation: 0,
                            parts: text.respond_to?(:parts) ? text.parts : NoParts)
-        kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
+        answer = kind == RECALLED ? recalled(held_line || answered(turn, asked, text)) : answered(turn, asked, text)
+        block_given? ? yield(answer) : answer
       ensure
         unwinding do
           leave(turn)
@@ -333,7 +341,42 @@ module Lain
         end
       end
 
+      # A queued review, asked as a run asks the human: behind any answer
+      # already waiting, and taking the terminal from an untouched `you>`.
+      # Blocks until the human answers, so the caller gives it a thread.
+      #
+      # One offer at a time: a second, or the same one again, is dropped
+      # with a note rather than queued behind a prompt the human may ignore.
+      #
+      # @param request [#review_line, #to_h] a {Review::Queue::Request}
+      # @return [String, nil] the line sent on as if typed, or nil when dropped
+      # @raise [Review::Queue::Request::Refused] when the line cannot be rebuilt, before anything is shown
+      def offer(request)
+        crowded = @lock.synchronize { @offered ? crowding(request) : (@offered = request.to_h) && nil }
+        @screen.render_note(crowded) if crowded
+        return if crowded
+
+        begin
+          asked(Offer.new(request.review_line))
+        ensure
+          @lock.synchronize { @offered = nil }
+        end
+      end
+
       private
+
+      def crowding(request) = @offered == request.to_h ? OFFERED_ALREADY : OFFER_WAITING
+
+      # Settled before the reader leaves the line, so the draft and the opened
+      # line are both in place when the `you>` behind the offer comes back.
+      def asked(offered)
+        read(:human, offered) do |answer|
+          redraft(offered.draft) unless offered.draft.empty?
+          offered.opened(answer) { |line| @lock.synchronize { @held << line } }
+        end
+      end
+
+      def redraft(text) = @lock.synchronize { @producers.keys }.each { |producer| producer.keep(text) }
 
       # With nothing published no reader is waiting, and a queued line would sit
       # unseen until some later prompt: the chat looks for held lines instead.
@@ -359,7 +402,7 @@ module Lain
 
       # A line acted on already answered the human, so only one kept is told what does answer the prompt.
       def refused(text, line)
-        keep(line)
+        text.respond_to?(:withhold) ? text.withhold(line) : keep(line)
         text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
       end
 

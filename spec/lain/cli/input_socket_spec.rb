@@ -537,6 +537,67 @@ RSpec.describe Lain::CLI::InputSocket do
     end
   end
 
+  describe "an offer frame from the review queue", :seam do
+    subject(:socket) { described_class.new(rail:, path:, notice: ->(word) { said << word }) }
+
+    let(:said) { Thread::Queue.new }
+    let(:url) { "https://github.com/fuze/api/pull/12" }
+
+    before { socket.bind.start(nil) }
+
+    it "is put to the human, and Enter sends its rebuilt line on as if typed" do
+      client = connect
+      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })
+      frame = next_frame(client, of: "prompt")
+      send_frame(client, { "v" => "line", "text" => "", "generation" => frame["generation"] })
+
+      expect([frame["kind"], frame["text"], settles { rail.held_lines.first }])
+        .to eq(["human", "lain queue: /review #{url}  (Enter opens, x drops)", "/review #{url}"])
+    end
+
+    it "drops an offer that fails to load with 1 note naming the field, never its value" do
+      client = connect
+      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => "#{url} --base \e[2Jx" } })
+      note = said.pop(timeout: 5)
+      settles(within: 0.2) { nil }
+
+      expect([note, said.size, rail.published.kind, rail.held_lines]).to eq(
+        ["lain queue: an offer was dropped: queued review request refused: url is not of its shape", 0, nil, []]
+      )
+    end
+
+    it "writes out the escapes in a refused field's name rather than sending them to the screen" do
+      send_frame(connect, { "v" => "offer", "request" => { "kind" => "pr", "url" => url, "x\e[2J" => "v" } })
+
+      expect(said.pop(timeout: 5)).to eq(
+        "lain queue: an offer was dropped: queued review request refused: x\\e[2J is not a field of a pr request"
+      )
+    end
+
+    it "says a dirty-tree request's own reason when the tree has nothing to snapshot" do
+      Dir.mktmpdir("lain-offer-clean") do |repo|
+        root = File.realpath(repo)
+        FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", root)
+        send_frame(connect, { "v" => "offer", "request" => { "kind" => "dirty", "repo_root" => root } })
+
+        expect([said.pop(timeout: 5), rail.published.kind]).to eq(
+          ["lain queue: an offer was dropped: queued review request refused: repo_root has no uncommitted changes", nil]
+        )
+      end
+    end
+
+    it "puts what was typed at the offer back in the pane as a draft, never sending it" do
+      client = connect
+      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })
+      offered = next_frame(client, of: "prompt")
+      send_frame(client, { "v" => "line", "text" => "maybe", "generation" => offered["generation"] })
+      again = next_frame(client, of: "prompt") while again.nil? || again["generation"] <= offered["generation"]
+      send_frame(client, { "v" => "line", "text" => "x", "generation" => again["generation"] })
+
+      expect([next_frame(client, of: "draft"), rail.held_lines]).to eq([{ "v" => "draft", "text" => "maybe" }, []])
+    end
+  end
+
   describe "with no pane connected" do
     it "composes no header, command list or layer set at all" do
       asked = []

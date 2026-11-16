@@ -1,6 +1,8 @@
 # frozen_string_literal: true
 
 require "async"
+require "fileutils"
+require "tmpdir"
 
 RSpec.describe Lain::Frontend::Intake do
   # What the rail tells the human, recorded rather than drawn.
@@ -1342,6 +1344,211 @@ RSpec.describe Lain::Frontend::Intake do
       end
 
       expect(verdict).to eq(:passed)
+    end
+  end
+
+  # A reader given a block settles it before leaving the line, so whatever the
+  # block queues is there for the prompt waiting behind it.
+  describe "#read with a block" do
+    it "keeps a preempted you> unpublished until the block returns" do
+      rail.attach(Struct.new(:untouched) do
+        def sweep = nil
+        def untouched?(_prompt) = true
+      end.new(true))
+      gate = Thread::Queue.new
+      you = Thread.new { rail.read(:you, "you> ") }
+      wait_until { rail.published.kind == :you }
+      asked = Thread.new { rail.read(:human, "q? ") { |answer| gate.pop && answer } }
+      wait_until { rail.published.kind == :human }
+      rail << line("a", rail.published.generation)
+      sleep 0.1
+      unpublished_meanwhile = rail.published.kind
+      gate << true
+
+      expect([unpublished_meanwhile, asked.value, wait_until { rail.published.kind }]).to eq([nil, "a", :you])
+    ensure
+      [you, asked].compact.each(&:kill)
+    end
+  end
+
+  # A queued review is asked as a run asks the human, on a thread of its own.
+  describe "#offer" do
+    let(:url) { "https://github.com/fuze/api/pull/12" }
+    let(:asking) { "lain queue: /review #{url}  (Enter opens, x drops)" }
+    # Built before any reader thread asks for it: a lazy let is memoized under a lock the main thread holds.
+    let!(:request) do
+      Lain::Review::Queue::Request.load({ "kind" => "pr", "url" => url },
+                                        checkouts: Lain::Review::Queue::Checkouts.new(roots: []))
+    end
+    let(:producer) do
+      Struct.new(:untouched, :discarded, :kept) do
+        def sweep = nil
+        def untouched?(_prompt) = untouched
+        def typed?(_prompt) = !untouched
+        def discard_draft = self.discarded = true
+        def keep(text) = kept << text
+      end.new(true, false, [])
+    end
+    let(:threads) { [] }
+
+    before { rail.attach(producer) }
+    after { threads.each(&:kill).each(&:join) }
+
+    def typed(text) = line(text, rail.published.generation)
+
+    def reading(&) = Thread.new(&).tap { |thread| threads << thread }
+
+    def drawn(kind) = wait_until(reason: "#{kind} published") { rail.published.kind == kind && rail.published }
+
+    def changing(*lines)
+      Struct.new(:lines) do
+        def review_line = lines.next
+        def to_h = { "lines" => "changing" }
+      end.new(lines.each)
+    end
+
+    context "with a chat at rest" do
+      let!(:you) { reading { rail.read(:you, "you> ") }.tap { drawn(:you) } }
+
+      it "asks before it runs" do
+        offered = reading { rail.offer(request) }
+
+        expect([drawn(:human).text, offered.join(0.2)]).to eq([asking, nil])
+      end
+
+      it "sends the rebuilt line on as if typed when Enter is pressed, and says nothing of holding it" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("")
+
+        expect([offered.value, you.value, screen.said]).to eq(["/review #{url}", "/review #{url}", []])
+      end
+
+      it "drops the offer when x is entered, and the chat goes back to you>" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("x")
+        drawn(:you)
+        rail << typed("hello")
+
+        expect([offered.value, you.value, rail.held_lines]).to eq([nil, "hello", []])
+      end
+
+      it "asks again at anything else, and says what answers it" do
+        offered = reading { rail.offer(request) }
+        first = drawn(:human)
+        rail << typed("maybe")
+        again = wait_until { rail.published.generation > first.generation && rail.published }
+
+        expect([again.kind, again.text, offered.alive?]).to eq([:human, asking, true])
+        expect(screen.said).to eq([[:note, "lain queue: Enter opens /review #{url}, x drops it; " \
+                                           "what you typed waits at you>"]])
+      end
+
+      it "puts what was typed at it back at you> as a draft when it is dropped, never sending it" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("maybe")
+        wait_until { rail.published.kind == :human && rail.published.generation > 2 }
+        rail << typed("x")
+        offered.join(5)
+        drawn(:you)
+
+        expect([producer.kept, rail.held_lines, you.alive?]).to eq([["maybe"], [], true])
+      end
+
+      it "puts what was typed at it back as a draft when it opens, and sends only the review" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("maybe")
+        wait_until { rail.published.kind == :human && rail.published.generation > 2 }
+        rail << typed("")
+
+        expect([offered.value, you.value, producer.kept, rail.held_lines])
+          .to eq(["/review #{url}", "/review #{url}", ["maybe"], []])
+      end
+
+      it "puts the draft back before the you> behind the offer can return" do
+        let_go = Thread::Queue.new
+        producer.define_singleton_method(:keep) { |text| let_go.pop && (kept << text) }
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("maybe")
+        wait_until { rail.published.kind == :human && rail.published.generation > 2 }
+        rail << typed("")
+        sleep 0.1
+
+        expect(rail.published.kind).to be_nil
+        let_go << true
+        expect([offered.value, you.value]).to eq(["/review #{url}"] * 2)
+      end
+
+      it "shows and sends exactly 1 line for a request that rebuilds a new one each time" do
+        offered = reading { rail.offer(changing("/review a", "/review b")) }
+        shown = drawn(:human).text
+        rail << typed("")
+
+        expect([shown, offered.value]).to eq(["lain queue: /review a  (Enter opens, x drops)", "/review a"])
+      end
+
+      it "shows a non-ASCII branch as the bytes it sends", :seam do
+        Dir.mktmpdir("lain-offer") do |repo|
+          root = File.realpath(repo)
+          FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", root)
+          branch = Lain::Review::Queue::Request.load(
+            { "kind" => "branch", "branch" => "fé", "repo_root" => root },
+            checkouts: Lain::Review::Queue::Checkouts.new(roots: [])
+          )
+          offered = reading { rail.offer(branch) }
+          shown = drawn(:human).text
+          rail << typed("")
+
+          expect([shown, offered.value])
+            .to eq(["lain queue: /review refs/heads/f\\é  (Enter opens, x drops)", "/review refs/heads/f\\é"])
+        end
+      end
+    end
+
+    context "with 1 offer already waiting" do
+      let!(:pending) { reading { rail.offer(request) }.tap { drawn(:human) } }
+
+      it "drops a second one with 1 note, leaving the first drawn" do
+        first = rail.published
+        second = rail.offer(changing("/review b"))
+
+        expect([second, screen.said, rail.published])
+          .to eq([nil, [[:note, "lain queue: a review is already offered, so this one was dropped"]], first])
+      end
+
+      it "drops the same request again with 1 note" do
+        expect([rail.offer(request), screen.said])
+          .to eq([nil, [[:note, "lain queue: that review is already offered"]]])
+      end
+
+      it "takes the next one once the first is answered" do
+        rail << typed("x")
+        pending.join(5)
+        offered = reading { rail.offer(changing("/review b")) }
+
+        expect(drawn(:human).text).to eq("lain queue: /review b  (Enter opens, x drops)")
+        offered.kill
+      end
+    end
+
+    %i[approval human].each do |kind|
+      context "with #{kind == :human ? "a question" : "an approval"} waiting" do
+        it "leaves the waiting prompt untouched and its typed text kept, and waits behind it, saying so" do
+          producer.untouched = false
+          asked = reading { rail.read(kind, "[y/N] ") }
+          waiting = drawn(kind)
+          offered = reading { rail.offer(request) }
+          expect(offered.join(0.2)).to be_nil
+
+          expect([rail.published, producer.discarded, screen.said]).to eq([waiting, false, [[:queued, asking]]])
+          rail << typed("y")
+          expect([asked.value, drawn(:human).text]).to eq(["y", asking])
+        end
+      end
     end
   end
 

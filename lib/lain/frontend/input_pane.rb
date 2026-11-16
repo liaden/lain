@@ -7,11 +7,11 @@ require "socket"
 module Lain
   module Frontend
     # `lain input`: the pane the human types in while the chat scrolls its
-    # transcript somewhere else. It is an {Intake} PRODUCER at the far end of
+    # transcript somewhere else. It is an `Intake` PRODUCER at the far end of
     # a Unix socket, and it holds nothing of the chat -- no registry, no agent,
     # no session. What it draws, it was told.
     #
-    # IT RUNS THE SAME RAIL IT FEEDS. A local {Intake} mirrors the chat's
+    # IT RUNS THE SAME RAIL IT FEEDS. A local `Intake` mirrors the chat's
     # publications and a local {StdinPump} serves them, so the line editor, the
     # completion menu and the typeahead rule are the ones a plain chat has
     # rather than a second implementation of them; only a line typed while
@@ -19,7 +19,7 @@ module Lain
     # is the CHAT's: a line only ever leaves here as the answer to the prompt it
     # was read at, because the local rail has already held anything typed
     # before that prompt drew. The mirror keeps no history: the chat's own
-    # {Intake} keeps what reaches its `you>`, so a line is written once.
+    # `Intake` keeps what reaches its `you>`, so a line is written once.
     #
     # THE HEADER IS THE CHAT'S TOO, and it arrives with the prompt. A header
     # that changes while nothing has been typed republishes the prompt, so an
@@ -143,6 +143,7 @@ module Lain
         @quit = @idle = @settled = @answered = @resized = @below_echo = false
         @shown = @wanted = ""
         @draft = Draft.new(keys: @keys)
+        @redraft = +""
       end
 
       # A signal the pane's traps or its line editor recorded. With a chat to
@@ -266,6 +267,7 @@ module Lain
         when "prompt" then prompted(task, client, frame)
         when "unpublished" then idle(task, client, frame["header"].to_s, frame["closed"].to_s)
         when "context" then @commands.replace(Array(frame["commands"]))
+        when "draft" then held_back(frame["text"])
         when "closed" then :closed
         end
       end
@@ -438,11 +440,19 @@ module Lain
       def redraw(task, client, frame)
         @geometry.painted
         stop_drawing
+        restore_draft if frame["kind"] == "you"
         @drawn = frame
         @answered = @resized = false
         @reported = nil
         @drawing = task.async { drawn(client, frame) }
       end
+
+      # Only `you>` takes a draft back: typed back at an answer's prompt it
+      # would join the answer.
+      def restore_draft = @redraft.empty? || @pump.keep(@redraft.slice!(0..))
+
+      # Drafts from several offers wait for one `you>`, so they are joined as words.
+      def held_back(text) = @redraft << (@redraft.empty? ? "" : " ") << Draft.typed_back(text)
 
       def drawing_already?(frame) = @drawn["generation"] == frame["generation"] && frame["header"] == @drawn["header"]
 

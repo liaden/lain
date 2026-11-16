@@ -41,4 +41,20 @@ RSpec.describe Lain::Frontend::InputPane::Draft do
       expect(draft.empty?).to be(true)
     end
   end
+
+  # A draft is typed back into the editor as keys, so a line end or an escape
+  # in it would act as Enter or as a key sequence rather than as text.
+  describe ".typed_back" do
+    it "writes out every control, so none of it acts as a key" do
+      expect(described_class.typed_back("maybe\r\e[2J\t")).to eq("maybe\\r\\e[2J\\t")
+    end
+
+    it "carries a line end inside a paste, where no prompt takes it for Enter" do
+      expect(described_class.typed_back("one\ntwo")).to eq("\e[200~one\ntwo\e[201~")
+    end
+
+    it "leaves plain text as it is" do
+      expect(described_class.typed_back("maybe later, caf\u00e9")).to eq("maybe later, caf\u00e9")
+    end
+  end
 end

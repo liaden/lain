@@ -37,7 +37,8 @@ module Lain
     # names it completes against, since it holds no registry), `touch` is the
     # pane's answer to `untouched?`, and `closed` is the goodbye that tells a
     # clean shutdown from a kill. `cycle` is the approval key pressed in the
-    # pane ({Frontend::Intake#cycle}).
+    # pane ({Frontend::Intake#cycle}), and `offer` is a review the queue asks
+    # the human to open ({Frontend::Intake#offer}).
     class InputSocket
       # What an `--input` option asks for. The name is the tmux session's, so
       # two cockpits on one project do not share a socket.
@@ -56,6 +57,13 @@ module Lain
       # The bound is filled in at the call, since {Client} is defined below.
       OVER_LIMIT = "input pane sent one line past %<bytes>d bytes and it was refused whole. " \
                    "Nothing of it reached the chat."
+      # The request's own reason, which names a field and never its value: the
+      # value is whatever a same-uid writer put there.
+      OFFER_REFUSED = "lain queue: an offer was dropped: %<reason>s"
+
+      # Nothing in the chat reads an offered request's repo_root, so no clone is looked up.
+      NO_CHECKOUTS = ::Lain::Review::Queue::Checkouts.new(roots: [])
+      private_constant :NO_CHECKOUTS
 
       # Another chat is already listening. Named rather than a sentence because
       # the refusal has to name the path: the human's next move is to look at
@@ -218,6 +226,9 @@ module Lain
 
       def discard_draft = nil
 
+      # Text typed at an offer, put back in every pane's `you>` line unsent.
+      def keep(text) = broadcast(Codec.dump({ "v" => "draft", "text" => text }))
+
       # Say goodbye, then take the path down. The order is the contract: a pane
       # that reads `closed` exits, and one whose stream simply ends waits for
       # the chat to come back. The goodbye cannot block -- this runs on the
@@ -360,13 +371,25 @@ module Lain
       # down.
       def receive(client, frame)
         case frame&.fetch("v", nil)
-        when "line" then @rail << Frontend::Intake::Line.new(text: frame["text"].to_s,
-                                                             generation: frame["generation"].to_i)
+        when "line" then @rail << line_in(frame)
         when "signal" then @rail << Frontend::Intake::Signal.new(name: frame["name"].to_s.to_sym)
         when "eof" then @rail << Frontend::Intake::Eof.new
         when "touch" then client.touched(frame["generation"].to_i, frame["untouched"] == true)
         when "cycle" then @rail.cycle
+        when "offer" then spawn { offered(frame["request"]) }
         end
+      end
+
+      def line_in(frame) = Frontend::Intake::Line.new(text: frame["text"].to_s, generation: frame["generation"].to_i)
+
+      # On a thread of its own: the offer waits for an answer that arrives
+      # through the very reader that heard it.
+      def offered(request)
+        @rail.offer(::Lain::Review::Queue::Request.load(request, checkouts: NO_CHECKOUTS))
+      rescue ::Lain::Review::Queue::Request::Refused => e
+        @notice.call(format(OFFER_REFUSED, reason: Utf8.escaped(e.message)))
+      ensure
+        @lock.synchronize { @threads.delete(Thread.current) }
       end
 
       # The rail's nudge says the prompt changed; the tick says the header may

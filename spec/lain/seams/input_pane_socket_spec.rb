@@ -114,6 +114,15 @@ module InputPaneSocket
         { "lines" => lines, "approval" => approval,
           "decided_elsewhere" => ->(inner) { approval.call(inner, elsewhere: true) }, "countdown" => countdown,
           "parked" => parked, "running" => running,
+          "offers_then_lines" => lambda do |inner|
+            Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "go"))
+            lines.call(inner)
+          end,
+          "offer_then_approval" => lambda do |inner|
+            Async::Task.current.sleep(0.05) until File.exist?(File.join(dir, "approve"))
+            approval.call(inner)
+            lines.call(inner)
+          end,
           "long_approval" => ->(inner) { approval.call(inner, "FIRSTWORD " + ("x" * 2600) + " LASTWORD") } }.fetch(shape).call(task)
       end
     end
@@ -486,6 +495,113 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.type("\x15")
 
     expect(cockpit.settles { cockpit.screen.scan("fleet:1 inbox:0").size > shown || nil }).to be(true)
+  end
+
+  # The queue offers a review over the chat's own socket, as `lain queue open`
+  # does. Left open: a peer gone before the chat greets it is dropped unread.
+  def offer(url)
+    UNIXSocket.new(cockpit.path).tap do |queue|
+      queue.write("#{JSON.generate({ "v" => "offer", "request" => { "kind" => "pr", "url" => url } })}\n")
+    end
+  end
+
+  it "keeps text typed at a queued review offer as the pane's unsent draft when it is dropped" do
+    cockpit_at("lines")
+    queue = offer("https://github.com/fuze/api/pull/12")
+    offered = cockpit.settles { cockpit.screen.include?("(Enter opens, x drops)") || nil }
+    drawn = cockpit.quiet { cockpit.screen.scan("(Enter opens, x drops)").size }
+    cockpit.type("maybe\r")
+    cockpit.settles { cockpit.screen.scan("(Enter opens, x drops)").size > drawn || nil }
+    cockpit.quiet { cockpit.screen }
+    cockpit.type("x\r")
+    drafted = cockpit.settles { cockpit.screen.split("you> ").last.to_s.include?("maybe") || nil }
+    unsent = cockpit.quiet { cockpit.heard }
+    cockpit.type("\r")
+
+    expect([offered, drafted, unsent, cockpit.settles { cockpit.heard.first }])
+      .to eq([true, true, [], { "heard" => "maybe" }])
+  ensure
+    queue&.close
+  end
+
+  def offers_drawn = cockpit.screen.scan("(Enter opens, x drops)").size
+
+  # The offer at a chat with nothing published, dropped with words typed at it;
+  # those words wait for `you>`, wherever the next prompt is.
+  def dropped_offer_with(words)
+    queue, drawn = offer_drawn
+    cockpit.type("#{words}\r")
+    redrawn_after(drawn)
+    cockpit.type("x\r")
+    cockpit.quiet { cockpit.screen }
+    queue
+  end
+
+  # An offer drawn in the pane, and how many offers the screen has drawn so far.
+  def offer_drawn
+    before = offers_drawn
+    queue = offer("https://github.com/fuze/api/pull/12")
+    queue.timeout = 5
+    cockpit.settles { offers_drawn > before || nil }
+    [queue, cockpit.quiet { offers_drawn }]
+  end
+
+  def redrawn_after(drawn)
+    cockpit.settles { offers_drawn > drawn || nil }
+    cockpit.quiet { cockpit.screen }
+  end
+
+  # The `you>` the chat draws once told to go, with whatever draft the pane put in it.
+  def you_after_go
+    FileUtils.touch(File.join(dir, "go"))
+    cockpit.settles { cockpit.screen.include?("you> ") || nil }
+    cockpit.quiet { cockpit.screen }.split("you> ").last.to_s
+  end
+
+  it "joins the drafts of 2 dropped offers with 1 space at the next you>" do
+    cockpit.watch_screen
+    expect_bound(cockpit.chat("offers_then_lines"))
+    queues = [dropped_offer_with("alpha"), dropped_offer_with("beta")]
+
+    expect([you_after_go.include?("alpha beta"), cockpit.quiet { cockpit.heard }]).to eq([true, []])
+  ensure
+    queues&.each(&:close)
+  end
+
+  # Any same-uid process can answer at the offer, with bytes no keyboard sends.
+  it "types a raw answer's line ends and controls back as text, so none of it reaches the model" do
+    cockpit.watch_screen
+    expect_bound(cockpit.chat("offers_then_lines"))
+    queue, drawn = offer_drawn
+    asked = Enumerator.produce { JSON.parse(queue.gets) }.find { |frame| frame["kind"] == "human" }
+    answer = { "v" => "line", "text" => "one\ntwo\rthree", "generation" => asked["generation"] }
+    queue.write("#{JSON.generate(answer)}\n")
+    redrawn_after(drawn)
+    cockpit.type("x\r")
+    cockpit.quiet { cockpit.screen }
+    you_after_go
+
+    expect(cockpit.quiet(ticks: 8) { cockpit.heard }).to eq([])
+  ensure
+    queue&.close
+  end
+
+  it "keeps a dropped offer's draft out of the approval that follows, and puts it at the next you>" do
+    cockpit.watch_screen
+    expect_bound(cockpit.chat("offer_then_approval"))
+    queue = dropped_offer_with("maybe")
+    cockpit.quiet { cockpit.screen }
+    FileUtils.touch(File.join(dir, "approve"))
+    cockpit.settles { cockpit.screen.include?("[y/N]") || nil }
+    cockpit.quiet { cockpit.screen }
+    cockpit.type("y\r")
+    approved = cockpit.settles { cockpit.heard.find { |record| record.key?("approved") } }
+    drafted = cockpit.settles { cockpit.screen.split("you> ").last.to_s.include?("maybe") || nil }
+    unsent = cockpit.quiet { cockpit.heard.count { |record| record.key?("heard") } }
+
+    expect([approved&.fetch("approved"), drafted, unsent]).to eq([true, true, 0])
+  ensure
+    queue&.close
   end
 
   it "decides a gated call from the pane, and the pane's surface signs the verdict" do
