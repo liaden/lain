@@ -245,12 +245,16 @@ module Lain
         end
       end
 
-      # Waiting is timed from an item's first showing, so a republish never buzzes it again.
+      # Waiting is timed from an item's first showing, so a republish never buzzes it again. Published
+      # before the send: the phone can show the item before its reply lands, and a stop in between must
+      # still take it back. A refused first showing is unrecorded, so it is never settled for nothing.
       def show(item, view)
+        held = @published.key?(item.id)
+        @published[item.id] = item
         send_delta(added: [wired(view)], keys: gate_keys(item))
         @waiting[item.id] = view if @shown.add?(item.id)
-        @published[item.id] = item
       rescue Core::Client::Refused => e
+        @published.delete(item.id) unless held
         fault(e)
       end
 

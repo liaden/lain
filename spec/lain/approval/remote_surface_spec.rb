@@ -134,10 +134,15 @@ module RemoteSurfaceSpecSupport
     # @param relay [String] the relay state daemon.info answers
     # @param refuse [String, nil] the refusal every agenda.publish gets
     # @param dying [Hash{String=>Integer}] how many times each method raises Died before it answers
-    def initialize(relay: "running", refuse: nil, dying: {})
+    # @param holding [Boolean] whether the first publish that adds an item is taken, and then
+    #   answered only once the example calls {#release}
+    def initialize(relay: "running", refuse: nil, dying: {}, holding: false)
       @relay = relay
       @refuse = refuse
       @dying = dying.dup
+      @holding = holding
+      @taken = Lain::Promise.new
+      @released = Lain::Promise.new
       @calls = []
       @handlers = {}
     end
@@ -150,7 +155,21 @@ module RemoteSurfaceSpecSupport
       return { "relay" => @relay } if method == "daemon.info"
       raise Lain::Core::Client::Refused, @refuse if @refuse
 
+      hold(params.first)
       @calls.size
+    end
+
+    # Parks until the held publish has been taken.
+    def taken = @taken.await
+
+    def release = @released.resolve(true)
+
+    def hold(delta)
+      return unless @holding && delta.fetch("added").any?
+
+      @holding = false
+      @taken.resolve(true)
+      @released.await
     end
 
     def die(method)
@@ -537,9 +556,12 @@ RSpec.describe Lain::Approval::RemoteSurface do
     end
 
     it "sends the phone no artifact digest" do
-      watched(parked: false, agenda: agenda_over(gates: RemoteSurfaceSpecSupport::Wave.new)) { _1.added_ids.any? }
+      wave = agenda_over(gates: RemoteSurfaceSpecSupport::Wave.new)
+      watched(parked: false, agenda: wave, project: File.join(@dir, "d1-d2")) { _1.added_ids.any? }
 
-      expect(registration.wired_items.to_s).not_to include("d1", "d2", "digests")
+      fields = registration.wired_items.flat_map(&:values).flat_map(&:to_a)
+      expect(fields.map(&:first)).not_to include("digests")
+      expect(fields.map(&:last).flatten).not_to include("d1", "d2")
     end
 
     it "hides a path under home in the refusal it shows the phone" do
@@ -594,6 +616,79 @@ RSpec.describe Lain::Approval::RemoteSurface do
       watched { _1.added_ids.any? }
 
       expect(registration.settled_ids).to eq(["1"])
+    end
+
+    it "takes back an item the daemon took, when it stops before the daemon's reply comes back" do
+      holding = RemoteSurfaceSpecSupport::StandIn.new(holding: true)
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(holding).watch }
+          call = park(task)
+          holding.taken
+          watching.stop
+        ensure
+          holding.release
+          call&.stop
+          watching&.stop
+        end
+      end
+
+      expect(holding.settled_ids).to eq(["1"])
+    end
+
+    it "takes back nothing the daemon refused" do
+      refusing = RemoteSurfaceSpecSupport::StandIn.new(refuse: "ParkedCall 900000 bytes, over the relay's reply budget")
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(refusing).watch }
+          call = park(task)
+          wait_until(reason: "the refusal was recorded") { records("approval_surface_fault").any? }
+          watching.stop
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
+
+      expect(refusing.settled_ids).to be_empty
+    end
+
+    it "still takes back an item the daemon took, when only its republish after a refused answer is refused" do
+      gated = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new)
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration, agenda: gated).watch }
+          wait_until(reason: "the gate was published") { registration.added_ids.any? }
+          registration.refuse = "GateQuestion 900000 bytes, over the relay's reply budget"
+          registration.deliver("answer", [approve(registration.published.first.first.added.sole).to_wire])
+          wait_until(reason: "the republish was refused") { registration.added_ids.size == 2 }
+          watching.stop
+        ensure
+          watching&.stop
+        end
+      end
+
+      expect(registration.settled_ids).to eq(["1"])
+    end
+
+    it "offers a refused item again after a reconnect, and takes it back once, after the daemon took it" do
+      refusing = RemoteSurfaceSpecSupport::StandIn.new(refuse: "ParkedCall 900000 bytes, over the relay's reply budget")
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(refusing).watch }
+          call = park(task)
+          wait_until(reason: "the refusal was recorded") { records("approval_surface_fault").any? }
+          refusing.refuse = nil
+          refusing.deliver(Lain::Daemon::Registration::RECONNECTED)
+          wait_until(reason: "the call was offered again") { refusing.added_ids.size == 2 }
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
+
+      expect(refusing.settled_ids).to eq(["1"])
+      expect(records("approval_surface_fault").size).to eq(1)
     end
 
     it "takes nothing back once the relay is gone" do
