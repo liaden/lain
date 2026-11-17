@@ -51,7 +51,7 @@ Eight tiers are excluded by default (`:api_integration`, `:spike`, `:services`, 
 
 ```bash
 LAIN_INTEGRATION=1 ANTHROPIC_API_KEY=sk-... bundle exec rspec   # :api_integration -- costs money
-bundle exec rake core:build && bundle exec rspec --tag core     # :core -- the one real-binary wire seam; needs the built lain-core
+bundle exec rake daemon:build && bundle exec rspec --tag core   # :core -- the one real-binary wire seam; needs the built lain-daemon
 ```
 
 Spec git reads a spec-owned global config (`spec/support/isolated_git_config.rb`); a lib site that
@@ -362,7 +362,7 @@ one round trip, never a loop — Lain owns the loop, because the loop is the obj
 
 **Rust is here for its data model and for capabilities Ruby has no good answer to, not for
 speed.** The placement rule: **anything async, I/O-bound, or isolation-relevant lives out of
-process (`crates/lain-core`, msgpack-RPC over a Unix socket); in-process work (`ext/lain`,
+process (`crates/lain-daemon`, msgpack-RPC over a Unix socket); in-process work (`ext/lain`,
 magnus) must be pure, synchronous, and must not own the terminal.**
 
 Before binding anything, read [`docs/rust-bindings.md`](docs/rust-bindings.md) for the five

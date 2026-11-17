@@ -332,7 +332,7 @@ RSpec.describe Lain::Daemon::Registration do
       end
 
       expect(notes.string.lines.size).to eq(1)
-      expect(notes.string).to match(/lost the daemon.*no lain-core listens.*still trying/)
+      expect(notes.string).to match(/lost the daemon.*no daemon listens.*still trying/)
     end
 
     it "stops trying once the daemon refuses the registration" do

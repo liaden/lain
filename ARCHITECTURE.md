@@ -37,13 +37,11 @@ Two frontends subscribe to one Journal, and the agent knows about neither. `Fron
 Subagent spawns can open read-only viewer windows (`chat --windows`, each running `lain watch`,
 `lib/lain/cli/watch.rb`).
 
-`crates/lain-core` and Neovim talk to `lain` over the same transport, msgpack-RPC on a Unix
-socket, which is why they look symmetric below. The Neovim path is live. The `lain-core` path is
-dashed because that daemon is off the default chat path: a chat reaches it only when the project's
-`remote relay:` is set, where it runs as the phone relay (`lain-core relay`, below). Run plain it
-answers `ping` and nothing else and is kept as the wire seed for code-mode handles, and only the
-one opt-in `:core` spec drives that mode. `crates/lain-fence` is a separate binary that bash confinement execs per
-call (Landlock and seccomp, no socket). `ext/lain` is in-process and built.
+`crates/lain-daemon` and Neovim talk to `lain` over the same transport, msgpack-RPC on a Unix
+socket, which is why they look symmetric below. Both paths are live: every chat registers with
+the per-user daemon, which hosts the phone relay worker (`crates/lain-daemon/src/relay.rs`, with
+`crates/lain-wire` defining the phone types) and ntfy. `crates/lain-fence` is a separate binary that bash confinement execs per call (Landlock
+and seccomp, no socket). `ext/lain` is in-process and built.
 
 ```mermaid
 flowchart LR
@@ -57,7 +55,7 @@ flowchart LR
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
   TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
-  TTY -.->|msgpack-RPC · unix socket<br/>off default path · opt-in| CORE["crates/lain-core (Rust · tokio)<br/>out-of-process wire seed<br/>ping, and the phone relay when remote relay: is set"]
+  TTY -.->|msgpack-RPC · unix socket| CORE["crates/lain-daemon (Rust · tokio)<br/>per-user daemon<br/>registry, agenda, the phone relay worker, ntfy"]
   TTY -->|bwrap, strace, then lain-fence per confined bash call| FENCE["crates/lain-fence (Rust)<br/>Landlock + seccomp<br/>runs one command, then exits"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
@@ -89,7 +87,7 @@ flowchart TB
 
   subgraph RUST["Rust"]
     EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread, holding the GVL<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · unsafe only at the FFI boundary"]
-    CORE["<b>crates/lain-core</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>wire seed · ping, and the phone relay<br/>forbid(unsafe_code) · off default path"]
+    CORE["<b>crates/lain-daemon</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>registry · agenda · phone relay worker · ntfy<br/>forbid(unsafe_code)"]
     FENCE["<b>crates/lain-fence</b> · short-lived process per confined call<br/>Landlock + seccomp, then execs the command<br/>isolation, not pure work"]
   end
 
@@ -120,7 +118,7 @@ Four consequences worth internalizing before you write code on either side:
 - **An `ext/lain` call blocks the reactor and that is the design.** It is synchronous by the
   placement rule, so it must stay fast and cross the FFI boundary in batches. A per-element call
   inside a DAG walk loses to plain Ruby and stalls the loop while losing.
-- **A `lain-core` call does not**, because it is IO. The msgpack-RPC round trip is a socket read
+- **A `lain-daemon` call does not**, because it is IO. The msgpack-RPC round trip is a socket read
   the scheduler hooks, so the reactor yields to other fibers while the daemon works. That
   asymmetry is the placement rule restated at runtime.
 - **The 2 real threads are frontend drains.** Neither runs agent work. Both exist because a
@@ -2417,22 +2415,22 @@ what a sweep of `"type" =>` literals in `lib/` turned up once content blocks and
 fragments were excluded, not a proof of completeness. A reader of the NDJSON should discriminate
 on the `type` string and always have an `else`.
 
-## `ext/lain` vs `crates/lain-core`: the placement rule
+## `ext/lain` vs `crates/lain-daemon`: the placement rule
 
 The rule, verbatim from `CLAUDE.md`: **anything async, I/O-bound, or isolation-relevant lives
-out of process (`crates/lain-core`, msgpack-RPC over a Unix socket); data-structure work lives
+out of process (`crates/lain-daemon`, msgpack-RPC over a Unix socket); data-structure work lives
 in-process (`ext/lain`, magnus, pure and synchronous).** `ext/lain/CLAUDE.md` restates the same
 line and adds the mechanical reason: driving an async runtime from inside an FFI call while
 holding the GVL is a known footgun, and an in-process sandbox is not a sandbox. Today
-`crates/lain-core` serves `ping` when run plain, and as `lain-core relay` it is the phone relay
-(its only production caller); it is also the wire seed for code-mode handles. The isolation work
+`crates/lain-daemon` is the per-user daemon: it registers chats, holds the agenda, and runs the
+phone relay as a confined worker. The isolation work
 that exists lives in its sibling `crates/lain-fence`.
 
 `ext/lain` denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root, matching
 what `spec/output_discipline_spec.rb` enforces on the Ruby side. It does not forbid `unsafe`:
 `lib.rs` has 6 `unsafe` sites, all confined to the magnus FFI boundary (`classname` and
 `as_slice`).
-`#![forbid(unsafe_code)]` lives on `crates/lain-core` instead, whose `main.rs` carries it at the
+`#![forbid(unsafe_code)]` lives on `crates/lain-daemon` instead, whose `main.rs` carries it at the
 crate root alongside the same print denies.
 
 `ext/lain/src/` today holds `canonical.rs` and `digest.rs` (the Rust side of `Canonical`
@@ -2464,15 +2462,15 @@ The shareability trap held for the port: a magnus-wrapped object is not `Ractor.
 free, and `Ractor.shareable?(event)` staying `true` is spec'd mechanically. `Ext::Event` and
 `Ext::Payload` are `frozen_shareable`; a new wrapped value object must establish the same.
 
-`crates/lain-core` is a separate binary. `main.rs` is a msgpack-RPC daemon on a Unix socket
-whose path arrives via argv, because path *policy* stays in Ruby (`Paths#runtime_dir`) and the
-daemon never computes its own. `rpc.rs` is the codec and server. Run plain, the daemon answers
-`ping` and nothing else, a wire seed code-mode handles will grow methods on. Run as `relay`, it is
-the phone relay (`relay.rs`, with `crates/lain-wire` defining the types the phone and lain share),
-the out-of-process side the placement rule reserves for async and network-facing work. `crates/lain-fence` is the other out-of-process crate, a binary that
-applies Landlock and a seccomp filter to itself and execs one command (see the sandbox section
-above).
+`crates/lain-daemon` is a separate binary: a msgpack-RPC daemon on a Unix socket whose path
+arrives via argv, because path *policy* stays in Ruby (`Paths#runtime_dir`) and the daemon never
+computes its own. `crates/lain-rpc` is the codec and server it is built on. The relay worker
+(`relay.rs`, with `crates/lain-wire`) is the phone relay, confined by Landlock and refusing to
+start unconfined (a non-Linux build returns `StartError::Unconfined`), the out-of-process side the
+placement rule reserves for async and network-facing work. `crates/lain-fence` is the other
+out-of-process crate, a binary that applies Landlock and a seccomp filter to itself and execs one
+command (see the sandbox section above).
 
 `lib/lain/core.rb` is the Ruby half: `Core::Client` owns the wire over an injected
 `Core::Transport`, with one reader-loop fiber demuxing an `msgid -> Promise` map over
-out-of-order completions. Both `ext/lain` and `crates/lain-core` are real, built crates today.
+out-of-order completions. Both `ext/lain` and `crates/lain-daemon` are real, built crates today.

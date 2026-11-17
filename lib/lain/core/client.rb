@@ -13,7 +13,7 @@ module Lain
     # own termination; this class owns bytes.
     class Client
       # Matched EXACTLY against ping's reported version on connect. Tracks
-      # crates/lain-core/Cargo.toml -- an exact string, not a range, because the
+      # crates/lain-daemon/Cargo.toml -- an exact string, not a range, because the
       # wire contract has no negotiation.
       PROTOCOL_VERSION = "0.1.0"
 
@@ -21,7 +21,7 @@ module Lain
       # versions so the fix (rebuild one side) is legible.
       class VersionMismatch < Error
         def initialize(pinned, reported)
-          super("lain-core protocol mismatch: client pins #{pinned.inspect}, daemon reports #{reported.inspect}")
+          super("lain-daemon protocol mismatch: client pins #{pinned.inspect}, daemon reports #{reported.inspect}")
         end
       end
 
@@ -34,7 +34,7 @@ module Lain
       # cannot see because accept succeeded.
       class HandshakeTimeout < Error
         def initialize(budget)
-          super("lain-core accepted but never answered the ping handshake within #{budget}s")
+          super("lain-daemon accepted but never answered the ping handshake within #{budget}s")
         end
       end
 
@@ -43,7 +43,7 @@ module Lain
       # daemon mystery.
       class Stopped < Error
         def initialize
-          super("lain-core client stopped; calls after #stop want a new client")
+          super("lain-daemon client stopped; calls after #stop want a new client")
         end
       end
 
@@ -265,7 +265,7 @@ module Lain
         return if @dropped_noted
 
         @dropped_noted = true
-        @notes.puts("lain-core push #{method.inspect} dropped: no subscriber (further drops not noted)")
+        @notes.puts("lain-daemon push #{method.inspect} dropped: no subscriber (further drops not noted)")
       end
 
       # Releasing the transport rather than merely observing matters for one

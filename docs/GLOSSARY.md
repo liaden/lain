@@ -639,7 +639,7 @@ path from the session file, so writer and reader cannot name different files.
 
 The transport for both out-of-process boundaries, which is why they look symmetric in the topology
 diagram. `Frontend::Neovim` injects its whole runtime into a bare `nvim --listen` over it, and
-`crates/lain-core` speaks it over a Unix socket. `Core::Client` runs 1 reader-loop fiber demuxing an
+`crates/lain-daemon` speaks it over a Unix socket. `Core::Client` runs 1 reader-loop fiber demuxing an
 `msgid -> Promise` map, because completions arrive out of order.
 
 ### CloudEvents

@@ -202,18 +202,16 @@ RSpec.configure do |config|
   config.filter_run_excluding(:services) unless SERVICES_ENABLED
 end
 
-# The one :core spec drives the REAL compiled lain-core daemon over its Unix
-# socket (spec/lain/core/client_spec.rb): the wire seam. It costs no money and
-# touches no network, but it needs the compiled binary, so it is excluded by
-# default. Unlike the env-gated tags above, the way in is the tag itself: a
-# command-line `--tag core` takes priority over this config-level exclusion
-# (rspec-core 3.13, verified), so no LAIN_* variable is needed:
+# The one :core spec drives the REAL compiled lain-daemon over its Unix socket
+# (spec/lain/core/client_spec.rb): the wire seam. It costs no money and touches
+# no network, but it needs the compiled binary, so it is excluded by default.
+# Unlike the env-gated tags above, the way in is the tag itself: a command-line
+# `--tag core` takes priority over this config-level exclusion (rspec-core 3.13,
+# verified), so no LAIN_* variable is needed. The example is also tagged
+# :daemon, whose hook (spec/support/lain_daemon.rb) skips it when the binary is
+# absent and names the rake task that builds it:
 #
-#     bundle exec rake core:build && bundle exec rspec --tag core
-#
-# When opted in but the binary is absent, an example SKIPS (never fails, unless LAIN_REQUIRE_BINARIES=1),
-# mirroring :nvim: a missing build artifact is an environment gap, not a lain
-# regression -- and the skip message names the rake task that fills it.
+#     bundle exec rake daemon:build && bundle exec rspec --tag core
 #
 # CI and the pre-commit hook set LAIN_REQUIRE_BINARIES=1, where an absent binary FAILS instead:
 # a tier that skips for want of its binary reads green while running nothing.
@@ -233,13 +231,6 @@ end
 RSpec.configure do |config|
   config.include BinaryGate
   config.filter_run_excluding(:core)
-
-  config.before(:each, :core) do
-    unless File.executable?(CoreDaemon::BINARY)
-      absent_binary("lain-core binary not built at #{CoreDaemon::BINARY} -- run `bundle exec rake core:build` " \
-                    "to run the wire seam")
-    end
-  end
 end
 
 RSpec.configure do |config|

@@ -83,7 +83,7 @@ Gem::Specification.new do |spec|
   # bug class we most fear: a `data:` line split across two TCP reads. A VCR cassette
   # stores the body as one blob and would replay green forever over that bug.
   spec.add_dependency "event_stream_parser", "~> 1.0"
-  # Wire format for Core::Client, the msgpack-RPC client to the lain-core binary.
+  # Wire format for Core::Client, the msgpack-RPC client to the lain-daemon binary.
   # Already in the bundle transitively (neovim, bootsnap) -- declared
   # because Core requires it directly; a transitive dep is one upstream refactor
   # away from vanishing.

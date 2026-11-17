@@ -63,8 +63,8 @@ RSpec.describe Lain::Core::Transport do
     # With no base class to inherit, this pins ARITY as well as the names: a
     # transport that grew a required argument would satisfy `include` and still
     # break every call site.
-    it "is two nullary messages, satisfied by Mock and by the spec daemon alike" do
-      [Lain::Core::Transport::Mock, CoreDaemon].each do |implementation|
+    it "is two nullary messages, satisfied by Mock and by Unix alike" do
+      [Lain::Core::Transport::Mock, Lain::Core::Transport::Unix].each do |implementation|
         expect(implementation.instance_method(:start).arity).to eq(0)
         expect(implementation.instance_method(:stop).arity).to eq(0)
       end

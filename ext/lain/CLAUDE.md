@@ -4,7 +4,7 @@ This crate is **pure and synchronous**. It exists for Rust's *data model* — ow
 immutability, structural sharing — not for speed. See `docs/rust-bindings.md` for the five tests
 a capability must pass before it gets a binding at all.
 
-Anything **async, I/O-bound, or isolation-relevant** belongs in `crates/lain-core` (tokio,
+Anything **async, I/O-bound, or isolation-relevant** belongs in `crates/lain-daemon` (tokio,
 msgpack-RPC over a Unix socket), not here. Driving an async runtime from inside a magnus FFI call
 while holding the GVL is a known footgun, and an "in-process sandbox" is not a sandbox.
 
@@ -46,8 +46,8 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
 
 - **Stable channel only. No `#![feature]`.** A subagent has already shipped `#![feature]` here
   and it does not build. If you reach for a nightly feature, the design is wrong.
-- **No `forbid(unsafe_code)` here.** That rule is `crates/lain-core`'s
-  (`crates/lain-core/src/main.rs:13`), not this crate's. `ext/lain` has 16 `unsafe {` blocks
+- **No `forbid(unsafe_code)` here.** That rule is `crates/lain-daemon`'s
+  (`crates/lain-daemon/src/main.rs:6`), not this crate's. `ext/lain` has 16 `unsafe {` blocks
   (`grep -rc 'unsafe {' ext/lain/src`, 2026-10-21). 9 are FFI-boundary calls in magnus's own
   unsafe API, 1 is the `rb_nogvl` call below, and the other 6 sit in the 2 counting global
   allocators, `lib.rs`'s `heap` (the extension's, behind `Lain::Ext::Probe.live_bytes`) and
@@ -99,7 +99,7 @@ All four run in `pre-commit` on **every** worktree, because `core.hooksPath` is 
   a `.so` you cannot see into. The rule is mechanical, not remembered —
   `deny.toml`'s `[bans] deny` list refuses `crossterm`, `termion`, `termwiz`, `console`,
   `termcolor`, `terminal_size` and `onig_sys` **workspace-wide**, so it binds
-  `crates/lain-core` too. If a crate you want pulls one of them in, that crate is answering a
+  `crates/lain-daemon` too. If a crate you want pulls one of them in, that crate is answering a
   question in the wrong process — stop, do not add an exception.
 - **Vendored source needs a `NOTICE` entry; the licence allow-list does not cover it.**
   `deny.toml`'s `allow` list governs crates resolved from crates.io. Grammar, algorithms, or

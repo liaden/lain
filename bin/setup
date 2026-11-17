@@ -16,7 +16,7 @@ if command -v pre-commit > /dev/null; then
   pre-commit install
 fi
 
-# A linked worktree compiles its own lain-core unless CARGO_TARGET_DIR points at
+# A linked worktree compiles its own lain-daemon unless CARGO_TARGET_DIR points at
 # a build that already exists. A tracked .cargo/config.toml cannot do this: a
 # relative target-dir resolves against its own checkout. So export it by hand, in
 # .envrc or wherever the worktree is created:

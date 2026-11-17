@@ -47,7 +47,7 @@ highlight = "all"
 # `anstyle` (style value types, zero deps, no env access) is the sanctioned
 # substitute for the whole class.
 #
-# This list is workspace-wide and therefore also binds `crates/lain-core`. That
+# This list is workspace-wide and therefore also binds `crates/lain-daemon`. That
 # is deliberate: the daemon is the isolation boundary and has even less business
 # holding a tty. `onig_sys` is here for a different reason -- it is a C
 # dependency that arrives transitively via `syntect`'s default `regex-onig`
@@ -61,7 +61,7 @@ highlight = "all"
 # `env::var("NO_COLOR")` (`fmt_layer.rs:743`) -- the environment read this whole
 # list exists to keep out of the process Ruby does not own. Banning the crate
 # therefore bans the feature by proxy: a `default-features = true` regression in
-# `crates/lain-core/Cargo.toml` fails `cargo deny` instead of silently re-arming it.
+# `crates/lain-daemon/Cargo.toml` fails `cargo deny` instead of silently re-arming it.
 deny = [
     { crate = "crossterm", reason = "owns the terminal; Ruby does" },
     { crate = "termion", reason = "owns the terminal; Ruby does" },

@@ -599,7 +599,7 @@ module SpecCensus
   #     `compare.rb:121`) reaches a method this scan will swear nothing calls.
   #     A name that arrives from a Hash, a constant or the wire is not visible
   #     to any static index.
-  #   * Non-Ruby callers. The nvim plugin and `crates/lain-core` speak over RPC;
+  #   * Non-Ruby callers. The nvim plugin and `crates/lain-daemon` speak over RPC;
   #     a method they call is spelled in Lua or Rust, not here. Verified for
   #     the nine review-subtree flags (none is), NOT in general.
   #   * A method NAME is the key, so two methods sharing a name share their

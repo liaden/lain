@@ -253,10 +253,9 @@ RSpec.describe Lain::Core::Client do
 
   # The one example with no double between client and daemon: it pins the
   # Ruby-to-Rust msgpack contract the wire exists to carry.
-  it "speaks the real binary's wire: handshake, ping, and a refusal of a method it does not serve", :core do
+  it "speaks the real binary's wire: handshake, ping, and a refusal of a method it does not serve", :core, :daemon do
     Sync do
-      daemon = CoreDaemon.new
-      client = described_class.start(transport: daemon)
+      client = Lain::Daemon.ensure(paths: daemon_paths, env: daemon_env)
       begin
         expect(client.call("ping")).to include("version" => Lain::Core::Client::PROTOCOL_VERSION, "pid" => Integer)
         expect { client.call("exec", [{ "argv" => %w[echo hi] }]) }
@@ -274,7 +273,7 @@ RSpec.describe Lain::Core::Client do
   # only catch Ruby-side writes.
   def capturing_parent_stderr
     absorb_experimental_io_buffer_warning
-    capture = Tempfile.new("lain-core-stderr")
+    capture = Tempfile.new("lain-daemon-stderr")
     backup = $stderr.dup
     $stderr.reopen(capture.path, "w")
     yield

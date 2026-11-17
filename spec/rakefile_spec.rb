@@ -77,6 +77,20 @@ RSpec.describe "Rakefile", :seam do
     end
   end
 
+  describe "the retired core namespace" do
+    it "is gone, so the only Rust binary a spec tier builds is lain-daemon" do
+      allow(RbSys::ExtensionTask).to receive(:new)
+      tasks = nil
+      Rake.with_application(Rake::Application.new) do
+        load File.join(root, "Rakefile")
+        tasks = Rake::Task.tasks.map(&:name)
+      end
+
+      expect(tasks).to include("daemon:build")
+      expect(tasks.grep(/\Acore:/)).to be_empty
+    end
+  end
+
   describe "the daemon:build task" do
     def build_with_git(sha)
       built = nil

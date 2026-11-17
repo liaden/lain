@@ -5,15 +5,14 @@ require "socket"
 module Lain
   module Core
     module Transport
-      # Attaches to a lain-core someone else started, such as the relay `lain
-      # up` runs in its own pane. It provisions no process, so {#stop} has
-      # nothing to end and only reports; the client's own read-side collapse is
-      # what ends its reader.
+      # Attaches to a daemon someone else started, such as the per-user
+      # lain-daemon. It provisions no process, so {#stop} has nothing to end
+      # and only reports; the client's own read-side collapse is what ends its reader.
       class Unix
-        # Nothing listens at the path: no relay was started, or it died.
+        # Nothing listens at the path: no daemon was started, or it died.
         class Unreachable < Error
           def initialize(path, cause)
-            super("no lain-core listens at #{path}: #{cause.message}")
+            super("no daemon listens at #{path}: #{cause.message}")
           end
         end
 

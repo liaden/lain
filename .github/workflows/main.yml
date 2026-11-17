@@ -108,7 +108,7 @@ jobs:
       - name: Run the daemon tier
         env:
           LAIN_REQUIRE_BINARIES: '1'
-        run: bundle exec rake daemon:build core:build && bundle exec rspec --tag core --tag daemon
+        run: bundle exec rake daemon:build && bundle exec rspec --tag core --tag daemon
       # Saved on a red suite too, but only once the extension linked: an entry
       # is immutable, so a half-built target/ would hold the key until evicted.
       - name: Save the cargo registry and compiled target/
@@ -165,10 +165,11 @@ jobs:
       - name: Compile the Rust extension
         run: bundle exec rake compile
       # ext/lain needs a macOS SDK to type-check, so only the pure crates are covered here.
+      # lain-daemon is absent on purpose: its rustls dependency ring needs the macOS SDK, so check it on the Mac.
       - name: Type-check the Linux-gated crates for macOS
         run: |
           rustup target add aarch64-apple-darwin
-          cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-core -p lain-fence
+          cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-fence
       # `ruby-checks` would run the suite a second time; rubocop, its other
       # half, runs on its own below.
       # The remote-* hooks need WebKitGTK; the remote-app job runs them on a runner that has it.

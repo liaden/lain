@@ -1,7 +1,7 @@
 # Which capabilities earn a Rust binding
 
 The placement rule and the crate layout live in `ARCHITECTURE.md` ("`ext/lain` vs
-`crates/lain-core`"). This file is the *admission test*: what has to be true before any work
+`crates/lain-daemon`"). This file is the *admission test*: what has to be true before any work
 moves from Ruby into Rust at all. `CLAUDE.md` keeps the one-line rule; read this before
 proposing a binding, and read `ext/lain/CLAUDE.md` before writing the code.
 
@@ -12,7 +12,7 @@ the reason itself. See `ext/lain/CLAUDE.md` before writing any Rust, and survey 
 before hand-rolling anything a crate already does well.
 
 The placement rule is unchanged and is the one that actually binds: **anything async, I/O-bound,
-or isolation-relevant lives out of process (`crates/lain-core`, msgpack-RPC over a Unix socket);
+or isolation-relevant lives out of process (`crates/lain-daemon`, msgpack-RPC over a Unix socket);
 in-process work (`ext/lain`, magnus) must be pure, synchronous, and must not own the terminal.**
 Driving an async runtime from inside an FFI call while holding the GVL is a known footgun, and an
 "in-process sandbox" is not a sandbox. A crate that reaches for `isatty` or `NO_COLOR` owns the

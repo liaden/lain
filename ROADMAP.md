@@ -153,7 +153,7 @@ was worth removing.
 - **lain-daemon (2026-11-16).** `[planned]` `planning/specs/lain-daemon.md`, 26 cards plus 3 dotfiles steps,
   from `planning/lain-daemon-research-2026-11.md`, after the review queue lands:
   - a per-user Rust daemon with a registry of live chats, routing for queue offers and approvals, the
-    phone relay as a confined worker and ntfy once per item; `lain-core` retires into `lain-rpc`;
+    phone relay as a confined worker and ntfy once per item; the old core binary retires into `lain-rpc`;
   - headless runs (an epic, the review poll, chores) that park and route their asks to you with
     `--human remote`, only where bash is sandboxed;
   - a warmed Ruby spawner that forks runs, after the exec cost is measured.
@@ -593,7 +593,7 @@ Ruby before any Rust.
 | Concept | Sparked by | Home | Ruby-first? |
 |---|---|---|---|
 | Context as **incremental view maintenance** | the monoid + persistent structures | M3c | ✅ |
-| **Handles** to out-of-context data (code-mode) | code mode + `lain-core` | M5 | partly |
+| **Handles** to out-of-context data (code-mode) | code mode + `lain-daemon` | M5 | partly |
 | **Workspace Timeline** (files as a 2nd DAG) | Cline checkpoints | M4 | ✅ |
 | **git-for-its-mind** (fork/rewind as agent tools) | O(1) fork + TODO time-travel | M4/M5 | ✅ |
 | **Attested context** (digest-chain provenance) | git-archaeology (TODO 22–26) | M3c/M5 | ✅ |
@@ -690,7 +690,7 @@ agent loop, expressed in the same DSL.
 
 Two frontends, one Journal — the agent knows about neither; both subscribe. TTY first (M1b), Neovim
 next (M4). The window layer is a multiplexer concern; the editing surface is Neovim's; the transport is
-the *same* msgpack-RPC that talks to `lain-core` — one idiom, two peers. The 2026-07-11 survey of the
+the *same* msgpack-RPC that talks to `lain-daemon`, one idiom, two peers. The 2026-07-11 survey of the
 actual desktop configs, the verified RPC probe, and the fleshed-out designs live in
 `planning/interface-integration.md`.
 
@@ -1015,7 +1015,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `/create-plan`, executable in either order:
    `planning/specs/chunk-parallel-tools-core-skeleton.md`
    (M6: parallel tool execution widened past `Subagent` with barrier semantics + the
-   `crates/lain-core` msgpack-RPC exec skeleton, `forbid(unsafe_code)`, confinement
+   the old core binary crate's msgpack-RPC exec skeleton, `forbid(unsafe_code)`, confinement
    explicitly out of scope) and `planning/specs/chunk-gherkin-meta-agents-plan-compaction.md`
    (grader-from-Gherkin GG-1..5; the four meta-agents — court-clerk consolidation,
    friction-observer, harness-improver with the XDG improvements sink, and the auto-approver
@@ -1147,14 +1147,14 @@ XDG path relative, which put machine state back inside the user's repository)
 18. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-vsock-exec-transport.md`, grounded by
    `references/firecracker-microvm-isolation.md` and two executed spikes: the **vsock-native exec
-   transport**. `lain-core` learns to listen on `AF_VSOCK`, and `Core::Client` learns to take an
+   transport**. `lain-daemon` learns to listen on `AF_VSOCK`, and `Core::Client` learns to take an
    injected transport, so the exec boundary can cross a hypervisor without a protocol change.
    Deliberately **backend-agnostic**: the guest-side listener is identical for Firecracker,
    libkrun, QEMU/KVM, and Cloud Hypervisor, so the chunk commits to no hypervisor and defers the
    libkrun-vs-Firecracker decision. Two spikes already de-risked the central claim — an unmodified
    `Core::Client` runs the boundary through a faked Firecracker `CONNECT`/`OK` handshake (6/6) and
    over real `AF_VSOCK` via `vsock_loopback`, which **autoloads unprivileged** so the whole chunk
-   runs on hardware with no `/dev/kvm` (this desktop's SVM is off in BIOS). Static musl `lain-core`
+   runs on hardware with no `/dev/kvm` (this desktop's SVM is off in BIOS). Static musl `lain-daemon`
    is 1.2 MB stripped, ~2.5% of Firecracker's rootfs budget. Panel review reversed three first-draft
    decisions: the "every transport's `#stop` must EOF the wire" contract clause was an accident of
    statement ordering in `Client#stop` promoted to an obligation — the client now collapses its own
@@ -1196,7 +1196,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `spec/support/vsock_daemon.rb` and the `:vsock` tag, with `Exec::Core`, `Core::Child` and
    `spec/lain/core/grep_parity_spec.rb` (named above) and the daemon's `exec` and `grep` RPCs. What
    pins the wire now is `Core::Client` over `Transport::Mock`, plus 1 `:core` example that drives the
-   real `lain-core` binary through handshake, `ping` and a refused `exec`.
+   real old core binary through handshake, `ping` and a refused `exec`.
 
 19. **✅ Landed — planned 2026-07-28, panel-reviewed** —
    `planning/specs/chunk-bench-arms-subcommand.md`: a **live door for the arm comparison**. Split
@@ -1239,7 +1239,7 @@ XDG path relative, which put machine state back inside the user's repository)
    (`Scribe#catch_up` O(n²)-per-session, one-walk-one-dump on the Derived render path, Slots/
    Catalog load-once-render-once, `Toolset#to_schema`), the Rust safety/idiom work that is also a
    wiring prerequisite (recursion bounds, mutex-vs-Ruby discipline, the `NO_COLOR`-via-feature
-   trim, one `read_text` encoding policy), a `Tools::Grep` lain-core RPC, and the record-keeping
+   trim, one `read_text` encoding policy), a `Tools::Grep` `lain-daemon` RPC, and the record-keeping
    card (T39) that writes the epic-tier entry, the Rust parity gap (`planning/rust-parity-gap.md`,
    deleted 2026-10-20 and kept in item 23), and the unwired-seam triage item. Memoization is
    constrained by ruling: restructure over cache, stated key-space/bound/consistency, "not worth it"
@@ -1543,7 +1543,7 @@ XDG path relative, which put machine state back inside the user's repository)
    is an `Approval::Queue` **surface**, not a middleware oracle; a denied read is **loud**; and
    `[[approval.allow]]` is honoured only from a **consented** root. `Approval::Remembered`'s read
    side is unblocked; `Remembered::Persister` and `Approval::Risk` stay dead, as scoped. The typed
-   egress tool remains **deferred**; Landlock confinement landed in `crates/lain-fence` instead of `crates/lain-core`.
+   egress tool remains **deferred**; Landlock confinement landed in `crates/lain-fence` instead of the old core binary crate.
 
 30. **✅ Landed (survey B12 part two open) — planned 2026-08-07, panel-reviewed — `/survey`: reviewing a corpus, in two chunks.**
    `planning/specs/chunk-partition-strategy.md` (4 cards, 3 waves) then
@@ -1666,7 +1666,7 @@ XDG path relative, which put machine state back inside the user's repository)
    with a class doc naming the hazard — and `Tools::Bash`, the tool the model actually uses, never
    got it, so every Ruby subprocess in the user's project resolves against **lain's** Gemfile (F45).
    That becomes **`Lain::Exec`**, a name for a question the code already answers twice without
-   naming it: `Local` (in-process shellout), `Core` (the existing lain-core arm) and a new bare-bones
+   naming it: `Local` (in-process shellout), `Core` (the existing old core binary arm) and a new bare-bones
    `Docker`. Deliberately **not** under `Isolation`, which answers how a *worker* gets a *workspace*
    and which `exe/lain:843-845` records as "inert in chat today". **14 cards, 3 waves.**
    The panel returned *request-changes* with four BLOCKERs, all fixed, and three were premises the
@@ -2166,7 +2166,7 @@ XDG path relative, which put machine state back inside the user's repository)
    `bench variance`; 2 records, `compaction_prepared` and `compaction_applied`, and 3 Compare columns. 10 cards, panel-reviewed.
 63. **Done (2026-10-18)**: `planning/specs/simplify-15-unreached-code.md`, the no-decision half of the
    2026-10-17 simplification survey: the unreached request/response half of the vendored HTTP provider
-   deleted; `crates/lain-core` cut to its msgpack-RPC wire (`rpc.rs`, `main.rs`, `Core::Client`), with the
+   deleted; the old core binary crate cut to its msgpack-RPC wire (`rpc.rs`, `main.rs`, `Core::Client`), with the
    `exec` and `grep` RPCs, the vsock listener, `Exec::Core` and `Core::Child` gone, by the ruling that the
    wire is the seed for the phone relay and the code-mode handle store; `Project::Dotfiles`, the spec-only
    landing desk, the Rust tracing scaffold and 3 spec-only names deleted; 1 session writer (the Scribe)
@@ -2273,7 +2273,7 @@ XDG path relative, which put machine state back inside the user's repository)
     - Compaction tuned to a provider that caches nothing.
     - `lain usage` by command and role.
 
-    Last, stream P (added by the user): lain-core grown into a tailnet relay, 1 agenda of everything waiting on a human,
+    Last, stream P (added by the user): the old core binary grown into a tailnet relay, 1 agenda of everything waiting on a human,
     paired and revocable phones, an ntfy buzz that opens the app, and a sideloaded Dioxus app in
     `apps/lain-remote`.
 75. **Planned (2026-11-11, panel-reviewed)**: `planning/specs/round29-fixes.md`, 42 cards in 6 streams from

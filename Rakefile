@@ -81,19 +81,6 @@ end
 # each tool's summary block still lands intact at its end.
 multitask check: %i[pspec rubocop]
 
-# The lain-core binary the one :core-tagged wire-seam spec drives. A plain
-# `cargo build` (not rb_sys -- lain-core is a standalone workspace binary, no
-# Ruby linkage) into the workspace target dir, which is exactly where
-# spec/support/core_daemon.rb looks.
-#
-#     bundle exec rake core:build && bundle exec rspec --tag core
-namespace :core do
-  desc "Compile the lain-core binary for the :core-tagged wire-seam spec"
-  task :build do
-    sh "cargo build -p lain-core"
-  end
-end
-
 # The lain-daemon release binary `Lain::Daemon::Launch` runs. The git sha is stamped in here
 # because the binary reports it as its build id and has no .git to ask at run time.
 namespace :daemon do

@@ -11,7 +11,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 # `bytes` is for `RString::to_bytes`, a byte copy that needs no `unsafe` here;
-# the `bytes` crate is already in the tree under lain-core.
+# the `bytes` crate is already in the tree under lain-daemon.
 magnus = { version = "0.9.0", features = ["bytes"] }
 # rb_nogvl, for releasing the GVL with an unblocking function: magnus has no
 # such API and does not re-export rb-sys. rb-sys declares `links = "rb"`, so
