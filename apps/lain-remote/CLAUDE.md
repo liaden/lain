@@ -16,7 +16,19 @@ cargo deny check                                    # this directory's deny.toml
 dx serve --platform desktop                         # where dx exists
 ```
 
-The Android SDK is not installed here either, so nothing on this box builds for Android.
+## Android
+
+```bash
+bin/android-setup                                   # once: JDK 17, SDK, NDK, Rust target, dx; prints 3 exports for .envrc
+dx build --platform android --target aarch64-linux-android
+adb install -r target/dx/lain-remote/debug/android/app/app/build/outputs/apk/debug/app-debug.apk
+```
+
+Everything lands under `$HOME` (`~/Android/Sdk`, mise's JDK), with no sudo; rerunning skips what is there.
+The newer cmdline-tools replace `sdkmanager` with `android sdk`, which sends usage metrics unless given `--no-metrics`.
+The `desktop` feature builds for Android as is: wry is the mobile renderer too. A cold build takes about 3.5 minutes.
+CI's `lain-remote android` job builds the same debug APK on the runner's own SDK and keeps it as an artifact for 7 days.
+dx 0.7.10 maps `[deep_links] schemes` in `Dioxus.toml` to an Android intent-filter; the app does not declare it yet.
 Pair in the Settings screen (saved 0600 at `$LAIN_REMOTE_CONFIG`, else `$XDG_CONFIG_HOME/lain-remote/settings`, else `~/.config/lain-remote/settings`);
 `LAIN_REMOTE_ADDR` and `LAIN_REMOTE_TOKEN` are the fallback when nothing is saved. The token is never logged or shown after saving.
 

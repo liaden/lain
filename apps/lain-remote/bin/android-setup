@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Installs what `dx build --platform android` needs, under $HOME and with no sudo.
+# It is safe to rerun: each step skips what is already there.
+#
+#   1. JDK 17 from mise, because the Gradle template dx generates targets Java 17
+#   2. Android command-line tools into $ANDROID_HOME
+#   3. platform, build-tools, platform-tools and the NDK, with metrics off
+#   4. the Rust Android target
+#   5. the Dioxus CLI at the version the app's Cargo.lock pins
+#   6. print the exports to put in .envrc
+set -euo pipefail
+
+app_dir=$(cd "$(dirname "$0")/.." && pwd)
+android_home=${ANDROID_HOME:-$HOME/Android/Sdk}
+
+java_version=temurin-17
+cmdline_tools_zip=commandlinetools-linux-16111833_latest.zip
+cmdline_tools_sha1=e025545c62a8e64c7559119566a569fb1dec5f60
+# dx 0.7 defaults compileSdk and targetSdk to 34.
+platform=platforms/android-34
+build_tools=build-tools/34.0.0
+ndk_version=29.0.14206865
+rust_target=aarch64-linux-android
+
+step() { printf '\n== %s\n' "$*"; }
+
+step "1. JDK ($java_version)"
+mise install "java@$java_version"
+java_home=$(mise where "java@$java_version")
+
+step "2. Android command-line tools"
+android=$android_home/cmdline-tools/latest/bin/android
+if [[ ! -x $android ]]; then
+  scratch=$(mktemp -d)
+  trap 'rm -rf "$scratch"' EXIT
+  curl -fsSL -o "$scratch/tools.zip" "https://dl.google.com/android/repository/$cmdline_tools_zip"
+  echo "$cmdline_tools_sha1  $scratch/tools.zip" | sha1sum -c -
+  if command -v bsdtar >/dev/null; then
+    bsdtar -xf "$scratch/tools.zip" -C "$scratch"
+  else
+    unzip -q "$scratch/tools.zip" -d "$scratch"
+  fi
+  mkdir -p "$android_home/cmdline-tools"
+  mv "$scratch/cmdline-tools" "$android_home/cmdline-tools/latest"
+fi
+
+step "3. SDK packages"
+export JAVA_HOME=$java_home
+"$android" --no-metrics --sdk="$android_home" sdk install platform-tools "$platform" "$build_tools" "ndk/$ndk_version"
+
+step "4. Rust target ($rust_target)"
+rustup target add "$rust_target"
+
+step "5. Dioxus CLI"
+dioxus_version=$(awk '/^name = "dioxus"$/ { getline; gsub(/version = |"/, ""); print; exit }' "$app_dir/Cargo.lock")
+if [[ $(dx --version 2>/dev/null) != "dioxus $dioxus_version"* ]]; then
+  cargo install dioxus-cli --version "$dioxus_version" --locked
+fi
+
+step "6. Add these to .envrc"
+cat <<EOF
+export JAVA_HOME=$java_home
+export ANDROID_HOME=$android_home
+export NDK_HOME=$android_home/ndk/$ndk_version
+EOF
