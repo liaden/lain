@@ -5,7 +5,7 @@
 #   lain-status [STATE_FILE]
 #
 # STATE_FILE is the struct Lain::StatusFeed publishes. This script is TOLD
-# that path and derives nothing: no project directory, no `.lain/`, no
+# that path and derives nothing (bar the one review-count sibling, below): no project directory, no `.lain/`, no
 # `$XDG_STATE_HOME`, and above all no `sha256(realpath(dir))[0, 12]`. That is
 # the point. The feed lives at
 # `$XDG_STATE_HOME/lain/status/<project-hash>/state.json`, and resolving a
@@ -77,6 +77,44 @@ while IFS= read -r line || [ -n "$line" ]; do
       ;;
   esac
 done <"$state"
+
+# The review count sits at `<state home>/reviews.json`, the ONE sibling of the state file this
+# script derives: three directories above `status/<hash>/state.json`, so cutting `/status/...` off the
+# path we were told reaches it without carrying the XDG rule, which is why it is not told a second
+# path. Only `rv <digits>` with an optional `+<digits>` is printed, so a file anyone could write
+# cannot put an escape or a tmux format into the bar. `stale` is looked for anywhere in the line,
+# so key order does not matter.
+reviews=""
+case "$state" in
+  */status/*/state.json)
+    counts="${state%/status/*}/reviews.json"
+    if [ -n "$hud" ] && [ -f "$counts" ] && [ -r "$counts" ]; then
+      while IFS= read -r line || [ -n "$line" ]; do
+        case "$line" in
+          *'"hud":"rv '*)
+            rest=${line#*'"hud":"'}
+            candidate=${rest%%'"'*}
+            body=${candidate#rv }
+            whole=${body%%+*}
+            valid=1
+            case "$whole" in ''|*[!0-9]*) valid=0 ;; esac
+            case "$body" in
+              *+*)
+                part=${body#*+}
+                case "$part" in ''|*[!0-9]*) valid=0 ;; esac
+                ;;
+            esac
+            if [ "$valid" = 1 ]; then
+              reviews=$candidate
+              case "$line" in *'"stale":true'*) reviews="$reviews?" ;; esac
+            fi
+            ;;
+        esac
+      done <"$counts"
+    fi
+    ;;
+esac
+hud="$hud$reviews"
 
 # Empty covers both "no such field" (a lain too old to publish it) and a field
 # published empty, and the never-blank contract makes the sentence the answer

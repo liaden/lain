@@ -284,6 +284,27 @@ RSpec.describe "lain nvim plugin", :nvim do
       expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 ")
     end
 
+    it "hud() appends the review count once, marks a stale one, and ignores a hud that is not a count" do
+      boot_nvim
+      state = publish("hud" => "\u{1F525} fleet:1 inbox:2 ")
+      reviews = File.join(@state_home, "lain", "reviews.json")
+      expect(File.dirname(state, 3)).to eq(File.dirname(reviews))
+
+      File.write(reviews, JSON.generate("hud" => "rv 7+2", "stale" => false))
+      expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 rv 7+2")
+
+      File.write(reviews, JSON.generate("hud" => "rv 7+2", "stale" => true))
+      expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 rv 7+2?")
+
+      ["rv 1\e[31m#(id)", "rv 7#[fg=red]", "rv 7\n", "rv +", "rv 7++", "rv 7+", "rv #{"9" * 100_000}a"].each do |text|
+        File.write(reviews, JSON.generate("hud" => text, "stale" => false))
+        expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 ")
+      end
+
+      File.write(reviews, '{"stale":true,"hud":"rv 7+2"}')
+      expect(lua("return require('lain').hud()")).to eq("\u{1F525} fleet:1 inbox:2 rv 7+2?")
+    end
+
     # A state file from a lain too old to publish the line: absence, not an
     # error and not a half-derived guess.
     it "hud() answers nothing for a state file carrying no published line" do

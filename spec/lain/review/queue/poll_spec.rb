@@ -135,6 +135,86 @@ RSpec.describe Lain::Review::Queue::Poll do
     end
   end
 
+  describe "a poll into a state home that does not exist yet" do
+    let(:counts_file) { paths.review_counts }
+
+    it "creates the directory and writes the counts" do
+      seed
+      poll.call
+
+      expect(JSON.parse(File.read(counts_file))).to include("hud" => "rv 7+2")
+    end
+  end
+
+  describe ".hud" do
+    let(:counts_file) { paths.review_counts }
+
+    before { FileUtils.mkdir_p(File.dirname(counts_file)) }
+
+    def hud = described_class.hud(paths:)
+
+    it "is empty when no counts file was written" do
+      expect(hud).to eq("")
+    end
+
+    it "is the line the poll wrote" do
+      seed
+      poll.call
+
+      expect(hud).to eq("rv 7+2")
+    end
+
+    it "says a stale count is in doubt" do
+      seed
+      poll.call
+      allow(reads).to receive(:review_requests).and_raise(Lain::Forge::Gh::Reads::Refused, "down")
+      poll.call
+
+      expect(hud).to eq("rv 7+2?")
+    end
+
+    it "is empty for a file that is not JSON" do
+      File.write(counts_file, "{")
+
+      expect(hud).to eq("")
+    end
+
+    it "is empty for JSON that is not an object" do
+      ["null", "[]", "[1]", "7", "\"rv 7\""].each do |body|
+        File.write(counts_file, body)
+
+        expect(hud).to eq("")
+      end
+    end
+
+    it "reads a count only when it is rv, digits and an optional +digits" do
+      bad = ["rv 7#[fg=red]", "rv 1\e[31m#(id)\r\n\e]0;x\a", "rv 7\n", "rv +", "rv 7++", "rv 7+", "rv", "",
+             "rv #{"9" * 100_000}a", " rv 7"]
+      bad.each do |text|
+        File.write(counts_file, JSON.generate("hud" => text, "stale" => false))
+
+        expect(hud).to eq("")
+      end
+    end
+
+    it "reads stale whatever the key order" do
+      File.write(counts_file, '{"stale":true,"hud":"rv 7+2"}')
+
+      expect(hud).to eq("rv 7+2?")
+    end
+
+    it "creates nothing, and is empty, under a state home it cannot write to" do
+      locked = File.join(@dir, "locked")
+      Dir.mkdir(locked, 0o500)
+      readonly = Lain::Paths.new(env: { "HOME" => @dir, "XDG_STATE_HOME" => File.join(locked, "state") })
+
+      expect(described_class.hud(paths: readonly)).to eq("")
+      expect(Dir.children(locked)).to be_empty
+    ensure
+      FileUtils.chmod(0o700, locked) if locked
+    end
+  end
+
   it "asks 1 review_requests question" do
     seed
     poll.call

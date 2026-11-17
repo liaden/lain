@@ -15,7 +15,21 @@ module Lain
         TITLE = "review requested"
         UNREACHABLE = [Forge::Gh::Reads::Refused, Forge::Gh::Account::Refused, Shell::Out::Timeout,
                        SystemCallError].freeze
-        private_constant :SOURCE, :TITLE, :UNREACHABLE
+        COUNT = /\Arv \d+(?:\+\d+)?\z/
+        private_constant :SOURCE, :TITLE, :UNREACHABLE, :COUNT
+
+        # The segment every HUD appends to its line. The file is any same-uid process's to write, so
+        # only a count is let through: nothing else can reach a status bar as an escape or a tmux format.
+        #
+        # @param paths [Paths]
+        # @return [String] empty when there is no counts file or it holds anything but a count
+        def self.hud(paths:)
+          counts = JSON.parse(File.read(paths.review_counts))
+          line = counts.is_a?(Hash) ? counts["hud"] : nil
+          COUNT.match?(line.to_s) ? "#{line}#{"?" if counts["stale"] == true}" : ""
+        rescue SystemCallError, JSON::ParserError, Paths::NonAbsoluteHome
+          ""
+        end
 
         # @param reads [Forge::Gh::Reads]
         # @param log [Log] says when the queue was last listed and which requests were noticed
@@ -36,6 +50,7 @@ module Lain
 
         # @return [void]
         def call
+          FileUtils.mkdir_p(File.dirname(@counts))
           FileLock.new("#{@counts}.lock").try { poll }
           nil
         end

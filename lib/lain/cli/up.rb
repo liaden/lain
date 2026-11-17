@@ -1086,6 +1086,11 @@ module Lain
         # clamped percentage.
         EXTRACT = %q{sed -n 's/.*"hud":"\([^"]*\)".*/\1/p'}
 
+        # Only a count is let through, so nothing in the reviews file can reach the status bar as an
+        # escape or a tmux format; a stale count says so with a trailing `?`.
+        REVIEWS = %q|sed -n -e '/"stale":true/s/.*"hud":"\(rv [0-9][0-9]*\(+[0-9][0-9]*\)\{0,1\}\)".*/\1?/p' -e t| +
+                  %q| -e 's/.*"hud":"\(rv [0-9][0-9]*\(+[0-9][0-9]*\)\{0,1\}\)".*/\1/p'|
+
         # How often tmux re-runs the `#(...)` job. A fact about this renderer --
         # what a redraw costs, how stale its numbers may get -- not about
         # sessions, windows or attaching, so it does not live on {Up}.
@@ -1096,9 +1101,11 @@ module Lain
         #   `$XDG_STATE_HOME/lain`, not in the project
         # @param interval [Integer] seconds between re-renders; tmux's
         #   `status-interval`, which {Up} writes as a session option
-        def initialize(state_path:, interval: DEFAULT_INTERVAL)
+        # @param reviews_path [String, nil] the review counts file; nil shows no segment
+        def initialize(state_path:, interval: DEFAULT_INTERVAL, reviews_path: nil)
           @state_path = state_path
           @interval = interval
+          @reviews_path = reviews_path
         end
 
         # `state_path` is public because the file sits in a directory named by
@@ -1116,7 +1123,18 @@ module Lain
         #
         # @return [String] the status-right value
         def status_right
-          "#(#{EXTRACT} #{Shellwords.escape(state_path)} 2>/dev/null | grep . || echo 'lain: no state yet')"
+          "#(#{line} 2>/dev/null | grep . || echo 'lain: no state yet')"
+        end
+
+        private
+
+        # The segment is read only once the state line is there, so a reviews file alone never
+        # replaces the sentence; `\0` is paste's empty delimiter, as the line carries its own space.
+        def line
+          state = "#{EXTRACT} #{Shellwords.escape(state_path)}"
+          return state unless @reviews_path
+
+          "{ #{state} | grep . && #{REVIEWS} #{Shellwords.escape(@reviews_path)}; } | paste -sd '\\0' -"
         end
       end
 
@@ -1368,7 +1386,7 @@ module Lain
         @cwd = cwd
         @paths = paths
         @panes = Panes.new(tmux: @tmux, session: @session, window: chat_target)
-        @hud = Hud.new(state_path:, interval: status_interval)
+        @hud = Hud.new(state_path:, interval: status_interval, reviews_path: paths.review_counts)
         @chat_args = chat_args
         @chat_command = chat_command
         @input_command = input_command
@@ -1800,7 +1818,7 @@ module Lain
       # #run, not #act -- best-effort ON PURPOSE, because `failed` needs tmux
       # >= 3.2 and failing `lain up` outright on an older tmux would trade a
       # working cockpit for a diagnostic nicety. The degrade is exact on
-      # `2.6 <= v < 3.2`; below 2.6 it is not, since {#spawn_chat_pane}'s
+      # `2.6 <= v < 3.2`; below 2.6 it is not, since {#run_chat}'s
       # `respawn-pane -c` did not exist yet and goes through #act. That is also
       # why this stays its OWN invocation rather than being chained onto
       # #create_session's with tmux's `;`, which would close the race just as

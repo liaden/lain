@@ -355,10 +355,9 @@ module Lain
       File.join(ensure_dir(File.join(state_home, "queue")), "log.ndjson")
     end
 
-    # Rewritten by each `lain queue poll`; every HUD reads it, so it lives beside no project.
-    def review_counts
-      File.join(ensure_dir(state_home), "reviews.json")
-    end
+    # Rewritten by each `lain queue poll`; every HUD reads it, so it lives beside no project. Creates
+    # nothing, because a HUD refresh must not make a directory; the writer does.
+    def review_counts = File.join(state_home, "reviews.json")
 
     # Purgeable: deleting the directory costs one export per image on the next run.
     #

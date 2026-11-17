@@ -2879,6 +2879,79 @@ RSpec.describe Lain::CLI::Up do
     end
   end
 
+  describe "Hud, with a review count beside the state" do
+    around do |example|
+      Dir.mktmpdir { |dir| @state_dir = dir and example.run }
+    end
+
+    let(:state_path) { File.join(@state_dir, "state.json") }
+    let(:reviews_path) { File.join(@state_dir, "reviews.json") }
+
+    def job = Lain::CLI::Up::Hud.new(state_path:, reviews_path:).status_right
+
+    before { File.write(state_path, JSON.generate("hud" => "❄ fleet:0 inbox:0 ")) }
+
+    it "shows the segment once, after the state's line" do
+      File.write(reviews_path, JSON.generate("hud" => "rv 7+2", "stale" => false))
+
+      expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0 rv 7+2")
+    end
+
+    it "prints what it printed before when there is no reviews file" do
+      expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0")
+    end
+
+    it "marks a stale count" do
+      File.write(reviews_path, JSON.generate("hud" => "rv 7+2", "stale" => true))
+
+      expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0 rv 7+2?")
+    end
+
+    it "drops a hud that is not a count, and keeps the job free of shell variables" do
+      File.write(reviews_path, JSON.generate("hud" => "rv 1\e[31m#(id)", "stale" => false))
+
+      expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0")
+      expect(job).not_to include("$")
+    end
+
+    it "prints no segment for any hud that is not rv, digits and an optional +digits" do
+      ["rv 7#[fg=red]", "rv 7\n", "rv +", "rv 7++", "rv 7+", "rv", "rv #{"9" * 100_000}a"].each do |text|
+        File.write(reviews_path, JSON.generate("hud" => text, "stale" => false))
+
+        expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0")
+      end
+    end
+
+    it "marks a stale count whatever the key order" do
+      File.write(reviews_path, '{"stale":true,"hud":"rv 7+2"}')
+
+      expect(eval_status_job(job)).to eq("❄ fleet:0 inbox:0 rv 7+2?")
+    end
+
+    it "still says there is no state when only the reviews file exists" do
+      FileUtils.rm_f(state_path)
+      File.write(reviews_path, JSON.generate("hud" => "rv 7", "stale" => false))
+
+      expect(eval_status_job(job)).to eq("lain: no state yet")
+    end
+  end
+
+  describe "the cockpit's status line" do
+    it "reads the review counts file beside the state, and creates no directory for it" do
+      Dir.mktmpdir do |dir|
+        calls = []
+        spy = ->(*args) { calls << args and FakeShellOut.new(0, "") }
+        paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
+
+        described_class.new(state_path: File.join(dir, "state.json"), shell_out_factory: spy, paths:).call
+
+        expect(calls.find { |args| args.include?("status-right") }.last)
+          .to include(File.join(dir, "state", "lain", "reviews.json"))
+        expect(Dir.exist?(File.join(dir, "state"))).to be(false)
+      end
+    end
+  end
+
   describe "degrading loudly" do
     let(:state_path) { "/tmp/irrelevant-for-these-examples/state.json" }
 

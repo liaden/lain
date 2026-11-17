@@ -310,6 +310,76 @@ RSpec.describe "plugin/tmux" do
     end
   end
 
+  describe "scripts/lain-status, with a review count beside the state" do
+    def reviews_path = Lain::Paths.new(env: plugin_env).review_counts
+
+    def write_reviews(fields) = write_json(reviews_path, JSON.generate(fields))
+
+    def run_status = Open3.capture3(plugin_env, status_script, state_path)
+
+    before { write_state(cache_deadline: nil, fleet: [], inbox_count: 0) }
+
+    it "appends the segment once, and leaves state.json's own hud alone" do
+      write_reviews("hud" => "rv 7+2", "stale" => false)
+
+      out, = run_status
+
+      expect(out).to eq("❄ fleet:0 inbox:0 rv 7+2\n")
+      expect(JSON.parse(File.read(state_path))["hud"]).not_to include("rv")
+    end
+
+    it "prints exactly what it printed before when there is no reviews file" do
+      out, = run_status
+
+      expect(out).to eq("❄ fleet:0 inbox:0 \n")
+    end
+
+    it "marks a stale count" do
+      write_reviews("hud" => "rv 7+2", "stale" => true)
+
+      out, = run_status
+
+      expect(out).to eq("❄ fleet:0 inbox:0 rv 7+2?\n")
+    end
+
+    it "prints no segment for a hud that is not a count" do
+      write_reviews("hud" => "rv 1\e[31m#(id)", "stale" => false)
+
+      out, = run_status
+
+      expect(out).to eq("❄ fleet:0 inbox:0 \n")
+    end
+
+    it "prints no segment for any hud that is not rv, digits and an optional +digits" do
+      ["rv 7#[fg=red]", "rv 7\n", "rv +", "rv 7++", "rv 7+", "rv", "rv #{"9" * 100_000}a"].each do |text|
+        write_reviews("hud" => text, "stale" => false)
+
+        expect(run_status.first).to eq("❄ fleet:0 inbox:0 \n")
+      end
+    end
+
+    it "marks a stale count whatever the key order" do
+      write_json(reviews_path, '{"stale":true,"hud":"rv 7+2"}')
+
+      expect(run_status.first).to eq("❄ fleet:0 inbox:0 rv 7+2?\n")
+    end
+
+    it "prints the honest sentence, not a bare segment, for a state file with no hud field" do
+      write_json(state_path, JSON.generate({ "fleet" => [] }))
+      write_reviews("hud" => "rv 7", "stale" => false)
+
+      expect(run_status.first).to eq("lain: no state yet\n")
+    end
+
+    it "prints no segment when the state is missing, only the honest sentence" do
+      write_reviews("hud" => "rv 7", "stale" => false)
+
+      out, = Open3.capture3(plugin_env, status_script, File.join(@dir, "none", "state.json"))
+
+      expect(out).to eq("lain: no state yet\n")
+    end
+  end
+
   # The half of the plugin that IS allowed to compute. These need no tmux
   # at all: the resolver is an ordinary argument-in, path-out program, and
   # driving it directly is what makes its agreement with Ruby checkable on

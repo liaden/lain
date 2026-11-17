@@ -11,6 +11,17 @@ RSpec.describe Lain::Paths do
     described_class.new(env: { "HOME" => "/home/nobody" }.merge(overrides))
   end
 
+  describe "#review_counts" do
+    it "names the file under state_home and creates nothing" do
+      Dir.mktmpdir do |tmp|
+        p = paths("XDG_STATE_HOME" => File.join(tmp, "state"))
+
+        expect(p.review_counts).to eq(File.join(tmp, "state", "lain", "reviews.json"))
+        expect(Dir.children(tmp)).to be_empty
+      end
+    end
+  end
+
   describe "XDG variables win" do
     it "uses XDG_CONFIG_HOME, suffixed with /lain" do
       expect(paths("XDG_CONFIG_HOME" => "/x").config_home).to eq("/x/lain")

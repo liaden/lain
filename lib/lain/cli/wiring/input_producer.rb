@@ -49,7 +49,10 @@ module Lain
         # whole header under the cursor.
         #
         # @return [String]
-        def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
+        def hud_line
+          Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now) +
+            Lain::Review::Queue::Poll.hud(paths: @paths)
+        end
 
         private
 

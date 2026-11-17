@@ -564,6 +564,8 @@ lain queue show "pr:acme/api#42"
 
 `--json` on `here`, `local` and `prs` prints 1 JSON object per row instead.
 
+Every HUD (the tmux status line, the `lain up` status line, the input pane's header, and nvim's `require('lain').hud()`) ends with `rv N+M` from the last `lain queue poll`: N review requests, M of them new direct ones, and a trailing `?` when that poll could not reach GitHub. With no counts file the HUD is unchanged, and the tmux and `lain up` status lines show the segment only once a chat has published its state.
+
 ### lain worktrees gc
 
 Reap lain's worker checkouts, anchors and merged epic branches whose work is safe elsewhere. No

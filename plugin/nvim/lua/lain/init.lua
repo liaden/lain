@@ -221,6 +221,31 @@ function M.status()
   return nil
 end
 
+-- The review count `lain queue poll` writes beside every project's state, or "". Only
+-- `rv <digits and +>` is let through: the file is any same-uid process's to write and this
+-- string reaches a statusline.
+local function reviews_segment()
+  local base = state_home()
+  if not base then
+    return ""
+  end
+  local file = io.open(base .. "/reviews.json", "r")
+  if not file then
+    return ""
+  end
+  local bytes = file:read("*a")
+  file:close()
+  local ok, counts = pcall(vim.json.decode, bytes)
+  if not ok or type(counts) ~= "table" or type(counts.hud) ~= "string" then
+    return ""
+  end
+  local count = counts.hud
+  if not (count:match("^rv %d+$") or count:match("^rv %d+%+%d+$")) then
+    return ""
+  end
+  return counts.hud .. (counts.stale == true and "?" or "")
+end
+
 -- The HUD line, already rendered: Lain::StatusFeed::Reading composes it (the
 -- marker, the fleet and inbox counts, a parked-approval count, the clamped
 -- context percentage, the run's token spend and the composed mode lighter) and
@@ -237,7 +262,7 @@ function M.hud()
   if type(line) ~= "string" or line == "" then
     return nil
   end
-  return line
+  return line .. reviews_segment()
 end
 
 -- One request to the runtime's placement policy, the only
