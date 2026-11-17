@@ -205,7 +205,7 @@ jobs:
           }
           changed=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null) || unset changed
           touched mutants '^(ext/lain/|Rakefile$)'
-          touched remote '^(apps/lain-remote/|crates/lain-(wire|core)/|Cargo\.(toml|lock)$|\.github/workflows/main\.yml$)'
+          touched remote '^(apps/lain-remote/|crates/lain-(wire|rpc|daemon)/|Cargo\.(toml|lock)$|\.github/workflows/main\.yml$)'
 
   remote-app:
     # Dioxus and WebKitGTK are a long cold build, so it runs only when the app, the wire or the relay changed.

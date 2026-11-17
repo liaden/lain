@@ -69,6 +69,7 @@ impl ItemView {
         issues,
         question,
         asked_at,
+        ..
       } => Self {
         id: id.clone(),
         kind: "gate",
@@ -84,7 +85,7 @@ impl ItemView {
           .collect(),
         replies: vec![Reply::Approve, Reply::Deny],
       },
-      AgendaItem::Question { id, requester, question, options, asked_at } => Self {
+      AgendaItem::Question { id, requester, question, options, asked_at, .. } => Self {
         id: id.clone(),
         kind: "question",
         requester: requester.clone(),
@@ -207,6 +208,8 @@ mod tests {
       why: "the judge could not settle it".to_string(),
       postponed: false,
       asked_at: 1,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 
@@ -219,6 +222,8 @@ mod tests {
       issues: vec!["i1".to_string(), "i2".to_string()],
       question: "land the wave?".to_string(),
       asked_at: 1,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 
@@ -229,6 +234,8 @@ mod tests {
       question: "which branch?".to_string(),
       options: vec!["main".to_string(), "dev".to_string()],
       asked_at: 1,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 

@@ -32,6 +32,10 @@ module Lain
       ENDS = [Core::Died, Core::Client::Stopped, Core::Client::HandshakeTimeout, Core::Client::VersionMismatch,
               Core::Transport::Unix::Unreachable, Core::Transport::Unix::Untrusted, Remote::Wire::Malformed].freeze
 
+      # This surface publishes outside a registration and does not know its session; the daemon
+      # overwrites both fields with the registration's.
+      UNREGISTERED = "placeholder"
+
       # A chat that is ending must not wait on a relay that stopped answering.
       RETRACT_BUDGET = 1.0
 
@@ -82,7 +86,7 @@ module Lain
 
         agenda = Remote::Agenda.new(queue:, gates: Remote::Agenda::Gates.new(paths:, root:), replies:)
         new(transport: Core::Transport::Unix.new(socket(paths:, root:)), agenda:, secrets:, journal:,
-            ntfy: announcer(ntfy))
+            ntfy: announcer(ntfy), project: root.to_s)
       end
 
       def self.announcer(url) = url ? Remote::Ntfy.new(url:) : Remote::Ntfy::Null::INSTANCE
@@ -97,10 +101,12 @@ module Lain
       # @param ntfy [#notify] announces an item that has waited {buzz_after} seconds
       # @param clock [#now] what the wait is measured by
       # @param buzz_after [Numeric] seconds an item waits before it is announced
-      def initialize(transport:, agenda:, secrets:, journal: Channel::Null::INSTANCE,
+      # @param project [String] the project root every published item names
+      def initialize(transport:, agenda:, secrets:, project:, journal: Channel::Null::INSTANCE,
                      poll_interval: DEFAULT_POLL_INTERVAL, prefix: SecureRandom.hex(4),
                      ntfy: Remote::Ntfy::Null::INSTANCE, clock: Time, buzz_after: DEFAULT_BUZZ_AFTER)
         @transport = transport
+        @project = project
         @agenda = agenda
         @secrets = secrets
         @journal = journal
@@ -109,12 +115,7 @@ module Lain
         @ntfy = ntfy
         @clock = clock
         @buzz_after = buzz_after
-        @waiting = {}
-        @cursor = 0
-        @published = {}
-        @refused = {}
-        @reported = Set.new
-        @agenda_lock = Mutex.new
+        start_unpublished
       end
 
       # @return [#notify] what announces an item that has waited too long
@@ -141,6 +142,15 @@ module Lain
       end
 
       private
+
+      def start_unpublished
+        @waiting = {}
+        @cursor = 0
+        @published = {}
+        @refused = {}
+        @reported = Set.new
+        @agenda_lock = Mutex.new
+      end
 
       def follow_answers(client)
         cursor = Remote::Wire::Cursor.new(cursor: 0, epoch: nil)
@@ -265,7 +275,8 @@ module Lain
       def wire_id(id) = "#{@prefix}#{id}"
 
       def wired(view)
-        common = { id: wire_id(view.id), requester: view.requester, asked_at: view.asked_at.to_i }
+        common = { id: wire_id(view.id), requester: view.requester, asked_at: view.asked_at.to_i,
+                   session: UNREGISTERED, project: @project }
         case view
         when Remote::Agenda::ParkedCall
           Remote::Wire::Item::ParkedCall.new(**common, tool: view.tool, input: JSON.generate(view.input),

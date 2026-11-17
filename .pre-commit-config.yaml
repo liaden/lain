@@ -76,10 +76,10 @@ repos:
         name: cargo test (lain-remote)
         entry: >-
           env LAIN_REMOTE_REQUIRE_RELAY=1 sh -c
-          'cargo build -q -p lain-core && cargo test --manifest-path apps/lain-remote/Cargo.toml'
+          'cargo build -q -p lain-daemon && cargo test --manifest-path apps/lain-remote/Cargo.toml'
         language: system
         pass_filenames: false
-        files: ^(apps/lain-remote/|crates/lain-(wire|core)/|Cargo\.(toml|lock)$)
+        files: ^(apps/lain-remote/|crates/lain-(wire|rpc|daemon)/|Cargo\.(toml|lock)$)
 
       # Its own deny config, for the reason the cargo-deny hook below gives for stripping git's variables.
       - id: remote-deny

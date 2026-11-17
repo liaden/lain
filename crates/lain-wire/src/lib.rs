@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped on any change a peer running the old version cannot read.
-pub const WIRE_VERSION: u32 = 1;
+pub const WIRE_VERSION: u32 = 2;
 
 /// The first message of a phone connection.
 ///
@@ -23,7 +23,7 @@ pub struct Hello {
     pub cursor: u64,
 }
 
-/// One thing waiting on a human.
+/// One thing waiting on a human, and the session it waits in.
 ///
 /// Encode with [`encode`] (named maps); positional arrays do not decode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +46,10 @@ pub enum AgendaItem {
         postponed: bool,
         /// Unix seconds when it was asked.
         asked_at: i64,
+        /// The session that asked; a daemon's relay overwrites it with the registration's.
+        session: String,
+        /// That session's project root; a daemon's relay overwrites it with the registration's.
+        project: String,
     },
     /// A wave gate: one question covering every issue in the wave.
     GateQuestion {
@@ -63,6 +67,10 @@ pub enum AgendaItem {
         question: String,
         /// Unix seconds when it was asked.
         asked_at: i64,
+        /// The session that asked; a daemon's relay overwrites it with the registration's.
+        session: String,
+        /// That session's project root; a daemon's relay overwrites it with the registration's.
+        project: String,
     },
     /// A free question to the human.
     Question {
@@ -76,6 +84,10 @@ pub enum AgendaItem {
         options: Vec<String>,
         /// Unix seconds when it was asked.
         asked_at: i64,
+        /// The session that asked; a daemon's relay overwrites it with the registration's.
+        session: String,
+        /// That session's project root; a daemon's relay overwrites it with the registration's.
+        project: String,
     },
 }
 
@@ -314,6 +326,8 @@ mod tests {
         assert_eq!(decode::<T>(&committed).expect("decode"), value);
     }
 
+    const SESSION: &str = "2026-11-17T10-00-00-abc";
+
     fn call() -> AgendaItem {
         AgendaItem::ParkedCall {
             id: s("c1"),
@@ -324,6 +338,8 @@ mod tests {
             why: s("outside bounds"),
             postponed: true,
             asked_at: 1_700_000_000,
+            session: s(SESSION),
+            project: s("/work"),
         }
     }
 
@@ -336,6 +352,8 @@ mod tests {
             issues: vec![s("a"), s("b"), s("c")],
             question: s("merge the wave?"),
             asked_at: 1_700_000_001,
+            session: s(SESSION),
+            project: s("/work"),
         }
     }
 
@@ -346,6 +364,8 @@ mod tests {
             question: s("which branch?"),
             options: vec![s("main"), s("dev")],
             asked_at: 1_700_000_002,
+            session: s(SESSION),
+            project: s("/work"),
         }
     }
 
@@ -354,7 +374,7 @@ mod tests {
         check(
             "hello",
             Hello {
-                wire_version: WIRE_VERSION,
+                wire_version: 1,
                 token: s("tok"),
                 cursor: 7,
             },
@@ -454,7 +474,7 @@ mod tests {
         check(
             "welcome",
             Welcome {
-                wire_version: WIRE_VERSION,
+                wire_version: 1,
                 head: 9,
                 epoch: 0x9e37_79b9_7f4a_7c15,
             },
@@ -548,10 +568,58 @@ mod tests {
     }
 
     #[test]
-    fn a_newer_hello_decodes_and_differs_from_ours() {
-        let hello: Hello = decode(&committed("hello_v2")).expect("decode");
-        assert_eq!(hello.wire_version, 2);
-        assert_ne!(hello.wire_version, WIRE_VERSION);
+    fn an_older_and_a_newer_hello_decode_and_differ_from_ours() {
+        let versions: Vec<u32> = ["hello", "hello_v3"]
+            .iter()
+            .map(|name| {
+                decode::<Hello>(&committed(name))
+                    .expect("decode")
+                    .wire_version
+            })
+            .collect();
+        assert_eq!(vec![1, 3], versions);
+        assert!(!versions.contains(&WIRE_VERSION));
+    }
+
+    #[test]
+    fn an_item_without_its_session_or_without_its_project_is_an_error() {
+        #[derive(Serialize)]
+        enum Partial {
+            ParkedCall {
+                id: String,
+                requester: String,
+                tool: String,
+                input: String,
+                cwd: String,
+                why: String,
+                postponed: bool,
+                asked_at: i64,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                session: Option<String>,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                project: Option<String>,
+            },
+        }
+        let lacking = |session: Option<&str>, project: Option<&str>| {
+            encode(&Partial::ParkedCall {
+                id: s("c1"),
+                requester: s("main"),
+                tool: s("bash"),
+                input: s("ls -la"),
+                cwd: s("/work"),
+                why: s("outside bounds"),
+                postponed: true,
+                asked_at: 1_700_000_000,
+                session: session.map(s),
+                project: project.map(s),
+            })
+            .expect("encode")
+        };
+        let decoded = [
+            decode::<AgendaItem>(&lacking(None, Some("/work"))).is_err(),
+            decode::<AgendaItem>(&lacking(Some(SESSION), None)).is_err(),
+        ];
+        assert_eq!([true, true], decoded);
     }
 
     #[test]
@@ -565,7 +633,7 @@ mod tests {
         assert_eq!(
             hello,
             Hello {
-                wire_version: WIRE_VERSION,
+                wire_version: 1,
                 token: s("tok"),
                 cursor: 7
             }
@@ -593,7 +661,7 @@ mod tests {
         let bytes = committed("hello_map16");
         assert_eq!(bytes[0], 0xde);
         let hello: Hello = decode(&bytes).expect("decode");
-        assert_eq!(hello.wire_version, WIRE_VERSION);
+        assert_eq!(hello.wire_version, 1);
     }
 
     fn register() -> Register {

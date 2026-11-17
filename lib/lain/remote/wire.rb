@@ -13,7 +13,7 @@ module Lain
     # positional array, an unknown variant, a missing required field. A key
     # Rust ignores, Ruby ignores too.
     module Wire
-      VERSION = 1
+      VERSION = 2
 
       class Malformed < Error; end
 
@@ -151,13 +151,16 @@ module Lain
       Welcome = Message.define(wire_version: COUNT, head: COUNT, epoch: COUNT)
       Cursor = Message.define(cursor: COUNT, epoch: optional(COUNT))
 
-      # One thing waiting on a human, as the phone is shown it.
+      # One thing waiting on a human, as the phone is shown it, with the session and project it waits in.
       module Item
+        SOURCE = { session: TEXT, project: TEXT }.freeze
+
         ParkedCall = Message.define(id: TEXT, requester: TEXT, tool: TEXT, input: TEXT, cwd: TEXT, why: TEXT,
-                                    postponed: FLAG, asked_at: COUNT)
+                                    postponed: FLAG, asked_at: COUNT, **SOURCE)
         GateQuestion = Message.define(id: TEXT, requester: TEXT, epic: TEXT, stage: TEXT, issues: List.new(TEXT),
-                                      question: TEXT, asked_at: COUNT)
-        Question = Message.define(id: TEXT, requester: TEXT, question: TEXT, options: List.new(TEXT), asked_at: COUNT)
+                                      question: TEXT, asked_at: COUNT, **SOURCE)
+        Question = Message.define(id: TEXT, requester: TEXT, question: TEXT, options: List.new(TEXT), asked_at: COUNT,
+                                  **SOURCE)
 
         extend Enum
 

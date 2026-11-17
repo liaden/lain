@@ -68,6 +68,8 @@ mod tests {
       question: "which branch?".to_string(),
       options: vec![],
       asked_at,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 
@@ -81,6 +83,8 @@ mod tests {
       why: "judge could not settle".to_string(),
       postponed: false,
       asked_at,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 

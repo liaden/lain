@@ -7,21 +7,24 @@ RSpec.describe Lain::Remote::Wire do
   let(:epoch) { 0x9e37_79b9_7f4a_7c15 }
   let(:verdict) { Lain::Approval::Verdict }
 
+  let(:source) { { session: "2026-11-17T10-00-00-abc", project: "/work" } }
+
   def committed(name) = File.binread(File.join(fixtures, "#{name}.msgpack"))
 
   def call_item
     described_class::Item::ParkedCall.new(id: "c1", requester: "main", tool: "bash", input: "ls -la", cwd: "/work",
-                                          why: "outside bounds", postponed: true, asked_at: 1_700_000_000)
+                                          why: "outside bounds", postponed: true, asked_at: 1_700_000_000, **source)
   end
 
   def gate_item
     described_class::Item::GateQuestion.new(id: "g1", requester: "coordinator", epic: "nyotes", stage: "wave",
-                                            issues: %w[a b c], question: "merge the wave?", asked_at: 1_700_000_001)
+                                            issues: %w[a b c], question: "merge the wave?", asked_at: 1_700_000_001,
+                                            **source)
   end
 
   def question_item
     described_class::Item::Question.new(id: "q1", requester: "main", question: "which branch?", options: %w[main dev],
-                                        asked_at: 1_700_000_002)
+                                        asked_at: 1_700_000_002, **source)
   end
 
   def delta = described_class::Delta.new(cursor: 9, added: [call_item, gate_item, question_item], settled: ["old"])
@@ -69,7 +72,7 @@ RSpec.describe Lain::Remote::Wire do
   end
 
   it "speaks the version the relay serves" do
-    expect(described_class::VERSION).to eq(1)
+    expect(described_class::VERSION).to eq(2)
   end
 
   describe "Ruby and Rust encode alike" do
@@ -110,7 +113,17 @@ RSpec.describe Lain::Remote::Wire do
 
     it "reads a map16 message and a newer version's hello" do
       expect([described_class.unpack(committed("hello_map16"), as: described_class::Hello).wire_version,
-              described_class.unpack(committed("hello_v2"), as: described_class::Hello).wire_version]).to eq([1, 2])
+              described_class.unpack(committed("hello_v3"), as: described_class::Hello).wire_version]).to eq([1, 3])
+    end
+
+    %w[session project].each do |field|
+      it "refuses an item without the #{field} it came from, naming the field" do
+        lacking = MessagePack.unpack(described_class.pack(call_item))
+        lacking["ParkedCall"].delete(field)
+
+        expect { described_class.unpack(MessagePack.pack(lacking), as: described_class::Item) }
+          .to raise_error(described_class::Malformed, /#{field}/)
+      end
     end
 
     it "refuses a positional array, as the Rust decoder does" do

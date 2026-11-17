@@ -694,10 +694,15 @@ impl Relay {
     /// which tells it nothing about the token.
     fn admit(&self, hello: &Hello) -> Result<Admitted, RpcError> {
         if hello.wire_version != WIRE_VERSION {
+            let advice = if hello.wire_version < WIRE_VERSION {
+                "update the phone app"
+            } else {
+                "update lain"
+            };
             return Err(refused_with(
                 "wire_version",
                 format!(
-                    "wire version {} is not served; this relay speaks {WIRE_VERSION}",
+                    "wire version {} is not served; this relay speaks {WIRE_VERSION}: {advice}",
                     hello.wire_version
                 ),
             ));
@@ -1288,6 +1293,8 @@ mod tests {
             why: "outside the checkout".to_string(),
             postponed: false,
             asked_at: 1_793_000_000,
+            session: "claimed-session".to_string(),
+            project: "/claimed/project".to_string(),
         }
     }
 
@@ -2091,18 +2098,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_phone_on_another_wire_version_is_told_both_and_others_still_served() {
+    async fn a_phone_on_another_wire_version_is_told_both_and_which_side_to_update() {
         let relay = Relay::start().await;
-        let mut newer = relay.stranger().await;
-        let (error, _) = newer.call("hello", vec![hello(TOKEN, 2)]).await;
-        assert_eq!(
-            Value::from("wire version 2 is not served; this relay speaks 1"),
-            error
-        );
-        assert!(
-            newer.closes().await,
-            "a phone on version 2 stayed connected"
-        );
+        for (version, advice) in [(1, "update the phone app"), (3, "update lain")] {
+            let mut other = relay.stranger().await;
+            let (error, _) = other.call("hello", vec![hello(TOKEN, version)]).await;
+            assert_eq!(
+                Value::from(format!(
+                    "wire version {version} is not served; this relay speaks 2: {advice}"
+                )),
+                error
+            );
+            assert!(
+                other.closes().await,
+                "a phone on version {version} stayed connected"
+            );
+        }
 
         let mut phone = relay.phone().await;
         let (error, _) = phone.peer.call("ping", vec![]).await;
@@ -2158,9 +2169,28 @@ mod tests {
     fn stamp(session: &str, registration: u64) -> Value {
         value(&Stamp {
             session: session.to_string(),
-            project: "/work".to_string(),
+            project: project_of(session),
             registration,
         })
+    }
+
+    /// The root `session` registered with, which no item names.
+    fn project_of(session: &str) -> String {
+        format!("/work/{session}")
+    }
+
+    fn source_of(item: &AgendaItem) -> (&str, &str) {
+        match item {
+            AgendaItem::ParkedCall {
+                session, project, ..
+            }
+            | AgendaItem::GateQuestion {
+                session, project, ..
+            }
+            | AgendaItem::Question {
+                session, project, ..
+            } => (session, project),
+        }
     }
 
     fn no_keys() -> Value {
@@ -2180,6 +2210,8 @@ mod tests {
             issues: vec!["i1".to_string()],
             question: "land the wave?".to_string(),
             asked_at: 1_793_000_000,
+            session: "claimed-session".to_string(),
+            project: "/claimed/project".to_string(),
         }
     }
 
@@ -2366,6 +2398,66 @@ mod tests {
         assert_eq!(
             ("answer".to_string(), "sb".to_string(), 2, answered("1")),
             worker.pushed().await
+        );
+    }
+
+    #[tokio::test]
+    async fn each_item_carries_the_session_and_project_it_was_registered_with_not_its_own() {
+        let mut worker = Worker::start().await;
+        worker.publish("sa", 1, parked_with("1", "for a")).await;
+        worker.publish("sb", 2, gate("g")).await;
+        let mut phone = worker.phone().await;
+        let mut sources: Vec<(String, String)> = phone
+            .items()
+            .await
+            .iter()
+            .map(|item| {
+                let (session, project) = source_of(item);
+                (session.to_string(), project.to_string())
+            })
+            .collect();
+        sources.sort();
+        assert_eq!(
+            vec![
+                ("sa".to_string(), project_of("sa")),
+                ("sb".to_string(), project_of("sb")),
+            ],
+            sources
+        );
+    }
+
+    #[tokio::test]
+    async fn an_answer_reaches_only_the_session_holding_its_id_whatever_session_it_names() {
+        let mut worker = Worker::start().await;
+        worker.publish("sa", 1, parked_with("1", "for a")).await;
+        worker.publish("sb", 2, parked_with("1", "for b")).await;
+        let mut phone = worker.phone().await;
+        let for_a = id_for_input(&phone.items().await, "for a");
+        let Value::Map(mut answer) = value(&approve(&for_a)) else {
+            panic!("an answer is a map")
+        };
+        let Some((_, Value::Map(fields))) = answer.first_mut() else {
+            panic!("an answer names its variant")
+        };
+        fields.push((Value::from("session"), Value::from("sb")));
+        let (error, _) = phone
+            .peer
+            .call("answer.send", vec![Value::Map(answer)])
+            .await;
+        assert_eq!(Value::Nil, error);
+
+        assert_eq!(
+            ("answer".to_string(), "sa".to_string(), 1, answered("1")),
+            worker.pushed().await
+        );
+        assert!(
+            tokio::time::timeout(
+                Duration::from_millis(300),
+                worker.uplink.framed.next_frame()
+            )
+            .await
+            .is_err(),
+            "a second session heard of the answer"
         );
     }
 

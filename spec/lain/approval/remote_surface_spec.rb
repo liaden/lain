@@ -113,9 +113,9 @@ module RemoteSurfaceSpecSupport
 
     attr_reader :socket, :port, :token
 
-    def initialize(dir)
+    def initialize(dir, socket: File.join(dir, "sock", "relay.sock"))
       @dir = dir
-      @socket = File.join(dir, "sock", "relay.sock")
+      @socket = socket
       FileUtils.mkdir_p(File.dirname(@socket), mode: 0o700)
       devices = Lain::Remote::Devices.new(File.join(dir, "devices", "devices"))
       @token = devices.pair("pixel")
@@ -235,7 +235,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
   def surface(socket, secrets: [], agenda: self.agenda, journal: self.journal, **options)
     described_class.new(transport: Lain::Core::Transport::Unix.new(socket), agenda:, secrets:, journal:,
-                        poll_interval: 0.02, **options)
+                        poll_interval: 0.02, project: "/work", **options)
   end
 
   def agenda_over(gates: RemoteSurfaceSpecSupport::NoGates.new, queue: self.queue, **options)
@@ -321,6 +321,11 @@ RSpec.describe Lain::Approval::RemoteSurface do
     end
   end
 
+  it "is not built without the project its items name" do
+    expect { described_class.new(transport: Lain::Core::Transport::Unix.new(File.join(@dir, "absent.sock")), agenda:, secrets: []) }
+      .to raise_error(ArgumentError, /project/)
+  end
+
   it "dials the relay's socket in the runtime directory, one per project" do
     paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => "/run/user/7", "HOME" => "/home/x" })
 
@@ -352,6 +357,30 @@ RSpec.describe Lain::Approval::RemoteSurface do
     end
 
     def approve(item) = wire::Answer::Call.new(id: item.id, verdict: Lain::Approval::Verdict::Approve.new, device: nil)
+
+    context "when built by .for" do
+      let(:paths) { Lain::Paths.new(env: { "HOME" => @dir, "XDG_RUNTIME_DIR" => File.join(@dir, "r") }) }
+      let!(:relay) { RemoteSurfaceSpecSupport::Relay.new(@dir, socket: described_class.socket(paths:, root: @dir)).start }
+
+      it "names no session of its own and the root it was built for on the item the phone sees" do
+        built = described_class.for(relay: "127.0.0.1:7820", ntfy: nil, paths:, root: Pathname(@dir), queue:,
+                                    replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
+        item = Sync do |task|
+          task.with_timeout(20) do
+            watching = task.async { built.watch }
+            phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+            call = park(task)
+            phone.until_open(&:any?).first
+          ensure
+            call&.stop
+            phone&.stop
+            watching&.stop
+          end
+        end
+
+        expect([item.session, item.project]).to eq([described_class::UNREGISTERED, @dir])
+      end
+    end
 
     it "sends the phone the parked call, and its Approve runs it as the paired device, with human authority" do
       result = with_a_parked_call do |phone, call, item|

@@ -280,6 +280,7 @@ impl Daemon {
         if !keys.is_map() || params.next().is_some() {
             return Err(malformed());
         }
+        readable_delta(&delta)?;
         let stamp = relay::Stamp {
             session: registration.session_id().to_string(),
             project: registration.root().to_string(),
@@ -316,6 +317,19 @@ fn already_registered() -> RpcError {
         code: "registered",
         message: "this connection already registered a session".to_string(),
     }
+}
+
+/// A publisher on an older wire learns which field it lacks, not the worker's own call shape.
+fn readable_delta(delta: &Value) -> Result<(), RpcError> {
+    let unreadable = |reason: String| RpcError::Refused {
+        code: "bad_params",
+        message: format!("agenda.publish could not read its Delta: {reason}"),
+    };
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, delta).map_err(|error| unreadable(error.to_string()))?;
+    lain_wire::decode::<lain_wire::Delta>(&bytes)
+        .map(drop)
+        .map_err(|error| unreadable(error.to_string()))
 }
 
 fn decoded_register(params: Vec<Value>) -> Result<Register, RpcError> {
@@ -603,6 +617,8 @@ mod tests {
             why: "outside the checkout".to_string(),
             postponed: false,
             asked_at: 1_793_000_000,
+            session: "claimed-session".to_string(),
+            project: "/claimed/project".to_string(),
         }
     }
 
@@ -833,6 +849,60 @@ mod tests {
         }
         assert_eq!(1, left.len(), "{left:?}");
         id_for_input(&left, "for a");
+    }
+
+    #[tokio::test]
+    async fn the_phone_sees_each_items_registered_session_and_root_not_what_it_claims() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (served, phone_address) = with_worker(dir.path()).await;
+        let process = sleeper();
+        let mut chat = session_in(&served, "sa", &process, "/registered/root").await;
+        assert_eq!(
+            Value::Nil,
+            call(&mut chat, "agenda.publish", vec![adding(parked("1", "x"))]).await
+        );
+
+        let mut phone = phone(phone_address).await;
+        let items = items(&mut phone).await;
+        let [
+            AgendaItem::ParkedCall {
+                session, project, ..
+            },
+        ] = &items[..]
+        else {
+            panic!("{items:?}")
+        };
+        assert_eq!(
+            ("sa", "/registered/root"),
+            (session.as_str(), project.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn an_item_from_an_older_wire_is_refused_naming_the_field_it_lacks() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let (served, _) = with_worker(dir.path()).await;
+        let process = sleeper();
+        let mut chat = session(&served, "sa", &process).await;
+        let mut item = value(&parked("1", "x"));
+        if let Value::Map(variant) = &mut item
+            && let Some((_, Value::Map(fields))) = variant.first_mut()
+        {
+            fields.retain(|(key, _)| !matches!(key.as_str(), Some("session" | "project")));
+        }
+        let delta = Value::Map(vec![
+            (Value::from("cursor"), Value::from(0)),
+            (Value::from("added"), Value::Array(vec![item])),
+            (Value::from("settled"), Value::Array(vec![])),
+        ]);
+
+        let error = call(&mut chat, "agenda.publish", vec![delta]).await;
+        assert!(
+            error
+                .as_str()
+                .is_some_and(|text| text.contains("missing field `session`")),
+            "{error}"
+        );
     }
 
     #[tokio::test]

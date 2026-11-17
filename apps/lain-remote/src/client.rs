@@ -246,7 +246,7 @@ mod tests {
 
   const TOKEN: &str = "a-paired-phone-token";
   const DEVICE: &str = "test-phone";
-  const DEFAULT_BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/lain-core");
+  const DEFAULT_BIN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../../target/debug/lain-daemon");
 
   struct Relay {
     child: Child,
@@ -256,12 +256,12 @@ mod tests {
   }
 
   /// A skipped suite looks green, so CI sets the flag to turn a missing binary into a failure.
-  fn lain_core_bin(configured: Option<&str>, required: bool) -> Option<String> {
+  fn lain_daemon_bin(configured: Option<&str>, required: bool) -> Option<String> {
     let bin = configured.unwrap_or(DEFAULT_BIN);
     if Path::new(bin).is_file() {
       return Some(bin.to_string());
     }
-    let advice = format!("no lain-core at {bin}; build it with `rake core:build` or set LAIN_CORE_BIN");
+    let advice = format!("no lain-daemon at {bin}; build it with `cargo build -p lain-daemon` or set LAIN_DAEMON_BIN");
     assert!(!required, "{advice}");
     eprintln!("skipping: {advice}");
     None
@@ -276,9 +276,9 @@ mod tests {
     }
 
     fn start_on(addresses: impl IntoIterator<Item = SocketAddr>) -> Option<Self> {
-      let configured = std::env::var("LAIN_CORE_BIN").ok();
+      let configured = std::env::var("LAIN_DAEMON_BIN").ok();
       let required = std::env::var_os("LAIN_REMOTE_REQUIRE_RELAY").is_some();
-      let bin = lain_core_bin(configured.as_deref(), required)?;
+      let bin = lain_daemon_bin(configured.as_deref(), required)?;
       let mut exits = Vec::new();
       for phone in addresses {
         match Self::spawn(&bin, phone) {
@@ -310,7 +310,7 @@ mod tests {
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
-        .expect("spawn lain-core");
+        .expect("spawn lain-daemon");
       let mut relay = Self { child, dir, _devices: devices, phone };
       relay.wait_until_listening()?;
       Ok(relay)
@@ -375,6 +375,8 @@ mod tests {
       question: "which branch?".to_string(),
       options: vec!["main".to_string(), "dev".to_string()],
       asked_at: 1_700_000_000,
+      session: "s1".to_string(),
+      project: "/work".to_string(),
     }
   }
 
@@ -462,14 +464,14 @@ mod tests {
   }
 
   #[test]
-  #[should_panic(expected = "rake core:build")]
+  #[should_panic(expected = "cargo build -p lain-daemon")]
   fn a_required_relay_that_is_missing_fails_instead_of_skipping() {
-    let _ = lain_core_bin(Some("/nonexistent/lain-core"), true);
+    let _ = lain_daemon_bin(Some("/nonexistent/lain-daemon"), true);
   }
 
   #[test]
   fn a_missing_relay_skips_when_not_required() {
-    assert_eq!(None, lain_core_bin(Some("/nonexistent/lain-core"), false));
+    assert_eq!(None, lain_daemon_bin(Some("/nonexistent/lain-daemon"), false));
   }
 
   #[tokio::test]

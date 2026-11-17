@@ -769,6 +769,9 @@ mod tests {
             why: "outside the checkout".to_string(),
             postponed: false,
             asked_at: 1_793_000_000,
+            // This relay has no session registry, so no test here reads the source back.
+            session: "placeholder".to_string(),
+            project: "placeholder".to_string(),
         }
     }
 
@@ -1562,14 +1565,16 @@ mod tests {
     async fn a_phone_on_another_wire_version_is_told_both_and_others_still_served() {
         let relay = Relay::start().await;
         let mut newer = relay.stranger().await;
-        let (error, _) = newer.call("hello", vec![hello(TOKEN, 2)]).await;
+        let (error, _) = newer
+            .call("hello", vec![hello(TOKEN, WIRE_VERSION + 1)])
+            .await;
         assert_eq!(
-            Value::from("wire version 2 is not served; this relay speaks 1"),
+            Value::from("wire version 3 is not served; this relay speaks 2"),
             error
         );
         assert!(
             newer.closes().await,
-            "a phone on version 2 stayed connected"
+            "a phone on a newer version stayed connected"
         );
 
         let mut phone = relay.phone().await;

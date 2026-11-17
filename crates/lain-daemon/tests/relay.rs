@@ -312,6 +312,8 @@ fn parked(id: &str) -> AgendaItem {
         why: "outside the checkout".to_string(),
         postponed: false,
         asked_at: 1_793_000_000,
+        session: "claimed-session".to_string(),
+        project: "/claimed/project".to_string(),
     }
 }
 

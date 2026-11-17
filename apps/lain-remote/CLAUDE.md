@@ -1,7 +1,7 @@
 # lain-remote
 
 Sideloaded phone app that answers what lain is waiting on. Rust + Dioxus 0.7, desktop first, Android later.
-It talks to `lain-core relay` over the tailnet; the wire types come from `lain-wire`.
+It talks to the `lain-daemon` relay over the tailnet; the wire types come from `lain-wire`.
 On the phone it is labelled `lain` (`Dioxus.toml`); `lain-remote` is only the crate's name.
 It is a Cargo workspace of its own, excluded from lain's, so Dioxus stays out of lain's lockfile and deny config.
 
@@ -9,7 +9,7 @@ It is a Cargo workspace of its own, excluded from lain's, so Dioxus stays out of
 
 ```bash
 cargo build                                         # from this directory: the app is its own workspace
-(cd ../.. && cargo build -p lain-core) && cargo test  # the tests drive a real relay, see below
+(cd ../.. && cargo build -p lain-daemon) && cargo test  # the tests drive a real relay, see below
 cargo clippy --all-targets -- -D warnings
 cargo fmt -- --check
 cargo deny check                                    # this directory's deny.toml: the root's plus 2 Dioxus ignores
@@ -20,11 +20,11 @@ The Android SDK is not installed here either, so nothing on this box builds for 
 Pair in the Settings screen (saved 0600 at `$LAIN_REMOTE_CONFIG`, else `$XDG_CONFIG_HOME/lain-remote/settings`, else `~/.config/lain-remote/settings`);
 `LAIN_REMOTE_ADDR` and `LAIN_REMOTE_TOKEN` are the fallback when nothing is saved. The token is never logged or shown after saving.
 
-## Tests find lain-core
+## Tests find lain-daemon
 
-`src/client.rs` tests start a real `lain-core relay` on 127.0.0.1 and publish through its Unix socket,
-the way lain does. The binary is `$LAIN_CORE_BIN`, default the workspace's `target/debug/lain-core`.
-With no binary a test prints a skip message naming `rake core:build` and passes, so a green run
+`src/client.rs` tests start a real `lain-daemon relay --unix` on 127.0.0.1 and publish through its Unix socket.
+The binary is `$LAIN_DAEMON_BIN`, default the workspace's `target/debug/lain-daemon`.
+With no binary a test prints a skip message naming `cargo build -p lain-daemon` and passes, so a green run
 with `skipping:` in `cargo test -- --nocapture` proved nothing. Set `LAIN_REMOTE_REQUIRE_RELAY=1` (any value)
 and a missing binary fails the test instead; use it wherever a skip must not pass.
 

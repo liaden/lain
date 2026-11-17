@@ -397,7 +397,7 @@ impl Agenda {
                 (None, Some(_)) => log.mint(),
             };
             added.push(Added {
-                item: Measured::of(with_item_id(item.clone(), &id))?,
+                item: Measured::of(phone_facing(item.clone(), &id, stamp))?,
                 id,
                 holder: holder(local),
                 key,
@@ -608,11 +608,32 @@ fn id_of_item(item: &AgendaItem) -> &str {
     }
 }
 
-fn with_item_id(mut item: AgendaItem, phone_id: &str) -> AgendaItem {
-    let (AgendaItem::ParkedCall { id, .. }
-    | AgendaItem::GateQuestion { id, .. }
-    | AgendaItem::Question { id, .. }) = &mut item;
+/// `item` under the id the phone sees, naming the session and project `stamp` registered, whatever
+/// the item claimed. A relay on its own socket has no registrations and keeps the publisher's.
+fn phone_facing(mut item: AgendaItem, phone_id: &str, stamp: Option<&Stamp>) -> AgendaItem {
+    let (AgendaItem::ParkedCall {
+        id,
+        session,
+        project,
+        ..
+    }
+    | AgendaItem::GateQuestion {
+        id,
+        session,
+        project,
+        ..
+    }
+    | AgendaItem::Question {
+        id,
+        session,
+        project,
+        ..
+    }) = &mut item;
     phone_id.clone_into(id);
+    if let Some(stamp) = stamp {
+        stamp.session.clone_into(session);
+        stamp.project.clone_into(project);
+    }
     item
 }
 
