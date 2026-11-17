@@ -738,7 +738,7 @@ Spec file: `spec/lain/approval/remote_surface_spec.rb` (`:daemon`)
 **Shared-file wiring:** none
 **Reachable from:**
 - `agenda_watch.rs` keeps each item's open time and fires 1 POST at 60 s with no answer.
-- `Daemon::Launch` passes the topic from `Config.remote(paths:)` in the `DAEMON_NTFY_TOPIC` env var, never in argv (argv is world-readable in `/proc`); the launch digest holds a hash of the topic. (Ruled during the run, D12 review.)
+- `Daemon::Launch` passes the topic from `Config.remote(paths:)` in the `DAEMON_NTFY_TOPIC` env var, never in argv (argv is world-readable in `/proc`); the launch digest travels the same way, in `DAEMON_LAUNCH_DIGEST`, since a digest over readable inputs let the topic be guessed. (Ruled during the run, D12 reviews 3 and 5.)
 
 **Acceptance criteria**
 
@@ -794,6 +794,7 @@ Spec file: `spec/lain/review/queue/delivery_spec.rb` (`:daemon`), `crates/lain-d
 ### D14: Retire the `lain-core` binary          [risk: medium]
 
 **Depends on:** D11, D12
+**Note from D12:** lain-daemon now depends on `ring` (through rustls), so `cargo check -p lain-daemon --target aarch64-apple-darwin` fails on Linux without the macOS SDK. Do not add lain-daemon to the CI cross-check step without an SDK; a native Mac build and the keychain roots are unverified.
 **Files:**
 - `crates/lain-core/` (deleted), `Rakefile`, `spec/rakefile_spec.rb`, `spec/support/core_daemon.rb` (deleted), `spec/support/tags.rb`
 - `lib/lain/core.rb`, `lib/lain/core/client.rb`, `lib/lain/core/transport/unix.rb`, `spec/lain/core/client_spec.rb`
@@ -1218,6 +1219,26 @@ Scenario: the warning count does not depend on timing or on other tests
 
 **Stop and report if:** the only fix found is a looser assertion or a sleep. That goes to the user.
 
+### F3: Fix the remote surface's take-back race          [risk: low]
+
+**Depends on:** none
+**Files:** `lib/lain/approval/remote_surface.rb`, `spec/lain/approval/remote_surface_spec.rb`
+**Why:** a repeat flake. `through the built daemon's relay takes back what it published when it stops, so the phone stops showing it` timed out in the D11 review (2 of 22) and in F1's landing hook 1. The cause was in lib: `show` recorded an item only after the daemon's reply, so a stop in that window took nothing back.
+
+```gherkin
+Scenario: a stop while a publish is in flight still takes the item back
+  Given the daemon holds the first publish's reply
+  When the watch stops before the reply comes back
+  Then the item is settled once, with no wall-clock wait in the example
+
+Scenario: a refused first showing is never settled for nothing
+  Given the daemon refuses an item's first publish
+  When the watch stops
+  Then nothing is taken back, while an item the daemon once took and later refused is still taken back
+```
+
+**Stop and report if:** the only fix found is a longer timeout. That goes to the user.
+
 ## Main-session dotfiles steps
 
 Run after D19 lands, in the dotfiles bare repo (`git --git-dir=$HOME/.cfg --work-tree=$HOME`), staging by explicit path:
@@ -1231,7 +1252,7 @@ Run after D19 lands, in the dotfiles bare repo (`git --git-dir=$HOME/.cfg --work
 - `bundle exec rake pspec` green. Check the example count, not only the failure count.
 - `bundle exec rspec --tag core --tag daemon` green against `lain-daemon`.
 - `cargo clippy --all-targets -- -D warnings` and `cargo test`.
-- `cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-rpc -p lain-daemon -p lain-fence`.
+- `cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-rpc -p lain-fence` on Linux. Since D12, `-p lain-daemon` needs the macOS SDK (`ring`), so check it on the Mac.
 - `pre-commit run --all-files` and `bin/zeitwerk-census --check`.
 - `bin/hot-path-bench --check` with the D22 and D23 rows.
 - **Manual QA:** `/manual-qa planning/qa/scenarios/daemon.md`, with the paired phone.
@@ -1428,3 +1449,25 @@ Carried notes, departures and rulings from the run so far (folded from the coord
 - 13:02 D13 landed 41f8b82f
 - 13:03 D13 landed 41f8b82f. Worktree removed.
 - 13:03 D12 fourth review (fresh panel, opus) spawned. Nothing else ready: D14, D26, D17 all wait on D12.
+
+Carried notes and rulings after the 54bafabe checkpoint:
+
+- D12 (review 5): the launch digest left argv for `DAEMON_LAUNCH_DIGEST`; the reviewer recovered a test topic from the argv digest in 12 guesses.
+- D12 (review 5, ruling): TLS roots from the system store, not webpki-roots; the per-crate licence exception left deny.toml with it. A test-only `server.key` is committed under `crates/lain-daemon/src/test_tls/`; its CA key is deleted.
+- D12 (review 6, ruling): port parity with OpenSSL on Unix other than macOS: `SSL_CERT_FILE` replaces only the default file and `SSL_CERT_DIR` only the default dirs. macOS keeps the native loader, where a set variable replaces the keychain.
+- D12 (review 7): redirects are refused (a 302 to https panicked inside ureq); a panicked send maps to 1 fixed trace string. Ruling: the proxy variables are honoured.
+- D12 (review 8, ruling): ureq's proxy selection is kept and documented (ALL_PROXY, then HTTPS_PROXY, then HTTP_PROXY, for either scheme; an http topic is tunnelled). Ruby read only http_proxy; a proxy that refuses CONNECT to port 80 now fails an http topic.
+- D12 landed after 8 reviews. Its worktree was merged up to main by hand (F3 touched remote_surface.rb), and the landing copied files with `LDM_CUT=HEAD`.
+- F3: the take-back flake was a real race in `RemoteSurface#show`; fixed in lib. Its landing also fixed the D11 example "sends the phone no artifact digest", which matched "d1" in a random tmpdir name.
+- Environment: F3's landing 3 failed with 64 examples when a game started mid-suite (load 97, memory stalled 95%). The quiet check only runs at the start of a landing.
+- Process: the fifth D12 reviewer ran `pkill -f` and killed 4 stale wait shells of finished agents. Review briefs now forbid `pkill -f` and `pgrep -f`.
+
+Run log after the 54bafabe checkpoint:
+
+- 13:04 F1 and F2 started, cut at 54bafabe.
+- 13:16 F2 landed 58a04dbc. 13:37 F1 landed 4c6dd02a (landing 1 red on the remote_surface take-back example, a repeat, so F3).
+- 13:38 docs commit 98dc35e5. F3 started.
+- 13:43 to 16:48 D12 reviews 4 to 8 (fresh panel each, opus); review 8 approved with 6 NITs, closed.
+- 14:28 to 16:53 F3 landing: 1 refused on subject length, 2 red on the digest substring example, 3 red on a starved box, 4 landed 1ba2fa90.
+- 17:05 D12 landed 19bf9b36.
+- Checkpoint after D12: no agents in flight. Ready next: D14 and D26.
