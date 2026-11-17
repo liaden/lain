@@ -6,6 +6,8 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr, missing_docs)]
 
+mod agenda_watch;
+mod ntfy;
 mod registry;
 mod relay;
 
@@ -18,6 +20,7 @@ use std::sync::{Arc, OnceLock};
 use lain_rpc::{Conn, Handler, Peer, Push, RpcError, Session};
 use lain_wire::Register;
 use rmpv::Value;
+use tokio::sync::mpsc;
 
 use registry::{Registration, Registry};
 
@@ -48,18 +51,25 @@ struct Args {
     launch_digest: String,
     /// The phone relay's listen address and devices file, given together or not at all.
     relay: Option<(String, PathBuf)>,
+    /// The ntfy topic items still waiting after a minute are announced on; only a relay has items.
+    ntfy: Option<String>,
 }
 
 impl Args {
-    fn parse(mut args: impl Iterator<Item = String>) -> Option<Self> {
-        let (mut socket, mut trace, mut launch_digest) = (None, None, None);
+    /// `ntfy` is the topic from the environment: `/proc/<pid>/cmdline` is readable by every user and
+    /// a topic is as good as a password to anyone who can post to it, so it never rides in argv.
+    fn parse(
+        mut args: impl Iterator<Item = String>,
+        ntfy: Option<String>,
+        launch_digest: Option<String>,
+    ) -> Option<Self> {
+        let (mut socket, mut trace) = (None, None);
         let (mut listen, mut devices) = (None, None);
         while let Some(flag) = args.next() {
             let value = args.next()?;
             match flag.as_str() {
                 "--socket" => socket = Some(PathBuf::from(value)),
                 "--trace" => trace = Some(PathBuf::from(value)),
-                "--launch-digest" => launch_digest = Some(value),
                 "--relay" => listen = Some(value),
                 "--devices-file" => devices = Some(PathBuf::from(value)),
                 _ => return None,
@@ -70,21 +80,44 @@ impl Args {
             (None, None) => None,
             _ => return None,
         };
+        if !ntfy.as_deref().is_none_or(is_topic_url) || (ntfy.is_some() && relay.is_none()) {
+            return None;
+        }
         Some(Self {
             socket: socket?,
             trace,
             launch_digest: launch_digest?,
             relay,
+            ntfy,
         })
     }
 }
+
+/// The user's config accepts `HTTPS://host/topic`, since a URI's scheme has no case, so this does
+/// too: refusing it here would end the whole daemon for a topic the config let through.
+fn is_topic_url(url: &str) -> bool {
+    url.split_once("://").is_some_and(|(scheme, _)| {
+        scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https")
+    })
+}
+
+/// The env var `Daemon::Launch` hands the daemon the ntfy topic in.
+pub(crate) const NTFY_VAR: &str = "DAEMON_NTFY_TOPIC";
+
+/// Where `Daemon::Launch` hands the daemon its launch digest. The digest hashes the topic with inputs
+/// any user can read, so on a command line it would let a user test guesses at the topic.
+pub(crate) const DIGEST_VAR: &str = "DAEMON_LAUNCH_DIGEST";
 
 fn main() -> ExitCode {
     let mut args = std::env::args().skip(1).peekable();
     if args.next_if_eq("relay").is_some() {
         return relay(args);
     }
-    let Some(args) = Args::parse(args) else {
+    let Some(args) = Args::parse(
+        args,
+        std::env::var(NTFY_VAR).ok(),
+        std::env::var(DIGEST_VAR).ok(),
+    ) else {
         return ExitCode::from(USAGE_ERROR);
     };
     let trace = args.trace.as_deref().unwrap_or(Path::new("/dev/null"));
@@ -172,11 +205,28 @@ impl PhoneRelay {
         }
     }
 
-    fn start(args: &Args, registry: &Arc<Registry>) -> Self {
+    /// `spawn` starts the worker, given the relay's address and devices file, the registry and where
+    /// it reports its items; `delay` is how long an item waits before the topic hears of it.
+    fn start(
+        args: &Args,
+        registry: &Arc<Registry>,
+        delay: std::time::Duration,
+        spawn: impl FnOnce(
+            &str,
+            &Path,
+            Arc<Registry>,
+            mpsc::UnboundedSender<relay::Event>,
+        ) -> io::Result<Arc<relay::Worker>>,
+    ) -> Self {
         let Some((listen, devices)) = &args.relay else {
             return Self::Off;
         };
-        match relay::Worker::spawn(listen, devices, args.trace.as_deref(), Arc::clone(registry)) {
+        let (events, announced) = mpsc::unbounded_channel();
+        if let Some(topic) = &args.ntfy {
+            let notifier = Arc::new(ntfy::Ntfy::new(topic.clone()));
+            tokio::spawn(agenda_watch::run(announced, notifier, delay));
+        }
+        match spawn(listen, devices, Arc::clone(registry), events) {
             Ok(worker) => Self::Running(worker),
             Err(error) => {
                 tracing::error!(%error, "could not start the relay worker");
@@ -287,6 +337,7 @@ impl Daemon {
             session: registration.session_id().to_string(),
             project: registration.root().to_string(),
             registration: registration.registration(),
+            pid: caller.peer.pid.unwrap_or_default(),
         };
         worker.publish(&stamp, delta, keys).await
     }
@@ -492,7 +543,14 @@ async fn serve_unix(args: Args) -> ExitCode {
     };
     tracing::info!(socket = %args.socket.display(), pid = std::process::id(), "lain-daemon listening");
     let registry = Registry::new(registry::ProcTable);
-    let relay = PhoneRelay::start(&args, &registry);
+    let relay = PhoneRelay::start(
+        &args,
+        &registry,
+        agenda_watch::DELAY,
+        |listen, devices, registry, events| {
+            relay::Worker::spawn(listen, devices, args.trace.as_deref(), registry, events)
+        },
+    );
     let handler = Daemon {
         launch_digest: args.launch_digest,
         registry,
@@ -550,7 +608,6 @@ mod tests {
     use lain_wire::{AgendaItem, Answer, Delta, Hello, Verdict, WIRE_VERSION};
     use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
     use tokio::net::{TcpListener, UnixStream};
-    use tokio::sync::mpsc;
 
     use super::*;
 
@@ -748,10 +805,16 @@ mod tests {
         session_in(served, session_id, process, "/work").await
     }
 
+    /// Where the news of items goes when a test does not listen for it.
+    fn unheard() -> mpsc::UnboundedSender<relay::Event> {
+        mpsc::unbounded_channel().0
+    }
+
     /// The worker in-process, over a devices file pairing [`TOKEN`]; its phone address.
-    async fn worker(
+    fn worker(
         dir: &Path,
         registry: &Arc<Registry>,
+        events: mpsc::UnboundedSender<relay::Event>,
     ) -> (Arc<relay::Worker>, std::net::SocketAddr) {
         use std::os::unix::fs::PermissionsExt;
         let remote = dir.join("remote");
@@ -762,17 +825,22 @@ mod tests {
         std::fs::set_permissions(&devices, std::fs::Permissions::from_mode(0o600)).expect("chmod");
         let mut watcher = relay::Watcher::new(relay::DevicesFile::new(devices));
         let roster = watcher.read().expect("read the devices");
-        let phone = TcpListener::bind(("127.0.0.1", 0)).await.expect("bind");
+        let phone = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        phone.set_nonblocking(true).expect("nonblocking");
+        let phone = TcpListener::from_std(phone).expect("adopt");
         let address = phone.local_addr().expect("the phone address");
         let (ours, theirs) = UnixStream::pair().expect("a socket pair");
         tokio::spawn(relay::serve_worker(theirs, phone, watcher, roster));
-        (relay::Worker::over(ours, Arc::clone(registry)), address)
+        (
+            relay::Worker::over(ours, Arc::clone(registry), events),
+            address,
+        )
     }
 
     /// The daemon over an in-process worker, and that worker's phone address.
     async fn with_worker(dir: &Path) -> (Served, std::net::SocketAddr) {
         let registry = Registry::new(registry::ProcTable);
-        let (worker, phone) = worker(dir, &registry).await;
+        let (worker, phone) = worker(dir, &registry, unheard());
         let served = Served::start(daemon(registry, PhoneRelay::Running(worker)));
         (served, phone)
     }
@@ -824,6 +892,390 @@ mod tests {
             parts[1].clone(),
             parts[2].as_array().expect("params").clone(),
         )
+    }
+
+    fn argv(flags: &[&str]) -> impl Iterator<Item = String> + use<> {
+        ["--socket", "/run/d.sock"]
+            .into_iter()
+            .chain(flags.iter().copied())
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// What `Daemon::Launch` puts in the daemon's environment as its digest.
+    fn digest() -> Option<String> {
+        Some("abc".to_string())
+    }
+
+    #[test]
+    fn the_launch_digest_comes_from_the_environment_and_never_from_the_command_line() {
+        let args = Args::parse(argv(&[]), None, digest()).expect("parse");
+        assert_eq!("abc", args.launch_digest);
+        assert!(
+            Args::parse(argv(&[]), None, None).is_none(),
+            "a daemon with no digest started"
+        );
+        let flags = ["--launch-digest", "abc"];
+        assert!(Args::parse(argv(&flags), None, digest()).is_none());
+    }
+
+    const RELAY: [&str; 4] = ["--relay", "127.0.0.1:0", "--devices-file", "/d/devices"];
+
+    #[test]
+    fn an_ntfy_topic_in_the_environment_rides_with_the_relay_it_announces_for() {
+        let args =
+            Args::parse(argv(&RELAY), Some("http://n/t".to_string()), digest()).expect("parse");
+        assert_eq!(Some("http://n/t"), args.ntfy.as_deref());
+        assert!(
+            Args::parse(argv(&RELAY), None, digest())
+                .expect("parse")
+                .ntfy
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn an_ntfy_topic_is_never_taken_from_the_command_line_where_every_user_can_read_it() {
+        let flags: Vec<&str> = RELAY.into_iter().chain(["--ntfy", "http://n/t"]).collect();
+        assert!(Args::parse(argv(&flags), None, digest()).is_none());
+    }
+
+    #[test]
+    fn an_ntfy_topic_without_a_relay_is_a_bad_invocation() {
+        assert!(Args::parse(argv(&[]), Some("http://n/t".to_string()), digest()).is_none());
+    }
+
+    #[test]
+    fn an_ntfy_topic_that_is_not_http_or_https_is_a_bad_invocation() {
+        for topic in ["ftp://n/t", "file:///etc/passwd", "n/t", "", "httpx://n/t"] {
+            assert!(
+                Args::parse(argv(&RELAY), Some(topic.to_string()), digest()).is_none(),
+                "{topic:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_topic_the_user_config_accepts_with_capitals_in_its_scheme_is_accepted() {
+        for topic in ["https://n/t", "HTTPS://ntfy.sh/x", "Http://n/t"] {
+            assert!(
+                Args::parse(argv(&RELAY), Some(topic.to_string()), digest()).is_some(),
+                "{topic:?} killed the daemon"
+            );
+        }
+    }
+
+    /// A topic that answers 200 to each request and hands the request's text on.
+    fn stub_topic() -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).expect("bind");
+        let url = format!("http://{}/qa", listener.local_addr().expect("addr"));
+        let (heard, requests) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            while let Ok((mut stream, _)) = listener.accept() {
+                let mut text = Vec::new();
+                let mut chunk = [0_u8; 1024];
+                while !text.windows(4).any(|window| window == b"\r\n\r\n") {
+                    match stream.read(&mut chunk) {
+                        Ok(0) | Err(_) => break,
+                        Ok(got) => text.extend_from_slice(&chunk[..got]),
+                    }
+                }
+                let _ = stream.write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-length: 0\r\nconnection: close\r\n\r\n",
+                );
+                let _ = heard.send(String::from_utf8_lossy(&text).into_owned());
+            }
+        });
+        (url, requests)
+    }
+
+    #[tokio::test]
+    async fn a_daemon_given_a_topic_posts_once_for_an_item_that_waits_and_names_the_id_the_phone_sees()
+     {
+        let dir = tempfile::tempdir().expect("a tempdir");
+        let (url, requests) = stub_topic();
+        let args = Args::parse(argv(&RELAY), Some(url), digest()).expect("the flags parse");
+        let registry = Registry::new(registry::ProcTable);
+        let mut address = None;
+        let relay = PhoneRelay::start(
+            &args,
+            &registry,
+            Duration::from_millis(50),
+            |_, _, registry, events| {
+                let (worker, phone) = worker(dir.path(), &registry, events);
+                address = Some(phone);
+                Ok(worker)
+            },
+        );
+        let served = Served::start(daemon(Arc::clone(&registry), relay));
+        let process = sleeper();
+        let mut chat = session(&served, "sa", &process).await;
+        let error = call(
+            &mut chat,
+            "agenda.publish",
+            vec![adding(parked("1", "secret input"))],
+        )
+        .await;
+        assert_eq!(Value::Nil, error);
+
+        let mut phone = phone(address.expect("the worker started")).await;
+        let id = id_for_input(&items(&mut phone).await, "secret input");
+        let request = tokio::task::spawn_blocking(move || requests.recv_timeout(WAIT))
+            .await
+            .expect("the wait")
+            .expect("a POST within the wait");
+        assert!(request.starts_with("POST /qa "), "{request}");
+        assert!(
+            request.contains(&format!("lain-remote://item/{id}")),
+            "{request}"
+        );
+        assert!(!request.contains("secret input"), "{request}");
+    }
+
+    #[tokio::test]
+    async fn a_chat_restarted_in_another_process_is_another_item_though_its_ids_repeat() {
+        let dir = tempfile::tempdir().expect("a tempdir");
+        let registry = Registry::new(registry::ProcTable);
+        let (events, mut heard_from) = mpsc::unbounded_channel();
+        let (worker, _) = worker(dir.path(), &registry, events);
+        let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
+        let (before, after) = (sleeper(), sleeper());
+
+        let mut first = session(&served, "sa", &before).await;
+        assert_eq!(
+            Value::Nil,
+            call(&mut first, "agenda.publish", vec![adding(parked("1", "x"))]).await
+        );
+        let opened = opening(heard(&mut heard_from).await);
+        drop(first);
+        assert!(matches!(
+            heard(&mut heard_from).await,
+            relay::Event::Left { .. }
+        ));
+
+        let mut second = session(&served, "sa", &after).await;
+        assert_eq!(
+            Value::Nil,
+            call(
+                &mut second,
+                "agenda.publish",
+                vec![adding(parked("1", "x"))]
+            )
+            .await
+        );
+        let restarted = opening(heard(&mut heard_from).await);
+        assert_ne!(opened.twin, restarted.twin, "2 processes share an item");
+    }
+
+    fn opened_with(id: &str, twin: &str) -> relay::Event {
+        relay::Event::Opened(relay::Opened {
+            id: id.to_string(),
+            twin: twin.to_string(),
+            kind: relay::Kind::ParkedCall,
+            requester: "main".to_string(),
+        })
+    }
+
+    #[tokio::test]
+    async fn an_item_report_that_is_not_the_shape_the_worker_makes_never_reaches_the_watch() {
+        let registry = Registry::new(registry::ProcTable);
+        let (ours, theirs) = UnixStream::pair().expect("a socket pair");
+        let (events, mut heard_from) = mpsc::unbounded_channel();
+        let _worker = relay::Worker::over(ours, Arc::clone(&registry), events);
+        let mut worker_end = TestClient::over(theirs);
+        let (id, twin) = ("0123456789abcdef", "ab".repeat(32));
+        let huge = "a".repeat(450_000);
+        let forged = [
+            opened_with(&huge, &huge),
+            opened_with(id, &huge),
+            opened_with(&huge, &twin),
+            opened_with(id, &twin[..63]),
+            opened_with(id, &format!("{}g", &twin[..63])),
+            opened_with(&id[..15], &twin),
+            opened_with("0123456789abcdefa", &twin),
+            opened_with("0123456789abcdeg", &twin),
+            opened_with("0123456789ABCDEF", &twin),
+            opened_with(id, &twin.to_uppercase()),
+            relay::Event::Closed { id: huge.clone() },
+            relay::Event::Left { id: huge.clone() },
+            relay::Event::Left {
+                id: "0123456789ABCDEF".to_string(),
+            },
+            relay::Event::Closed {
+                id: id[..15].to_string(),
+            },
+            relay::Event::Closed {
+                id: "../../etc/passwd".to_string(),
+            },
+        ];
+        for event in forged.iter().chain([&opened_with(id, &twin)]) {
+            worker_end
+                .send(Value::Array(vec![
+                    Value::from(2),
+                    Value::from("item"),
+                    Value::Array(vec![value(event)]),
+                ]))
+                .await;
+        }
+        assert_eq!(opened_with(id, &twin), heard(&mut heard_from).await);
+
+        let mut long = opened_with(id, &twin);
+        if let relay::Event::Opened(opened) = &mut long {
+            opened.requester = "r".repeat(900_000);
+        }
+        worker_end
+            .send(Value::Array(vec![
+                Value::from(2),
+                Value::from("item"),
+                Value::Array(vec![value(&long)]),
+            ]))
+            .await;
+        let relay::Event::Opened(bounded) = heard(&mut heard_from).await else {
+            panic!("an opening was expected")
+        };
+        assert_eq!(64, bounded.requester.chars().count());
+    }
+
+    fn gate_item(id: &str) -> AgendaItem {
+        AgendaItem::GateQuestion {
+            id: id.to_string(),
+            requester: "epic gate".to_string(),
+            epic: "e".to_string(),
+            stage: "review".to_string(),
+            issues: vec![],
+            question: "land it?".to_string(),
+            asked_at: 1_793_000_000,
+            session: "claimed".to_string(),
+            project: "/claimed".to_string(),
+        }
+    }
+
+    async fn heard(events: &mut mpsc::UnboundedReceiver<relay::Event>) -> relay::Event {
+        tokio::time::timeout(WAIT, events.recv())
+            .await
+            .expect("news of an item within the wait")
+            .expect("the channel stays open")
+    }
+
+    fn opening(event: relay::Event) -> relay::Opened {
+        match event {
+            relay::Event::Opened(opened) => opened,
+            other => panic!("{other:?}, expected an opening"),
+        }
+    }
+
+    #[tokio::test]
+    async fn two_chats_and_a_shared_gate_are_three_items_and_a_reconnect_opens_none_anew() {
+        let dir = tempfile::tempdir().expect("a tempdir");
+        let registry = Registry::new(registry::ProcTable);
+        let (events, mut heard_from) = mpsc::unbounded_channel();
+        let (worker, address) = worker(dir.path(), &registry, events);
+        let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
+        let (process_a, process_b) = (sleeper(), sleeper());
+        let mut a = session(&served, "sa", &process_a).await;
+        let mut b = session(&served, "sb", &process_b).await;
+
+        let gate_key = |local: &str| Value::Map(vec![(Value::from(local), Value::from("digest"))]);
+        let sent = [
+            call(
+                &mut a,
+                "agenda.publish",
+                vec![adding(parked("1", "from a"))],
+            )
+            .await,
+            call(
+                &mut b,
+                "agenda.publish",
+                vec![adding(parked("1", "from b"))],
+            )
+            .await,
+            call(
+                &mut a,
+                "agenda.publish",
+                vec![adding(gate_item("ga")), gate_key("ga")],
+            )
+            .await,
+            call(
+                &mut b,
+                "agenda.publish",
+                vec![adding(gate_item("gb")), gate_key("gb")],
+            )
+            .await,
+        ];
+        assert_eq!(vec![Value::Nil; 4], sent);
+
+        let mut news = Vec::new();
+        for _ in 0..3 {
+            news.push(opening(heard(&mut heard_from).await));
+        }
+        let mut phone = phone(address).await;
+        let seen = items(&mut phone).await;
+        let mut phone_ids: Vec<&str> = seen
+            .iter()
+            .map(|item| match item {
+                AgendaItem::ParkedCall { id, .. }
+                | AgendaItem::GateQuestion { id, .. }
+                | AgendaItem::Question { id, .. } => id.as_str(),
+            })
+            .collect();
+        let mut told: Vec<&str> = news.iter().map(|opened| opened.id.as_str()).collect();
+        phone_ids.sort_unstable();
+        told.sort_unstable();
+        assert_eq!(3, seen.len(), "{seen:?}");
+        assert_eq!(
+            phone_ids, told,
+            "the daemon was told ids the phone does not hold"
+        );
+
+        let first_of_a = news
+            .iter()
+            .find(|opened| opened.id == id_for_input(&seen, "from a"))
+            .expect("a's call")
+            .clone();
+        drop(a);
+        // Only its own call leaves: b still holds the gate.
+        assert_eq!(
+            relay::Event::Left {
+                id: first_of_a.id.clone()
+            },
+            heard(&mut heard_from).await
+        );
+        let mut again = session(&served, "sa", &process_a).await;
+        let error = call(
+            &mut again,
+            "agenda.publish",
+            vec![adding(parked("1", "from a"))],
+        )
+        .await;
+        assert_eq!(Value::Nil, error);
+        let reopened = opening(heard(&mut heard_from).await);
+        assert_ne!(first_of_a.id, reopened.id);
+        assert_eq!(
+            first_of_a.twin, reopened.twin,
+            "the reconnect looks like another item"
+        );
+    }
+
+    #[tokio::test]
+    async fn news_of_an_item_from_the_worker_reaches_the_watch() {
+        let registry = Registry::new(registry::ProcTable);
+        let (ours, theirs) = UnixStream::pair().expect("a socket pair");
+        let (events, mut heard_from) = mpsc::unbounded_channel();
+        let _worker = relay::Worker::over(ours, Arc::clone(&registry), events);
+        let mut worker_end = TestClient::over(theirs);
+        let news = relay::Event::Closed {
+            id: "0123456789abcdef".to_string(),
+        };
+        worker_end
+            .send(Value::Array(vec![
+                Value::from(2),
+                Value::from("item"),
+                Value::Array(vec![value(&news)]),
+            ]))
+            .await;
+        assert_eq!(news, heard(&mut heard_from).await);
     }
 
     /// An offer for `root`, sent by a connection that never registered.
@@ -1074,7 +1526,7 @@ mod tests {
     async fn a_publish_reaches_the_worker_stamped_with_the_registration_not_the_payload() {
         let registry = Registry::new(registry::ProcTable);
         let (ours, theirs) = UnixStream::pair().expect("a socket pair");
-        let worker = relay::Worker::over(ours, Arc::clone(&registry));
+        let worker = relay::Worker::over(ours, Arc::clone(&registry), unheard());
         let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
         let process = sleeper();
         let mut chat = session(&served, "sa", &process).await;
@@ -1116,7 +1568,7 @@ mod tests {
     async fn an_answer_for_an_earlier_registration_of_a_session_id_is_not_delivered() {
         let registry = Registry::new(registry::ProcTable);
         let (ours, theirs) = UnixStream::pair().expect("a socket pair");
-        let worker = relay::Worker::over(ours, Arc::clone(&registry));
+        let worker = relay::Worker::over(ours, Arc::clone(&registry), unheard());
         let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
         let process = sleeper();
         drop(session(&served, "sa", &process).await);
@@ -1159,7 +1611,7 @@ mod tests {
     async fn a_relay_that_is_gone_refuses_a_publish_as_unavailable() {
         let registry = Registry::new(registry::ProcTable);
         let (ours, theirs) = UnixStream::pair().expect("a socket pair");
-        let worker = relay::Worker::over(ours, Arc::clone(&registry));
+        let worker = relay::Worker::over(ours, Arc::clone(&registry), unheard());
         drop(theirs);
         let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
         let process = sleeper();
@@ -1209,7 +1661,7 @@ mod tests {
     async fn a_session_that_hangs_up_mid_publish_leaves_the_workers_socket_whole() {
         let registry = Registry::new(registry::ProcTable);
         let (ours, theirs) = UnixStream::pair().expect("a socket pair");
-        let worker = relay::Worker::over(ours, Arc::clone(&registry));
+        let worker = relay::Worker::over(ours, Arc::clone(&registry), unheard());
         let served = Served::start(daemon(Arc::clone(&registry), PhoneRelay::Running(worker)));
         let (process_a, process_b) = (sleeper(), sleeper());
         let mut a = session(&served, "sa", &process_a).await;

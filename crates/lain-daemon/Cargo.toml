@@ -22,6 +22,14 @@ tracing = "0.1"
 # `default-features = false` keeps `nu-ansi-term` out (deny.toml bans it): this process owns no terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "smallvec"] }
 thiserror = "2"
+# The ntfy notice, from the main daemon only: the relay worker has no network. TLS roots are the
+# system's as OpenSSL finds them (`SSL_CERT_FILE` replaces only the default file, `SSL_CERT_DIR` only
+# the default directories): `openssl-probe` supplies the defaults and `rustls-native-certs` reads the
+# files, since it alone drops the defaults once a variable is set. `rustls` brings the `ring`
+# provider ureq is not given.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
 # The relay's token check: the guess's digest against each paired device's, in constant time, so
 # its timing tells a peer neither which device nor how much of a guess matched.
@@ -42,6 +50,10 @@ tokio = { version = "1.53", features = ["process", "io-util", "test-util"] }
 [target.'cfg(target_os = "linux")'.dependencies]
 # The relay worker confines itself after taking its sockets, without unsafe here.
 landlock = "0.4.7"
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+# The default roots OpenSSL would use, since `rustls-native-certs` drops them once a variable is set.
+openssl-probe = "0.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 blake3 = { version = "1", features = ["pure"] }

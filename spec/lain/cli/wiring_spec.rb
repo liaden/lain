@@ -4015,10 +4015,10 @@ RSpec.describe Lain::CLI::Wiring do
         expect(remote_handed).to be_a(Lain::Approval::RemoteSurface)
       end
 
-      it "hands the Repl a surface that announces on the configured ntfy topic" do
+      it "hands the Repl a surface when a topic is set too, since only the daemon uses the topic" do
         write_user_config("remote relay: \"127.0.0.1:7820\", ntfy: \"http://127.0.0.1:8090/lain-x7\"\n")
 
-        expect(remote_handed.ntfy).to be_an_instance_of(Lain::Remote::Ntfy)
+        expect(remote_handed).to be_a(Lain::Approval::RemoteSurface)
       end
 
       it "hands the Repl none when remote relay is unset" do

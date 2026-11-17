@@ -3,13 +3,15 @@
 **What it exercises:** `lain remote pair` and `lain remote revoke` (`CLI::Remote`, `Remote::Devices`), the `remote` config verb
 (`relay:` and `ntfy:`), the phone relay the per-user lain-daemon runs as a confined worker (`Daemon::Launch` adds
 `--relay` and `--devices-file`), `Approval::RemoteSurface` publishing through the chat's `Daemon::Registration` over
-`Remote::Agenda` and its masked `View`, `Remote::Ntfy`, and the phone app in `apps/lain-remote` (§6 on the desktop,
-§7 on an emulated Android device).
+`Remote::Agenda` and its masked `View`, the daemon's ntfy notice (`agenda_watch.rs`, `ntfy.rs`), and the phone app in
+`apps/lain-remote` (§6 on the desktop, §7 on an emulated Android device).
 
 **Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/remote.rb`, `remote/devices.rb`, `remote/agenda.rb`,
-`remote/ntfy.rb`, `approval/remote_surface.rb`, `cli/up.rb` `class Relay`, `config/builder.rb`, `crates/lain-core/src/relay.rs`).
+`approval/remote_surface.rb`, `cli/up.rb` `class Relay`, `config/builder.rb`, `crates/lain-core/src/relay.rs`).
 Revised 2026-11-17 when the relay moved into lain-daemon: `lain up` opens no relay window, `lain-core relay` is no
 longer the phone path, and the chat publishes through its daemon registration rather than a per-project socket.
+The ntfy notice moved the same day: `remote/ntfy.rb` is gone, and `crates/lain-daemon/src/agenda_watch.rs` and
+`ntfy.rs` send it (§5).
 Nothing here has been driven. §0 to §5 need no phone app: drive the relay's TCP port with a stand-in client, or
 with the app. §6 and §7 were added on 2026-11-10, when the app moved into this repo. Every "Expect" is a prediction read off the code, so a mismatch is either a defect or a
 stale line in this file, and the round says which.
@@ -134,19 +136,46 @@ refused as already settled, with no `gate_decision` for the new revision.
 
 ## 5: ntfy *(cheap)*
 
-Set `remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run the stand-in topic server. Park a call and leave it.
+The lain-daemon sends the notice, from its main process: the relay worker has no network. Set
+`remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run the stand-in topic server before the daemon starts
+(a changed topic restarts it, by its launch digest). Park a call and leave it.
 
 - Before 60 s: nothing is sent. Answer a second parked call within the minute: nothing is ever sent for it.
 - At 60 s the server receives exactly 1 POST: body `Open lain to answer.`, a `Title` of `lain approval waiting on <requester>`
-  (`gate question` or `question` for those kinds), and an `Actions` header `view, Open, lain-remote://item/<id>`, where
-  `<id>` is the chat's own agenda id until the notice moves into the daemon (the app does not open the link yet). No input text, no
-  token, no path, no relay address anywhere in it. A requester with non-ASCII bytes reads `?` in the title.
-- It is not sent again while the same chat runs, even if the server answered 500 (a refusal is recorded once, not retried).
-- **A reminder after a restart.** Leave a deferred gate parked, end the chat, start a new one over the same project and wait 60 s
-  again: the still-waiting gate is announced again. The announced set lives in the chat, so this is by design, and a gate someone
-  answered in between is not announced.
-- Point `ntfy:` at a dead port: the chat is not stalled (the post is bounded at 5 s and runs off the sweep), and one fault record
-  is written, not one per sweep.
+  (`gate question` or `question` for those kinds), and an `Actions` header `view, Open, lain-remote://item/<phone id>`. The
+  `<phone id>` is the id a client sees in the relay's snapshot for that item (§3), not the chat's own agenda id, and the id is
+  percent-encoded. No input text, no token, no path, no project, no session, no relay address anywhere in it. A requester with
+  non-ASCII bytes reads `?` in the title.
+- **2 chats in 1 project, 1 buzz per item.** Start a second chat in the same project (a shared gate is keyed by its project, so
+  chats in different projects each show it), park 1 call in each, and leave a deferred gate parked that both publish. After 60 s the
+  server has exactly 3 POSTs, 1 per distinct item (the shared gate once, whichever chat published it first). End the second
+  chat: nothing is sent, and its call leaves the phone's agenda. Start another chat there and park a call: 60 s later 1 more POST
+  for that call alone. A restarted chat is a new process, so it is a new item to the daemon, and a parked call cannot outlive
+  its chat. The gate, still held by the first chat, buzzes nothing. A chat that reconnects to a live daemon is not announced
+  again, but no manual step drops a chat's connection and keeps the daemon, so the unit tests in
+  `crates/lain-daemon/src/main.rs` and `crates/lain-daemon/src/agenda_watch.rs` pin it and this round does not drive it.
+- **More than 30 in a window.** Leave 35 parked calls (or a restart with that many open) past 60 s. The server gets exactly 30 item
+  POSTs in that window, and when the window closes (60 s after the first of them) exactly 1 more: `Title` `lain: 5 more items waiting`,
+  body `Open lain to answer.`, and no `Actions` header, since no single item is meant. The 5 dropped items are not sent later. No
+  window sends more than 30 item POSTs and 1 summary, however many items open.
+- **An https topic under a private CA.** Name the CA in `SSL_CERT_FILE` in the environment `lain` starts the daemon from (the
+  launch passes `SSL_CERT_FILE` and `SSL_CERT_DIR` on) and point `ntfy:` at an https stand-in signed by it: the POST arrives. Without
+  the variable the daemon's trace says `error=io: invalid peer certificate: UnknownIssuer` once. The variable replaces only the
+  default file, as with OpenSSL: a public https topic (any real ntfy server) still verifies with it set, which on macOS it does not
+  (there a set variable replaces the keychain).
+- **Behind a proxy.** With `http_proxy` (or `https_proxy`) set in the environment `lain` starts the daemon from, the POST goes
+  through it (an http topic arrives as a `CONNECT`), and a host named in `no_proxy` goes direct. A topic that answers a redirect
+  is not followed: the trace says `ntfy answered 302` once.
+- It is not sent again while the daemon runs, even if the server answered 500: the refusal is written to the daemon's trace once.
+- **A re-buzz after a daemon restart.** Leave a call parked past its notice, then stop the daemon by pid and let the chats
+  reconnect (the next chat action starts a new one). The chats publish everything again under new phone ids, and 60 s later each
+  item still waiting is announced once more. By design: the announced set lives in the daemon's memory. An item answered in
+  between is not announced.
+- Point `ntfy:` at a dead port: neither the chat nor the phone's agenda is stalled (the post is bounded at 5 s and runs off the
+  relay), no `approval_surface_fault` record is written, and the daemon trace, `$XDG_RUNTIME_DIR/lain/daemon/daemon.trace`
+  (`/tmp/lain/daemon/daemon.trace` when `XDG_RUNTIME_DIR` is unset), gains a line `could not announce on ntfy error=<why>`
+  (for example `error=ntfy answered 500`) each time the error changes, so a port that keeps refusing costs 1 line, not one per
+  item. **Wrong looks like:** a fault record in the chat's journal, or a trace line per item.
 
 ## 6: The desktop app, over the tailnet only *(cheap)*
 

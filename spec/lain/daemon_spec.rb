@@ -327,7 +327,7 @@ RSpec.describe Lain::Daemon do
     it "replaces an idle daemon from another launch" do
       socket = described_class.socket(paths: daemon_paths)
       FileUtils.mkdir_p(File.dirname(socket), mode: 0o700)
-      stale = Process.spawn(daemon_launch.binary, "--socket", socket, "--launch-digest", "another",
+      stale = Process.spawn({ "DAEMON_LAUNCH_DIGEST" => "another" }, daemon_launch.binary, "--socket", socket,
                             in: File::NULL, out: File::NULL, err: File::NULL)
       waiter = Process.detach(stale)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5

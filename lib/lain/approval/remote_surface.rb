@@ -25,9 +25,6 @@ module Lain
       NO_DAEMON = "no daemon to publish through"
       RELAY_STATE = "the daemon's phone relay is %<state>s; %<trace>s says why"
 
-      # A phone that is looking at the app needs no buzz, so a short wait is the desk's to end.
-      DEFAULT_BUZZ_AFTER = 60
-
       # How the phone learns an answer was refused: the reason heads the item's
       # own text, since the wire has no reply to an answer the relay accepted.
       REFUSED = "your last answer was refused: %<reason>s"
@@ -68,7 +65,6 @@ module Lain
       # deferred gates and the chat's open questions.
       #
       # @param relay [String, nil] the `remote relay:` address, where nil leaves the phone surface off
-      # @param ntfy [String, nil] the `remote ntfy:` topic URL a long-waiting item is announced on
       # @param paths [Paths]
       # @param root [String] the project root
       # @param registration [Daemon::Registration, Daemon::Registration::Null] the chat's place in the daemon
@@ -77,16 +73,13 @@ module Lain
       # @param secrets [#to_a] the board's known secret values
       # @param journal [#<<] the session journal
       # @return [RemoteSurface, nil]
-      def self.for(relay:, ntfy:, paths:, root:, registration:, queue:, replies:, secrets:, journal:)
+      def self.for(relay:, paths:, root:, registration:, queue:, replies:, secrets:, journal:)
         return unless relay && queue
 
         agenda = Remote::Agenda.new(queue:, gates: Remote::Agenda::Gates.new(paths:, root:), replies:)
-        new(registration:, agenda:, secrets:, journal:, ntfy: announcer(ntfy), project: root.to_s,
+        new(registration:, agenda:, secrets:, journal:, project: root.to_s,
             trace: Daemon::Launch.trace_path(paths:))
       end
-
-      def self.announcer(url) = url ? Remote::Ntfy.new(url:) : Remote::Ntfy::Null::INSTANCE
-      private_class_method :announcer
 
       # @param registration [#call, #on] the chat's {Daemon::Registration}: publishes go out as its
       #   requests, and answers come back as its pushes
@@ -94,14 +87,10 @@ module Lain
       # @param secrets [#to_a] the board's known secret values, which every published item is masked for
       # @param journal [#<<] where a degraded relay and a failed sweep are recorded
       # @param poll_interval [Numeric] seconds between reads of the agenda
-      # @param ntfy [#notify] announces an item that has waited {buzz_after} seconds
-      # @param clock [#now] what the wait is measured by
-      # @param buzz_after [Numeric] seconds an item waits before it is announced
       # @param project [String] the project root every published item names, and every gate key is scoped to
       # @param trace [String] the daemon's trace, which says why its relay is unavailable
       def initialize(registration:, agenda:, secrets:, project:, trace:, journal: Channel::Null::INSTANCE,
-                     poll_interval: DEFAULT_POLL_INTERVAL, ntfy: Remote::Ntfy::Null::INSTANCE, clock: Time,
-                     buzz_after: DEFAULT_BUZZ_AFTER)
+                     poll_interval: DEFAULT_POLL_INTERVAL)
         @registration = registration
         @project = project
         @trace = trace
@@ -109,14 +98,8 @@ module Lain
         @secrets = secrets
         @journal = journal
         @poll_interval = poll_interval
-        @ntfy = ntfy
-        @clock = clock
-        @buzz_after = buzz_after
         start_unpublished
       end
-
-      # @return [#notify] what announces an item that has waited too long
-      attr_reader :ntfy
 
       # Runs for the conversation, in its own fiber, and returns once the relay is gone.
       #
@@ -124,22 +107,18 @@ module Lain
       def watch
         @registration.on("answer") { |params| answered(params.first) }
         @registration.on(Daemon::Registration::RECONNECTED) { @resync_due = true }
-        @announcing = Async::Barrier.new
         sweep while serving?
       rescue Unserved => e
         degrade(e)
       ensure
-        @announcing&.stop
         retract unless @degraded
       end
 
       private
 
       def start_unpublished
-        @waiting = {}
         @cursor = 0
         @published = {}
-        @shown = Set.new
         @refused = {}
         @reported = Set.new
         @agenda_lock = Mutex.new
@@ -226,7 +205,6 @@ module Lain
         views.each { |item, view| show(item, view) }
         @cursor = cursor
         republish_refused
-        announce_overdue
       rescue Unserved
         raise
       rescue *DROPPED
@@ -239,20 +217,16 @@ module Lain
         return if ids.empty?
 
         send_delta(settled: ids)
-        ids.each do |id|
-          @published.delete(id)
-          @waiting.delete(id)
-        end
+        ids.each { @published.delete(_1) }
       end
 
-      # Waiting is timed from an item's first showing, so a republish never buzzes it again. Published
-      # before the send: the phone can show the item before its reply lands, and a stop in between must
-      # still take it back. A refused first showing is unrecorded, so it is never settled for nothing.
+      # Published before the send: the phone can show the item before its reply lands, and a stop in
+      # between must still take it back. A refused first showing is unrecorded, so it is never settled
+      # for nothing.
       def show(item, view)
         held = @published.key?(item.id)
         @published[item.id] = item
         send_delta(added: [wired(view)], keys: gate_keys(item))
-        @waiting[item.id] = view if @shown.add?(item.id)
       rescue Core::Client::Refused => e
         @published.delete(item.id) unless held
         fault(e)
@@ -264,23 +238,6 @@ module Lain
         refused.each do |id, reason|
           view = Remote::Agenda::View.of(annotated(phone_face(@published.fetch(id)), reason), secrets: @secrets)
           view && show(@published.fetch(id), view)
-        end
-      end
-
-      # Dropped before the POST, so a topic that is down is one failure and not one per sweep.
-      def announce_overdue
-        now = @clock.now
-        @waiting.select { |_, view| now - view.asked_at >= @buzz_after }.each do |id, view|
-          @waiting.delete(id)
-          announce(view)
-        end
-      end
-
-      def announce(view)
-        @announcing.async do
-          @ntfy.notify(view)
-        rescue StandardError => e
-          fault(e)
         end
       end
 

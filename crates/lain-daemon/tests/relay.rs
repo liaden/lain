@@ -163,14 +163,12 @@ fn spawn_daemon(dir: &Path, listen: &str, devices: &Path) -> tokio::process::Chi
         .arg(dir.join("daemon.sock"))
         .arg("--trace")
         .arg(dir.join("daemon.trace"))
-        .args([
-            "--launch-digest",
-            "abc",
-            "--relay",
-            listen,
-            "--devices-file",
-        ])
+        .args(["--relay", listen, "--devices-file"])
         .arg(devices)
+        .env("DAEMON_LAUNCH_DIGEST", "abc")
+        // Names the worker must not inherit, since it has no network and no use for them.
+        .env("http_proxy", "http://127.0.0.1:9")
+        .env("HTTPS_PROXY", "http://127.0.0.1:9")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -460,7 +458,7 @@ async fn a_daemon_started_without_a_relay_reports_it_off() {
     let daemon_process = tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-daemon"))
         .arg("--socket")
         .arg(dir.path().join("daemon.sock"))
-        .args(["--launch-digest", "abc"])
+        .env("DAEMON_LAUNCH_DIGEST", "abc")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -479,7 +477,8 @@ async fn a_relay_flag_without_a_devices_file_exits_2() {
     let mut daemon = tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-daemon"))
         .arg("--socket")
         .arg(dir.path().join("daemon.sock"))
-        .args(["--launch-digest", "abc", "--relay", "127.0.0.1:0"])
+        .args(["--relay", "127.0.0.1:0"])
+        .env("DAEMON_LAUNCH_DIGEST", "abc")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())

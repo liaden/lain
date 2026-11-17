@@ -65,17 +65,25 @@ fn process_of_stat(stat: &str) -> Option<Process> {
     })
 }
 
-/// TZ and locale are pinned because `lstart` prints local time in the locale's words.
-fn ps(pid: u32) -> Option<String> {
-    let output = Command::new("ps")
+/// TZ and locale are pinned because `lstart` prints local time in the locale's words. The topic is
+/// as good as a password to anyone who can post to it, and the digest hashes it, so the child
+/// inherits neither.
+fn ps_command(pid: u32) -> Command {
+    let mut command = Command::new("ps");
+    command
         .args(["-o", "ppid=", "-o", "lstart=", "-p", &pid.to_string()])
         .env("TZ", "UTC")
         .env("LC_ALL", "C")
         .env("LANG", "C")
+        .env_remove(crate::NTFY_VAR)
+        .env_remove(crate::DIGEST_VAR)
         .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .output()
-        .ok()?;
+        .stderr(Stdio::null());
+    command
+}
+
+fn ps(pid: u32) -> Option<String> {
+    let output = ps_command(pid).output().ok()?;
     let text = String::from_utf8(output.stdout).ok()?;
     (output.status.success() && !text.trim().is_empty()).then_some(text)
 }
@@ -459,6 +467,19 @@ mod tests {
     use lain_wire::{OfferReply, Register};
 
     use super::*;
+
+    #[test]
+    fn the_ps_child_is_never_handed_the_ntfy_topic_or_the_launch_digest() {
+        let command = super::ps_command(1);
+        let envs: Vec<_> = command.get_envs().collect();
+        for name in [crate::NTFY_VAR, crate::DIGEST_VAR] {
+            assert!(
+                envs.iter()
+                    .any(|(set, value)| *set == name && value.is_none()),
+                "ps would inherit {name} from the daemon's environment"
+            );
+        }
+    }
 
     const OWNER: u32 = 1000;
 

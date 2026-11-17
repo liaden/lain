@@ -1482,12 +1482,31 @@ tests preset: :rspec
   surface off, which the chat says in a `phone surface off:` line and records as
   `capability_degraded`, never a refusal. Devices are admitted with [`lain remote pair`](#lain-remote).
   `ntfy:` is an `http` or `https` topic URL, such as
-  `"https://ntfy.sh/my-lain-topic"`; anything else is refused. An item that waits 60 seconds
-  unanswered sends 1 notice to the topic, a title naming the kind and the requester plus an Open
-  action into the phone app, and no item text, token or path. An item answered first never
-  buzzes. A chat announces each item once, so an item still waiting after the chat restarts (an
-  epic gate held across it, say) is announced again as a reminder. The topic is a shared name to
-  ntfy, which is why nothing else rides on the notice.
+  `"https://ntfy.sh/my-lain-topic"`; anything else is refused. It takes effect only with `relay:`,
+  and the lain-daemon sends the notice, not the chat. An item that waits 60 seconds unanswered
+  sends 1 notice to the topic, a title naming the kind and the requester plus an Open action into
+  the phone app (`lain-remote://item/<phone id>`), and no item text, token or path. An item
+  answered first never buzzes, and a chat that reconnects to the same daemon does not buzz an item
+  twice. A daemon restart forgets what it announced, so an item still waiting after one (an epic
+  gate held across it, say) is announced once more as a reminder. The daemon sends at most 30
+  notices per minute-long window; windows are fixed, not sliding. A window that had to drop some
+  is followed by 1 summary, titled `lain: N more items waiting`, with no link, so a restart that
+  re-arms a long agenda still tells you to open lain. An https topic is verified against the
+  system's roots as OpenSSL finds them: `SSL_CERT_FILE` replaces only the default file and
+  `SSL_CERT_DIR` only the default directories, so a variable naming a private CA still leaves the
+  public roots trusted (on macOS a set variable replaces the keychain). A topic that is down
+  writes a line to the daemon's trace, `$XDG_RUNTIME_DIR/lain/daemon/daemon.trace`
+  (`/tmp/lain/daemon/daemon.trace` when `XDG_RUNTIME_DIR` is unset), each time its error
+  changes, so a topic that keeps failing the same way costs 1 line and not 1 per item. A
+  redirect from the topic is not followed and is traced as `ntfy answered 302`. The launch
+  passes `http_proxy`, `https_proxy` and `no_proxy`, in either case, to the daemon, and the
+  daemon's HTTP client picks the proxy as it does: `ALL_PROXY` first if it were set (the launch
+  does not pass it), then `HTTPS_PROXY`, then `HTTP_PROXY`, for a topic of either scheme. A
+  host named in `NO_PROXY` goes direct, an http topic is tunnelled with `CONNECT`, and a proxy
+  variable that is not a valid URL is ignored, so the post goes direct. The topic and the
+  daemon's launch digest reach the daemon in its environment, never its command line, since
+  any user can read a command line and a topic is as good as a password to anyone who can
+  post to it. It is a shared name to ntfy, which is why nothing else rides on the notice.
 * `middleware`: documented [below](#middleware).
 
 ### middleware

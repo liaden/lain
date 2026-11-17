@@ -28,10 +28,10 @@ use serde::de::DeserializeOwned;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
-pub(crate) use agenda::Stamp;
 use agenda::{Agenda, REPLY_BUDGET, Refusal, Route, with_answer_id};
+pub(crate) use agenda::{Event, Kind, Opened, REQUESTER_CHARS, Stamp};
 use devices::{Admitted, DevicesError, Paired, Roster};
 pub(crate) use devices::{DevicesFile, Watcher};
 use lain_rpc::{Accept, Conn, Handler, Push, RpcError, Session};
@@ -490,10 +490,10 @@ impl Handler for Lain {
         match method {
             "agenda.publish" => {
                 let delta = decoded::<Delta>(params, "agenda.publish takes [Delta]")?;
-                let cursor = agenda
+                let published = agenda
                     .publish(&delta, None, &HashMap::new())
                     .map_err(refused)?;
-                Ok(Value::from(cursor))
+                Ok(Value::from(published.cursor))
             }
             "answers.next" => {
                 let at = decoded::<Cursor>(params, "answers.next takes [Cursor]")?;
@@ -542,20 +542,32 @@ impl Handler for Upstream {
                 let delta = decoded::<Delta>(vec![delta], shape)?;
                 let keys = decoded::<HashMap<String, String>>(vec![keys], shape)?;
                 self.0.uplink.get_or_init(|| linked.0.clone());
-                let cursor = agenda
+                let published = agenda
                     .publish(&delta, Some(&stamp), &keys)
                     .map_err(refused)?;
-                Ok(Value::from(cursor))
+                // After the cursor is settled, so the daemon hears of an item the phone can see.
+                report(&linked.0, published.events);
+                Ok(Value::from(published.cursor))
             }
             "agenda.leave" => {
                 let registration = params
                     .first()
                     .and_then(Value::as_u64)
                     .ok_or_else(|| bad_params("agenda.leave takes [registration]"))?;
-                agenda.leave(registration);
+                report(&linked.0, agenda.leave(registration));
                 Ok(Value::Nil)
             }
             _ => Err(RpcError::UnknownMethod(method.to_string())),
+        }
+    }
+}
+
+/// Tells the daemon, which owns the network the relay lacks, what opened and closed.
+fn report(daemon: &Push, events: Vec<Event>) {
+    for event in events {
+        let sent = reply(&event).map(|event| daemon.send("item", vec![event]));
+        if !matches!(sent, Ok(Ok(()))) {
+            tracing::warn!("could not tell the daemon what an item did");
         }
     }
 }
@@ -743,6 +755,8 @@ pub(crate) struct Worker {
     writer: Arc<tokio::sync::Mutex<OwnedWriteHalf>>,
     /// The publishes awaiting the worker's reply; None once the worker is gone.
     calls: Mutex<Option<Calls>>,
+    /// Set by the first refused item report, so a forging worker cannot fill the trace.
+    refused: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Default)]
@@ -759,6 +773,7 @@ impl Worker {
         devices: &Path,
         trace: Option<&Path>,
         registry: Arc<Registry>,
+        events: mpsc::UnboundedSender<Event>,
     ) -> io::Result<Arc<Self>> {
         use std::process::Stdio;
         let (ours, theirs) = std::os::unix::net::UnixStream::pair()?;
@@ -778,7 +793,7 @@ impl Worker {
             .spawn()?;
         drop(command);
         ours.set_nonblocking(true)?;
-        let worker = Self::over(UnixStream::from_std(ours)?, registry);
+        let worker = Self::over(UnixStream::from_std(ours)?, registry, events);
         // The exit closes the worker's end of the socket, and the reader hangs up on that; this
         // task only reaps the child and records why it went.
         tokio::spawn(async move {
@@ -791,15 +806,20 @@ impl Worker {
     }
 
     /// A worker already running on the other end of `stream`, told of each registration that
-    /// leaves so the items it held leave with it.
-    pub(crate) fn over(stream: UnixStream, registry: Arc<Registry>) -> Arc<Self> {
+    /// leaves so the items it held leave with it. What it reports of its items goes to `events`.
+    pub(crate) fn over(
+        stream: UnixStream,
+        registry: Arc<Registry>,
+        events: mpsc::UnboundedSender<Event>,
+    ) -> Arc<Self> {
         let (reader, writer) = stream.into_split();
         let worker = Arc::new(Self {
             writer: Arc::new(tokio::sync::Mutex::new(writer)),
             calls: Mutex::new(Some(Calls::default())),
+            refused: std::sync::atomic::AtomicBool::new(false),
         });
         let mut departures = registry.departures();
-        tokio::spawn(Arc::clone(&worker).read(reader, registry));
+        tokio::spawn(Arc::clone(&worker).read(reader, registry, events));
         let leaving = Arc::clone(&worker);
         tokio::spawn(async move {
             while let Some(registration) = departures.recv().await {
@@ -892,11 +912,16 @@ impl Worker {
         }
     }
 
-    async fn read(self: Arc<Self>, mut reader: OwnedReadHalf, registry: Arc<Registry>) {
+    async fn read(
+        self: Arc<Self>,
+        mut reader: OwnedReadHalf,
+        registry: Arc<Registry>,
+        events: mpsc::UnboundedSender<Event>,
+    ) {
         let mut frames = Frames::default();
         let error = loop {
             match frames.next(&mut reader).await {
-                Ok(frame) => self.take(frame, &registry),
+                Ok(frame) => self.take(frame, &registry, &events),
                 Err(error) => break error,
             }
         };
@@ -904,7 +929,21 @@ impl Worker {
         self.hang_up();
     }
 
-    fn take(&self, frame: Value, registry: &Registry) {
+    /// The worker is confined, not trusted: a report that is not the shape it makes is dropped, and
+    /// only the first is traced so a forger cannot fill the trace.
+    fn refuse_report(&self) -> bool {
+        let first = !self
+            .refused
+            .swap(true, std::sync::atomic::Ordering::Relaxed);
+        if first {
+            tracing::warn!(
+                "refused an item report that is not the shape the relay makes; later ones are not traced"
+            );
+        }
+        first
+    }
+
+    fn take(&self, frame: Value, registry: &Registry, events: &mpsc::UnboundedSender<Event>) {
         let Value::Array(parts) = frame else {
             tracing::warn!("the relay worker sent a frame that is not an array");
             return;
@@ -923,6 +962,19 @@ impl Worker {
                 if kind.as_u64() == Some(2) && method.as_str() == Some("answer") =>
             {
                 deliver(params, registry);
+            }
+            [kind, method, params]
+                if kind.as_u64() == Some(2) && method.as_str() == Some("item") =>
+            {
+                match decoded::<Event>(
+                    params.as_array().cloned().unwrap_or_default(),
+                    "item takes [Event]",
+                ) {
+                    // No watch is listening when the daemon has no ntfy topic.
+                    Ok(event) if event.well_formed() => drop(events.send(event.bounded())),
+                    Ok(_) => drop(self.refuse_report()),
+                    Err(_) => drop(self.refuse_report()),
+                }
             }
             _ => tracing::warn!("the relay worker sent a frame the daemon does not read"),
         }
@@ -1020,6 +1072,7 @@ mod tests {
     use super::devices::tests::{devices_file, line, rewrite};
     use super::devices::{DevicesFile, Watcher};
     use super::{Config, RELOAD_TICK, StartError};
+    use super::{Event, Kind, Opened};
     use lain_rpc::support::{request, response_parts};
 
     const TOKEN: &str = "a-paired-phone-token";
@@ -1045,6 +1098,8 @@ mod tests {
     struct Peer<C> {
         framed: TestClient<C>,
         next_msgid: u32,
+        /// Pushes that arrived while a call waited for its reply, oldest first.
+        pushes: std::collections::VecDeque<Value>,
     }
 
     impl<C: Wire> Peer<C> {
@@ -1052,6 +1107,7 @@ mod tests {
             Self {
                 framed: TestClient::over(stream),
                 next_msgid: 1,
+                pushes: std::collections::VecDeque::new(),
             }
         }
 
@@ -1064,14 +1120,21 @@ mod tests {
 
         /// The next reply within `wait`, or None when nothing came.
         async fn reply_within(&mut self, wait: Duration) -> Option<(u32, Value, Value)> {
-            let frame = tokio::time::timeout(wait, self.framed.next_frame())
-                .await
-                .ok()?;
-            Some(response_parts(
-                frame
+            loop {
+                let frame = tokio::time::timeout(wait, self.framed.next_frame())
+                    .await
+                    .ok()?
                     .expect("a reply, not a close")
-                    .expect("decode a reply"),
-            ))
+                    .expect("decode a reply");
+                if frame
+                    .as_array()
+                    .is_some_and(|parts| parts[0] == Value::from(2))
+                {
+                    self.pushes.push_back(frame);
+                } else {
+                    return Some(response_parts(frame));
+                }
+            }
         }
 
         async fn reply(&mut self) -> (u32, Value, Value) {
@@ -2167,10 +2230,18 @@ mod tests {
     }
 
     fn stamp(session: &str, registration: u64) -> Value {
+        stamp_of(session, registration, CHAT_PID)
+    }
+
+    /// The chat process every test session stands for, unless a test says another.
+    const CHAT_PID: u32 = 4200;
+
+    fn stamp_of(session: &str, registration: u64, pid: u32) -> Value {
         value(&Stamp {
             session: session.to_string(),
             project: project_of(session),
             registration,
+            pid,
         })
     }
 
@@ -2279,6 +2350,26 @@ mod tests {
                 .0
         }
 
+        async fn publish_as(
+            &mut self,
+            session: &str,
+            registration: u64,
+            pid: u32,
+            item: AgendaItem,
+        ) -> Value {
+            self.uplink
+                .call(
+                    "agenda.publish",
+                    vec![
+                        stamp_of(session, registration, pid),
+                        adding(item),
+                        no_keys(),
+                    ],
+                )
+                .await
+                .0
+        }
+
         async fn publish(&mut self, session: &str, registration: u64, item: AgendaItem) {
             let error = self
                 .publish_with(session, registration, adding(item), no_keys())
@@ -2305,24 +2396,46 @@ mod tests {
             }
         }
 
-        /// The next push on the uplink as its method, session, registration and answer.
-        async fn pushed(&mut self) -> (String, String, u64, Answer) {
-            let frame = tokio::time::timeout(WAIT, self.uplink.framed.next_frame())
-                .await
-                .expect("a push within the wait")
-                .expect("a frame, not a close")
-                .expect("decode a frame");
+        /// The next push on the uplink, as its method and params.
+        async fn push(&mut self) -> (String, Vec<Value>) {
+            let frame = match self.uplink.pushes.pop_front() {
+                Some(frame) => frame,
+                None => tokio::time::timeout(WAIT, self.uplink.framed.next_frame())
+                    .await
+                    .expect("a push within the wait")
+                    .expect("a frame, not a close")
+                    .expect("decode a frame"),
+            };
             let Value::Array(parts) = frame else {
                 panic!("{frame} is not a frame")
             };
             assert_eq!(Value::from(2), parts[0], "not a push: {parts:?}");
-            let params = parts[2].as_array().expect("push params");
             (
                 parts[1].as_str().expect("a method").to_string(),
-                params[0].as_str().expect("a session").to_string(),
-                params[1].as_u64().expect("a registration"),
-                message(&params[2]),
+                parts[2].as_array().expect("push params").clone(),
             )
+        }
+
+        /// The next answer push as its method, session, registration and answer, past any item news.
+        async fn pushed(&mut self) -> (String, String, u64, Answer) {
+            loop {
+                let (method, params) = self.push().await;
+                if method != "item" {
+                    return (
+                        method,
+                        params[0].as_str().expect("a session").to_string(),
+                        params[1].as_u64().expect("a registration"),
+                        message(&params[2]),
+                    );
+                }
+            }
+        }
+
+        /// The next push, which must be news of an item.
+        async fn event(&mut self) -> Event {
+            let (method, params) = self.push().await;
+            assert_eq!("item", method);
+            message(&params[0])
         }
     }
 
@@ -2593,6 +2706,230 @@ mod tests {
             Value::from("agenda.publish takes [Stamp, Delta, Keys]"),
             error
         );
+    }
+
+    fn opened_of(event: Event) -> Opened {
+        match event {
+            Event::Opened(opened) => opened,
+            other => panic!("{other:?}, expected an opening"),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_new_item_is_reported_opened_with_its_phone_id_its_kind_and_its_requester_only() {
+        let mut worker = Worker::start().await;
+        worker
+            .publish("sa", 1, parked_with("1", "secret words"))
+            .await;
+        let mut phone = worker.phone().await;
+        let phone_id = id_for_input(&phone.items().await, "secret words");
+
+        let (method, params) = worker.push().await;
+        assert_eq!("item", method);
+        let opened = opened_of(message(&params[0]));
+        assert_eq!(
+            ("main", Kind::ParkedCall, phone_id.as_str()),
+            (opened.requester.as_str(), opened.kind, opened.id.as_str())
+        );
+        let text = format!("{params:?}");
+        for hidden in [
+            "secret words",
+            "sa",
+            "/work",
+            "bash",
+            "outside the checkout",
+        ] {
+            assert!(
+                !text.contains(hidden),
+                "{hidden} reached the daemon in {text}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_item_published_again_is_not_reported_again() {
+        let mut worker = Worker::start().await;
+        worker.publish("sa", 1, parked_with("1", "first")).await;
+        worker.publish("sa", 1, parked_with("1", "first")).await;
+        worker.publish("sa", 1, parked_with("2", "sentinel")).await;
+        let first = opened_of(worker.event().await);
+        let next = opened_of(worker.event().await);
+        assert_ne!(first.id, next.id, "the republish was reported");
+    }
+
+    #[tokio::test]
+    async fn a_gate_both_chats_publish_is_reported_once() {
+        let mut worker = Worker::start().await;
+        for (session, registration, local) in [("sa", 1, "ga"), ("sb", 2, "gb")] {
+            let error = worker
+                .publish_with(
+                    session,
+                    registration,
+                    adding(gate(local)),
+                    keyed(local, "digest"),
+                )
+                .await;
+            assert_eq!(Value::Nil, error);
+        }
+        worker.publish("sb", 2, parked_with("1", "sentinel")).await;
+        let gate = opened_of(worker.event().await);
+        let next = opened_of(worker.event().await);
+        assert_eq!(
+            (Kind::GateQuestion, Kind::ParkedCall),
+            (gate.kind, next.kind)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_item_that_settles_or_whose_chat_leaves_is_reported_closed_under_its_phone_id() {
+        let mut worker = Worker::start().await;
+        worker.publish("sa", 1, parked_with("1", "settled")).await;
+        worker.publish("sa", 1, parked_with("2", "left")).await;
+        let settled = opened_of(worker.event().await).id;
+        let left = opened_of(worker.event().await).id;
+
+        assert_eq!(
+            Value::Nil,
+            worker.publish_with("sa", 1, settling("1"), no_keys()).await
+        );
+        assert_eq!(Event::Closed { id: settled }, worker.event().await);
+        worker.leave(1).await;
+        assert_eq!(Event::Left { id: left }, worker.event().await);
+    }
+
+    #[tokio::test]
+    async fn a_chat_that_reconnects_is_the_same_twin_under_a_new_phone_id() {
+        let mut worker = Worker::start().await;
+        for registration in [1, 2] {
+            let error = worker
+                .publish_as("sa", registration, CHAT_PID, parked_with("1", "same item"))
+                .await;
+            assert_eq!(Value::Nil, error);
+        }
+        worker
+            .publish_as("sa", 3, CHAT_PID + 1, parked_with("1", "same item"))
+            .await;
+        worker
+            .publish_as("sb", 4, CHAT_PID, parked_with("1", "same item"))
+            .await;
+        let first = opened_of(worker.event().await);
+        let again = opened_of(worker.event().await);
+        let restarted = opened_of(worker.event().await);
+        let other = opened_of(worker.event().await);
+        assert_ne!(first.id, again.id);
+        assert_eq!(first.twin, again.twin, "a reconnect is a new twin");
+        assert_ne!(first.twin, restarted.twin, "a restarted chat shares a twin");
+        assert_ne!(first.twin, other.twin, "another session shares a twin");
+        assert!(!first.twin.contains("sa"), "the twin spells the session");
+    }
+
+    #[tokio::test]
+    async fn a_shared_gate_is_one_twin_whichever_chat_publishes_it_first_after_both_left() {
+        let mut worker = Worker::start().await;
+        for (session, registration, local) in [("sa", 1, "ga"), ("sb", 2, "gb")] {
+            let error = worker
+                .publish_with(
+                    session,
+                    registration,
+                    adding(gate(local)),
+                    keyed(local, "digest"),
+                )
+                .await;
+            assert_eq!(Value::Nil, error);
+        }
+        let first = opened_of(worker.event().await);
+        worker.leave(1).await;
+        worker.leave(2).await;
+        assert!(matches!(worker.event().await, Event::Left { .. }));
+
+        let error = worker
+            .publish_with("sb", 4, adding(gate("gb")), keyed("gb", "digest"))
+            .await;
+        assert_eq!(Value::Nil, error);
+        let again = opened_of(worker.event().await);
+        assert_ne!(first.id, again.id);
+        assert_eq!(first.twin, again.twin, "the gate would buzz twice");
+    }
+
+    #[tokio::test]
+    async fn a_gate_asked_again_under_new_digests_is_a_new_twin() {
+        let mut worker = Worker::start().await;
+        let error = worker
+            .publish_with("sa", 1, adding(gate("g1")), keyed("g1", "digest-1"))
+            .await;
+        assert_eq!(Value::Nil, error);
+        let error = worker
+            .publish_with("sa", 1, adding(gate("g2")), keyed("g2", "digest-2"))
+            .await;
+        assert_eq!(Value::Nil, error);
+        let (first, second) = (
+            opened_of(worker.event().await),
+            opened_of(worker.event().await),
+        );
+        assert_ne!(first.twin, second.twin);
+    }
+
+    #[tokio::test]
+    async fn a_delta_adding_one_gate_under_2_ids_is_one_opening() {
+        let mut worker = Worker::start().await;
+        let delta = value(&Delta {
+            cursor: 0,
+            added: vec![gate("g1"), gate("g2")],
+            settled: vec![],
+        });
+        let keys = Value::Map(vec![
+            (Value::from("g1"), Value::from("k")),
+            (Value::from("g2"), Value::from("k")),
+        ]);
+        assert_eq!(Value::Nil, worker.publish_with("sa", 1, delta, keys).await);
+        worker.publish("sa", 1, parked_with("1", "sentinel")).await;
+        let gate = opened_of(worker.event().await);
+        let next = opened_of(worker.event().await);
+        assert_eq!(
+            (Kind::GateQuestion, Kind::ParkedCall),
+            (gate.kind, next.kind)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_item_added_and_settled_in_one_delta_is_never_opened() {
+        let mut worker = Worker::start().await;
+        let delta = value(&Delta {
+            cursor: 0,
+            added: vec![parked_with("1", "in and out")],
+            settled: vec!["1".to_string()],
+        });
+        assert_eq!(
+            Value::Nil,
+            worker.publish_with("sa", 1, delta, no_keys()).await
+        );
+        assert!(matches!(worker.event().await, Event::Closed { .. }));
+    }
+
+    #[tokio::test]
+    async fn only_the_first_malformed_item_report_is_traced() {
+        let registry = crate::registry::Registry::new(crate::registry::ProcTable);
+        let (ours, _theirs) = UnixStream::pair().expect("a socket pair");
+        let (events, _heard) = tokio::sync::mpsc::unbounded_channel();
+        let worker = super::Worker::over(ours, registry, events);
+        assert!(worker.refuse_report(), "the first refusal was not traced");
+        assert!(!worker.refuse_report(), "a second refusal was traced");
+    }
+
+    #[tokio::test]
+    async fn an_item_report_that_cannot_be_decoded_is_refused_like_one_of_the_wrong_shape() {
+        let registry = crate::registry::Registry::new(crate::registry::ProcTable);
+        let (ours, _theirs) = UnixStream::pair().expect("a socket pair");
+        let (events, mut heard) = tokio::sync::mpsc::unbounded_channel();
+        let worker = super::Worker::over(ours, std::sync::Arc::clone(&registry), events.clone());
+        let garbage = Value::Array(vec![
+            Value::from(2),
+            Value::from("item"),
+            Value::Array(vec![Value::from(1)]),
+        ]);
+        worker.take(garbage, &registry, &events);
+        assert!(worker.refused.load(std::sync::atomic::Ordering::Relaxed));
+        assert!(heard.try_recv().is_err());
     }
 
     fn nested(depth: usize) -> Value {

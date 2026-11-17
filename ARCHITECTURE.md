@@ -2326,10 +2326,19 @@ hidden), publishes it through the chat's daemon registration, and takes answers 
 so 2 chats in 1 project show it once and a wave with any row asked again is a new item. An answer the
 desk beat leaves a `remote_answer_lost` record. A dead relay degrades the surface with a recorded
 `capability_degraded` and a `phone surface off` line in the chat, never the chat itself; a daemon
-restart is not a death, and the surface publishes everything again. With `remote ntfy:` set, an item
-that waits 60 seconds sends 1 notice (`Remote::Ntfy`) carrying a title and an Open link and nothing
-of the item. The announced set lives in the chat, so an item still waiting after a chat restarts is
-announced again.
+restart is not a death, and the surface publishes everything again. With `remote ntfy:` set, the
+lain-daemon sends the notice, from its main process and never the confined worker, which has no
+network. The worker reports each item's opening and closing on its uplink, and the daemon sends 1
+notice per phone item that has had no answer for 60 seconds: a title and an Open link to
+`lain-remote://item/<phone id>`, and nothing of the item. A chat that reconnects to the same daemon
+is not announced again; the set lives in the daemon's memory, so an item still waiting after a daemon
+restart, which mints new phone ids, is announced once more. The daemon bounds what the confined
+worker can make it send: at most 30 notices per minute-long window, and a window that dropped some
+is followed by 1 summary notice (`lain: N more items waiting`) with no link. The TLS roots of an
+https topic are the system's as OpenSSL finds them: `SSL_CERT_FILE` replaces only the default file
+and `SSL_CERT_DIR` only the default directories (on macOS a set variable replaces the keychain).
+The proxy variables (`http_proxy`, `https_proxy`, `no_proxy`) are passed to the daemon, whose HTTP
+client picks the proxy as it does (`HTTPS_PROXY` before `HTTP_PROXY`, `NO_PROXY` respected).
 
 **Every reader of an epic gate reads one fold.** A `gate_decision` record carries an
 `Approval::Verdict` or, for a gate that parked, `Epic::GateDecision::Deferred`, and `Epic::Signoff`

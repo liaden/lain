@@ -65,6 +65,81 @@ pub(crate) struct Stamp {
     pub(crate) session: String,
     pub(crate) project: String,
     pub(crate) registration: u64,
+    /// The chat's process, which a chat keeps across its reconnects and a restarted chat does not.
+    pub(crate) pid: u32,
+}
+
+/// What kind of thing waits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum Kind {
+    ParkedCall,
+    GateQuestion,
+    Question,
+}
+
+/// An item the phone can now open: its id, and the 2 fields a title is made of. Nothing of the
+/// item's text, project, session or directory is here, so none can reach a topic.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct Opened {
+    pub(crate) id: String,
+    /// A one-way fingerprint of the publishing chat and its own id for the item, the same across
+    /// a chat's reconnects, where the phone's `id` is not.
+    pub(crate) twin: String,
+    pub(crate) kind: Kind,
+    pub(crate) requester: String,
+}
+
+/// One change in what the phone's agenda holds.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "event", rename_all = "snake_case")]
+pub(crate) enum Event {
+    Opened(Opened),
+    /// The item settled: answered, or withdrawn by the chat that held it.
+    Closed {
+        id: String,
+    },
+    /// Every chat holding the item went away, which a reconnecting chat then undoes.
+    Left {
+        id: String,
+    },
+}
+
+/// What a requester is cut to before it goes anywhere, so a forged one is not held whole.
+pub(crate) const REQUESTER_CHARS: usize = 64;
+
+impl Event {
+    /// The shape `Log::mint` and `twin` make and nothing else: the daemon holds these as keys and
+    /// puts the id in a header, and the worker that reports them is confined, not trusted.
+    pub(crate) fn well_formed(&self) -> bool {
+        let hex = |text: &str, len: usize| {
+            text.len() == len
+                && text
+                    .bytes()
+                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+        };
+        match self {
+            Self::Opened(opened) => hex(&opened.id, 16) && hex(&opened.twin, 64),
+            Self::Closed { id } | Self::Left { id } => hex(id, 16),
+        }
+    }
+
+    /// The same event with its requester cut to [`REQUESTER_CHARS`].
+    pub(crate) fn bounded(self) -> Self {
+        match self {
+            Self::Opened(opened) => Self::Opened(Opened {
+                requester: opened.requester.chars().take(REQUESTER_CHARS).collect(),
+                ..opened
+            }),
+            other @ (Self::Closed { .. } | Self::Left { .. }) => other,
+        }
+    }
+}
+
+/// A publish's cursor, and what it opened and closed on the phone's agenda.
+pub(crate) struct Published {
+    pub(crate) cursor: u64,
+    pub(crate) events: Vec<Event>,
 }
 
 /// Where the phone's answer to an item goes: the session that holds it, under its own id.
@@ -344,13 +419,13 @@ impl Agenda {
     /// The relay numbers deltas itself, so a phone's cursor means the same thing whatever lain
     /// put in the field. `stamp` names the registration publishing, none for a relay on its own
     /// socket; `keys` maps a gate question's own id to the gate key it is shared under. Returns
-    /// the delta's cursor.
+    /// the delta's cursor, and the items it opened and closed when a registration published it.
     pub(crate) fn publish(
         &self,
         delta: &Delta,
         stamp: Option<&Stamp>,
         keys: &HashMap<String, String>,
-    ) -> Result<u64, Refusal> {
+    ) -> Result<Published, Refusal> {
         let gates: HashSet<&str> = delta
             .added
             .iter()
@@ -373,7 +448,7 @@ impl Agenda {
         delta: &Delta,
         stamp: Option<&Stamp>,
         keys: &HashMap<String, String>,
-    ) -> Result<u64, Refusal> {
+    ) -> Result<Published, Refusal> {
         let registration = stamp.map(|stamp| stamp.registration);
         let holder = |local: &str| Holder {
             registration,
@@ -444,6 +519,7 @@ impl Agenda {
         let stamped = Measured::of(phone.clone())?;
         within_budget("the delta is", stamped.bytes)?;
         within_budget("the agenda would be", log.open_bytes_after(&phone, &added))?;
+        let events = stamp.map_or_else(Vec::new, |stamp| events_of(log, &added, &phone, stamp));
         for each in added {
             log.hold(each, stamp);
         }
@@ -453,11 +529,16 @@ impl Agenda {
         for id in &phone.settled {
             log.close(id);
         }
-        Ok(log.deltas.push(stamped))
+        Ok(Published {
+            cursor: log.deltas.push(stamped),
+            events,
+        })
     }
 
     /// Every item `registration` held is let go, and an item nobody holds after that is settled.
-    pub(crate) fn leave(&self, registration: u64) {
+    /// Returns a `Left` event for each item nobody holds any longer.
+    pub(crate) fn leave(&self, registration: u64) -> Vec<Event> {
+        let mut closed = Vec::new();
         self.log.send_if_modified(|log| {
             let leaving: Vec<Holder> = log
                 .held
@@ -478,6 +559,10 @@ impl Agenda {
             for id in &settled {
                 log.close(id);
             }
+            closed = settled
+                .iter()
+                .map(|id| Event::Left { id: id.clone() })
+                .collect();
             if settled.is_empty() {
                 return false;
             }
@@ -494,6 +579,7 @@ impl Agenda {
                 Err(_) => false,
             }
         });
+        closed
     }
 
     /// The deltas after `cursor`, waiting up to [`LONG_POLL`] for one. A cursor
@@ -588,6 +674,65 @@ impl Agenda {
     }
 }
 
+/// What `phone` changes for whoever follows the agenda by item: each id newly open, once, and each
+/// id that settled. An item the registration published again, or a gate another chat already
+/// holds, is open already and is not news.
+fn events_of(log: &Log, added: &[Added], phone: &Delta, stamp: &Stamp) -> Vec<Event> {
+    let mut seen = HashSet::new();
+    let opened = added
+        .iter()
+        .filter(|each| !phone.settled.contains(&each.id))
+        .filter(|each| !log.open.iter().any(|open| open.id == each.id))
+        .filter(|each| seen.insert(each.id.as_str()))
+        .map(|each| {
+            let (kind, requester) = match &each.item.message {
+                AgendaItem::ParkedCall { requester, .. } => (Kind::ParkedCall, requester),
+                AgendaItem::GateQuestion { requester, .. } => (Kind::GateQuestion, requester),
+                AgendaItem::Question { requester, .. } => (Kind::Question, requester),
+            };
+            Event::Opened(Opened {
+                id: each.id.clone(),
+                twin: twin_of(each, stamp),
+                kind,
+                requester: requester.clone(),
+            })
+        });
+    let closed = phone
+        .settled
+        .iter()
+        .map(|id| Event::Closed { id: id.clone() });
+    opened.chain(closed).collect()
+}
+
+/// A gate is 1 item to every chat holding it under its key, so its twin comes from the key and
+/// not from whichever chat published it first; any other item is the publishing chat's own.
+fn twin_of(each: &Added, stamp: &Stamp) -> String {
+    match (&each.item.message, &each.key) {
+        (AgendaItem::GateQuestion { .. }, Some(key)) => digest_of(&[b"gate", key.as_bytes()]),
+        _ => twin(stamp, &each.holder.local),
+    }
+}
+
+/// The chat's own name for an item, one-way hashed: the same across the chat's reconnects, which
+/// mint the phone a new id, and naming nothing to a reader of the hash.
+fn twin(stamp: &Stamp, local: &str) -> String {
+    digest_of(&[
+        stamp.session.as_bytes(),
+        &stamp.pid.to_le_bytes(),
+        local.as_bytes(),
+    ])
+}
+
+/// Each part length-prefixed, so no 2 splits of the same bytes hash alike.
+fn digest_of(parts: &[&[u8]]) -> String {
+    let mut hasher = blake3::Hasher::new();
+    for part in parts {
+        hasher.update(&part.len().to_le_bytes());
+        hasher.update(part);
+    }
+    hasher.finalize().to_hex().to_string()
+}
+
 fn within_budget(what: &'static str, bytes: usize) -> Result<(), Refusal> {
     if bytes > REPLY_BUDGET {
         Err(Refusal::TooLarge { what, bytes })
@@ -648,5 +793,50 @@ pub(crate) fn with_answer_id(mut answer: Answer, local: &str) -> Answer {
 fn id_of_answer(answer: &Answer) -> &str {
     match answer {
         Answer::Call { id, .. } | Answer::Gate { id, .. } | Answer::Question { id, .. } => id,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stamp(session: &str, pid: u32) -> Stamp {
+        Stamp {
+            session: session.to_string(),
+            project: "/work".to_string(),
+            registration: 1,
+            pid,
+        }
+    }
+
+    #[test]
+    fn two_local_ids_of_one_session_and_process_are_two_twins() {
+        assert_ne!(twin(&stamp("a", 7), "1"), twin(&stamp("a", 7), "2"));
+    }
+
+    #[test]
+    fn chats_whose_fields_would_run_together_are_not_one_twin() {
+        // The same bytes once the session, the pid's 4 bytes and the local id are joined with no lengths.
+        assert_ne!(
+            twin(&stamp("a", 0x6362), "x\0\0\0\0"),
+            twin(&stamp("abc", 0x0078_0000), "\0\0\0")
+        );
+    }
+
+    #[test]
+    fn an_event_round_trips_over_the_wire_codec() {
+        let event = Event::Opened(Opened {
+            id: "a".into(),
+            twin: "t".into(),
+            kind: Kind::ParkedCall,
+            requester: "main".into(),
+        });
+        let bytes = lain_wire::encode(&event).expect("encode");
+        assert_eq!(event, lain_wire::decode::<Event>(&bytes).expect("decode"));
+        let bytes = lain_wire::encode(&Event::Closed { id: "a".into() }).expect("encode");
+        assert_eq!(
+            Event::Closed { id: "a".into() },
+            lain_wire::decode::<Event>(&bytes).expect("decode")
+        );
     }
 }

@@ -102,29 +102,6 @@ module RemoteSurfaceSpecSupport
     end
   end
 
-  # Time the spec moves by hand, so a delay is crossed without waiting for it.
-  class Clock
-    attr_accessor :now
-
-    def initialize(now) = @now = now
-  end
-
-  # Records what it is asked to announce, and the clock's reading at that moment.
-  class Ntfy
-    attr_reader :sent
-
-    def initialize(clock, failing: nil)
-      @clock = clock
-      @failing = failing
-      @sent = []
-    end
-
-    def notify(view)
-      @sent << [view, @clock.now]
-      raise @failing if @failing
-    end
-  end
-
   # Plays the chat's registration: answers daemon.info with the relay's state,
   # records every request, and hands a push to its subscriber when told.
   class StandIn
@@ -788,17 +765,10 @@ RSpec.describe Lain::Approval::RemoteSurface do
   end
 
   describe ".for" do
-    def built(relay, ntfy = nil)
-      described_class.for(relay:, ntfy:, paths: Lain::Paths.new(env: { "HOME" => @dir }), root: @dir, queue:,
+    def built(relay)
+      described_class.for(relay:, paths: Lain::Paths.new(env: { "HOME" => @dir }), root: @dir, queue:,
                           registration: Lain::Daemon::Registration::Null.new,
                           replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
-    end
-
-    it "builds a surface that announces on the ntfy topic when remote ntfy is set, and one that does not when unset" do
-      announcers = [built("127.0.0.1:7820", "http://127.0.0.1:1/t"), built("127.0.0.1:7820")]
-                   .map(&:ntfy)
-
-      expect(announcers).to match([an_instance_of(Lain::Remote::Ntfy), Lain::Remote::Ntfy::Null::INSTANCE])
     end
 
     it "builds the surface when remote relay is set, and none when it is not" do
@@ -807,7 +777,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
     it "names the trace the daemon writes when its relay is unavailable" do
       paths = Lain::Paths.new(env: { "HOME" => @dir })
-      built = described_class.for(relay: "127.0.0.1:7820", ntfy: nil, paths:, root: @dir, queue:,
+      built = described_class.for(relay: "127.0.0.1:7820", paths:, root: @dir, queue:,
                                   registration: RemoteSurfaceSpecSupport::StandIn.new(relay: "unavailable"),
                                   replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
       Sync { |task| task.with_timeout(5) { built.watch } }
@@ -874,9 +844,9 @@ RSpec.describe Lain::Approval::RemoteSurface do
         launch = Lain::Daemon::Launch.current(paths: daemon_paths, env: daemon_env)
         token = Lain::Remote::Devices.for(paths: daemon_paths).pair("pixel")
         built = lambda do |registration|
-          described_class.for(**Lain::Config.remote(paths: daemon_paths), paths: daemon_paths, root: Pathname(@dir),
-                                                                          registration:, queue:, secrets: [], journal:,
-                                                                          replies: RemoteSurfaceSpecSupport::NoReplies.new)
+          described_class.for(relay: Lain::Config.remote(paths: daemon_paths)[:relay], paths: daemon_paths,
+                              root: Pathname(@dir), registration:, queue:, secrets: [], journal:,
+                              replies: RemoteSurfaceSpecSupport::NoReplies.new)
         end
         item = Sync do |task|
           task.with_timeout(20) do
@@ -1116,140 +1086,6 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
       expect(outcome).to all(be_ok)
       expect(records("capability_degraded").map { _1["capability"] }).to eq(["remote_surface"])
-    end
-  end
-
-  describe "announcing a waiting item through ntfy" do
-    let(:registration) { RemoteSurfaceSpecSupport::StandIn.new }
-    let(:asked) { Time.at(1_000) }
-    let(:clock) { RemoteSurfaceSpecSupport::Clock.new(asked) }
-    let(:ntfy) { RemoteSurfaceSpecSupport::Ntfy.new(clock) }
-    let(:timed) { agenda_over(wall: -> { asked }) }
-
-    def watching(task, ntfy: self.ntfy, **options)
-      task.async { surface(registration, agenda: timed, ntfy:, clock:, buzz_after: 60, **options).watch }
-    end
-
-    def published(count) = wait_until(reason: "#{count} items were published") { registration.added_ids.size >= count }
-
-    # A call left parked holds the Sync block open until the queue's 10 s timeout.
-    def settle_parked = queue.to_a.each { _1.approve(surface: "desk", authority: :human) }
-
-    def announcing(**options)
-      Sync do |task|
-        task.with_timeout(10) do
-          watch = watching(task, **options)
-          yield task
-        ensure
-          settle_parked
-          watch&.stop
-        end
-      end
-    end
-
-    it "announces a call once it has waited the delay, not before" do
-      announcing do |task|
-        park(task)
-        published(1)
-        clock.now = asked + 59
-        task.sleep(0.1)
-        expect(ntfy.sent).to be_empty
-        clock.now = asked + 60
-        wait_until(reason: "the call was announced") { ntfy.sent.any? }
-      end
-
-      expect(ntfy.sent.map { |view, at| [view.id, view.requester, at] }).to eq([["1", "agent", asked + 60]])
-    end
-
-    it "does not announce a call the desk answered first" do
-      announcing do |task|
-        first = park(task)
-        published(1)
-        clock.now = asked + 30
-        queue.first.approve(surface: "desk", authority: :human)
-        first.wait
-        clock.now = asked + 61
-        park(task, "second")
-        wait_until(reason: "the second call was announced") { ntfy.sent.any? }
-      end
-
-      expect(ntfy.sent.map { _1.first.input }).to eq([{ "command" => "second" }])
-    end
-
-    it "announces the masked view, and announces each item once" do
-      secret = "hunter2-correct-horse-battery"
-      announcing(secrets: [secret]) do |task|
-        park(task, "deploy --password #{secret}")
-        published(1)
-        clock.now = asked + 600
-        wait_until(reason: "the call was announced") { ntfy.sent.any? }
-        task.sleep(0.2)
-      end
-
-      expect(ntfy.sent.size).to eq(1)
-      expect(ntfy.sent.first.first.input.to_s).not_to include(secret)
-    end
-
-    it "announces nothing again when a reconnect publishes the item again" do
-      announcing do |task|
-        park(task)
-        published(1)
-        clock.now = asked + 60
-        wait_until(reason: "the call was announced") { ntfy.sent.any? }
-        registration.deliver(Lain::Daemon::Registration::RECONNECTED)
-        published(2)
-        task.sleep(0.1)
-      end
-
-      expect(ntfy.sent.size).to eq(1)
-    end
-
-    it "records a failed announcement once and keeps serving" do
-      failing = RemoteSurfaceSpecSupport::Ntfy.new(clock, failing: IOError.new("ntfy is down"))
-      announcing(ntfy: failing) do |task|
-        park(task)
-        published(1)
-        clock.now = asked + 60
-        wait_until(reason: "the failure was recorded") { records("approval_surface_fault").any? }
-        park(task, "second")
-        published(2)
-      end
-
-      expect(records("approval_surface_fault").map { _1["error"] }).to eq(["IOError: ntfy is down"])
-    end
-
-    it "publishes a second call while the announcement of the first hangs" do
-      silent = TCPServer.new("127.0.0.1", 0)
-      real = Lain::Remote::Ntfy.new(url: "http://127.0.0.1:#{silent.addr[1]}/lain-x7", timeout: 30)
-      NetworkAccess.permit_loopback(silent.addr[1]) do
-        announcing(ntfy: real) do |task|
-          park(task)
-          published(1)
-          clock.now = asked + 60
-          silent.wait_readable(10) || raise("the announcement never reached the server")
-          park(task, "after the announcement began")
-          published(2)
-        end
-      end
-      silent.close
-
-      expect(registration.added_ids).to eq(%w[1 2])
-    end
-
-    it "announces an item once even when a refused answer makes the surface publish it again" do
-      announcing do |task|
-        park(task)
-        published(1)
-        clock.now = asked + 60
-        wait_until(reason: "the call was announced") { ntfy.sent.any? }
-        registration.deliver("answer",
-                             [wire::Answer::Question.new(id: "1", option: nil, text: "yes", device: nil).to_wire])
-        published(2)
-        park(task, "marker")
-        wait_until(reason: "the marker was announced") { ntfy.sent.size >= 2 }
-      end
-
-      expect(ntfy.sent.map { _1.first.id }.tally.values).to eq([1, 1])
     end
   end
 end

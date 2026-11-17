@@ -16,7 +16,7 @@ fn spawn_daemon(dir: &Path, digest: &str) -> tokio::process::Child {
         .arg(dir.join("daemon.sock"))
         .arg("--trace")
         .arg(dir.join("daemon.trace"))
-        .args(["--launch-digest", digest])
+        .env("DAEMON_LAUNCH_DIGEST", digest)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -219,15 +219,21 @@ async fn a_bad_invocation_exits_2() {
     let dir = tempfile::tempdir().expect("tempdir");
     let socket = dir.path().join("daemon.sock");
     let socket = socket.to_str().expect("utf-8 path");
-    let bad: [&[&str]; 4] = [
-        &[],
-        &["--socket", socket],
-        &["--socket", socket, "--launch-digest", "abc", "--bogus", "x"],
-        &["--socket", socket, "--launch-digest"],
+    // Whether the digest is in the environment, where `Daemon::Launch` puts it.
+    let bad: [(&[&str], bool); 5] = [
+        (&[], false),
+        (&["--socket", socket], false),
+        (&["--socket", socket, "--bogus", "x"], true),
+        (&["--socket", socket, "--trace"], true),
+        (&["--socket", socket, "--launch-digest", "abc"], true),
     ];
-    for argv in bad {
-        let mut daemon = tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-daemon"))
-            .args(argv)
+    for (argv, digest) in bad {
+        let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-daemon"));
+        command.args(argv);
+        if digest {
+            command.env("DAEMON_LAUNCH_DIGEST", "abc");
+        }
+        let mut daemon = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -240,6 +246,33 @@ async fn a_bad_invocation_exits_2() {
             .expect("wait");
         assert_eq!(Some(2), status.code(), "argv {argv:?}");
     }
+}
+
+/// The name `Daemon::Launch::NTFY` hands the topic in: if either side renames it, ntfy goes off
+/// without an error, so the daemon must refuse a bad value of exactly this name.
+#[tokio::test]
+async fn a_topic_in_the_environment_that_is_not_http_exits_2() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let socket = dir.path().join("daemon.sock");
+    let mut daemon = tokio::process::Command::new(env!("CARGO_BIN_EXE_lain-daemon"))
+        .arg("--socket")
+        .arg(&socket)
+        .args(["--relay", "127.0.0.1:0"])
+        .env("DAEMON_LAUNCH_DIGEST", "abc")
+        .arg("--devices-file")
+        .arg(dir.path().join("devices"))
+        .env("DAEMON_NTFY_TOPIC", "ftp://x")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("spawn the daemon");
+    let status = tokio::time::timeout(Duration::from_secs(5), daemon.wait())
+        .await
+        .expect("the daemon exits")
+        .expect("wait");
+    assert_eq!(Some(2), status.code());
 }
 
 fn registration(session_id: &str, pid: u32) -> Value {
