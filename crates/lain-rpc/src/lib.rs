@@ -17,10 +17,10 @@
 //!   bad marker means the read position is unrecoverable): that connection
 //!   closes, the server survives, other connections are unaffected.
 //!
-//! msgpack-RPC *notifications* (`[2, method, params]`) are unsupported and
-//! answered as invalid requests (an arity error echoing the id slot): the only
-//! client we serve never sends one, and a silent no-reply path would be a
-//! second contract to maintain for nobody.
+//! msgpack-RPC *notifications* (`[2, method, params]`) flow one way only: the
+//! server pushes them through a connection's [`Push`], and one from a client
+//! is answered as an invalid request (an arity error echoing the id slot), so
+//! there is no silent no-reply path to maintain.
 
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr, missing_docs)]
@@ -41,8 +41,12 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::codec::{Decoder, Encoder, Framed};
 
+mod push;
 #[cfg(any(test, feature = "test-support"))]
 pub mod support;
+
+pub use push::{Closed, Push};
+use push::{Outbox, PUSH_BUFFER};
 
 /// Incremental msgpack decode with a frame ceiling. msgpack is
 /// self-delimiting, so there is no framing to invent: a [`Scan`] walks the
@@ -358,11 +362,6 @@ pub struct Conn {
     pub push: Push,
 }
 
-/// A connection's outbound channel for frames that answer no request. Its field is private so
-/// only the server can attach the connection's sender.
-#[derive(Clone, Debug)]
-pub struct Push(());
-
 /// What one connection carries from its start, or from its hello, to every
 /// call it makes: who the peer is, and when the server must close it.
 pub trait Session: Send + Sync + 'static {
@@ -441,11 +440,12 @@ pub async fn serve<A: Accept, H: Handler>(
     loop {
         match listener.accept().await {
             Ok(stream) => {
+                let (push, outbox) = Push::channel();
                 let conn = Conn {
                     peer: A::peer(&stream),
-                    push: Push(()),
+                    push,
                 };
-                admit(stream, conn, &handler, version, &slots, &lobby);
+                admit(stream, conn, outbox, &handler, version, &slots, &lobby);
             }
             Err(error) => {
                 tracing::warn!(%error, "accept failed; still listening");
@@ -462,6 +462,7 @@ pub async fn serve<A: Accept, H: Handler>(
 fn admit<C: Wire, H: Handler>(
     stream: C,
     conn: Conn,
+    outbox: Outbox,
     handler: &Arc<H>,
     version: &'static str,
     slots: &Arc<Semaphore>,
@@ -472,6 +473,7 @@ fn admit<C: Wire, H: Handler>(
         tokio::spawn(greet_then_serve(
             stream,
             conn,
+            outbox,
             Arc::clone(handler),
             version,
             Arc::clone(slots),
@@ -485,6 +487,7 @@ fn admit<C: Wire, H: Handler>(
             let session = H::Session::opened(&conn);
             tokio::spawn(serve_connection(
                 framed,
+                outbox,
                 Arc::clone(handler),
                 version,
                 session,
@@ -557,10 +560,13 @@ impl Drop for Seat {
 }
 
 /// A hello-requiring connection: a small frame ceiling and the auth deadline
-/// until its hello is admitted, then a cap slot and the full ceiling.
+/// until its hello is admitted, then a cap slot and the full ceiling. A push
+/// sent before admission waits in the outbox, which has no writer until the
+/// welcome is sent, and is dropped with it when the hello is refused.
 async fn greet_then_serve<C: Wire, H: Handler>(
     stream: C,
     conn: Conn,
+    outbox: Outbox,
     handler: Arc<H>,
     version: &'static str,
     slots: Arc<Semaphore>,
@@ -585,7 +591,7 @@ async fn greet_then_serve<C: Wire, H: Handler>(
         return;
     };
     framed.codec_mut().ceiling = MAX_FRAME;
-    serve_connection(framed, handler, version, session, slot).await;
+    serve_connection(framed, outbox, handler, version, session, slot).await;
 }
 
 type Sink<C> = SplitSink<Framed<C, Codec>, Value>;
@@ -594,8 +600,8 @@ type Stream<C> = SplitStream<Framed<C, Codec>>;
 /// A response bound for the writer, with the in-flight slot it frees once written.
 type Outgoing = (Value, OwnedSemaphorePermit);
 
-/// How a connection's reading ended. Poison and a closed session drop the
-/// responses still in flight.
+/// How a connection's reading ended. Poison, a closed session and an
+/// overflowed push queue drop the responses still in flight.
 enum Ending {
     Finished,
     Poisoned,
@@ -604,14 +610,16 @@ enum Ending {
 
 /// One connection: a reader that spawns an independent task per request, and
 /// a writer that sends responses in whatever order the tasks finish. On EOF
-/// the writer sends the responses already finished and the requests still
-/// running are dropped: a peer that stopped sending is gone, and a long-poll
+/// the writer sends the responses already finished and the pushes already
+/// queued, and the requests still running are dropped: a peer that stopped sending is gone, and a long-poll
 /// it left behind must not hold the connection's slot. On poison the writer
 /// is aborted too -- the connection dies immediately and takes no response
-/// with it, and a session that closes ends it the same way. The slot is held
-/// for the connection's life, so dropping it frees the cap.
+/// with it, and a session that closes or a push queue that overflows ends it
+/// the same way. The slot is held for the connection's life, so dropping it
+/// frees the cap.
 async fn serve_connection<C: Wire, H: Handler>(
     framed: Framed<C, Codec>,
+    outbox: Outbox,
     handler: Arc<H>,
     version: &'static str,
     session: H::Session,
@@ -620,18 +628,31 @@ async fn serve_connection<C: Wire, H: Handler>(
     let session = Arc::new(session);
     let (sink, mut inbound) = framed.split();
     let (responses, inbox) = mpsc::channel(RESPONSE_BUFFER);
-    let writer = tokio::spawn(write_responses(sink, inbox));
+    let mut writer = tokio::spawn(write_frames(sink, inbox, outbox.frames));
     let mut requests = JoinSet::new();
     let ending = tokio::select! {
         ending = read_requests(&mut inbound, &responses, &handler, version, &session, &mut requests) => ending,
         () = session.closed() => Ending::Closed,
+        () = overflowed(&outbox.overflow) => Ending::Closed,
     };
     requests.shutdown().await;
     drop(responses);
-    if matches!(ending, Ending::Poisoned | Ending::Closed) {
-        writer.abort();
+    if matches!(ending, Ending::Finished) {
+        // A peer that stopped sending may never read either, so the writer it
+        // leaves blocked must still yield to a close.
+        tokio::select! {
+            _ = &mut writer => return,
+            () = session.closed() => {}
+            () = overflowed(&outbox.overflow) => {}
+        }
     }
+    writer.abort();
     let _ = writer.await;
+}
+
+async fn overflowed(overflow: &tokio::sync::Notify) {
+    overflow.notified().await;
+    tracing::warn!(PUSH_BUFFER, "a connection's push queue is full; closing it");
 }
 
 /// The connection's cap slot and session once the first request is a `hello`
@@ -710,9 +731,36 @@ async fn read_requests<C: Wire, H: Handler>(
     }
 }
 
-async fn write_responses<C: Wire>(mut sink: Sink<C>, mut inbox: mpsc::Receiver<Outgoing>) {
-    while let Some((response, _slot)) = inbox.recv().await {
-        if sink.send(response).await.is_err() {
+/// The connection's one writer, so a push and a response never interleave.
+/// It ends with the responses: a handler may keep a clone of the [`Push`]
+/// past the connection, so the push queue never says when to stop.
+async fn write_frames<C: Wire>(
+    mut sink: Sink<C>,
+    mut inbox: mpsc::Receiver<Outgoing>,
+    mut pushes: mpsc::Receiver<Value>,
+) {
+    loop {
+        let (frame, _slot) = tokio::select! {
+            outgoing = inbox.recv() => match outgoing {
+                Some((response, slot)) => (response, Some(slot)),
+                None => return write_queued(sink, pushes).await,
+            },
+            Some(push) = pushes.recv() => (push, None),
+        };
+        if sink.send(frame).await.is_err() {
+            return;
+        }
+    }
+}
+
+/// Writes the pushes already queued when the responses end, and no more: a
+/// handler pushing as fast as the peer reads would otherwise keep it open.
+async fn write_queued<C: Wire>(mut sink: Sink<C>, mut pushes: mpsc::Receiver<Value>) {
+    for _ in 0..pushes.len() {
+        let Ok(push) = pushes.try_recv() else {
+            return;
+        };
+        if sink.send(push).await.is_err() {
             return;
         }
     }
@@ -917,8 +965,8 @@ mod tests {
         start_flaky_server, start_server, start_server_with, start_tcp_server,
     };
     use super::{
-        ACCEPT_RETRY_DELAY, Codec, Conn, Handler, MAX_CONNECTIONS, Peer, RESPONSE_BUFFER, RpcError,
-        Session, Wire,
+        ACCEPT_RETRY_DELAY, Codec, Conn, Handler, MAX_CONNECTIONS, Peer, Push, RESPONSE_BUFFER,
+        RpcError, Session, Wire,
     };
 
     /// The whole protocol surface a transport has to carry, as one value: a
@@ -1933,5 +1981,361 @@ mod tests {
             (Value::from("this handler refuses"), Value::Nil),
             (error, result)
         );
+    }
+
+    thread_local! {
+        // Per thread because a current-thread test runs the server's tasks on its own thread.
+        static LINES_DROPPED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// A session holding its connection's Push, counting its drops on this thread.
+    struct Line(Push);
+
+    impl Session for Line {
+        fn opened(conn: &Conn) -> Self {
+            Self(conn.push.clone())
+        }
+    }
+
+    impl Drop for Line {
+        fn drop(&mut self) {
+            LINES_DROPPED.with(|dropped| dropped.set(dropped.get() + 1));
+        }
+    }
+
+    /// A handler whose methods push to their own connection or a joined one.
+    #[derive(Default)]
+    struct Switchboard {
+        joined: std::sync::Mutex<std::collections::HashMap<String, Push>>,
+        accepted: Arc<AtomicUsize>,
+    }
+
+    fn chunk() -> Value {
+        Value::from("x".repeat(8 << 10))
+    }
+
+    fn push_frame(method: &str, params: Vec<Value>) -> Value {
+        Value::Array(vec![
+            Value::from(2),
+            Value::from(method),
+            Value::Array(params),
+        ])
+    }
+
+    fn count(params: &[Value]) -> u64 {
+        params.first().and_then(Value::as_u64).unwrap_or(0)
+    }
+
+    impl Handler for Switchboard {
+        type Session = Line;
+
+        async fn call(
+            &self,
+            session: &Line,
+            method: &str,
+            params: Vec<Value>,
+        ) -> Result<Value, RpcError> {
+            let gone = |_| RpcError::Refused {
+                code: "gone",
+                message: "that connection is gone".to_string(),
+            };
+            match method {
+                "join" => {
+                    let name = params.first().and_then(Value::as_str).unwrap_or_default();
+                    let mut joined = self.joined.lock().expect("the joined map");
+                    joined.insert(name.to_string(), session.0.clone());
+                    Ok(Value::Nil)
+                }
+                "tell" => {
+                    let name = params.first().and_then(Value::as_str).unwrap_or_default();
+                    let said = params.get(1).cloned().unwrap_or(Value::Nil);
+                    let target = self.joined.lock().expect("the joined map")[name].clone();
+                    target.send("answer", vec![said]).map_err(gone)?;
+                    Ok(Value::Nil)
+                }
+                "burst" => {
+                    for _ in 0..count(&params) {
+                        session.0.send("chunk", vec![chunk()]).map_err(gone)?;
+                    }
+                    Ok(chunk())
+                }
+                "flood" => {
+                    let target = match params.get(1).and_then(Value::as_str) {
+                        Some(name) => self.joined.lock().expect("the joined map")[name].clone(),
+                        None => session.0.clone(),
+                    };
+                    for _ in 0..count(&params) {
+                        if target.send("chunk", vec![chunk()]).is_ok() {
+                            self.accepted.fetch_add(1, Ordering::SeqCst);
+                        }
+                    }
+                    Ok(Value::Nil)
+                }
+                unknown => Err(RpcError::UnknownMethod(unknown.to_string())),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn a_push_reaches_its_own_connection_and_no_other() {
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut a = TestClient::connect(&path).await;
+        let mut b = TestClient::connect(&path).await;
+        let mut c = TestClient::connect(&path).await;
+        for (client, name) in [(&mut a, "a"), (&mut b, "b")] {
+            let (_, error, _) = client.call(1, "join", vec![Value::from(name)]).await;
+            assert_eq!(Value::Nil, error, "{name} joined");
+        }
+
+        let tell = vec![Value::from("b"), Value::from(42)];
+        let (_, error, _) = c.call(2, "tell", tell).await;
+        assert_eq!(Value::Nil, error);
+
+        assert_eq!(push_frame("answer", vec![Value::from(42)]), b.recv().await);
+        for client in [&mut a, &mut c] {
+            let (msgid, error, _) = client.call(9, "ping", vec![]).await;
+            assert_eq!((9, Value::Nil), (msgid, error), "a stray push came first");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_that_never_reads_is_closed_at_the_push_bound_and_others_go_on() {
+        let switchboard = Switchboard::default();
+        let accepted = Arc::clone(&switchboard.accepted);
+        let (_dir, path) = start_server_with(switchboard).await;
+        let mut slow = TestClient::connect(&path).await;
+        let mut other = TestClient::connect(&path).await;
+
+        slow.send(request(1, "flood", vec![Value::from(300)])).await;
+        let mut stream = slow.into_inner();
+        let mut written = Vec::new();
+        tokio::time::timeout(RESPONSE_WAIT, stream.read_to_end(&mut written))
+            .await
+            .expect("the slow connection was closed")
+            .expect("read until the close");
+        assert_eq!(256, accepted.load(Ordering::SeqCst));
+
+        let (msgid, error, _) = other.call(2, "ping", vec![]).await;
+        assert_eq!((2, Value::Nil), (msgid, error));
+    }
+
+    #[tokio::test]
+    async fn pushes_and_responses_arrive_as_whole_frames() {
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut client = TestClient::connect(&path).await;
+        let (bursts, per_burst) = (20, 4);
+        for msgid in 0..bursts {
+            client
+                .send(request(msgid, "burst", vec![Value::from(per_burst)]))
+                .await;
+        }
+        let (mut pushes, mut replies) = (0, 0);
+        while replies < bursts || pushes < bursts * per_burst {
+            let frame = client.recv().await;
+            if frame.as_array().and_then(|parts| parts.first()) == Some(&Value::from(2)) {
+                assert_eq!(push_frame("chunk", vec![chunk()]), frame);
+                pushes += 1;
+            } else {
+                let (_, error, result) = response_parts(frame);
+                assert_eq!((Value::Nil, chunk()), (error, result));
+                replies += 1;
+            }
+        }
+        assert_eq!((bursts, bursts * per_burst), (replies, pushes));
+    }
+
+    #[tokio::test]
+    async fn a_push_frame_from_a_client_is_refused_as_a_request() {
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut client = TestClient::connect(&path).await;
+
+        client
+            .send(push_frame("answer", vec![Value::from(1)]))
+            .await;
+        let (id, error, _) = raw_response_parts(client.recv().await);
+        assert_eq!(
+            (
+                Value::from("answer"),
+                Value::from("request has 3 elements, expected 4")
+            ),
+            (id, error)
+        );
+
+        client
+            .send(Value::Array(vec![
+                Value::from(2),
+                Value::from(5),
+                Value::from("ping"),
+                Value::Array(vec![]),
+            ]))
+            .await;
+        let (msgid, error, _) = response_parts(client.recv().await);
+        assert_eq!(
+            (5, Value::from("request type must be 0, got 2")),
+            (msgid, error)
+        );
+    }
+
+    /// Pushes from every hello and admits only "letmein".
+    struct Herald;
+
+    impl Handler for Herald {
+        type Session = Line;
+
+        fn requires_hello(&self) -> bool {
+            true
+        }
+
+        async fn hello(&self, conn: &Conn, params: Vec<Value>) -> Result<(Value, Line), RpcError> {
+            let token = params.first().cloned().unwrap_or(Value::Nil);
+            let _queued = conn.push.send("early", vec![token.clone()]);
+            if token.as_str() == Some("letmein") {
+                Ok((Value::from("welcome"), Line(conn.push.clone())))
+            } else {
+                Err(RpcError::Refused {
+                    code: "bad_token",
+                    message: "the hello was refused".to_string(),
+                })
+            }
+        }
+
+        async fn call(&self, _: &Line, method: &str, _: Vec<Value>) -> Result<Value, RpcError> {
+            Err(RpcError::UnknownMethod(method.to_string()))
+        }
+    }
+
+    #[tokio::test]
+    async fn a_push_from_a_hello_waits_for_the_welcome() {
+        let (_dir, path) = start_server_with(Herald).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, result) = client.call(1, "hello", vec![Value::from("letmein")]).await;
+        assert_eq!((Value::Nil, Value::from("welcome")), (error, result));
+        assert_eq!(
+            push_frame("early", vec![Value::from("letmein")]),
+            client.recv().await
+        );
+    }
+
+    #[tokio::test]
+    async fn a_push_from_a_refused_hello_never_reaches_the_peer() {
+        let (_dir, path) = start_server_with(Herald).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, _) = client.call(1, "hello", vec![Value::from("guess")]).await;
+        assert_eq!(Value::from("the hello was refused"), error);
+        let after = tokio::time::timeout(RESPONSE_WAIT, client.next_frame())
+            .await
+            .expect("the refused connection closed");
+        assert!(
+            !matches!(after, Some(Ok(_))),
+            "a refused peer read {after:?}"
+        );
+    }
+
+    /// Counts warnings on the thread it is the default for.
+    struct Warnings(Arc<AtomicUsize>);
+
+    impl tracing::Subscriber for Warnings {
+        fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
+            true
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+
+        fn event(&self, event: &tracing::Event<'_>) {
+            if *event.metadata().level() == tracing::Level::WARN {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        fn enter(&self, _: &tracing::span::Id) {}
+
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    #[tokio::test]
+    async fn an_overflow_warns_once_for_its_connection() {
+        let warnings = Arc::new(AtomicUsize::new(0));
+        let _default = tracing::subscriber::set_default(Warnings(Arc::clone(&warnings)));
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut slow = TestClient::connect(&path).await;
+
+        slow.send(request(1, "flood", vec![Value::from(300)])).await;
+        let mut stream = slow.into_inner();
+        let mut written = Vec::new();
+        tokio::time::timeout(RESPONSE_WAIT, stream.read_to_end(&mut written))
+            .await
+            .expect("the slow connection was closed")
+            .expect("read until the close");
+        assert_eq!(1, warnings.load(Ordering::SeqCst));
+    }
+
+    /// A raw stream's frames until the server closes it.
+    async fn frames_until_close(mut stream: tokio::net::UnixStream) -> Vec<Value> {
+        let mut bytes = Vec::new();
+        tokio::time::timeout(RESPONSE_WAIT, stream.read_to_end(&mut bytes))
+            .await
+            .expect("the connection closed")
+            .expect("read until the close");
+        let mut rest = bytes.as_slice();
+        std::iter::from_fn(|| rmpv::decode::read_value(&mut rest).ok()).collect()
+    }
+
+    #[tokio::test]
+    async fn pushes_queued_when_the_peer_stops_sending_are_still_written() {
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut client = TestClient::connect(&path).await;
+        let pushes = 100;
+        client
+            .send(request(1, "burst", vec![Value::from(pushes)]))
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut stream = client.into_inner();
+        stream.shutdown().await.expect("half-close");
+
+        let frames = frames_until_close(stream).await;
+        let pushed = frames
+            .iter()
+            .filter(|frame| {
+                frame.as_array().and_then(|parts| parts.first()) == Some(&Value::from(2))
+            })
+            .count();
+        assert_eq!((pushes + 1, pushes), (frames.len(), pushed));
+    }
+
+    #[tokio::test]
+    async fn an_overflow_closes_a_half_closed_peer_that_never_reads() {
+        let (_dir, path) = start_server_with(Switchboard::default()).await;
+        let mut stuck = TestClient::connect(&path).await;
+        let mut other = TestClient::connect(&path).await;
+        let (_, error, _) = stuck.call(1, "join", vec![Value::from("stuck")]).await;
+        assert_eq!(Value::Nil, error);
+        stuck
+            .send(request(2, "flood", vec![Value::from(100)]))
+            .await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let mut stream = stuck.into_inner();
+        stream.shutdown().await.expect("half-close");
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let dropped = LINES_DROPPED.with(std::cell::Cell::get);
+
+        let flood = vec![Value::from(300), Value::from("stuck")];
+        let (_, error, _) = other.call(3, "flood", flood).await;
+        assert_eq!(Value::Nil, error);
+
+        let closed = tokio::time::timeout(RESPONSE_WAIT, async {
+            while LINES_DROPPED.with(std::cell::Cell::get) == dropped {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        assert!(closed.is_ok(), "the overflow left the unread session open");
+        assert_eq!(dropped + 1, LINES_DROPPED.with(std::cell::Cell::get));
+        drop(stream);
     }
 }
