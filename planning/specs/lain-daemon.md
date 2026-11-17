@@ -1,6 +1,7 @@
 # lain-daemon: 1 per-user Rust daemon for sessions, the phone, headless runs and fast spawning
 
-status: draft
+status: in-progress
+base: 7eea39c5e92903ae975887cb5ce268c75926fd2f
 commit-mode: orchestrator-commits
 language: rust, ruby
 panel: Rust (Linus Torvalds, Raph Levien, Andrew Gallant, Frank McSherry, Ashley Williams); Ruby (Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1206,3 +1207,17 @@ Run after D19 lands, in the dotfiles bare repo (`git --git-dir=$HOME/.cfg --work
 - **On the Mac:** add a daemon step to `lain-macos-bringup.md`. `--human remote` is expected to refuse there.
 
 ## Execution log
+
+### Setup (2026-11-17)
+
+- **Base:** `main` at `7eea39c5e92903ae975887cb5ce268c75926fd2f`. `review-queue-hud.md` is `done` (head `38d3f560`). Re-checked the grounding the first ready cards touch: `crates/lain-core/src/rpc.rs` (1,966 lines, the `pub(crate)` traits at the cited lines, `main.rs` lint attributes) and `config/builder.rb` (`USER_VERBS`, `remote`, `refuse_project_only`) still match. `Config.github` and `Up::Relay`'s lines moved; later cards re-read their own grounding.
+- **Worktrees at start:** the main checkout, `/home/tara/w/ir`, and 82 stale `tmp/worktrees/<id>` from earlier plans. This run uses `tmp/worktrees/ldm-D<n>` and `card/ldm-D<n>`.
+- **Pre-staged user work, unstaged for the run:** `.gitmodules`, `references/repos/cliffcompaction` (gitlink `b48d660a`), `references/repos/pi` (gitlink `36be9c61`). Re-stage at close-out with `git add .gitmodules references/repos/cliffcompaction references/repos/pi`, then check `git ls-files -s` against those SHAs.
+- **Hook:** unchanged from the review-queue run. `bundle exec rake compile check` (rubocop plus `rake pspec`) on any Ruby or Rust file; cargo fmt, clippy and test on Rust; `remote-test` (the phone app's tests) on `crates/lain-(wire|core)/` and `Cargo.*`; `cargo deny` on `Cargo.*` and `deny.toml`; `yard-lint --staged`; `bin/lint-gherkin-docs` on plan docs; `bin/lint-commit-msg`. The suite cannot run beside other tests; the example count comes from `tmp/parallel_runtime_rspec.log` and the hook log.
+- **Ratchet specs:** every top-level `spec/*_spec.rb` plus the 35 nested scanners listed in `~/tmp/lain/ldm-ratchet-scan.txt`, plus `bin/zeitwerk-census --check` for a card that adds a constant.
+- **Build outputs copied at cut:** `lib/lain/lain.so`, `target/release/lain-fence`, `tmp/parallel_runtime_rspec.log`; a Rust card also gets a copy of `target/debug`.
+- **Quiet wait:** no test runner, load under 4, memory PSI under 5, 7 GB available, 3 readings 10 s apart (the review-queue run's rule).
+- **Concurrency cap:** 15 GB RAM, so about 5 agents with a landing counted as 1.
+- **Paths that need user approval:** none in the cards; E1 to E3 run in `~/.cfg` after D19.
+
+### Run log
