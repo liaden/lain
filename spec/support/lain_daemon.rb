@@ -75,7 +75,7 @@ RSpec.configure do |config|
 
   config.before(:each, :daemon) do
     unless File.executable?(daemon_launch.binary)
-      skip("lain-daemon not built at #{daemon_launch.binary} -- run `bundle exec rake daemon:build`")
+      absent_binary("lain-daemon not built at #{daemon_launch.binary} -- run `bundle exec rake daemon:build`")
     end
   end
 

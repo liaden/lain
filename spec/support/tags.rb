@@ -211,16 +211,33 @@ end
 #
 #     bundle exec rake core:build && bundle exec rspec --tag core
 #
-# When opted in but the binary is absent, an example SKIPS (never fails),
+# When opted in but the binary is absent, an example SKIPS (never fails, unless LAIN_REQUIRE_BINARIES=1),
 # mirroring :nvim: a missing build artifact is an environment gap, not a lain
 # regression -- and the skip message names the rake task that fills it.
+#
+# CI and the pre-commit hook set LAIN_REQUIRE_BINARIES=1, where an absent binary FAILS instead:
+# a tier that skips for want of its binary reads green while running nothing.
+module BinaryGate
+  REQUIRED = ENV["LAIN_REQUIRE_BINARIES"] == "1"
+
+  # @param message [String] what is missing and the rake task that builds it
+  # @return [void]
+  # @raise [RuntimeError] when binaries are required
+  def absent_binary(message)
+    raise message if REQUIRED
+
+    skip(message)
+  end
+end
+
 RSpec.configure do |config|
+  config.include BinaryGate
   config.filter_run_excluding(:core)
 
   config.before(:each, :core) do
     unless File.executable?(CoreDaemon::BINARY)
-      skip("lain-core binary not built at #{CoreDaemon::BINARY} -- run `bundle exec rake core:build` " \
-           "to run the wire seam")
+      absent_binary("lain-core binary not built at #{CoreDaemon::BINARY} -- run `bundle exec rake core:build` " \
+                    "to run the wire seam")
     end
   end
 end

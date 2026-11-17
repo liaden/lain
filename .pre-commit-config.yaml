@@ -118,8 +118,19 @@ repos:
         types_or: [ruby, rust]
         # Neither the phone app's Rust nor lain-core's reaches this suite: the app never touches Ruby,
         # and the only specs that drive lain-core are :core, which the suite excludes. Their own unit
-        # tests are the check for a change inside either.
+        # tests are the check for a change inside either. lain-daemon and lain-rpc are NOT excluded:
+        # the :daemon and :core specs drive them, and daemon-tier below runs those tags on them.
         exclude: ^(apps/|crates/lain-core/)
+        pass_filenames: false
+
+      # The suite excludes :core and skips :daemon without their binaries, so a Rust or Ruby change
+      # under the daemon would pass ruby-checks having run neither. LAIN_REQUIRE_BINARIES makes a
+      # missing binary a failure here.
+      - id: daemon-tier
+        name: daemon tier (:core and :daemon specs)
+        entry: env LAIN_REQUIRE_BINARIES=1 sh -c 'bundle exec rake compile daemon:build core:build && bundle exec rspec --tag core --tag daemon'
+        language: system
+        files: ^(crates/lain-(core|rpc|daemon|wire)/|Cargo\.(toml|lock)$|Rakefile$|lib/lain/(core|daemon)(\.rb|/)|lib/lain/approval/remote_surface\.rb|lib/lain/paths/shipped\.rb|spec/lain/(daemon_spec\.rb|daemon/|core/|approval/remote_surface_spec\.rb)|spec/support/(lain_daemon|core_daemon|tags)\.rb)
         pass_filenames: false
 
       # The doc defects RuboCop cannot reach, because they are properties of the

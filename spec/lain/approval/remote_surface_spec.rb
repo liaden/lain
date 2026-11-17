@@ -646,6 +646,9 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
     def sent_ids = ntfy.sent.map { _1.first.id }
 
+    # A call left parked holds the Sync block open until the queue's 10 s timeout.
+    def settle_parked = queue.to_a.each { _1.approve(surface: "desk", authority: :human) }
+
     it "announces a call once it has waited the delay, not before" do
       Sync do |task|
         task.with_timeout(20) do
@@ -658,6 +661,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
           clock.now = asked + 60
           wait_until(reason: "the call was announced") { ntfy.sent.any? }
           @item = item
+          settle_parked
           watch.stop
           phone.stop
         end
@@ -680,6 +684,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
           clock.now = asked + 61
           park(task, "second")
           wait_until(reason: "the second call was announced") { ntfy.sent.any? }
+          settle_parked
           watch.stop
           phone.stop
         end
@@ -699,6 +704,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
           clock.now = asked + 600
           wait_until(reason: "the call was announced") { ntfy.sent.any? }
           task.sleep(0.2)
+          settle_parked
           watch.stop
           phone.stop
         end
@@ -721,6 +727,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
           wait_until(reason: "the failure was recorded") { records("approval_surface_fault").any? }
           phone.answer(wire_approve(item))
           call.wait
+          settle_parked
           watch.stop
           phone.stop
         end
@@ -747,6 +754,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
             phone.answer(wire_approve(item))
             call.wait
           ensure
+            settle_parked
             phone&.stop
             watch&.stop
           end
@@ -771,6 +779,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
           park(task, "marker")
           wait_until(reason: "the marker was announced") { ntfy.sent.size >= 2 }
           @first = first
+          settle_parked
           watch.stop
           phone.stop
         end

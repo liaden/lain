@@ -104,6 +104,11 @@ jobs:
         run: uname -r; cat /sys/kernel/security/lsm; target/release/lain-fence --status
       - name: Run the parallel suite
         run: bundle exec rake pspec
+      # The suite excludes :core and skips :daemon without a binary; LAIN_REQUIRE_BINARIES makes an absent one a failure.
+      - name: Run the daemon tier
+        env:
+          LAIN_REQUIRE_BINARIES: '1'
+        run: bundle exec rake daemon:build core:build && bundle exec rspec --tag core --tag daemon
       # Saved on a red suite too, but only once the extension linked: an entry
       # is immutable, so a half-built target/ would hold the key until evicted.
       - name: Save the cargo registry and compiled target/
