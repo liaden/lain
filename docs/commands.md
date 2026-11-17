@@ -1477,10 +1477,11 @@ tests preset: :rspec
   `.lain/config.rb` that says `remote` is refused, naming the user's config.rb.
   `relay:` is the `"ip:port"` the relay listens on for the phone, such as `"100.64.0.1:7820"`. It
   must be loopback or this host's `tailscale0` address; `0.0.0.0` and any other all-addresses
-  spelling are refused. [`lain up`](#lain-up) runs the relay in its own `relay` tmux window of the
-  cockpit, and a relay it cannot start (no `lain-core` build, no matching address, an unsafe
-  devices file) is a warning and a cockpit without one, never a refusal. Devices are admitted with
-  [`lain remote pair`](#lain-remote). `ntfy:` is an `http` or `https` topic URL, such as
+  spelling are refused. The per-user lain-daemon runs the relay as a confined worker for every
+  chat; a relay it cannot start (no matching address, an unsafe devices file) leaves the phone
+  surface off, which the chat says in a `phone surface off:` line and records as
+  `capability_degraded`, never a refusal. Devices are admitted with [`lain remote pair`](#lain-remote).
+  `ntfy:` is an `http` or `https` topic URL, such as
   `"https://ntfy.sh/my-lain-topic"`; anything else is refused. An item that waits 60 seconds
   unanswered sends 1 notice to the topic, a title naming the kind and the requester plus an Open
   action into the phone app, and no item text, token or path. An item answered first never

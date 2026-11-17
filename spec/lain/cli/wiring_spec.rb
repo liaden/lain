@@ -4024,6 +4024,25 @@ RSpec.describe Lain::CLI::Wiring do
       it "hands the Repl none when remote relay is unset" do
         expect(remote_handed).to be_nil
       end
+
+      it "builds the surface over the chat's own daemon registration" do
+        write_user_config("remote relay: \"127.0.0.1:7820\"\n")
+        registration = instance_spy(Lain::Daemon::Registration, call: nil)
+        handed = []
+        allow(Lain::Approval::RemoteSurface).to receive(:for).and_wrap_original do |original, **kwargs|
+          handed << kwargs[:registration]
+          original.call(**kwargs)
+        end
+
+        Dir.mktmpdir do |dir|
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                              tty_factory: tty_factory(dir), conductor_opener:, registration:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(handed).to eq([registration])
+      end
     end
 
     describe "the idle compaction surface", :seam do

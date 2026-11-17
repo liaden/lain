@@ -5,6 +5,7 @@ require "fileutils"
 require "json"
 require "socket"
 require "stringio"
+require "timeout"
 require "tmpdir"
 
 # Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
@@ -61,6 +62,24 @@ module RemoteSurfaceSpecSupport
     def approve(digest, reason: nil, answered_by: nil) = @answers << [:approve, digest, reason, answered_by]
   end
 
+  # A wave of gate rows the spec can re-ask, as a newer artifact revision does.
+  class Wave
+    Row = Lain::Remote::Agenda::Gates::Row
+
+    attr_accessor :rows
+
+    def initialize(epic: "e", digests: %w[d1 d2])
+      @rows = digests.each_with_index.map do |digest, at|
+        Row.new(digest:, epic:, stage: "issue_plan", issue: "i#{at}", question: "sign off?", asked_at: Time.at(at))
+      end
+    end
+
+    def each(&block) = @rows.each(&block)
+
+    # The last row asked again under a new digest and a later time; the wave's earliest row keeps its time.
+    def reask! = @rows[-1] = @rows[-1].with(digest: "#{@rows[-1].digest}-reasked", asked_at: Time.at(100))
+  end
+
   # Gate journals the fold cannot read, whose message names one of them.
   class UnreadableGates
     Unreadable = Class.new(Lain::Error) { include Lain::JournalUnreadable }
@@ -106,62 +125,201 @@ module RemoteSurfaceSpecSupport
     end
   end
 
-  # The built lain-core relay on a loopback port, with one paired device.
-  class Relay
-    BINARY = File.join(Lain::Paths::Shipped.cargo_target, "debug", "lain-core")
-    START_BUDGET = 5.0
+  # Plays the chat's registration: answers daemon.info with the relay's state,
+  # records every request, and hands a push to its subscriber when told.
+  class StandIn
+    attr_reader :calls
+    attr_accessor :relay, :refuse
 
-    attr_reader :socket, :port, :token
-
-    def initialize(dir, socket: File.join(dir, "sock", "relay.sock"))
-      @dir = dir
-      @socket = socket
-      FileUtils.mkdir_p(File.dirname(@socket), mode: 0o700)
-      devices = Lain::Remote::Devices.new(File.join(dir, "devices", "devices"))
-      @token = devices.pair("pixel")
-      @devices_file = devices.path
-      @port = TCPServer.open("127.0.0.1", 0) { _1.addr[1] }
+    # @param relay [String] the relay state daemon.info answers
+    # @param refuse [String, nil] the refusal every agenda.publish gets
+    # @param dying [Hash{String=>Integer}] how many times each method raises Died before it answers
+    def initialize(relay: "running", refuse: nil, dying: {})
+      @relay = relay
+      @refuse = refuse
+      @dying = dying.dup
+      @calls = []
+      @handlers = {}
     end
 
-    def start
-      @pid = Process.spawn(BINARY, "relay", "--unix", @socket, "--listen", "127.0.0.1:#{@port}",
-                           "--devices-file", @devices_file, in: :close, out: :close,
-                                                            err: File.join(@dir, "relay.log"))
-      wait_for_socket
-      self
+    def on(method, &handler) = (@handlers[method] = handler) && self
+
+    def call(method, *params)
+      @calls << [method, params]
+      die(method)
+      return { "relay" => @relay } if method == "daemon.info"
+      raise Lain::Core::Client::Refused, @refuse if @refuse
+
+      @calls.size
+    end
+
+    def die(method)
+      return unless @dying.fetch(method, 0).positive?
+
+      @dying[method] -= 1
+      raise Lain::Core::Died, "the daemon went away"
+    end
+
+    def settled_ids
+      @calls.select { _1.first == "agenda.publish" }
+            .flat_map { |_, (delta, _keys)| Lain::Remote::Wire::Delta.from_wire(delta).settled }
+    end
+
+    def wired_items
+      @calls.select { _1.first == "agenda.publish" }.flat_map { |_, (delta, _keys)| delta.fetch("added") }
+    end
+
+    def deliver(method, params = []) = @handlers.fetch(method).call(params)
+
+    def die_next(method) = @dying[method] = 1
+
+    def methods_called = @calls.map(&:first).uniq
+
+    # Each agenda.publish that added an item, as the Delta and the gate keys it sent.
+    def published
+      @calls.select { _1.first == "agenda.publish" }
+            .map { |_, (delta, keys)| [Lain::Remote::Wire::Delta.from_wire(delta), keys] }
+            .reject { |delta, _| delta.added.empty? }
+    end
+
+    def added_ids = published.flat_map { |delta, _| delta.added.map(&:id) }
+  end
+
+  # A lain-daemon running the phone relay on a loopback port with 1 paired
+  # device, and this process registered with it as 1 chat.
+  class Desk
+    SESSION = "20261117T100000-spec"
+
+    attr_reader :port, :token, :launch
+
+    def initialize(dir, launch:, paths:, env:, devices: Lain::Remote::Devices.new(File.join(dir, "devices", "devices")))
+      @token = devices.pair("pixel")
+      @port = TCPServer.open("127.0.0.1", 0) { _1.addr[1] }
+      @launch = launch.with(flags: ["--relay", "127.0.0.1:#{@port}", "--devices-file", devices.path])
+      @paths = paths
+      @env = env
+      @root = dir
+    end
+
+    def registration(launch: @launch)
+      writer = Lain::Liveness::Writer.current
+      record = Lain::LiveSessions::Record.new(session_id: SESSION, pid: writer.pid, start: writer.start,
+                                              host: writer.host, root: @root, cwd: @root, input_socket: nil,
+                                              journal: nil, attended: true, started_at: "2026-11-17T10:00:00Z")
+      Lain::Daemon::Registration.new(record:, notes: StringIO.new, daemon: lambda { |pushes:, replace:|
+        Lain::Daemon.ensure(paths: @paths, env: @env, launch:, pushes:, replace:)
+      })
+    end
+
+    def pid = LainDaemon.pid_at(@paths)
+
+    # A daemon other than `old` answers, with its relay listening.
+    def restarted?(old)
+      pid.then { _1 && _1 != old } && info.fetch("relay") == "running"
+    rescue Lain::Core::Died, Lain::Core::Client::Stopped
+      false
+    end
+
+    def info
+      client = Lain::Core::Client.start(transport: Lain::Core::Transport::Unix.new(Lain::Daemon.socket(paths: @paths)))
+      client.call("daemon.info").tap { client.stop }
+    end
+
+    # The relay worker is the daemon's only child.
+    def worker_pid
+      Dir[File.join("/proc", pid.to_s, "task", "*", "children")].flat_map { File.read(_1).split }.map(&:to_i).sole
+    end
+  end
+
+  # 1 chat in a process of its own, as a sibling of every other: it registers
+  # with the daemon, runs a RemoteSurface over 1 deferred gate wave read from
+  # ROWS, appends each answer the wave gets to OUT, prints "published <ids>"
+  # each time the daemon takes a publish that adds items, and stops at EOF.
+  SIBLING_CHAT = <<~RUBY
+    require "json"
+    require "stringio"
+    require "lain"
+
+    session, root, out, rows, flags = ARGV
+    paths = Lain::Paths.new
+    launch = Lain::Daemon::Launch.current(paths:).with(flags: JSON.parse(flags))
+    gates = Class.new do
+      define_method(:each) do |&block|
+        JSON.parse(File.read(rows)).map do |issue, digest, at|
+          Lain::Remote::Agenda::Gates::Row.new(digest:, epic: "e", stage: "impl", issue:, question: "ship it?",
+                                                asked_at: Time.at(at))
+        end.each(&block)
+      end
+      define_method(:approve) { |digest, **| File.write(out, "\#{session} approve \#{digest}\n", mode: "a") }
+      define_method(:deny) { |digest, **| File.write(out, "\#{session} deny \#{digest}\n", mode: "a") }
+    end.new
+    told = Class.new(SimpleDelegator) do
+      def call(method, *params)
+        super.tap do |answer|
+          added = method == "agenda.publish" ? params.first.fetch("added") : []
+          if answer && added.any?
+            $stdout.puts("published \#{added.map { _1.values.first.fetch("id") }.join(",")}")
+            $stdout.flush
+          end
+        end
+      end
+    end
+    queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new), timeout: 60)
+    agenda = Lain::Remote::Agenda.new(queue:, gates:, replies: Class.new { def waiting = [] }.new)
+    writer = Lain::Liveness::Writer.current
+    record = Lain::LiveSessions::Record.new(session_id: session, pid: writer.pid, start: writer.start,
+                                            host: writer.host, root:, cwd: root, input_socket: nil, journal: nil,
+                                            attended: true, started_at: "2026-11-17T10:00:00Z")
+    Sync do |task|
+      registration = Lain::Daemon::Registration.new(record:, notes: $stderr, daemon: lambda { |pushes:, replace:|
+        Lain::Daemon.ensure(paths:, launch:, pushes:, replace:)
+      }).open(task)
+      surface = Lain::Approval::RemoteSurface.new(registration: told.new(registration), agenda:, secrets: [],
+                                                  journal: Lain::Journal.new(io: StringIO.new), project: root,
+                                                  trace: Lain::Daemon::Launch.trace_path(paths:), poll_interval: 0.02)
+      watching = task.async { surface.watch }
+      $stdin.read
+      watching.stop
+    ensure
+      registration&.close
+    end
+  RUBY
+
+  # Each sibling chat is stopped by its pid however the example ends.
+  class SiblingChat
+    STOP_BUDGET = 10
+
+    def initialize(env, session, root:, out:, rows:, flags:)
+      @err = File.join(root, "#{session}.err")
+      @io = IO.popen(env, [RbConfig.ruby, "-I", File.expand_path("../../../lib", __dir__), "-e", SIBLING_CHAT,
+                           session, root, out, rows, JSON.generate(flags)], "r+", err: @err)
+    end
+
+    # Reads what the chat prints until a publish adds `id`.
+    def published(id)
+      seen = @io.each_line.find { |line| line.chomp.split(" ", 2).last.to_s.split(",").include?(id) }
+      raise "the chat ended before it published #{id}: #{File.read(@err)}" unless seen
     end
 
     def stop
-      return unless @pid
-
-      Process.kill("TERM", @pid)
-      Process.wait(@pid)
-      @pid = nil
-    rescue Errno::ESRCH, Errno::ECHILD
-      @pid = nil
-    end
-
-    def log = File.read(File.join(@dir, "relay.log"))
-
-    private
-
-    def wait_for_socket
-      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + START_BUDGET
-      until File.socket?(@socket)
-        raise "the relay did not start: #{log}" if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-
-        sleep 0.02
-      end
+      @io.close_write
+      Timeout.timeout(STOP_BUDGET) { @io.read }
+    rescue Timeout::Error
+      Process.kill("KILL", @io.pid)
+    ensure
+      @io.close
     end
   end
 
   # The phone's side of the relay, over TCP with the paired token, speaking the
   # wire through the same Core::Client the surface uses.
   class Phone
-    def initialize(relay)
-      socket = TCPSocket.new("127.0.0.1", relay.port)
+    CONNECT_BUDGET = 5.0
+
+    def initialize(desk)
+      socket = connected(desk.port)
       @client = Lain::Core::Client.new(transport: Lain::Core::Transport::Mock.new(socket:), socket:)
-      hello = Lain::Remote::Wire::Hello.new(wire_version: Lain::Remote::Wire::VERSION, token: relay.token, cursor: 0)
+      hello = Lain::Remote::Wire::Hello.new(wire_version: Lain::Remote::Wire::VERSION, token: desk.token, cursor: 0)
       @head = Lain::Remote::Wire::Welcome.from_wire(@client.call("hello", [hello.to_wire])).head
       @cursor = 0
       @epoch = nil
@@ -182,6 +340,19 @@ module RemoteSurfaceSpecSupport
     def stop = @client.stop
 
     private
+
+    # The worker binds its port after the daemon answers, so the first connect may come early.
+    def connected(port)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + CONNECT_BUDGET
+      begin
+        TCPSocket.new("127.0.0.1", port)
+      rescue Errno::ECONNREFUSED
+        raise if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+        sleep 0.02
+        retry
+      end
+    end
 
     def advance
       page = Lain::Remote::Wire::AgendaPage.from_wire(
@@ -211,6 +382,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
   let(:runs) { [] }
   let(:toolset) { Lain::Toolset.new([gated_tool]) }
   let(:gate) { Lain::Middleware::Gate.new(policy: asking_ladder(queue, tools: toolset, journal:)) }
+  let(:wire) { Lain::Remote::Wire }
 
   around do |example|
     Dir.mktmpdir("remote") do |dir|
@@ -233,9 +405,10 @@ RSpec.describe Lain::Approval::RemoteSurface do
     end.new
   end
 
-  def surface(socket, secrets: [], agenda: self.agenda, journal: self.journal, **options)
-    described_class.new(transport: Lain::Core::Transport::Unix.new(socket), agenda:, secrets:, journal:,
-                        poll_interval: 0.02, project: "/work", **options)
+  def trace = File.join(@dir, "daemon.trace")
+
+  def surface(registration, secrets: [], agenda: self.agenda, journal: self.journal, project: @dir, **options)
+    described_class.new(registration:, agenda:, secrets:, journal:, poll_interval: 0.02, project:, trace:, **options)
   end
 
   def agenda_over(gates: RemoteSurfaceSpecSupport::NoGates.new, queue: self.queue, **options)
@@ -248,36 +421,252 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
   def records(type) = journal_records(journal_io, type)
 
-  describe "a dead relay degrades" do
-    it "returns from its watch and names the remote surface in a capability_degraded record" do
-      Sync { |task| task.with_timeout(5) { surface(File.join(@dir, "absent.sock")).watch } }
+  def approve(item) = wire::Answer::Call.new(id: item.id, verdict: Lain::Approval::Verdict::Approve.new, device: nil)
 
-      expect(records("capability_degraded"))
-        .to contain_exactly(a_hash_including("capability" => "remote_surface",
-                                             "requirer" => described_class.name,
-                                             "provider" => a_string_including("absent.sock")))
+  describe "over its registration" do
+    let(:registration) { RemoteSurfaceSpecSupport::StandIn.new }
+
+    # Watching until `want` holds of the registration, with the call parked first when asked.
+    def watched(stand_in = registration, parked: true, **options, &want)
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(stand_in, **options).watch }
+          call = park(task) if parked
+          wait_until(reason: "the surface published") { yield(stand_in) }
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
     end
 
-    it "leaves the desk answering the parked call it could not publish" do
+    it "publishes a parked call as an agenda.publish request, and never polls for answers" do
+      watched { _1.added_ids.any? }
+
+      expect(registration.methods_called).to contain_exactly("daemon.info", "agenda.publish")
+      expect(registration.published.first.first.added.sole).to have_attributes(tool: "bash", id: "1")
+    end
+
+    it "takes an answer the daemon pushes, as the paired device, with human authority" do
       outcome = Sync do |task|
-        task.async { surface(File.join(@dir, "absent.sock")).watch }
-        call = park(task)
-        wait_until(reason: "the call parked") { queue.any? }
-        queue.first.approve(surface: "desk", authority: :human)
-        task.with_timeout(5) { call.wait }
+        task.with_timeout(10) do
+          watching = task.async { surface(registration).watch }
+          call = park(task)
+          wait_until(reason: "the call was published") { registration.added_ids.any? }
+          registration.deliver("answer", [wire::Answer::Call.new(id: "1", verdict: Lain::Approval::Verdict::Approve.new,
+                                                                 device: "pixel").to_wire])
+          call.wait
+        ensure
+          watching&.stop
+        end
       end
 
       expect([outcome, runs]).to eq([Lain::Tool::Result.ok("ran ls -la"), [{ "command" => "ls -la" }]])
+      expect(records("approval_decision").last).to include("surface" => "remote:pixel")
     end
-  end
 
-  it "degrades with its own reason when the socket's directory is open to others" do
-    dir = File.join(@dir, "loose")
-    FileUtils.mkdir_p(dir, mode: 0o755)
-    File.chmod(0o755, dir)
-    Sync { |task| task.with_timeout(5) { surface(File.join(dir, "relay.sock")).watch } }
+    it "republishes every open item from cursor 0 when the registration reconnects, and does not degrade" do
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration).watch }
+          call = park(task)
+          wait_until(reason: "the call was published") { registration.added_ids.any? }
+          registration.deliver(Lain::Daemon::Registration::RECONNECTED)
+          wait_until(reason: "the call was published again") { registration.added_ids.size == 2 }
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
 
-    expect(records("capability_degraded").map { _1["provider"] }).to contain_exactly(a_string_including("0755"))
+      expect(registration.added_ids).to eq(%w[1 1])
+      expect(records("capability_degraded")).to be_empty
+    end
+
+    it "shares a gate under a key of its own, and a parked call under none" do
+      gated = agenda_over(gates: RemoteSurfaceSpecSupport::StageGate.new)
+      watched(agenda: gated) { |stand_in| stand_in.added_ids.size == 2 }
+
+      keyed = registration.published.to_h { |delta, keys| [delta.added.sole.class, keys] }
+      expect(keyed.fetch(wire::Item::GateQuestion)).to match("1" => a_string_matching(/\A\h{64}\z/))
+      expect(keyed.fetch(wire::Item::ParkedCall)).to eq({})
+    end
+
+    def gate_key(gates, secrets: [], project: @dir)
+      stand_in = RemoteSurfaceSpecSupport::StandIn.new
+      watched(stand_in, parked: false, agenda: agenda_over(gates:), secrets:, project:) { |chat| chat.added_ids.any? }
+      stand_in.published.sole.last.values.sole
+    end
+
+    it "keys the same gate the same way for 2 chats in 1 project" do
+      keys = Array.new(2) { gate_key(RemoteSurfaceSpecSupport::StageGate.new) }
+
+      expect(keys.uniq.size).to eq(1)
+    end
+
+    # The relay's keys span every project, and a project root is where authority ends.
+    it "keys the same wave differently in 2 projects" do
+      keys = [@dir, File.join(@dir, "other")].map { gate_key(RemoteSurfaceSpecSupport::StageGate.new, project: _1) }
+
+      expect(keys.uniq.size).to eq(2)
+    end
+
+    it "keys the same gate the same way for 2 chats that know different secret values" do
+      secret = "hunter2-correct-horse-battery"
+      keys = [[secret], []].map { gate_key(RemoteSurfaceSpecSupport::Wave.new(epic: "ship-#{secret}"), secrets: _1) }
+
+      expect(keys.uniq.size).to eq(1)
+    end
+
+    it "keys a re-asked wave anew, even when only 1 of its rows was asked again" do
+      wave = RemoteSurfaceSpecSupport::Wave.new
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration, agenda: agenda_over(gates: wave)).watch }
+          wait_until(reason: "the wave was published") { registration.added_ids.any? }
+          wave.reask!
+          wait_until(reason: "the re-asked wave was published") { registration.added_ids.size == 2 }
+        ensure
+          watching&.stop
+        end
+      end
+
+      keys = registration.published.map { |_, keyed| keyed.values.sole }
+      expect(keys.uniq.size).to eq(2)
+      expect(registration.settled_ids).to include("1")
+    end
+
+    it "sends the phone no artifact digest" do
+      watched(parked: false, agenda: agenda_over(gates: RemoteSurfaceSpecSupport::Wave.new)) { _1.added_ids.any? }
+
+      expect(registration.wired_items.to_s).not_to include("d1", "d2", "digests")
+    end
+
+    it "hides a path under home in the refusal it shows the phone" do
+      document = File.join(Dir.home, "dev", "nyotes", "epics", "e", "plan.md")
+      gated = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new("no epic document at #{document}"))
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration, agenda: gated).watch }
+          wait_until(reason: "the gate was published") { registration.added_ids.any? }
+          registration.deliver("answer", [approve(registration.published.first.first.added.sole).to_wire])
+          wait_until(reason: "the refusal was published") { registration.added_ids.size == 2 }
+        ensure
+          watching&.stop
+        end
+      end
+
+      shown = registration.published.last.first.added.sole.question
+      expect(shown).to include("no epic document at", described_class::PATH_MASK)
+      expect(shown).not_to include(Dir.home)
+    end
+
+    it "keeps watching when the daemon drops while it asks after a reconnect, and publishes again once it answers" do
+      dropping = RemoteSurfaceSpecSupport::StandIn.new
+      running = Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(dropping).watch }
+          call = park(task)
+          wait_until(reason: "the call was published") { dropping.added_ids.any? }
+          dropping.die_next("daemon.info")
+          dropping.deliver(Lain::Daemon::Registration::RECONNECTED)
+          wait_until(reason: "the call was published again") { dropping.added_ids.size == 2 }
+          watching.running?
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
+
+      expect(running).to be(true)
+      expect(records("capability_degraded")).to be_empty
+    end
+
+    it "publishes again on the next sweep when the daemon drops under a publish, and records no fault" do
+      dropping = RemoteSurfaceSpecSupport::StandIn.new(dying: { "agenda.publish" => 1 })
+      watched(dropping) { _1.added_ids.any? }
+
+      expect(records("approval_surface_fault")).to be_empty
+      expect(records("capability_degraded")).to be_empty
+    end
+
+    it "takes back what it published when it stops" do
+      watched { _1.added_ids.any? }
+
+      expect(registration.settled_ids).to eq(["1"])
+    end
+
+    it "takes nothing back once the relay is gone" do
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration).watch }
+          calls = [park(task)]
+          wait_until(reason: "the call was published") { registration.added_ids.any? }
+          registration.relay = "unavailable"
+          registration.refuse = "the phone relay is unavailable"
+          calls << park(task, "after the relay died")
+          watching.wait
+        ensure
+          calls&.each(&:stop)
+        end
+      end
+
+      expect(records("capability_degraded").size).to eq(1)
+      expect(registration.settled_ids).to be_empty
+    end
+
+    it "leaves the session for the daemon to stamp and names its project on each item" do
+      watched { _1.added_ids.any? }
+
+      expect(registration.published.first.first.added.sole).to have_attributes(session: "", project: @dir)
+    end
+
+    it "records a publish the daemon refuses, and keeps serving" do
+      refusing = RemoteSurfaceSpecSupport::StandIn.new(refuse: "ParkedCall 900000 bytes, over the relay's reply budget")
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(refusing).watch }
+          call = park(task)
+          wait_until(reason: "the refusal was recorded") { records("approval_surface_fault").any? }
+          [watching.running?, call]
+        ensure
+          call&.stop
+          watching&.stop
+        end
+      end
+
+      expect(records("approval_surface_fault").map { _1["error"] })
+        .to contain_exactly(a_string_including("Refused", "reply budget"))
+      expect(records("capability_degraded")).to be_empty
+    end
+
+    {
+      "the daemon runs no relay" => "off",
+      "the daemon's relay is unavailable" => "unavailable"
+    }.each do |what, state|
+      it "degrades once when #{what}" do
+        Sync { |task| task.with_timeout(5) { surface(RemoteSurfaceSpecSupport::StandIn.new(relay: state)).watch } }
+
+        expect(records("capability_degraded"))
+          .to contain_exactly(a_hash_including("capability" => "remote_surface", "requirer" => described_class.name,
+                                               "provider" => a_string_including(state, "#{trace} says why")))
+      end
+    end
+
+    it "degrades cleanly over a registration with no daemon, and the desk keeps the call" do
+      outcome = Sync do |task|
+        task.with_timeout(5) do
+          surface(Lain::Daemon::Registration::Null.new).watch
+          call = park(task)
+          wait_until(reason: "the call parked") { queue.any? }
+          queue.first.approve(surface: "desk", authority: :human)
+          call.wait
+        end
+      end
+
+      expect(outcome).to eq(Lain::Tool::Result.ok("ran ls -la"))
+      expect(records("capability_degraded").map { _1["capability"] }).to eq(["remote_surface"])
+    end
   end
 
   # An owner's error can name any file on this box; the phone is not on it.
@@ -306,6 +695,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
   describe ".for" do
     def built(relay, ntfy = nil)
       described_class.for(relay:, ntfy:, paths: Lain::Paths.new(env: { "HOME" => @dir }), root: @dir, queue:,
+                          registration: Lain::Daemon::Registration::Null.new,
                           replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
     end
 
@@ -319,66 +709,96 @@ RSpec.describe Lain::Approval::RemoteSurface do
     it "builds the surface when remote relay is set, and none when it is not" do
       expect([built("127.0.0.1:7820"), built(nil)]).to match([an_instance_of(described_class), nil])
     end
+
+    it "names the trace the daemon writes when its relay is unavailable" do
+      paths = Lain::Paths.new(env: { "HOME" => @dir })
+      built = described_class.for(relay: "127.0.0.1:7820", ntfy: nil, paths:, root: @dir, queue:,
+                                  registration: RemoteSurfaceSpecSupport::StandIn.new(relay: "unavailable"),
+                                  replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
+      Sync { |task| task.with_timeout(5) { built.watch } }
+
+      expect(records("capability_degraded").sole["provider"])
+        .to eq("the daemon's phone relay is unavailable; #{Lain::Daemon::Launch.current(paths:).trace} says why")
+    end
   end
 
-  it "is not built without the project its items name" do
-    expect { described_class.new(transport: Lain::Core::Transport::Unix.new(File.join(@dir, "absent.sock")), agenda:, secrets: []) }
-      .to raise_error(ArgumentError, /project/)
+  it "keeps no socket of its own" do
+    expect(described_class).not_to respond_to(:socket)
   end
 
-  it "dials the relay's socket in the runtime directory, one per project" do
-    paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => "/run/user/7", "HOME" => "/home/x" })
+  describe "through the built daemon's relay", :daemon do
+    let(:desk) { RemoteSurfaceSpecSupport::Desk.new(@dir, launch: daemon_launch, paths: daemon_paths, env: daemon_env) }
 
-    expect(described_class.socket(paths:, root: @dir))
-      .to eq(File.join("/run/user/7/lain", "remote-#{paths.project_hash(@dir)}", "relay.sock"))
-  end
-
-  describe "over the built relay", :core do
-    let(:relay) { RemoteSurfaceSpecSupport::Relay.new(@dir).start }
-    let(:wire) { Lain::Remote::Wire }
-
-    after { relay.stop }
-
-    # Watching, a phone connected, and one call parked: the block gets the
-    # phone, the call's task and the call as the phone sees it.
-    def with_a_parked_call(secrets: [], command: "ls -la")
+    # Registered, watching, a phone connected, and one call parked: the block
+    # gets the phone, the call's task and the call as the phone sees it.
+    def with_a_parked_call(secrets: [], command: "ls -la", agenda: self.agenda)
       Sync do |task|
         task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, secrets:).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+          registration = desk.registration.open(task)
+          watching = task.async { surface(registration, secrets:, agenda:).watch }
+          phone = RemoteSurfaceSpecSupport::Phone.new(desk)
           call = park(task, command)
           item = phone.until_open(&:any?).first
           yield phone, call, item
         ensure
           phone&.stop
           watching&.stop
+          registration&.close
         end
       end
     end
 
-    def approve(item) = wire::Answer::Call.new(id: item.id, verdict: Lain::Approval::Verdict::Approve.new, device: nil)
+    # Registered, watching and a phone connected; the block gets the phone and the watch.
+    def with_a_phone(agenda: self.agenda)
+      Sync do |task|
+        task.with_timeout(20) do
+          registration = desk.registration.open(task)
+          watching = task.async { surface(registration, agenda:).watch }
+          phone = RemoteSurfaceSpecSupport::Phone.new(desk)
+          yield phone, watching, task
+        ensure
+          phone&.stop
+          watching&.stop
+          registration&.close
+        end
+      end
+    end
 
-    context "when built by .for" do
-      let(:paths) { Lain::Paths.new(env: { "HOME" => @dir, "XDG_RUNTIME_DIR" => File.join(@dir, "r") }) }
-      let!(:relay) { RemoteSurfaceSpecSupport::Relay.new(@dir, socket: described_class.socket(paths:, root: @dir)).start }
+    context "when built by .for over a launch the user's config set" do
+      def write_user_config(body)
+        FileUtils.mkdir_p(File.dirname(daemon_paths.user_config))
+        File.write(daemon_paths.user_config, body)
+        Lain::Project::Trust.for_user(paths: daemon_paths).grant!
+      end
 
-      it "names no session of its own and the root it was built for on the item the phone sees" do
-        built = described_class.for(relay: "127.0.0.1:7820", ntfy: nil, paths:, root: Pathname(@dir), queue:,
-                                    replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
+      after { FileUtils.rm_f([daemon_paths.user_config, Lain::Remote::Devices.for(paths: daemon_paths).path]) }
+
+      it "shows the phone the item under the registration's session and root" do
+        port = TCPServer.open("127.0.0.1", 0) { _1.addr[1] }
+        write_user_config("remote relay: \"127.0.0.1:#{port}\"\n")
+        launch = Lain::Daemon::Launch.current(paths: daemon_paths, env: daemon_env)
+        token = Lain::Remote::Devices.for(paths: daemon_paths).pair("pixel")
+        built = lambda do |registration|
+          described_class.for(**Lain::Config.remote(paths: daemon_paths), paths: daemon_paths, root: Pathname(@dir),
+                                                                          registration:, queue:, secrets: [], journal:,
+                                                                          replies: RemoteSurfaceSpecSupport::NoReplies.new)
+        end
         item = Sync do |task|
           task.with_timeout(20) do
-            watching = task.async { built.watch }
-            phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+            registration = desk.registration(launch:).open(task)
+            watching = task.async { built.call(registration).watch }
+            phone = RemoteSurfaceSpecSupport::Phone.new(Struct.new(:port, :token).new(port, token))
             call = park(task)
             phone.until_open(&:any?).first
           ensure
             call&.stop
             phone&.stop
             watching&.stop
+            registration&.close
           end
         end
 
-        expect([item.session, item.project]).to eq([described_class::UNREGISTERED, @dir])
+        expect([item.session, item.project]).to eq([RemoteSurfaceSpecSupport::Desk::SESSION, @dir])
       end
     end
 
@@ -420,23 +840,22 @@ RSpec.describe Lain::Approval::RemoteSurface do
       expect(records("approval_decision").map { _1["surface"] }).to eq(["desk"])
     end
 
-    it "leaves the desk's later answer losing to the phone's" do
-      desk = with_a_parked_call do |phone, call, item|
-        pending = queue.first
+    it "writes a line naming the item and the device when the phone's answer loses to the desk" do
+      with_a_parked_call(agenda: RemoteSurfaceSpecSupport::DeskFirst.new(agenda, queue)) do |phone, call, item|
         phone.answer(approve(item))
         call.wait
-        pending.deny(surface: "desk", authority: :human)
+        wait_until(reason: "the lost answer was recorded") { records(described_class::LOST_TYPE).any? }
       end
 
-      expect(desk).to be(false)
-      expect(records("approval_decision").map { _1["surface"] }).to eq(["remote:pixel"])
+      expect(records(described_class::LOST_TYPE)).to contain_exactly(a_hash_including("id" => "1", "device" => "pixel"))
+      expect(records("approval_decision").map { _1["surface"] }).to eq(["desk"])
     end
 
     it "shows the phone why a wrong-typed answer was refused, and keeps the item open for another" do
       shown = with_a_parked_call do |phone, call, item|
         phone.answer(wire::Answer::Question.new(id: item.id, option: nil, text: "yes please", device: nil))
-        again = phone.until_open { |open| open.any? { _1.id == item.id && _1.why.include?("not a verdict") } }
-        phone.answer(approve(item))
+        again = phone.until_open { |open| open.any? { _1.why.include?("not a verdict") } }
+        phone.answer(approve(again.first))
         call.wait
         again.first.why
       end
@@ -445,23 +864,29 @@ RSpec.describe Lain::Approval::RemoteSurface do
       expect(runs).to eq([{ "command" => "ls -la" }])
     end
 
+    it "records a call the relay refuses as too large, and keeps serving the phone" do
+      shown = with_a_phone do |phone, watching, task|
+        large = park(task, "x" * (800 << 10))
+        wait_until(reason: "the refusal was recorded") { records("approval_surface_fault").any? }
+        small = park(task)
+        phone.answer(approve(phone.until_open(&:any?).sole))
+        large.stop
+        [small.wait, watching.running?]
+      end
+
+      expect(shown).to eq([Lain::Tool::Result.ok("ran ls -la"), true])
+      expect(records("approval_surface_fault").map { _1["error"] }).to contain_exactly(a_string_including("budget"))
+    end
+
     it "records a gate owner's refusal, shows it to the phone, and keeps serving" do
-      gated = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new)
-      shown = Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, agenda: gated).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          gate_item = phone.until_open(&:any?).first
-          phone.answer(approve(gate_item))
-          phone.until_open { |open| open.any? { _1.question.include?("no epic document") } }
-          call = park(task)
-          parked = phone.until_open { |open| open.any? { _1.respond_to?(:tool) } }.find { _1.respond_to?(:tool) }
-          phone.answer(approve(parked))
-          [call.wait, watching.running?]
-        ensure
-          phone&.stop
-          watching&.stop
-        end
+      raising = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new)
+      shown = with_a_phone(agenda: raising) do |phone, watching, task|
+        phone.answer(approve(phone.until_open(&:any?).first))
+        phone.until_open { |open| open.any? { _1.question.include?("no epic document") } }
+        call = park(task)
+        parked = phone.until_open { |open| open.any? { _1.respond_to?(:tool) } }.find { _1.respond_to?(:tool) }
+        phone.answer(approve(parked))
+        [call.wait, watching.running?]
       end
 
       expect(shown).to eq([Lain::Tool::Result.ok("ran ls -la"), true])
@@ -469,110 +894,36 @@ RSpec.describe Lain::Approval::RemoteSurface do
         .to contain_exactly(a_string_including("MissingEpicDocument", "no epic document for e"))
     end
 
-    it "refuses a gate answer with no verdicts, shows the phone why, and takes the answer keyed by the stage" do
-      stage_gate = RemoteSurfaceSpecSupport::StageGate.new
-      shown = Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, agenda: agenda_over(gates: stage_gate)).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          item = phone.until_open(&:any?).first
-          phone.answer(wire::Answer::Gate.new(id: item.id, verdicts: [], device: nil))
-          again = phone.until_open { |open| open.any? { _1.question.include?("names no issue") } }.first
-          phone.answer(wire::Answer::Gate.new(id: again.id, verdicts: again.issues.map { [_1, approve(item).verdict] },
-                                              device: nil))
-          wait_until(reason: "the keyed answer landed") { stage_gate.answers.any? }
-          [item.issues, again.question]
-        ensure
-          phone&.stop
-          watching&.stop
-        end
-      end
-
-      expect(shown).to match([%w[research], a_string_including("refused", "names no issue")])
-      expect(stage_gate.answers).to eq([[:approve, "d1", nil, "remote:pixel"]])
-    end
-
     it "hands a question's answer on with the device that gave it" do
       asked = RemoteSurfaceSpecSupport::OneQuestion.new
-      Sync do |task|
-        task.with_timeout(20) do
-          agenda = Lain::Remote::Agenda.new(queue:, gates: RemoteSurfaceSpecSupport::NoGates.new, replies: asked)
-          watching = task.async { surface(relay.socket, agenda:).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          item = phone.until_open(&:any?).first
-          phone.answer(wire::Answer::Question.new(id: item.id, option: nil, text: "main", device: nil))
-          wait_until(reason: "the answer was handed on") { asked.answers.any? }
-        ensure
-          phone&.stop
-          watching&.stop
-        end
+      with_a_phone(agenda: Lain::Remote::Agenda.new(queue:, gates: RemoteSurfaceSpecSupport::NoGates.new,
+                                                    replies: asked)) do |phone, _watching, _task|
+        item = phone.until_open(&:any?).first
+        phone.answer(wire::Answer::Question.new(id: item.id, option: nil, text: "main", device: nil))
+        wait_until(reason: "the answer was handed on") { asked.answers.any? }
       end
 
       expect(asked.answers).to eq([["main", "blake3:q1", "remote:pixel"]])
     end
 
-    it "shows the phone a refusal without the path under home it names" do
-      document = File.join(Dir.home, "dev", "nyotes", "epics", "e", "plan.md")
-      gated = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new("no epic document at #{document}"))
-      shown = Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, agenda: gated).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          phone.answer(approve(phone.until_open(&:any?).first))
-          phone.until_open { |open| open.any? { _1.question.include?("no epic document") } }.first.question
-        ensure
-          phone&.stop
-          watching&.stop
-        end
+    it "sends the phone an unreadable gate journal without its path, before and after an answer" do
+      texts = with_a_phone(agenda: agenda_over(gates: RemoteSurfaceSpecSupport::UnreadableGates.new)) do |phone, _, _|
+        first = phone.until_open(&:any?).first
+        phone.answer(approve(first))
+        again = phone.until_open { |open| open.any? { _1.question != first.question } }.first
+        [first, again].map { _1.to_h.except(:session, :project).values.join(" ") }
       end
 
-      expect(shown).to include("no epic document at", described_class::PATH_MASK)
-      expect(shown).not_to include(Dir.home)
-    end
-
-    it "leaves an answer to another chat's item to that chat" do
-      other_io = StringIO.new
-      other_journal = Lain::Journal.new(io: other_io)
-      other_queue = Lain::Approval::Parked::Queue.new(journal: other_journal, timeout: 10)
-      other_toolset_gate = Lain::Middleware::Gate.new(policy: asking_ladder(other_queue, tools: toolset,
-                                                                                         journal: other_journal))
-      ran = Sync do |task|
-        task.with_timeout(20) do
-          ours = task.async { surface(relay.socket).watch }
-          theirs = task.async do
-            surface(relay.socket, agenda: agenda_over(queue: other_queue), journal: other_journal).watch
-          end
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          our_call = task.async { dispatch_call("bash", { "command" => "ours" }, toolset:, layers: [gate]) }
-          their_call = task.async do
-            dispatch_call("bash", { "command" => "theirs" }, toolset:, layers: [other_toolset_gate])
-          end
-          open = phone.until_open { _1.size == 2 }
-          phone.answer(approve(open.find { JSON.parse(_1.input)["command"] == "theirs" }))
-          their_call.wait
-          runs.dup
-        ensure
-          phone&.stop
-          [ours, theirs, our_call].compact.each(&:stop)
-        end
-      end
-
-      expect(ran).to eq([{ "command" => "theirs" }])
-      expect(records("approval_surface_fault")).to be_empty
+      expect(texts).to all(include("gate journal").and(include("desk")))
+      expect(texts.join).not_to include(".ndjson", "/home/")
     end
 
     it "takes back what it published when it stops, so the phone stops showing it" do
-      left = Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          call = park(task)
-          phone.until_open(&:any?)
-          watching.stop
-          phone.until_open(&:empty?).tap { call.stop }
-        ensure
-          phone&.stop
-        end
+      left = with_a_phone do |phone, watching, task|
+        call = park(task)
+        phone.until_open(&:any?)
+        watching.stop
+        phone.until_open(&:empty?).tap { call.stop }
       end
 
       expect(left).to be_empty
@@ -582,14 +933,17 @@ RSpec.describe Lain::Approval::RemoteSurface do
       failing = Class.new { def to_a = raise(IOError, "the history walk failed") }.new
       seen = Sync do |task|
         task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, secrets: failing).watch }
+          registration = desk.registration.open(task)
+          watching = task.async { surface(registration, secrets: failing).watch }
           call = park(task)
-          wait_until(reason: "a sweep failed twice over") { records("approval_surface_fault").any? }
+          wait_until(reason: "a sweep failed") { records("approval_surface_fault").any? }
           task.sleep(0.1)
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
+          phone = RemoteSurfaceSpecSupport::Phone.new(desk)
           [call, watching].each(&:stop)
           phone.stop
           phone.head
+        ensure
+          registration&.close
         end
       end
 
@@ -597,228 +951,210 @@ RSpec.describe Lain::Approval::RemoteSurface do
       expect(records("approval_surface_fault").map { _1["error"] }).to eq(["IOError: the history walk failed"])
     end
 
-    it "writes a line naming the item and the device when the phone's answer loses to the desk" do
-      Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, agenda: RemoteSurfaceSpecSupport::DeskFirst.new(agenda, queue)).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          call = park(task)
-          item = phone.until_open(&:any?).first
-          phone.answer(approve(item))
-          call.wait
-          wait_until(reason: "the lost answer was recorded") { records(described_class::LOST_TYPE).any? }
-          @item_id = item.id
-        ensure
-          phone&.stop
-          watching&.stop
-        end
+    it "shows the phone every open item again after the daemon restarts, and does not degrade" do
+      result = with_a_parked_call do |_phone, call, _item|
+        old = desk.pid
+        Process.kill("KILL", old)
+        wait_until(reason: "a new daemon runs the relay") { desk.restarted?(old) }
+        again = RemoteSurfaceSpecSupport::Phone.new(desk)
+        again.answer(approve(again.until_open(&:any?).sole))
+        call.wait.tap { again.stop }
       end
 
-      expect(records(described_class::LOST_TYPE)).to contain_exactly(a_hash_including("id" => @item_id,
-                                                                                      "device" => "pixel"))
-      expect(records("approval_decision").map { _1["surface"] }).to eq(["desk"])
+      expect(result).to eq(Lain::Tool::Result.ok("ran ls -la"))
+      expect(records("capability_degraded")).to be_empty
     end
 
-    it "sends the phone an unreadable gate journal without its path, before and after an answer" do
-      unreadable = agenda_over(gates: RemoteSurfaceSpecSupport::UnreadableGates.new)
-      texts = Sync do |task|
+    # Both chats hold the wave, so neither chat's re-ask alone takes it off the
+    # phone; only a new key does.
+    # The chats re-ask 1 at a time, so the wave the phone was shown is still held by one of them when
+    # the other re-asks: under a key that survives a re-ask, its id would still be live at the answer.
+    it "refuses a phone answer to a wave re-asked under it by 2 sibling chats, and shows the new wave anew" do
+      out = File.join(@dir, "answers")
+      rows = %w[chat-a chat-b].to_h { [_1, File.join(@dir, "#{_1}.rows.json")] }
+      rows.each_value { File.write(_1, JSON.generate([["a", "d1", 100], ["b", "d2", 200]])) }
+      chats = rows.map do |session, file|
+        RemoteSurfaceSpecSupport::SiblingChat.new(daemon_env, session, root: @dir, out:, rows: file,
+                                                                       flags: desk.launch.flags)
+      end
+      refusal, old, renewed = Sync do |task|
         task.with_timeout(20) do
-          watching = task.async { surface(relay.socket, agenda: unreadable).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          first = phone.until_open(&:any?).first
-          phone.answer(approve(first))
-          again = phone.until_open { |open| open.any? { _1.question != first.question } }.first
-          [first, again].map { _1.to_h.values.join(" ") }
+          chats.each { _1.published("1") }
+          phone = RemoteSurfaceSpecSupport::Phone.new(desk)
+          shown = phone.until_open(&:any?).sole
+          rows.values.zip(chats).each do |file, chat|
+            File.write(file, JSON.generate([["a", "d1", 100], ["b", "d2-reasked", 900]]))
+            chat.published("2")
+          end
+          verdicts = %w[a b].map { [_1, Lain::Approval::Verdict::Approve.new] }
+          refused = begin
+            phone.answer(wire::Answer::Gate.new(id: shown.id, verdicts:, device: nil)) && nil
+          rescue Lain::Core::Client::Refused => e
+            e.message
+          end
+          fresh = RemoteSurfaceSpecSupport::Phone.new(desk)
+          [refused, shown, fresh.until_open(&:any?).sole]
         ensure
-          phone&.stop
-          watching&.stop
+          [phone, fresh].compact.each(&:stop)
         end
+      ensure
+        chats.each(&:stop)
       end
 
-      expect(texts).to all(include("gate journal").and(include("desk")))
-      expect(texts.join).not_to include(".ndjson", "/home/")
+      expect(refusal).to include("already settled")
+      expect(File.exist?(out) ? File.read(out) : "").not_to include("d2-reasked")
+      expect(renewed).to have_attributes(issues: %w[a b])
+      expect(renewed.id).not_to eq(old.id)
     end
 
-    it "degrades once the relay dies under it, and the desk keeps the call" do
-      outcome = Sync do |task|
-        task.with_timeout(20) do
-          watching = task.async { surface(relay.socket).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          call = park(task)
-          phone.until_open(&:any?)
-          relay.stop
-          watching.wait
-          queue.first.approve(surface: "desk", authority: :human)
-          call.wait && :desk_answered
-        ensure
-          phone&.stop
-        end
+    it "degrades once the relay worker dies under it, and the desk keeps the call" do
+      outcome = with_a_phone do |phone, watching, task|
+        first = park(task)
+        phone.until_open(&:any?)
+        Process.kill("KILL", desk.worker_pid)
+        wait_until(reason: "the daemon saw its relay die") { desk.info.fetch("relay") == "unavailable" }
+        second = park(task, "after the relay died")
+        watching.wait
+        queue.to_a.each { _1.approve(surface: "desk", authority: :human) }
+        [first, second].map(&:wait)
       end
 
-      expect(outcome).to eq(:desk_answered)
+      expect(outcome).to all(be_ok)
       expect(records("capability_degraded").map { _1["capability"] }).to eq(["remote_surface"])
     end
   end
 
-  describe "announcing a waiting item through ntfy", :core do
-    let(:relay) { RemoteSurfaceSpecSupport::Relay.new(@dir).start }
+  describe "announcing a waiting item through ntfy" do
+    let(:registration) { RemoteSurfaceSpecSupport::StandIn.new }
     let(:asked) { Time.at(1_000) }
     let(:clock) { RemoteSurfaceSpecSupport::Clock.new(asked) }
     let(:ntfy) { RemoteSurfaceSpecSupport::Ntfy.new(clock) }
     let(:timed) { agenda_over(wall: -> { asked }) }
 
-    after { relay.stop }
-
-    def watching(task, **options)
-      task.async { surface(relay.socket, agenda: timed, ntfy:, clock:, buzz_after: 60, **options).watch }
+    def watching(task, ntfy: self.ntfy, **options)
+      task.async { surface(registration, agenda: timed, ntfy:, clock:, buzz_after: 60, **options).watch }
     end
 
-    def sent_ids = ntfy.sent.map { _1.first.id }
+    def published(count) = wait_until(reason: "#{count} items were published") { registration.added_ids.size >= count }
 
     # A call left parked holds the Sync block open until the queue's 10 s timeout.
     def settle_parked = queue.to_a.each { _1.approve(surface: "desk", authority: :human) }
 
-    it "announces a call once it has waited the delay, not before" do
+    def announcing(**options)
       Sync do |task|
-        task.with_timeout(20) do
-          watch = watching(task)
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          park(task)
-          item = phone.until_open(&:any?).first
-          clock.now = asked + 59
-          phone.until_open(&:any?)
-          clock.now = asked + 60
-          wait_until(reason: "the call was announced") { ntfy.sent.any? }
-          @item = item
+        task.with_timeout(10) do
+          watch = watching(task, **options)
+          yield task
+        ensure
           settle_parked
-          watch.stop
-          phone.stop
+          watch&.stop
         end
       end
+    end
 
-      expect(ntfy.sent.map { |view, at| [view.id, view.requester, at] }).to eq([[@item.id, "agent", asked + 60]])
+    it "announces a call once it has waited the delay, not before" do
+      announcing do |task|
+        park(task)
+        published(1)
+        clock.now = asked + 59
+        task.sleep(0.1)
+        expect(ntfy.sent).to be_empty
+        clock.now = asked + 60
+        wait_until(reason: "the call was announced") { ntfy.sent.any? }
+      end
+
+      expect(ntfy.sent.map { |view, at| [view.id, view.requester, at] }).to eq([["1", "agent", asked + 60]])
     end
 
     it "does not announce a call the desk answered first" do
-      Sync do |task|
-        task.with_timeout(20) do
-          watch = watching(task)
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          first = park(task)
-          phone.until_open(&:any?)
-          clock.now = asked + 30
-          queue.first.approve(surface: "desk", authority: :human)
-          first.wait
-          phone.until_open(&:empty?)
-          clock.now = asked + 61
-          park(task, "second")
-          wait_until(reason: "the second call was announced") { ntfy.sent.any? }
-          settle_parked
-          watch.stop
-          phone.stop
-        end
+      announcing do |task|
+        first = park(task)
+        published(1)
+        clock.now = asked + 30
+        queue.first.approve(surface: "desk", authority: :human)
+        first.wait
+        clock.now = asked + 61
+        park(task, "second")
+        wait_until(reason: "the second call was announced") { ntfy.sent.any? }
       end
 
       expect(ntfy.sent.map { _1.first.input }).to eq([{ "command" => "second" }])
     end
 
-    it "announces the masked view under the id the phone knows, and announces each item once" do
+    it "announces the masked view, and announces each item once" do
       secret = "hunter2-correct-horse-battery"
-      Sync do |task|
-        task.with_timeout(20) do
-          watch = watching(task, secrets: [secret])
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          park(task, "deploy --password #{secret}")
-          @item = phone.until_open(&:any?).first
-          clock.now = asked + 600
-          wait_until(reason: "the call was announced") { ntfy.sent.any? }
-          task.sleep(0.2)
-          settle_parked
-          watch.stop
-          phone.stop
-        end
+      announcing(secrets: [secret]) do |task|
+        park(task, "deploy --password #{secret}")
+        published(1)
+        clock.now = asked + 600
+        wait_until(reason: "the call was announced") { ntfy.sent.any? }
+        task.sleep(0.2)
       end
 
       expect(ntfy.sent.size).to eq(1)
-      expect(ntfy.sent.first.first).to have_attributes(id: @item.id)
       expect(ntfy.sent.first.first.input.to_s).not_to include(secret)
     end
 
-    it "records a failed announcement once and keeps serving the phone" do
+    it "announces nothing again when a reconnect publishes the item again" do
+      announcing do |task|
+        park(task)
+        published(1)
+        clock.now = asked + 60
+        wait_until(reason: "the call was announced") { ntfy.sent.any? }
+        registration.deliver(Lain::Daemon::Registration::RECONNECTED)
+        published(2)
+        task.sleep(0.1)
+      end
+
+      expect(ntfy.sent.size).to eq(1)
+    end
+
+    it "records a failed announcement once and keeps serving" do
       failing = RemoteSurfaceSpecSupport::Ntfy.new(clock, failing: IOError.new("ntfy is down"))
-      Sync do |task|
-        task.with_timeout(20) do
-          watch = task.async { surface(relay.socket, agenda: timed, ntfy: failing, clock:, buzz_after: 60).watch }
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          call = park(task)
-          item = phone.until_open(&:any?).first
-          clock.now = asked + 60
-          wait_until(reason: "the failure was recorded") { records("approval_surface_fault").any? }
-          phone.answer(wire_approve(item))
-          call.wait
-          settle_parked
-          watch.stop
-          phone.stop
-        end
+      announcing(ntfy: failing) do |task|
+        park(task)
+        published(1)
+        clock.now = asked + 60
+        wait_until(reason: "the failure was recorded") { records("approval_surface_fault").any? }
+        park(task, "second")
+        published(2)
       end
 
       expect(records("approval_surface_fault").map { _1["error"] }).to eq(["IOError: ntfy is down"])
-      expect(runs).to eq([{ "command" => "ls -la" }])
     end
 
-    it "shows a second call and takes the desk's answer while the announcement of the first hangs" do
+    it "publishes a second call while the announcement of the first hangs" do
       silent = TCPServer.new("127.0.0.1", 0)
       real = Lain::Remote::Ntfy.new(url: "http://127.0.0.1:#{silent.addr[1]}/lain-x7", timeout: 30)
-      result = NetworkAccess.permit_loopback(silent.addr[1]) do
-        Sync do |task|
-          task.with_timeout(20) do
-            watch = task.async { surface(relay.socket, agenda: timed, ntfy: real, clock:, buzz_after: 60).watch }
-            phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-            call = park(task)
-            phone.until_open(&:any?)
-            clock.now = asked + 60
-            silent.wait_readable(10) || raise("the announcement never reached the server")
-            park(task, "after the announcement began")
-            item = phone.until_open { _1.size == 2 }.find { _1.input.include?("ls -la") }
-            phone.answer(wire_approve(item))
-            call.wait
-          ensure
-            settle_parked
-            phone&.stop
-            watch&.stop
-          end
+      NetworkAccess.permit_loopback(silent.addr[1]) do
+        announcing(ntfy: real) do |task|
+          park(task)
+          published(1)
+          clock.now = asked + 60
+          silent.wait_readable(10) || raise("the announcement never reached the server")
+          park(task, "after the announcement began")
+          published(2)
         end
       end
       silent.close
 
-      expect(result).to eq(Lain::Tool::Result.ok("ran ls -la"))
+      expect(registration.added_ids).to eq(%w[1 2])
     end
 
     it "announces an item once even when a refused answer makes the surface publish it again" do
-      Sync do |task|
-        task.with_timeout(20) do
-          watch = watching(task)
-          phone = RemoteSurfaceSpecSupport::Phone.new(relay)
-          park(task)
-          first = phone.until_open(&:any?).first
-          clock.now = asked + 60
-          wait_until(reason: "the call was announced") { ntfy.sent.any? }
-          phone.answer(Lain::Remote::Wire::Answer::Question.new(id: first.id, option: nil, text: "yes", device: nil))
-          phone.until_open { |open| open.any? { _1.why.include?("not a verdict") } }
-          park(task, "marker")
-          wait_until(reason: "the marker was announced") { ntfy.sent.size >= 2 }
-          @first = first
-          settle_parked
-          watch.stop
-          phone.stop
-        end
+      announcing do |task|
+        park(task)
+        published(1)
+        clock.now = asked + 60
+        wait_until(reason: "the call was announced") { ntfy.sent.any? }
+        registration.deliver("answer",
+                             [wire::Answer::Question.new(id: "1", option: nil, text: "yes", device: nil).to_wire])
+        published(2)
+        park(task, "marker")
+        wait_until(reason: "the marker was announced") { ntfy.sent.size >= 2 }
       end
 
-      expect(sent_ids.tally.values).to eq([1, 1])
-    end
-
-    def wire_approve(item)
-      Lain::Remote::Wire::Answer::Call.new(id: item.id, verdict: Lain::Approval::Verdict::Approve.new, device: nil)
+      expect(ntfy.sent.map { _1.first.id }.tally.values).to eq([1, 1])
     end
   end
 end

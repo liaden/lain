@@ -71,6 +71,63 @@ RSpec.describe Lain::Daemon::Launch do
     it "is deeply frozen" do
       expect(Ractor.shareable?(current)).to be(true)
     end
+
+    describe "the phone relay" do
+      let(:env) do
+        { "HOME" => @dir, "PATH" => "/usr/bin", "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
+          "CARGO_TARGET_DIR" => @dir }
+      end
+      let(:paths) { Lain::Paths.new(env:) }
+      let(:devices) { Lain::Remote::Devices.for(paths:).path }
+
+      def write_user_config(body)
+        FileUtils.mkdir_p(File.dirname(paths.user_config))
+        File.write(paths.user_config, body)
+        Lain::Project::Trust.for_user(paths:).grant!
+      end
+
+      it "runs the relay the user's config sets, over the paired devices file" do
+        write_user_config("remote relay: \"100.64.0.1:7820\", ntfy: \"https://ntfy.sh/x\"\n")
+
+        expect(described_class.current(paths:, env:).flags)
+          .to eq(["--relay", "100.64.0.1:7820", "--devices-file", devices])
+      end
+
+      it "writes an empty devices file, mode 0600 in a 0700 directory, before the daemon reads it" do
+        write_user_config("remote relay: \"100.64.0.1:7820\"\n")
+        described_class.current(paths:, env:)
+
+        expect([File.size(devices), File.stat(devices).mode & 0o777, File.stat(File.dirname(devices)).mode & 0o777])
+          .to eq([0, 0o600, 0o700])
+      end
+
+      it "keeps a devices file that already holds a pairing" do
+        token = Lain::Remote::Devices.for(paths:).pair("pixel")
+        write_user_config("remote relay: \"100.64.0.1:7820\"\n")
+        described_class.current(paths:, env:)
+
+        expect(File.read(devices)).to include("pixel", Lain::Ext.blake3_hex(token))
+      end
+
+      it "runs none, and writes no devices file, when the user's config sets no relay" do
+        expect(described_class.current(paths:, env:).flags).to eq([])
+        expect(File.exist?(devices)).to be(false)
+      end
+
+      it "runs none when the user's config cannot be read, and leaves saying why to the chat" do
+        FileUtils.mkdir_p(File.dirname(paths.user_config))
+        File.write(paths.user_config, "remote relay: \"100.64.0.1:7820\"\n")
+
+        expect(described_class.current(paths:, env:).flags).to eq([])
+      end
+
+      it "gives a launch with the relay and one without different digests" do
+        without = described_class.current(paths:, env:)
+        write_user_config("remote relay: \"100.64.0.1:7820\"\n")
+
+        expect(described_class.current(paths:, env:).digest).not_to eq(without.digest)
+      end
+    end
   end
 
   describe "#argv" do

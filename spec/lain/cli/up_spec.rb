@@ -3837,7 +3837,7 @@ RSpec.describe Lain::CLI::Up::ChatRestart do
   end
 end
 
-RSpec.describe Lain::CLI::Up, "the phone relay window" do
+RSpec.describe Lain::CLI::Up, "the phone relay" do
   around do |example|
     Dir.mktmpdir("lain-up-relay") do |dir|
       @dir = File.realpath(dir)
@@ -3845,330 +3845,33 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
     end
   end
 
-  let(:root) { File.join(@dir, "project") }
+  let(:root) { File.join(@dir, "project").tap { FileUtils.mkdir_p(_1) } }
   let(:paths) do
     Lain::Paths.new(env: { "HOME" => @dir, "XDG_STATE_HOME" => File.join(@dir, "state"),
                            "XDG_RUNTIME_DIR" => File.join(@dir, "run") })
   end
-  let(:binary) { File.join(@dir, "lain-core").tap { |path| File.write(path, "#!/bin/sh\n", perm: 0o755) } }
-  let(:interfaces) { -> { [["lo", "127.0.0.1"], ["tailscale0", "100.64.0.1"]] } }
-  let(:address) { "100.64.0.1:7820" }
-  let(:relay) { Lain::CLI::Up::Relay.new(address:, root:, paths:, interfaces:, binary:) }
-  let(:devices_path) { Lain::Remote::Devices.for(paths:).path }
   let(:calls) { [] }
 
-  def up_with(relay)
+  # The daemon runs the relay for every chat, so the cockpit has none of its own.
+  it "opens no relay window and says nothing of a relay when the user's config sets one" do
+    FileUtils.mkdir_p(File.dirname(paths.user_config))
+    File.write(paths.user_config, "remote relay: \"127.0.0.1:7820\"\n")
+    Lain::Project::Trust.for_user(paths:).grant!
     spy = lambda do |*args|
       calls << args
       FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
     end
-    described_class.new(session: "lain", state_path: File.join(@dir, "state.json"), cwd: root, shell_out_factory: spy,
-                        chat_preflight: ->(_args) { [] }, gc_schedule: Lain::CLI::GcSchedule::NONE, relay:)
+
+    report = described_class.new(session: "lain", state_path: File.join(@dir, "state.json"), cwd: root, paths:,
+                                 shell_out_factory: spy, chat_preflight: ->(_args) { [] },
+                                 gc_schedule: Lain::CLI::GcSchedule::NONE).call
+
+    expect(calls.select { |args| args.include?("new-window") }).to be_empty
+    expect(report.warnings.grep(/relay/)).to be_empty
+    expect(File.exist?(Lain::Remote::Devices.for(paths:).path)).to be(false)
   end
 
-  def new_windows = calls.select { |args| args.include?("new-window") }
-
-  def relay_command = calls.find { |args| args.include?("respawn-pane") && args.include?("=lain:relay") }.last
-
-  def relay_argv = Shellwords.split(relay_command.split(" || ").first)
-
-  def trace_path = File.join(File.dirname(Lain::Approval::RemoteSurface.socket(paths:, root:)), "relay.trace")
-
-  before { FileUtils.mkdir_p(root) }
-
-  describe "when remote relay is set" do
-    it "opens a detached window in the cockpit session that runs the relay" do
-      up_with(relay).call
-
-      window = new_windows.sole
-      expect(window).to include("-d", "-n", "relay")
-      expect(window.each_cons(2).to_a).to include(["-t", "=lain:"])
-    end
-
-    it "keeps a dead relay's screen, as the chat pane does" do
-      up_with(relay).call
-
-      expect(calls).to include(["tmux", "set-option", "-w", "-t", "=lain:relay", "remain-on-exit", "failed"])
-    end
-
-    it "gives the relay the lain-side socket, the devices file and the listen address" do
-      up_with(relay).call
-
-      socket = Lain::Approval::RemoteSurface.socket(paths:, root:)
-      expect(relay_argv).to eq([binary, "relay", "--unix", socket, "--devices-file", devices_path,
-                                "--listen", "100.64.0.1:7820", "--trace", trace_path])
-    end
-
-    it "prints the relay's trace when it exits non-zero, keeping its status" do
-      up_with(relay).call
-
-      failure = relay_command.split(" || ", 2).last
-      expect(failure).to include("tail", Shellwords.escape(trace_path), "exit")
-    end
-
-    it "starts the trace empty so a dead relay shows only its own last words" do
-      FileUtils.mkdir_p(File.dirname(trace_path), mode: 0o700)
-      File.write(trace_path, "last run's reason\n")
-
-      up_with(relay).call
-
-      expect(File.read(trace_path)).to eq("")
-    end
-
-    it "names the trace file in the report" do
-      expect(up_with(relay).call.warnings.sole).to include(trace_path, "relay")
-    end
-
-    it "gives the socket a directory of its own, closed to others" do
-      up_with(relay).call
-
-      directory = File.dirname(Lain::Approval::RemoteSurface.socket(paths:, root:))
-      expect(File.stat(directory).mode & 0o777).to eq(0o700)
-    end
-
-    it "writes an empty devices file, mode 0600, before the relay starts" do
-      seen = nil
-      allow(relay).to receive(:call).and_wrap_original do |original|
-        original.call.tap { seen = [File.read(devices_path), File.stat(devices_path).mode & 0o777] }
-      end
-
-      up_with(relay).call
-
-      expect(seen).to eq(["", 0o600])
-    end
-
-    it "keeps the devices of phones already paired" do
-      token_digest = Lain::Remote::Devices.for(paths:).tap { |devices| devices.pair("pixel") }.then { File.read(devices_path) }
-
-      up_with(relay).call
-
-      expect(File.read(devices_path)).to eq(token_digest)
-      expect(new_windows.size).to eq(1)
-    end
-
-    it "closes a devices file that is open to others to 0600" do
-      FileUtils.mkdir_p(File.dirname(devices_path), mode: 0o700)
-      File.write(devices_path, "", perm: 0o644)
-
-      up_with(relay).call
-
-      expect(File.stat(devices_path).mode & 0o777).to eq(0o600)
-      expect(new_windows.size).to eq(1)
-    end
-
-    it "starts without the relay when the devices file is another user's" do
-      FileUtils.mkdir_p(File.dirname(devices_path), mode: 0o700)
-      File.write(devices_path, "", perm: 0o600)
-      real = File.method(:lstat)
-      foreign = instance_double(File::Stat, file?: true, uid: Process.uid + 1)
-      allow(File).to receive(:lstat) { |path| path == devices_path ? foreign : real.call(path) }
-
-      report = up_with(relay).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include(devices_path)
-    end
-
-    it "does not touch the window on a session it only reattaches to" do
-      spy = lambda do |*args|
-        calls << args
-        FakeShellOut.new(0, "")
-      end
-      described_class.new(session: "lain", state_path: File.join(@dir, "state.json"), cwd: root,
-                          shell_out_factory: spy, chat_preflight: ->(_args) { [] },
-                          gc_schedule: Lain::CLI::GcSchedule::NONE, relay:).call
-
-      expect(new_windows).to be_empty
-    end
-  end
-
-  describe "with the interfaces this host really has" do
-    it "lists address pairs without raising on interfaces that have no IP" do
-      pairs = Lain::CLI::Up::Relay::LOCAL_ADDRESSES.call
-
-      expect(pairs).to all(match([String, a_string_matching(/\A[\h.:%\w]+\z/)]))
-    end
-
-    it "starts the relay on a loopback address with no interface injected" do
-      loopback = Lain::CLI::Up::Relay.new(address: "127.0.0.1:7820", root:, paths:, binary:)
-
-      up_with(loopback).call
-
-      expect(relay_argv).to include("127.0.0.1:7820")
-    end
-  end
-
-  describe "when the socket's directory already exists" do
-    let(:directory) { File.dirname(Lain::Approval::RemoteSurface.socket(paths:, root:)) }
-
-    it "closes a loose one to others" do
-      FileUtils.mkdir_p(directory, mode: 0o755)
-
-      up_with(relay).call
-
-      expect(File.stat(directory).mode & 0o777).to eq(0o700)
-    end
-
-    it "starts without the relay when it is a symlink" do
-      FileUtils.mkdir_p(File.dirname(directory))
-      FileUtils.mkdir_p(File.join(@dir, "elsewhere"))
-      File.symlink(File.join(@dir, "elsewhere"), directory)
-
-      report = up_with(relay).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include(directory, "symlink")
-    end
-  end
-
-  describe "when the address is on no local interface" do
-    let(:interfaces) { -> { [["lo", "127.0.0.1"], ["eth0", "192.168.1.5"]] } }
-
-    it "names the address and starts without the relay" do
-      report = up_with(relay).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include("100.64.0.1", "tailscale0")
-    end
-
-    it "refuses a LAN address even though it is on a local interface" do
-      lan = Lain::CLI::Up::Relay.new(address: "192.168.1.5:7820", root:, paths:, interfaces:, binary:)
-
-      report = up_with(lan).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include("192.168.1.5", "tailscale0")
-    end
-
-    it "refuses a tailnet address that sits on another interface" do
-      elsewhere = -> { [["eth0", "100.64.0.1"]] }
-
-      report = up_with(Lain::CLI::Up::Relay.new(address:, root:, paths:, interfaces: elsewhere, binary:)).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include("tailscale0")
-    end
-
-    it "writes no devices file" do
-      up_with(relay).call
-
-      expect(File.exist?(devices_path)).to be(false)
-    end
-  end
-
-  describe "when lain-core is not built" do
-    let(:binary) { File.join(@dir, "missing", "lain-core") }
-
-    it "says how to build it and starts without the relay" do
-      report = up_with(relay).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings.sole).to include("rake core:build")
-    end
-  end
-
-  describe "when remote relay is not set" do
-    let(:address) { nil }
-
-    it "starts no window and says nothing" do
-      report = up_with(relay).call
-
-      expect(new_windows).to be_empty
-      expect(report.warnings).to be_empty
-      expect(File.exist?(devices_path)).to be(false)
-    end
-  end
-
-  describe "built for the user's own config" do
-    def write_user_config(body)
-      FileUtils.mkdir_p(File.dirname(paths.user_config))
-      File.write(paths.user_config, body)
-      Lain::Project::Trust.for_user(paths:).grant!
-    end
-
-    it "reads the address from the user's config.rb" do
-      write_user_config("remote relay: \"100.64.0.1:7820\"\n")
-
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
-
-      up_with(found).call
-      expect(relay_argv).to include("100.64.0.1:7820")
-    end
-
-    it "says why when the user's relay is refused, rather than starting no relay in silence" do
-      write_user_config("remote relay: \"0.0.0.0:7820\"\n")
-
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
-
-      expect(found.call.warnings.sole).to start_with("remote relay skipped: ").and include("tailscale0")
-    end
-
-    it "starts no relay when the user's file sets none" do
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
-
-      up_with(found).call
-
-      expect(new_windows).to be_empty
-    end
-  end
-
-  describe "against a real tmux server" do
-    before { skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL) }
-
-    let(:socket) { "lain-spec-relay-#{Process.pid}-#{object_id}" }
-    let(:record) { File.join(@dir, "relay-argv") }
-    let(:binary) do
-      File.join(@dir, "lain-core").tap do |path|
-        File.write(path, "#!/bin/sh\necho $$ > #{record}.pid\nprintf '%s\\n' \"$@\" > #{record}\nexec sleep 30\n",
-                   perm: 0o755)
-      end
-    end
-
-    after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
-
-    def wait_for(path)
-      50.times { File.exist?(path) && !File.empty?(path) ? break : sleep(0.1) }
-      File.read(path)
-    end
-
-    def tmux_out(*args) = Open3.capture2("tmux", "-L", socket, *args).first
-
-    def alive?(pid)
-      Process.kill(0, pid) && true
-    rescue Errno::ESRCH
-      false
-    end
-
-    def start_cockpit
-      described_class.new(session: "lain", socket:, state_path: File.join(@dir, "state.json"), cwd: root,
-                          chat_preflight: ->(_args) { [] }, gc_schedule: Lain::CLI::GcSchedule::NONE, relay:).call
-    end
-
-    it "shows the relay's own reason on screen when it dies" do
-      File.write(binary, "#!/bin/sh\nwhile [ $# -gt 0 ]; do [ \"$1\" = --trace ] && t=$2; shift; done\n" \
-                         "echo 'cannot bind 127.0.0.1:7820: address in use' >> \"$t\"\nexit 1\n")
-      start_cockpit
-
-      screen = 50.times.lazy.map { sleep(0.1) && tmux_out("capture-pane", "-p", "-t", "lain:relay") }
-                 .find { |text| text.include?("address in use") }
-      expect(screen).to include("address in use")
-    end
-
-    it "runs the relay in a window of the session, and killing the session stops it" do
-      start_cockpit
-      args = wait_for(record).lines.map(&:chomp)
-      pid = File.read("#{record}.pid").to_i
-
-      expect(args.first(2)).to eq(["relay", "--unix"])
-      expect(alive?(pid)).to be(true)
-      expect(Open3.capture2("tmux", "-L", socket, "show-options", "-w", "-v", "-t", "lain:relay",
-                            "remain-on-exit").first.strip).to eq("failed")
-      expect(Open3.capture2("tmux", "-L", socket, "list-windows", "-t", "lain", "-F", "\#{window_name}").first.split)
-        .to contain_exactly("chat", "relay")
-
-      system("tmux", "-L", socket, "kill-session", "-t", "lain")
-      30.times { alive?(pid) ? sleep(0.1) : break }
-      expect(alive?(pid)).to be(false)
-    end
+  it "keeps no relay of its own" do
+    expect(described_class.const_defined?(:Relay, false)).to be(false)
   end
 end

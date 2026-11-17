@@ -338,7 +338,7 @@ module Lain
         parent = -> { @agent.timeline }
         @supervisor = supervise
         @ask_human = wire_askers(parent)
-        @observers = Observers.register(chronicle:, paths: @paths, project:, resumed:, arms:)
+        @observers = register_observers(resumed)
         toolset = build_toolset(recorder, backend:, parent:, ask_human: @ask_human, session:, notice:,
                                           stops: resumed&.stops || [])
         # Resolved BEFORE the record opens, and the statement order IS the
@@ -369,6 +369,10 @@ module Lain
       end
 
       private
+
+      def register_observers(resumed)
+        Observers.register(chronicle:, paths: @paths, project:, resumed:, arms:, say: told)
+      end
 
       # The process's one GitHub account, so every gh it runs asks for the token once. Read when
       # the command surface is built, while `.lain/config.rb` holds the bytes the launch trusted.
@@ -961,7 +965,8 @@ module Lain
 
       def remote_surface
         Approval::RemoteSurface.for(**Config.remote(paths: @paths), paths: @paths, root:, queue: approvals,
-                                                                    replies: @replies, secrets: @switchboard.secrets,
+                                                                    registration: @registration, replies: @replies,
+                                                                    secrets: @switchboard.secrets,
                                                                     journal: durable_journal)
       end
 

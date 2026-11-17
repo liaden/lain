@@ -151,7 +151,7 @@ RSpec.describe Lain::Remote::Agenda::View, :seam do
         "/home/me/.local/state/lain/sessions/s1.ndjson", StandardError.new("unexpected token at 'PASSWORD=#{known}'")
       )
       Lain::Remote::Agenda::GateQuestion.new(id: "5", requester: "epic gate", epic: "", stage: "", issues: [],
-                                             question: error.message, asked_at:, releases: 0)
+                                             question: error.message, asked_at:, releases: 0, digests: [])
     end
 
     def items
@@ -166,7 +166,7 @@ RSpec.describe Lain::Remote::Agenda::View, :seam do
                                             cwd: @root, why: "", asked_at:, releases: 0),
        Lain::Remote::Agenda::GateQuestion.new(id: "3", requester: "epic gate", epic: "alpha", stage: "issue_plan",
                                               issues: %w[a], question: "Ship #{both}?", asked_at:,
-                                              releases: 0),
+                                              releases: 0, digests: %w[d1]),
        Lain::Remote::Agenda::Question.new(id: "4", requester: "researcher", question: "Is #{both} live?",
                                           options: ["yes, #{both}"], asked_at:, releases: 0),
        unreadable_gate]

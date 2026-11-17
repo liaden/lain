@@ -6,6 +6,7 @@ module Lain
       # The in-process folds a chat registers on its session's journal, so
       # each sees every record the chat writes, durable or teed.
       class Observers
+        UNSAID = ->(_line) {}
         DEGRADED_NOTICE = "write records could not be read, so every user or project binary counts as changed this " \
                           "session and goes to the judge or to you; resume from an intact session to restore it"
 
@@ -35,6 +36,28 @@ module Lain
 
           def degraded?(event, capability)
             event.is_a?(Telemetry::CapabilityDegraded) && event.capability == capability
+          end
+        end
+
+        # Tells the chat the moment its phone surface goes off: the surface degrades mid-chat, after the
+        # startup notices are said, and a relay that is misconfigured would otherwise be silent.
+        class PhoneSurface
+          NOTICE = "phone surface off: %<reason>s"
+
+          # @param say [#call] shows a line in the chat
+          def initialize(say) = @say = say
+
+          # @param event [Hash, #to_journal] a journal record
+          # @return [self]
+          def <<(event)
+            @say.call(format(NOTICE, reason: event.provider)) if off?(event)
+            self
+          end
+
+          private
+
+          def off?(event)
+            event.is_a?(Telemetry::CapabilityDegraded) && event.capability == Approval::RemoteSurface::CAPABILITY
           end
         end
 
@@ -75,11 +98,12 @@ module Lain
         # @param resumed [Resume::Result, nil] nil for a fresh chat
         # @param arms [Arms] under `tripwire: :observe` or `:stop` a {Tripwire::Ledger} folds the journal too,
         #   and under `:stop` it trips the {Tripwire::Stops} the observers hold
+        # @param say [#call] shows a line in the chat while it runs
         # @return [Observers]
-        def self.register(chronicle:, paths:, project:, resumed:, arms:)
+        def self.register(chronicle:, paths:, project:, resumed:, arms:, say: UNSAID)
           stops = arms.tripwire_stops? ? Tripwire::Stops.new : Tripwire::Stops::None
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
-              unsealed: Unsealed.for(arms:, project:), stops:).tap do |observers|
+              unsealed: Unsealed.for(arms:, project:), stops:, phone: PhoneSurface.new(say)).tap do |observers|
             observers.register(chronicle)
             unless arms.tripwire_off?
               chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:,
@@ -112,11 +136,14 @@ module Lain
         # @param unconfined [Unconfined] hears the sandbox degrade while the toolset is built
         # @param unsealed [#notices] whether the project can run a workspace call
         # @param stops [Tripwire::Stops, Tripwire::Stops::None]
-        def initialize(fresh:, unconfined: Unconfined.new, unsealed: Unsealed::Unasked, stops: Tripwire::Stops::None)
+        # @param phone [PhoneSurface] tells the chat when its phone surface goes off
+        def initialize(fresh:, unconfined: Unconfined.new, unsealed: Unsealed::Unasked, stops: Tripwire::Stops::None,
+                       phone: PhoneSurface.new(UNSAID))
           @fresh = fresh
           @unconfined = unconfined
           @unsealed = unsealed
           @stops = stops
+          @phone = phone
         end
 
         # What the human should be told about the lineage and the sandbox, said once at startup. A sandbox
@@ -133,6 +160,7 @@ module Lain
         def register(chronicle)
           chronicle.observe(@fresh)
           chronicle.observe(@unconfined)
+          chronicle.observe(@phone)
           self
         end
       end

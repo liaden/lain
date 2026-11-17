@@ -65,7 +65,7 @@ RSpec.describe Lain::Remote::Ntfy do
   end
   let(:gate) do
     Lain::Remote::Agenda::GateQuestion.new(id: "g", requester: "gate", epic: "e", stage: "plan", issues: [],
-                                           question: "sign off?", asked_at: Time.at(0), releases: 0)
+                                           question: "sign off?", asked_at: Time.at(0), releases: 0, digests: [])
   end
   let(:question) do
     Lain::Remote::Agenda::Question.new(id: "q", requester: "agent", question: "which one?", options: [],

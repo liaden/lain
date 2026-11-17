@@ -1,25 +1,29 @@
 # frozen_string_literal: true
 
 require "async"
+require "digest"
 require "json"
-require "securerandom"
 
 module Lain
   module Approval
     # The phone's approval surface. It publishes the agenda of what waits on a
-    # human to the relay `lain up` runs, masked by {Remote::Agenda::View}, and
-    # routes each answer a paired phone sends back through the agenda to the
-    # owner that would take it at the desk. A phone is a human, so its answers
-    # carry `:human` authority, at the asking rung like the terminal's, and name
-    # the device that gave them.
+    # human, masked by {Remote::Agenda::View}, through the chat's registration
+    # to the relay the daemon runs, and routes each answer the daemon pushes
+    # back through the agenda to the owner that would take it at the desk. A
+    # phone is a human, so its answers carry `:human` authority, at the asking
+    # rung like the terminal's, and name the device that gave them.
     #
-    # The relay is optional equipment: one that is not there, or dies, costs
-    # this surface and nothing else, and the session journal says so in a
-    # `capability_degraded` record.
+    # The relay is optional equipment: one the daemon does not run, or that
+    # dies, costs this surface and nothing else, and the session journal says
+    # so in a `capability_degraded` record. A daemon restart is not a death:
+    # the registration reconnects and the surface publishes everything again.
     class RemoteSurface
       SURFACE = "remote"
       CAPABILITY = :remote_surface
       DEFAULT_POLL_INTERVAL = 0.25
+      RUNNING = "running"
+      NO_DAEMON = "no daemon to publish through"
+      RELAY_STATE = "the daemon's phone relay is %<state>s; %<trace>s says why"
 
       # A phone that is looking at the app needs no buzz, so a short wait is the desk's to end.
       DEFAULT_BUZZ_AFTER = 60
@@ -28,13 +32,14 @@ module Lain
       # own text, since the wire has no reply to an answer the relay accepted.
       REFUSED = "your last answer was refused: %<reason>s"
 
-      # Whatever ends the wire ends this surface; anything else is one sweep's fault.
-      ENDS = [Core::Died, Core::Client::Stopped, Core::Client::HandshakeTimeout, Core::Client::VersionMismatch,
-              Core::Transport::Unix::Unreachable, Core::Transport::Unix::Untrusted, Remote::Wire::Malformed].freeze
+      # A connection the registration is replacing; what it dropped is published again on reconnect.
+      DROPPED = [Core::Died, Core::Client::Stopped].freeze
 
-      # This surface publishes outside a registration and does not know its session; the daemon
-      # overwrites both fields with the registration's.
-      UNREGISTERED = "placeholder"
+      # The daemon stamps every item with the registration's session, whatever the item says.
+      UNSTAMPED = ""
+
+      # The relay is gone, so nothing this surface publishes can reach a phone.
+      class Unserved < Error; end
 
       # A chat that is ending must not wait on a relay that stopped answering.
       RETRACT_BUDGET = 1.0
@@ -58,16 +63,6 @@ module Lain
       # @return [String] the text with every path in it replaced by {PATH_MASK}
       def self.unpathed(text) = text.gsub(PATH, PATH_MASK)
 
-      # One socket per project, in a directory of its own, because the relay
-      # confines its writes to the directory its socket is in.
-      #
-      # @param paths [Paths]
-      # @param root [String] the project root
-      # @return [String] where the relay `lain up` starts for this project listens for lain
-      def self.socket(paths:, root:)
-        File.join(paths.runtime_dir, "remote-#{paths.project_hash(root)}", "relay.sock")
-      end
-
       # The surface a chat runs, when `remote relay:` is set and a human answers
       # it at all: over the agenda of this chat's parked calls, the project's
       # deferred gates and the chat's open questions.
@@ -76,42 +71,44 @@ module Lain
       # @param ntfy [String, nil] the `remote ntfy:` topic URL a long-waiting item is announced on
       # @param paths [Paths]
       # @param root [String] the project root
+      # @param registration [Daemon::Registration, Daemon::Registration::Null] the chat's place in the daemon
       # @param queue [Parked::Queue, nil] the chat's parked calls; nil when nobody answers the chat
       # @param replies [#waiting, #answer] the chat's open questions ({CLI::HumanReplies})
       # @param secrets [#to_a] the board's known secret values
       # @param journal [#<<] the session journal
       # @return [RemoteSurface, nil]
-      def self.for(relay:, ntfy:, paths:, root:, queue:, replies:, secrets:, journal:)
+      def self.for(relay:, ntfy:, paths:, root:, registration:, queue:, replies:, secrets:, journal:)
         return unless relay && queue
 
         agenda = Remote::Agenda.new(queue:, gates: Remote::Agenda::Gates.new(paths:, root:), replies:)
-        new(transport: Core::Transport::Unix.new(socket(paths:, root:)), agenda:, secrets:, journal:,
-            ntfy: announcer(ntfy), project: root.to_s)
+        new(registration:, agenda:, secrets:, journal:, ntfy: announcer(ntfy), project: root.to_s,
+            trace: Daemon::Launch.trace_path(paths:))
       end
 
       def self.announcer(url) = url ? Remote::Ntfy.new(url:) : Remote::Ntfy::Null::INSTANCE
       private_class_method :announcer
 
-      # @param transport [#start, #stop] the relay's Unix socket ({Core::Transport::Unix})
+      # @param registration [#call, #on] the chat's {Daemon::Registration}: publishes go out as its
+      #   requests, and answers come back as its pushes
       # @param agenda [Remote::Agenda] what waits on a human, and where an answer goes
       # @param secrets [#to_a] the board's known secret values, which every published item is masked for
       # @param journal [#<<] where a degraded relay and a failed sweep are recorded
       # @param poll_interval [Numeric] seconds between reads of the agenda
-      # @param prefix [String] marks this chat's ids on a relay other chats may publish to
       # @param ntfy [#notify] announces an item that has waited {buzz_after} seconds
       # @param clock [#now] what the wait is measured by
       # @param buzz_after [Numeric] seconds an item waits before it is announced
-      # @param project [String] the project root every published item names
-      def initialize(transport:, agenda:, secrets:, project:, journal: Channel::Null::INSTANCE,
-                     poll_interval: DEFAULT_POLL_INTERVAL, prefix: SecureRandom.hex(4),
-                     ntfy: Remote::Ntfy::Null::INSTANCE, clock: Time, buzz_after: DEFAULT_BUZZ_AFTER)
-        @transport = transport
+      # @param project [String] the project root every published item names, and every gate key is scoped to
+      # @param trace [String] the daemon's trace, which says why its relay is unavailable
+      def initialize(registration:, agenda:, secrets:, project:, trace:, journal: Channel::Null::INSTANCE,
+                     poll_interval: DEFAULT_POLL_INTERVAL, ntfy: Remote::Ntfy::Null::INSTANCE, clock: Time,
+                     buzz_after: DEFAULT_BUZZ_AFTER)
+        @registration = registration
         @project = project
+        @trace = trace
         @agenda = agenda
         @secrets = secrets
         @journal = journal
         @poll_interval = poll_interval
-        @prefix = "#{prefix}-"
         @ntfy = ntfy
         @clock = clock
         @buzz_after = buzz_after
@@ -125,20 +122,15 @@ module Lain
       #
       # @return [void]
       def watch
-        client = Core::Client.start(transport: @transport)
-        answering = Async { follow_answers(client) }
+        @registration.on("answer") { |params| answered(params.first) }
+        @registration.on(Daemon::Registration::RECONNECTED) { @resync_due = true }
         @announcing = Async::Barrier.new
-        while answering.running?
-          publish(client)
-          Async::Task.current.sleep(@poll_interval)
-        end
-      rescue *ENDS => e
+        sweep while serving?
+      rescue Unserved => e
         degrade(e)
       ensure
-        answering&.stop
         @announcing&.stop
-        retract(client) if client && !@degraded
-        client&.stop
+        retract unless @degraded
       end
 
       private
@@ -147,33 +139,60 @@ module Lain
         @waiting = {}
         @cursor = 0
         @published = {}
+        @shown = Set.new
         @refused = {}
         @reported = Set.new
         @agenda_lock = Mutex.new
+        @asked = false
+        @resync_due = true
       end
 
-      def follow_answers(client)
-        cursor = Remote::Wire::Cursor.new(cursor: 0, epoch: nil)
-        loop do
-          page = Remote::Wire::AnswersPage.from_wire(client.call("answers.next", [cursor.to_wire]))
-          page.answers.select { ours?(_1) }.each { take(_1) }
-          cursor = Remote::Wire::Cursor.new(cursor: page.cursor, epoch: page.epoch)
-        end
-      rescue *ENDS => e
-        degrade(e)
+      def serving?
+        start_over if @resync_due
+        !@degraded
       end
 
-      def ours?(answer) = answer.id.start_with?(@prefix)
+      def sweep
+        publish
+        Async::Task.current.sleep(@poll_interval)
+      end
+
+      # The daemon that answers now holds none of what this surface published before. No answer at
+      # all before the first sweep is no daemon; after it, a registration still reconnecting.
+      def start_over
+        state = relay_state
+        return if state.nil? && @asked
+
+        @asked = true
+        @resync_due = false
+        return degrade(Unserved.new(state ? relay_off(state) : NO_DAEMON)) unless state == RUNNING
+
+        @cursor = 0
+        @published.clear
+      end
+
+      def relay_off(state) = format(RELAY_STATE, state:, trace: @trace)
+
+      def relay_state
+        @registration.call("daemon.info")&.fetch("relay", nil)
+      rescue *DROPPED
+        nil
+      end
+
+      def answered(wired)
+        take(Remote::Wire::Answer.from_wire(wired))
+      rescue Remote::Wire::Malformed => e
+        fault(e)
+      end
 
       # An owner may refuse with any error, and a raise here would end the
       # fiber every later answer arrives on.
       def take(answer)
-        id = answer.id.delete_prefix(@prefix)
-        won = @agenda_lock.synchronize { @agenda.answer(id, answer_of(answer), surface: surface_of(answer)) }
+        won = @agenda_lock.synchronize { @agenda.answer(answer.id, answer_of(answer), surface: surface_of(answer)) }
         lost(answer) unless won
       rescue StandardError => e
         fault(e)
-        @refused[id] = e.message
+        @refused[answer.id] = e.message
       end
 
       def lost(answer)
@@ -200,44 +219,47 @@ module Lain
       # Every view is made before anything is sent, so a secrets source that
       # raises stops the sweep with nothing unmasked published, and the next
       # sweep starts from the same cursor.
-      def publish(client)
+      def publish
         cursor, added, settled = @agenda_lock.synchronize { @agenda.delta_since(@cursor) }
         views = added.to_h { [_1, Remote::Agenda::View.of(phone_face(_1), secrets: @secrets)] }.compact
-        settle(client, settled.select { @published.key?(_1) })
-        views.each { |item, view| show(client, item, view) }
+        settle(settled.select { @published.key?(_1) })
+        views.each { |item, view| show(item, view) }
         @cursor = cursor
-        republish_refused(client)
+        republish_refused
         announce_overdue
-      rescue *ENDS
+      rescue Unserved
         raise
+      rescue *DROPPED
+        nil
       rescue StandardError => e
         fault(e)
       end
 
-      def settle(client, ids)
+      def settle(ids)
         return if ids.empty?
 
-        send_delta(client, settled: ids.map { wire_id(_1) })
+        send_delta(settled: ids)
         ids.each do |id|
           @published.delete(id)
           @waiting.delete(id)
         end
       end
 
-      def show(client, item, view)
-        send_delta(client, added: [wired(view)])
-        @waiting[item.id] = view unless @published.key?(item.id)
+      # Waiting is timed from an item's first showing, so a republish never buzzes it again.
+      def show(item, view)
+        send_delta(added: [wired(view)], keys: gate_keys(item))
+        @waiting[item.id] = view if @shown.add?(item.id)
         @published[item.id] = item
       rescue Core::Client::Refused => e
         fault(e)
       end
 
-      def republish_refused(client)
+      def republish_refused
         refused = @refused.slice(*@published.keys)
         @refused.clear
         refused.each do |id, reason|
           view = Remote::Agenda::View.of(annotated(phone_face(@published.fetch(id)), reason), secrets: @secrets)
-          view && show(client, @published.fetch(id), view)
+          view && show(@published.fetch(id), view)
         end
       end
 
@@ -246,7 +268,7 @@ module Lain
         now = @clock.now
         @waiting.select { |_, view| now - view.asked_at >= @buzz_after }.each do |id, view|
           @waiting.delete(id)
-          announce(view.with(id: wire_id(view.id)))
+          announce(view)
         end
       end
 
@@ -268,15 +290,28 @@ module Lain
         item.with(field => [format(REFUSED, reason:), item.public_send(field)].reject(&:empty?).join("\n"))
       end
 
-      def send_delta(client, added: [], settled: [])
-        client.call("agenda.publish", [Remote::Wire::Delta.new(cursor: 0, added:, settled:).to_wire])
+      # A refusal from a relay that has since died is the relay's end, not one item's fault.
+      def send_delta(added: [], settled: [], keys: {})
+        @registration.call("agenda.publish", Remote::Wire::Delta.new(cursor: 0, added:, settled:).to_wire, keys)
+      rescue Core::Client::Refused
+        state = relay_state
+        raise Unserved, relay_off(state) if state && state != RUNNING
+
+        raise
       end
 
-      def wire_id(id) = "#{@prefix}#{id}"
+      # Keyed by the artifact revisions a yes approves, read off the unmasked item: 2 chats in 1 project
+      # then share a wave whatever secrets each knows, and a wave with any row asked again is a new item,
+      # so an answer given to the old one cannot approve a revision the phone never showed.
+      def gate_keys(item)
+        return {} unless item.is_a?(Remote::Agenda::GateQuestion) && !desk_only?(item)
+
+        { item.id => Digest::SHA256.hexdigest([@project, item.epic, item.stage, item.digests.sort].inspect) }
+      end
 
       def wired(view)
-        common = { id: wire_id(view.id), requester: view.requester, asked_at: view.asked_at.to_i,
-                   session: UNREGISTERED, project: @project }
+        common = { id: view.id, requester: view.requester, asked_at: view.asked_at.to_i,
+                   session: UNSTAMPED, project: @project }
         case view
         when Remote::Agenda::ParkedCall
           Remote::Wire::Item::ParkedCall.new(**common, tool: view.tool, input: JSON.generate(view.input),
@@ -290,8 +325,8 @@ module Lain
       end
 
       # Items this chat published would otherwise wait on the phone after the chat is gone.
-      def retract(client)
-        Async::Task.current.with_timeout(RETRACT_BUDGET) { settle(client, @published.keys) }
+      def retract
+        Async::Task.current.with_timeout(RETRACT_BUDGET) { settle(@published.keys) }
       rescue StandardError
         nil
       end

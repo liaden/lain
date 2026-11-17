@@ -2312,22 +2312,24 @@ extension must reproduce, which is how a port is known to be a swap rather than 
 
 ## The phone surface and the epic gate
 
-**The phone is one more surface over the same agenda, never a second authority.** With `remote relay:`
-set, `lain up` opens a `relay` tmux window running `lain-core relay` on the chat's socket, the
-paired-devices file and the listen address. The address must be loopback or this host's `tailscale0`
-address (`Config::Builder` refuses an all-addresses spelling, and the relay refuses any other), and
-the relay confines itself with Landlock before it serves. `lain remote pair` and `lain remote
-revoke` write the devices file (`Remote::Devices`, 0600, one token digest per device name); the
-relay rereads it each second, so neither verb restarts it and a revoke closes that device's
-connection. `Approval::RemoteSurface` is the chat's side: it folds what waits on a human (this
-chat's parked calls, the project's held gates, open questions: `Remote::Agenda`) into a masked
-view (`Remote::Agenda::View`, with paths in a refusal hidden), publishes it over a Unix socket in a
-private directory whose peer must be this user, and takes answers back with `:human` authority
-naming the device. An answer the desk beat leaves a `remote_answer_lost` record. A dead relay or a
-failing answer degrades the surface with a recorded `capability_degraded`, never the chat. With
-`remote ntfy:` set, an item that waits 60 seconds sends 1 notice (`Remote::Ntfy`) carrying a title and an
-Open link and nothing of the item. The announced set lives in the chat, so an item still waiting
-after a chat restarts is announced again.
+**The phone is one more surface over the same agenda, never a second authority.** With `remote
+relay:` set, the lain-daemon runs the relay worker on the paired-devices file and the listen address.
+The address must be loopback or this host's `tailscale0` address (`Config::Builder` refuses an
+all-addresses spelling, and the relay refuses any other), and the relay confines itself with Landlock
+before it serves. `lain remote pair` and `lain remote revoke` write the devices file
+(`Remote::Devices`, 0600, one token digest per device name); the relay rereads it each second, so
+neither verb restarts it and a revoke closes that device's connection. `Approval::RemoteSurface` is
+the chat's side: it folds what waits on a human (this chat's parked calls, the project's held gates,
+open questions: `Remote::Agenda`) into a masked view (`Remote::Agenda::View`, with paths in a refusal
+hidden), publishes it through the chat's daemon registration, and takes answers back as pushes with
+`:human` authority naming the device. A gate is published under a key of its rows' artifact digests,
+so 2 chats in 1 project show it once and a wave with any row asked again is a new item. An answer the
+desk beat leaves a `remote_answer_lost` record. A dead relay degrades the surface with a recorded
+`capability_degraded` and a `phone surface off` line in the chat, never the chat itself; a daemon
+restart is not a death, and the surface publishes everything again. With `remote ntfy:` set, an item
+that waits 60 seconds sends 1 notice (`Remote::Ntfy`) carrying a title and an Open link and nothing
+of the item. The announced set lives in the chat, so an item still waiting after a chat restarts is
+announced again.
 
 **Every reader of an epic gate reads one fold.** A `gate_decision` record carries an
 `Approval::Verdict` or, for a gate that parked, `Epic::GateDecision::Deferred`, and `Epic::Signoff`

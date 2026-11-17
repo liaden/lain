@@ -20,9 +20,11 @@ module Lain
 
       # `releases` is how many sensitive regions a yes would release, a count
       # and never the regions, so a surface off this box can leave the item out.
-      # Only a parked call can release any; the other kinds carry 0.
+      # Only a parked call can release any; the other kinds carry 0. A gate's
+      # `digests` are its rows' artifact digests, which name the revision a
+      # yes approves; empty for the unreadable-journal item.
       ParkedCall = Data.define(:id, :requester, :tool, :input, :cwd, :why, :asked_at, :releases)
-      GateQuestion = Data.define(:id, :requester, :epic, :stage, :issues, :question, :asked_at, :releases)
+      GateQuestion = Data.define(:id, :requester, :epic, :stage, :issues, :question, :asked_at, :releases, :digests)
       Question = Data.define(:id, :requester, :question, :options, :asked_at, :releases)
 
       # The route is held beside the frozen item, because an answer must reach
@@ -160,13 +162,13 @@ module Lain
 
         def unreadable(id, message)
           GateQuestion.new(id:, requester: GATE_REQUESTER, epic: "", stage: "", issues: [], question: message,
-                           asked_at: @wall.call.dup, releases: 0)
+                           asked_at: @wall.call.dup, releases: 0, digests: [])
         end
 
         def item(id, rows)
           GateQuestion.new(id:, requester: GATE_REQUESTER, epic: rows.first.epic, stage: rows.first.stage,
                            issues: rows.map { key_of(_1) }.uniq, question: rows.filter_map(&:question).uniq.join("\n"),
-                           asked_at: rows.map(&:asked_at).min, releases: 0)
+                           asked_at: rows.map(&:asked_at).min, releases: 0, digests: rows.map(&:digest))
         end
 
         # An epic-wide stage has no issue, so the stage's own name is the key

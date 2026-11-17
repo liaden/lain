@@ -1,13 +1,16 @@
 # Scenario: the phone surface, relay, pairing and ntfy
 
 **What it exercises:** `lain remote pair` and `lain remote revoke` (`CLI::Remote`, `Remote::Devices`), the `remote` config verb
-(`relay:` and `ntfy:`), the `relay` tmux window `lain up` opens (`CLI::Up::Relay`), `lain-core relay`, `Approval::RemoteSurface`
-over `Remote::Agenda` and its masked `View`, `Remote::Ntfy`, and the phone app in `apps/lain-remote` (§6 on the desktop,
+(`relay:` and `ntfy:`), the phone relay the per-user lain-daemon runs as a confined worker (`Daemon::Launch` adds
+`--relay` and `--devices-file`), `Approval::RemoteSurface` publishing through the chat's `Daemon::Registration` over
+`Remote::Agenda` and its masked `View`, `Remote::Ntfy`, and the phone app in `apps/lain-remote` (§6 on the desktop,
 §7 on an emulated Android device).
 
 **Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/remote.rb`, `remote/devices.rb`, `remote/agenda.rb`,
 `remote/ntfy.rb`, `approval/remote_surface.rb`, `cli/up.rb` `class Relay`, `config/builder.rb`, `crates/lain-core/src/relay.rs`).
-Nothing here has been driven. §0 to §5 need no phone app: drive the relay's own socket and TCP port with a stand-in client, or
+Revised 2026-11-17 when the relay moved into lain-daemon: `lain up` opens no relay window, `lain-core relay` is no
+longer the phone path, and the chat publishes through its daemon registration rather than a per-project socket.
+Nothing here has been driven. §0 to §5 need no phone app: drive the relay's TCP port with a stand-in client, or
 with the app. §6 and §7 were added on 2026-11-10, when the app moved into this repo. Every "Expect" is a prediction read off the code, so a mismatch is either a defect or a
 stale line in this file, and the round says which.
 
@@ -17,8 +20,8 @@ the phone ever see a byte the desk would have masked?
 
 **Cost:** cheap. 3 short asks on a local model (a parked `bash` call, an `ask_human`, a deferred gate). No spend.
 
-**Needs:** `../bench.md` up, tmux, a built `lain-core` (`bundle exec rake core:build`), Landlock in the kernel (the relay refuses to
-run unconfined), and for the real-network half a `tailscale0` interface. Without one, listen on loopback, which the relay allows.
+**Needs:** `../bench.md` up, tmux, a built `lain-daemon` (`bundle exec rake daemon:build`), Landlock in the kernel (the relay
+worker refuses to run unconfined), and for the real-network half a `tailscale0` interface. Without one, listen on loopback, which the relay allows.
 A stand-in ntfy topic: `nc -l` or a one-route HTTP server on loopback. §6 needs `tailscaled` up and logged in, and
 WebKitGTK (`cargo build -p lain-remote`); §7 needs what its own Needs line says. Read `../method.md` first, build the sandbox with
 `.claude/skills/manual-qa/scripts/qa-sandbox.sh`, and start each Bash call that touches files with `: "${QA:?}"`.
@@ -41,7 +44,7 @@ remote nope: 1                      # unknown key
 
 Expect: `relay must be an IP address and a port, such as "100.64.0.1:7820"`, `relay listens only on loopback or this host's
 tailscale0 address, never on every address`, and `ntfy must be an http or https URL naming a topic`. With no `remote` line the
-phone surface is off and nothing in `lain up` changes.
+phone surface is off and the daemon runs no relay.
 
 Then put `remote relay: "100.64.0.1:7820"` in a project's `.lain/config.rb`, run `lain trust --yes`, and start `lain chat`.
 Expect a refusal at load, exit 1, no backtrace, saying `remote belongs in the user's config.rb` and naming the user's
@@ -65,26 +68,31 @@ and expect no match. The repeat pair, the missing name and the unknown verb each
 message is `lain remote knows pair and revoke, not "forget"`); the second revoke refuses. **Wrong looks like:** the token in the
 file, in the journal, or printed twice.
 
-## 2: The relay window in `lain up` *(free)*
+## 2: The relay worker in the daemon *(free)*
 
-Set `remote relay: "127.0.0.1:7820"` in the user's config.rb and run `lain up`. Expect a tmux window named `relay` running `lain-core relay`, a note
-`the phone relay runs in the 'relay' window; if it dies its log is <path>`, the socket directory at mode 0700 and, on a first start,
-an empty devices file. Then the failures, each a warning and a cockpit WITHOUT a relay, never a refused cockpit:
+Set `remote relay: "127.0.0.1:7820"` in the user's config.rb and start `lain chat`. Expect the chat's daemon to run with
+`--relay 127.0.0.1:7820 --devices-file <state>/lain/remote/devices` on its command line (`ps -o args= -C lain-daemon`), a
+child `lain-daemon relay` process listening on the port, and, on a first start, an empty devices file at mode 0600 in a 0700
+directory. `lain up` opens no `relay` window. A chat started before the line was added keeps the daemon it has until that
+daemon has no chats left; the next chat then restarts it with the relay.
 
-| setup | expected warning |
+Then the failures. Each leaves the chat running with the phone surface off, a `phone surface off: <reason>` line in the
+chat and 1 `capability_degraded` record naming `remote_surface`, never a refused chat:
+
+| setup | expected reason |
 |---|---|
-| `relay: "100.64.9.9:7820"` on a host with no such address | `remote relay 100.64.9.9:7820: the relay listens only on loopback or an address of tailscale0, so the cockpit starts without it (is tailscale up?)` |
-| `lain-core` not built | `remote relay is set but lain-core is not built at <path>, ... (run `rake core:build`)` |
-| the devices file replaced by a symlink | `remote relay is set but <path> is a symlink or another user's, so the cockpit starts without the relay` |
-| a config that will not load | `remote relay skipped: <reason>`, and the chat says the same |
+| `relay: "100.64.9.9:7820"` on a host with no such address | `the daemon's phone relay is unavailable; <runtime dir>/lain/daemon/daemon.trace says why`, and that trace names the address |
+| the devices file replaced by a symlink | the same line, naming the same trace |
+| `LAIN_DAEMON=off` | `no daemon to publish through` |
 
-Kill the relay process inside its window: expect the window to stay with the last 20 lines of the relay's trace, not vanish. A
-dead relay is not revived by reattaching (known gap). Kill the tmux session: the relay stops with it.
+Kill the relay worker (`kill <pid of lain-daemon relay>`): the daemon keeps running and `daemon.info` reports the relay
+`unavailable`; the chat's next publish turns the surface off as above. Kill the daemon itself instead: that is not a death.
+The chat registers with a new daemon, the surface publishes every open item again, and no `capability_degraded` is written.
 
 ## 3: What the phone sees, and what it may not *(cheap)*
 
 In the cockpit, park a `bash` call (`approval` at `ask`), ask the model an `ask_human` question, and leave a `gate :research,
-:deferred` gate parked. Connect a paired client to the relay. Expect 3 items: an approval, a question with its options, and a gate
+:deferred` gate parked. Connect a paired client to the relay's port. Expect 3 items: an approval, a question with its options, and a gate
 question naming its epic and stage, each under an id the client can answer by.
 
 Masking: make the parked call's input carry a known secret value (a key in the command line, a `.env` value). Expect the item's
@@ -97,12 +105,17 @@ Answers, each with the device named in the journal (`surface=remote:qa-phone`, a
 2. answer the question: the model gets the text, the question leaves `lain://inbox`, and the journal's `question_answered` record names the device (`"answered_by":"remote:qa-phone"`), as a desk answer leaves it nil;
 3. answer the gate: the verdict is journaled as a `gate_decision` from the phone, with `answered_by` reading `remote:qa-phone` (it used to read as the desk's human);
 4. answer the same item at the desk first, then from the phone: expect a `remote_answer_lost` record with the device, and no
-   second decision.
+   second decision. Its `id` is the chat's own agenda id (`"1"`, `"2"`, ...), not the id the phone was shown: the relay
+   worker mints the phone's ids, and the chat never sees them.
 
 **A refused answer comes back as text.** Answer a question with neither option nor text: the item reappears with
 `your last answer was refused: ...` at the head of its text, and the surface lives on. A gate whose journal cannot be read is
 shown as `a gate journal cannot be read ... fix it at the desk` and every answer to it is refused with `this item can only be
 fixed at the desk`.
+
+**A re-asked gate is a new item.** With 2 chats open over 1 project, the deferred gate shows once on the phone. Re-ask 1 of
+its rows under a new artifact revision: expect the phone to show the gate under a new id, and an answer to the old id to be
+refused as already settled, with no `gate_decision` for the new revision.
 
 **A gate offers only Approve and Deny, and a bad answer cannot strand it.** The gate item lists 2 replies; Hold is not among them (a deferred gate already waits, so a hold answered nothing while the phone showed it landed). Check each way an answer can fail to decide a gate, from a client or by hand against the relay:
 
@@ -114,12 +127,10 @@ fixed at the desk`.
 
 - `lain remote revoke qa-phone` with a client connected: within about a second (the relay rereads the file on a 1 s tick) the
   connection closes, with no relay restart. A client with a token that was never paired is refused at its hello.
-- A socket directory open to others (`chmod 755` it), or a socket whose peer is another user's process, makes the chat refuse the
-  surface with `must be 0700` or `is another user's`; the chat itself carries on and the journal holds one `capability_degraded`
-  record naming the reason.
-- Kill `lain-core relay` mid-session: the chat keeps running, one `capability_degraded` record is written, and the desk answers
-  everything as before. **Wrong looks like:** a stalled chat, a second degraded record per sweep, or a stack trace in the pane.
-- End the chat: every item it published leaves the relay (retracted within 1 s), so no dead question waits on the phone.
+- Kill the `lain-daemon relay` worker mid-session: the chat keeps running, one `capability_degraded` record and one
+  `phone surface off:` line appear once the chat next publishes, and the desk answers everything as before. **Wrong looks like:** a stalled chat, a second degraded record per sweep, or a stack trace in the pane.
+- End the chat: every item it published leaves the relay (retracted within 1 s, and the daemon drops a session's items
+  when its registration closes), so no dead question waits on the phone.
 
 ## 5: ntfy *(cheap)*
 
@@ -127,7 +138,8 @@ Set `remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run th
 
 - Before 60 s: nothing is sent. Answer a second parked call within the minute: nothing is ever sent for it.
 - At 60 s the server receives exactly 1 POST: body `Open lain to answer.`, a `Title` of `lain approval waiting on <requester>`
-  (`gate question` or `question` for those kinds), and an `Actions` header `view, Open, lain-remote://item/<id>`. No input text, no
+  (`gate question` or `question` for those kinds), and an `Actions` header `view, Open, lain-remote://item/<id>`, where
+  `<id>` is the chat's own agenda id until the notice moves into the daemon (the app does not open the link yet). No input text, no
   token, no path, no relay address anywhere in it. A requester with non-ASCII bytes reads `?` in the title.
 - It is not sent again while the same chat runs, even if the server answered 500 (a refusal is recorded once, not retried).
 - **A reminder after a restart.** Leave a deferred gate parked, end the chat, start a new one over the same project and wait 60 s
@@ -146,7 +158,7 @@ TS=$(tailscale ip -4)
 cargo build -p lain-remote
 ```
 
-Set `remote relay: "$TS:7820"` (the address itself, not `$TS`) in the user's config.rb, run `lain remote pair qa-desktop`, and start `lain up`. Expect
+Set `remote relay: "$TS:7820"` (the address itself, not `$TS`) in the user's config.rb, run `lain remote pair qa-desktop`, and start `lain chat`. Expect
 the `relay:` line of the pair to read `$TS:7820`, and `ss -ltn 'sport = :7820'` to show 1 listener, on `$TS`, and none on
 `127.0.0.1` or `0.0.0.0`.
 
@@ -168,8 +180,8 @@ LAIN_REMOTE_CONFIG="$QA/remote-settings" target/debug/lain-remote
 4. **A blank text answer is not sent.** Pick Text on a question with nothing typed: expect no answer to leave the app. A Deny
    with an empty note is sent, carrying no note.
 5. **Revoke and restart.** `lain remote revoke qa-desktop` while the app is connected: expect `reconnecting: ` within about a
-   second, and never the agenda again. Pair again, enter the new token, then kill the `relay` window's process: expect
-   `reconnecting: `, and the agenda back on its own once `lain up` is restarted.
+   second, and never the agenda again. Pair again, enter the new token, then kill the lain-daemon: expect
+   `reconnecting: `, and the agenda back on its own once the chat has registered with the new daemon.
 6. **Wrong looks like:** an agenda while the address is `127.0.0.1`, a listener on loopback, or the token anywhere on screen.
 
 **What this does not prove.** Linux routes a packet for one of the host's own addresses through loopback, so this host reaching
@@ -201,5 +213,5 @@ Then:
 ## What this scenario does not cover
 
 A real phone, and `tailscale` ACLs. 2 gaps are known and recorded in the plan, and a round that finds them files
-them as known: no "already answered" signal reaches a phone that loses a race, only the journal's `remote_answer_lost`; and the
+them as known: no "already answered" signal reaches a phone that loses a race, only the journal's `remote_answer_lost`, whose `id` is the chat's agenda id, not the phone's; and the
 mask's known gaps show through the phone view (a value in base64 or reversed, under 6 bytes, or split across 2 fields).

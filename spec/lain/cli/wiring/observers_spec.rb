@@ -347,4 +347,28 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       end
     end
   end
+
+  describe "the phone surface" do
+    let(:said) { [] }
+
+    def registered = described_class.register(chronicle:, paths:, project:, resumed: nil, arms:, say: said.method(:<<))
+
+    def degraded(capability, provider)
+      chronicle.durable_journal << Lain::Telemetry::CapabilityDegraded.new(capability:, requirer: "spec", provider:)
+    end
+
+    it "tells the chat when the phone surface goes off, and why, as it happens" do
+      registered
+      degraded(:remote_surface, "the daemon's phone relay is unavailable")
+
+      expect(said).to eq(["phone surface off: the daemon's phone relay is unavailable"])
+    end
+
+    it "says nothing of another capability going off" do
+      registered
+      degraded(:sandbox, "lacks bwrap")
+
+      expect(said).to be_empty
+    end
+  end
 end

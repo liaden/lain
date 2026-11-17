@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "digest"
+require "fileutils"
 require "rbconfig"
 
 module Lain
@@ -16,16 +17,41 @@ module Lain
       KEEP = /\A(?:PATH|HOME|USER|LOGNAME|LANG|LC_ALL|TZ|TMPDIR|GEM_HOME|GEM_PATH|SSL_CERT_(?:FILE|DIR)|
                  XDG_(?:RUNTIME_DIR|STATE_HOME|CONFIG_HOME|CACHE_HOME|DATA_HOME))\z/x
 
-      # @param paths [Paths] where the socket and trace go, and the XDG homes the daemon is handed
+      # @param paths [Paths] where the socket and trace go, the XDG homes the daemon is handed, and
+      #   the user's config, whose `remote relay:` the daemon runs the phone relay on
       # @param env [Hash] the caller's environment, read for cargo's target dir and the allowlist
       # @return [Launch] this checkout's release build, run by this ruby
       def self.current(paths:, env: ENV)
         Ractor.make_shareable(
           new(binary: File.join(Paths::Shipped.cargo_target(env:), "release", "lain-daemon"),
-              socket: Daemon.socket(paths:), trace: File.join(paths.daemon_dir, "daemon.trace"),
+              socket: Daemon.socket(paths:), trace: trace_path(paths:),
               ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"),
-              env: kept(env).merge(homes(paths)), flags: [])
+              env: kept(env).merge(homes(paths)), flags: relay_flags(paths))
         )
+      end
+
+      # @param paths [Paths]
+      # @return [String] where the daemon, and the relay worker it runs, write their trace
+      def self.trace_path(paths:) = File.join(paths.daemon_dir, "daemon.trace")
+
+      # A user config that cannot be read starts a daemon with no relay; the chat reading the same
+      # file is what says why.
+      def self.relay_flags(paths)
+        relay = Config.remote(paths:)[:relay]
+        relay ? ["--relay", relay, "--devices-file", devices_file(paths)] : []
+      rescue Error
+        []
+      end
+
+      # The relay refuses a devices file that is missing or open to others, so the first launch
+      # writes the empty one a first pairing fills.
+      def self.devices_file(paths)
+        path = Remote::Devices.for(paths:).path
+        FileUtils.mkdir_p(File.dirname(path), mode: 0o700)
+        File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600, &:close)
+        path
+      rescue Errno::EEXIST
+        path
       end
 
       def self.kept(env) = env.to_h.select { |name, _| KEEP.match?(name) && !Exec::ChildEnv::SECRET.match?(name) }
@@ -36,7 +62,7 @@ module Lain
           "XDG_CONFIG_HOME" => paths.config_home, "XDG_CACHE_HOME" => paths.cache_home }
           .transform_values { |dir| File.dirname(dir) }
       end
-      private_class_method :kept, :homes
+      private_class_method :kept, :homes, :relay_flags, :devices_file
 
       # Content, not mtime or size, so an untouched or re-copied binary does
       # not restart the daemon. A rebuild at a new commit stamps a new sha in,

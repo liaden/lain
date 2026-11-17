@@ -3,7 +3,6 @@
 require "fileutils"
 require "json"
 require "shellwords"
-require "ipaddr"
 require "socket"
 
 module Lain
@@ -1138,150 +1137,6 @@ module Lain
         end
       end
 
-      # The phone relay, run in a tmux window of the cockpit's own session so the
-      # session owns it as it owns the chat: `lain up` ends in an exec of tmux
-      # attach and cannot hold a child, and killing the session stops the relay.
-      # Everything that can go wrong is a warning and a cockpit without a relay,
-      # never a refusal to open the cockpit.
-      class Relay
-        WINDOW = "relay"
-        BINARY = File.join(Paths::Shipped.cargo_target, "debug", "lain-core")
-        TAILNET = "tailscale0"
-        # getifaddrs lists AF_PACKET entries too, and ip_address raises on those.
-        LOCAL_ADDRESSES = lambda do
-          Socket.getifaddrs.select { |interface| interface.addr&.ip? }
-                .map { |interface| [interface.name, interface.addr.ip_address] }
-        end
-
-        ABSENT = "remote relay %<address>s: the relay listens only on loopback or an address of tailscale0, so " \
-                 "the cockpit starts without it (is tailscale up?)"
-        UNBUILT = "remote relay is set but lain-core is not built at %<binary>s, so the cockpit starts without " \
-                  "the relay (run `rake core:build`)"
-        UNSAFE = "remote relay is set but %<path>s is a symlink or another user's, so the cockpit starts without " \
-                 "the relay"
-        SKIPPED = "remote relay skipped: %<reason>s"
-        RUNNING = "the phone relay runs in the '%<window>s' window; if it dies its log is %<trace>s"
-
-        Launch = Data.define(:command, :warnings, :trace) do
-          def note = format(RUNNING, window: WINDOW, trace:)
-        end
-        NONE = Launch.new(command: nil, warnings: [].freeze, trace: nil)
-
-        # The user's `remote relay:`, started for the project its chat finds the way the chat does.
-        # The relay is user-wide, but the chat's socket path is per project root, so a
-        # directory that names no project still gets no relay. A user config that is
-        # refused or untrusted skips it with the reason; the chat says the rest.
-        #
-        # @param cwd [String] where the cockpit's panes run
-        # @param paths [Paths]
-        # @param interfaces [#call] the local interface addresses
-        # @param binary [String] the built `lain-core`
-        # @return [Relay]
-        def self.for(cwd:, paths: Paths.new, interfaces: LOCAL_ADDRESSES, binary: BINARY)
-          root = project_root(cwd, paths)
-          return new(address: nil, root: cwd, paths:, interfaces:, binary:) unless root
-
-          begin
-            new(address: Config.remote(paths:)[:relay], root:, paths:, interfaces:, binary:)
-          rescue Error => e
-            new(address: nil, root:, paths:, interfaces:, binary:, skipped: e.message)
-          end
-        end
-
-        def self.project_root(cwd, paths)
-          Project::Resolver.new(home: paths.home_or_nil, paths:).call(cwd:).project.root
-        rescue Error
-          nil
-        end
-        private_class_method :project_root
-
-        # @param address [String, nil] `ip:port`, the `remote relay:` the project set
-        # @param root [String] the project root
-        # @param paths [Paths]
-        # @param interfaces [#call] the local interface addresses
-        # @param binary [String] the built `lain-core`
-        # @param skipped [String, nil] why the project's config could not be read
-        def initialize(address:, root:, paths:, binary:, interfaces: LOCAL_ADDRESSES, skipped: nil)
-          @skipped = skipped
-          @address = address
-          @root = root
-          @paths = paths
-          @interfaces = interfaces
-          @binary = binary
-        end
-
-        # @return [Launch]
-        def call
-          return refused(SKIPPED, reason: @skipped) if @skipped
-          return NONE if @address.nil?
-          return refused(ABSENT, address: @address) unless listenable?
-          return refused(UNBUILT, binary: @binary) unless File.executable?(@binary)
-
-          socket = Approval::RemoteSurface.socket(paths: @paths, root: @root)
-          return refused(UNSAFE, path: File.dirname(socket)) unless private_directory?(File.dirname(socket))
-
-          devices = ::Lain::Remote::Devices.for(paths: @paths).path
-          private_devices_file?(devices) ? launch(socket, devices) : refused(UNSAFE, path: devices)
-        end
-
-        private
-
-        def launch(socket, devices)
-          trace = restart_trace(File.join(File.dirname(socket), "relay.trace"))
-          Launch.new(command: command(socket, devices, trace), warnings: [].freeze, trace:)
-        end
-
-        def host = @address.rpartition(":").first.delete("[]")
-
-        def listenable?
-          IPAddr.new(host).loopback? || @interfaces.call.include?([TAILNET, host])
-        end
-
-        def refused(reason, **fields)
-          Launch.new(command: nil, warnings: [format(reason, **fields)].freeze, trace: nil)
-        end
-
-        # The relay logs only to its --trace file, so a relay that dies would leave the
-        # pane saying nothing but its status; the tail is printed before the pane stops.
-        # The blank line first takes the one row tmux scrolls off when it paints the dead-pane notice.
-        def command(socket, devices, trace)
-          relay = Shellwords.join([@binary, "relay", "--unix", socket, "--devices-file", devices,
-                                   "--listen", @address, "--trace", trace])
-          "#{relay} || { code=$?; echo; tail -n 20 #{Shellwords.escape(trace)}; exit $code; }"
-        end
-
-        def restart_trace(path)
-          File.open(path, File::WRONLY | File::CREAT | File::TRUNC | File::NOFOLLOW, 0o600, &:close)
-          path
-        end
-
-        # The relay refuses a devices file that is not there or is open to others, so
-        # the first launch writes the empty one a first pair will fill.
-        def private_devices_file?(path)
-          FileUtils.mkdir_p(File.dirname(path), mode: 0o700)
-          create(path)
-          closed_to_others?(path, :file?, 0o600)
-        end
-
-        def create(path)
-          File.open(path, File::WRONLY | File::CREAT | File::EXCL, 0o600, &:close)
-        rescue Errno::EEXIST
-          nil
-        end
-
-        def private_directory?(directory)
-          FileUtils.mkdir_p(directory, mode: 0o700)
-          closed_to_others?(directory, :directory?, 0o700)
-        end
-
-        def closed_to_others?(path, kind, mode)
-          stat = File.lstat(path)
-          mine = stat.public_send(kind) && stat.uid == Process.uid
-          File.chmod(mode, path) if mine
-          mine
-        end
-      end
-
       # @param options [Hash] `up`'s parsed flags; {Flags} is where they are read
       # @param chat_args [Array<String>] the flags after `--`, forwarded to `chat` verbatim
       # @param path [String, nil] the PATH argument: the project directory to open
@@ -1376,8 +1231,7 @@ module Lain
                      preflight_run: ChatPreflight.spawning(shell_out_factory),
                      chat_preflight: ChatPreflight.new(run: preflight_run, cwd:),
                      binaries: Binaries.new,
-                     gc_schedule: GcSchedule.for(cwd:, paths:),
-                     relay: Relay.for(cwd:, paths:))
+                     gc_schedule: GcSchedule.for(cwd:, paths:))
         @session = session
         @tmux = Tmux.new(socket:, shell_out_factory:)
         @surface = TmuxSurface.new(socket:, shell_out_factory:)
@@ -1392,7 +1246,6 @@ module Lain
         @binaries = binaries
         @chat_preflight = chat_preflight
         @gc_schedule = gc_schedule
-        @relay = relay
       end
 
       # @param env [Hash{String=>String}] the launching process's environment
@@ -1609,27 +1462,10 @@ module Lain
         # Where the human types is where the cursor belongs, stated rather than
         # left to the order the panes happened to be made in.
         @tmux.act("select-pane", "-t", input)
-        open_relay_window
         watch_panes(chat:, input:)
       rescue StandardError
         @tmux.run("kill-session", "-t", target)
         raise
-      end
-
-      # Detached, so the session still opens on the chat. The trailing colon
-      # names the session and lets tmux pick the window's index. The window opens
-      # on a shell and is respawned onto the relay, so a relay that dies at once
-      # cannot take the window with it before remain-on-exit is set.
-      def open_relay_window
-        launch = @relay.call
-        @warnings.concat(launch.warnings)
-        return unless launch.command
-
-        relay_pane = "=#{@session}:#{Relay::WINDOW}"
-        @tmux.act("new-window", "-d", "-t", target, "-n", Relay::WINDOW, "-c", @cwd)
-        @tmux.run("set-option", "-w", "-t", relay_pane, "remain-on-exit", "failed")
-        @tmux.act("respawn-pane", "-k", "-t", relay_pane, "-c", @cwd, launch.command)
-        @warnings << launch.note
       end
 
       # The chat pane holds its screen on ANY exit, not just a failing one:
