@@ -58,7 +58,8 @@ RSpec.describe Lain::Remote::Agenda do
   # The real reply side a chat wires: the askers, and the replies `/inbox` drains.
   let(:asked_journal) { [] }
   let(:askers) do
-    Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new, journal: asked_journal)
+    Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                  observer: Lain::EventLog::ChainWriter::Null.new, journal: asked_journal)
   end
   let(:asker) do
     parent = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)

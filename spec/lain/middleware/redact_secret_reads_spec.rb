@@ -144,6 +144,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
       paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
       project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
       Lain::CLI::Wiring::BoardBuild.for(
+        human: Lain::CLI::Human.new(kind: :terminal),
         chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
         verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new)
       ).bind_session(session)
@@ -2133,6 +2134,7 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
         paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
         project = Lain::Project.new(root: dir, cwd: dir, kind: :project, detected_by: :git)
         Lain::CLI::Wiring::BoardBuild.for(
+          human: Lain::CLI::Human.new(kind: :terminal),
           chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m", toolset:, project:, paths:,
           verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new)
         ).bind_session(session)

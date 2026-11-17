@@ -133,7 +133,8 @@ class ReplGoalTerminal
     rail = Lain::Frontend::Intake.new(screen: tty)
     conductor = Lain::CLI::Conductor.new(tty:, chronicle: Lain::CLI::Chronicle::Null.new,
                                          signals: Lain::CLI::Signals.new, rail:, grace: 5)
-    askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
+    askers = Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                           observer: Lain::EventLog::ChainWriter::Null.new)
     replies = Lain::CLI::HumanReplies.new(tty:, conductor:, ask_human: askers.directory, questions: askers.questions)
     driver = Lain::CLI::GoalDriver.new(journal:, cap: Integer(cap))
     agent = Struct.new(:timeline, :session).new(CoreGraph.timeline, Lain::Session::Null.instance)

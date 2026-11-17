@@ -21,6 +21,9 @@ module Lain
         # a missed answer fails the replay rather than waiting out a chat's window.
         ANSWER_WINDOW = 5
 
+        # A replayed call parks for its recorded answer, so the board must have a queue to park on.
+        HUMAN = ::Lain::CLI::Human.new(kind: :terminal)
+
         # What the replay's bash would run a command through, were the interpreter ever to reach it.
         # Built over nothing, so the tool asks the disk for no shell either.
         module Unrun
@@ -86,8 +89,8 @@ module Lain
           @toolset = self.class.toolset
           sensitivity = policy
           @board = ::Lain::CLI::Switchboard.for(chronicle: @chronicle, options: { approval: arm.approval },
-                                                model: MODEL, toolset: @toolset, judge:, rules:, sensitivity:,
-                                                test_layout: test_layout(sensitivity),
+                                                human: HUMAN, model: MODEL, toolset: @toolset, judge:, rules:,
+                                                sensitivity:, test_layout: test_layout(sensitivity),
                                                 classifiers: classifiers(sensitivity), denied_tools:,
                                                 approval_timeout: window, memo: ::Lain::Approval::JudgeMemo.new,
                                                 arms: ::Lain::CLI::Arms::OFF.with(judge_denials: arm.denials))

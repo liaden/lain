@@ -464,7 +464,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     def leased_stack(checkout)
       project = Lain::Project.new(root: repo, cwd: repo, kind: :project, detected_by: :flag)
       trust_project(repo, paths:)
-      board = Lain::CLI::Wiring::BoardBuild.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+      board = Lain::CLI::Wiring::BoardBuild.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                                chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
                                                 model: "m", toolset:, project:, paths:)
       Lain::CLI::ToolGuard.leased(chronicle, board.guard_inputs, Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:),
                                   fresh: Lain::Shell::Executable::Resolver::NeverFresh,

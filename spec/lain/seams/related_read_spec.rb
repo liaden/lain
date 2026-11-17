@@ -37,7 +37,7 @@ RSpec.describe "A read under a related directory", :seam do
 
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
-      chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+      human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
       model: "m", toolset:, project:, paths:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     ).bind_session(session)

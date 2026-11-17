@@ -1552,6 +1552,7 @@ RSpec.describe Lain::Approval::Judged do
     it "journals the digests on an auto ladder built by Switchboard.for" do
       scripted = answering("approve")
       board = Lain::CLI::Switchboard.for(
+        human: Lain::CLI::Human.new(kind: :terminal),
         chronicle: instance_double(Lain::CLI::Chronicle, record_journal: Lain::Journal.new(io: ladder_io)),
         options: { approval: "auto" }, model: "claude-opus-4-8", toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
         test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,

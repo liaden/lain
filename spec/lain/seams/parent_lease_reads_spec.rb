@@ -45,7 +45,7 @@ RSpec.describe "A parent's read of its child's lease", :seam do
   let(:judge) { ->(place:, **) { (places << place) && :defer } }
   let(:board) do
     Lain::CLI::Wiring::BoardBuild.for(
-      chronicle:, options: {}, judge:, model: "m",
+      human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, judge:, model: "m",
       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]), project:,
       paths: Lain::Paths.new(env: { "HOME" => @home }),
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new)

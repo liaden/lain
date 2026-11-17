@@ -46,7 +46,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
-      chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+      human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
       model: "m", toolset: Lain::Toolset.new([]), project:, paths:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     ).bind_session(Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: @repo)))

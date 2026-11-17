@@ -226,7 +226,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     describe "when plan scope cannot be entered" do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
-        Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
+        Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, model: "m",
                                    judge: Lain::CLI::Switchboard::DEFERRING,
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
@@ -279,7 +279,7 @@ RSpec.describe Lain::CLI::Command::Mode do
     describe "the reset" do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
       let(:board) do
-        Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "m",
+        Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, model: "m",
                                    judge: Lain::CLI::Switchboard::DEFERRING,
                                    toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                    test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
@@ -389,7 +389,8 @@ RSpec.describe Lain::CLI::Command::Mode do
     end
 
     def board_for(**options)
-      Lain::CLI::Switchboard.for(chronicle:, options:, model: "claude-opus-4-8", toolset: tools,
+      Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                 chronicle:, options:, model: "claude-opus-4-8", toolset: tools,
                                  judge: Lain::CLI::Switchboard::DEFERRING,
                                  spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)
@@ -427,7 +428,8 @@ RSpec.describe Lain::CLI::Command::Mode do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
     let(:tools) { Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) }) }
     let(:board) do
-      Lain::CLI::Switchboard.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: tools,
+      Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                 chronicle:, options: {}, model: "claude-opus-4-8", toolset: tools,
                                  judge: Lain::CLI::Switchboard::DEFERRING,
                                  spike: Lain::Isolation::Scratch.new(root: @scratch),
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared)

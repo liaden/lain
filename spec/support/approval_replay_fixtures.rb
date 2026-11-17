@@ -149,6 +149,7 @@ module ApprovalReplayFixtures
     sensitivity = Lain::Sensitivity::Policy.new(sensitivity: classifier, home: at.home, root: at.root,
                                                 file_facts: facts)
     Lain::CLI::Switchboard.for(
+      human: Lain::CLI::Human.new(kind: :terminal),
       chronicle:, options: { approval: }, model: MODEL, toolset:, judge: Judge.new(script), rules: remembered,
       denied_tools:, sensitivity:,
       classifiers: Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: at.home, cwd: at.cwd, root: at.root),

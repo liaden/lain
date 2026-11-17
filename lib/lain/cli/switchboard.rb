@@ -122,13 +122,14 @@ module Lain
       # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
       #   whether the toolset's bash can run a call that reads
       #   secrets contained, which the queue's rows say and a plain approval needs; unstated by default
-      # @option options [Boolean] :non_interactive no human is at this
-      #   session's terminal
+      # @param human [Human] who answers this session, built once by the chat from
+      #   its launch flags. Required: a default would hand a headless caller a
+      #   queue nobody drains
       # @option options [String] :approval the session starts at this approval
-      #   level. This and `non_interactive` are the only flags this entry
-      #   reads off `options`
+      #   level, the only flag this entry reads off `options`
       # @return [Switchboard]
-      def self.for(chronicle:, options:, model:, toolset:, test_layout:, judge:, rules: [], approving: REMEMBERED,
+      def self.for(chronicle:, options:, model:, toolset:, test_layout:, judge:, human:, rules: [],
+                   approving: REMEMBERED,
                    sensitivity: Sensitivity::Policy::Null.instance,
                    classifiers: Approval::Escalation::Triage::AnyPath.new,
                    verdict: Lain::Shell::Verdict.new, spike: Scoping::NOWHERE, middleware: Config::Middleware.empty,
@@ -141,7 +142,7 @@ module Lain
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
             request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
-            attended: !options[:non_interactive], approval: options.fetch(:approval, :ask))
+            attended: !human.ladder_refuses?, approval: options.fetch(:approval, :ask))
       end
 
       # The rules rung's chain when nothing composes one: the remembered
@@ -220,12 +221,11 @@ module Lain
       #
       #   Defaults to a verdict restricting no program, so a board built
       #   without a project behaves as it did before the table existed.
-      # @param attended [Boolean] whether a human is at this session's terminal
-      #   at all. `--non-interactive` says no, which answers "who decides a
-      #   gated call" with "nobody can, so refuse" -- see {#seed} for why
-      #   refusing beats the two alternatives. Spelled positively all the way
-      #   down the chain ({CLI::Wiring#attended?}, {Repl}, {Wiring::Askers}), so
-      #   no reader has to un-negate it twice.
+      # @param attended [Boolean] whether anyone can decide this session's
+      #   gated calls. {.for} answers it from {Human#ladder_refuses?}, and false
+      #   answers "who decides a gated call" with "nobody can, so refuse" --
+      #   see {#seed} for why refusing beats the two alternatives. Spelled
+      #   positively, so no reader has to un-negate it twice.
       # @param test_layout [Middleware::GuardTestLayout::Run] as on {.for};
       #   a board of its own that declares no layout by default, so the
       #   direct-construction seams a spec drives enforce nothing

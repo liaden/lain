@@ -64,11 +64,12 @@ module Lain
         # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
         #   whether bash can run a call that reads secrets
         #   contained, as {ToolsetBuild#board_inputs} answers; unstated by default
-        # @option options [Boolean] :non_interactive no human is at this
-        #   session's terminal -- read by {Switchboard.for}, never here
+        # @param human [Human] who answers this session, handed on to {Switchboard.for}
+        # @option options [String] :approval the session's starting approval level,
+        #   read by {Switchboard.for}, never here
         # @return [Switchboard]
-        def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
-                verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
+        def for(chronicle:, options:, model:, toolset:, project:, judge:, human:,
+                paths: Paths.new, verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
                 config: Config.load(root: project.root, paths:), display: Channel::Null.instance,
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
                 child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None,
@@ -82,7 +83,7 @@ module Lain
           sensitivity = session_policy(project:, paths:, table:, config:)
           factory = classifiers(project:, paths:, table:, facts: sensitivity.file_facts,
                                 reads: sensitivity.read_roots, **identity)
-          Switchboard.for(chronicle:, options:, model:, toolset:, verdict:,
+          Switchboard.for(chronicle:, options:, human:, model:, toolset:, verdict:,
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: approving_under(arms, masks, child_env),
                           sensitivity:, spike: PlanSpike.new(project:, paths:),

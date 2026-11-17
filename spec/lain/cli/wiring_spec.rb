@@ -1512,6 +1512,13 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.approvals).to be_a(Lain::Approval::Parked::Queue)
     end
 
+    it "takes the queue and the asker from the Human, not from the flag" do
+      allow(Lain::CLI::Human).to receive(:from).and_return(Lain::CLI::Human.new(kind: :none))
+      wire_agent
+      expect(wiring.ask_human).to be_a(Lain::Tools::AskHuman::Unattended)
+      expect(wiring.approvals).to be_nil
+    end
+
     # The session Toolset is built ONCE (toolset_build.rb:61-64) and the
     # Agent holds it in an ivar for its whole life. This identity is what made a
     # #to_schema memo PLAUSIBLE -- Context#render (context.rb:162) calls
@@ -4706,6 +4713,27 @@ RSpec.describe Lain::CLI::Wiring do
         expect(Lain::Skill::Catalog).to have_received(:load).once
         expect(Lain::Prompt::Slots).to have_received(:load).once
       end
+    end
+
+    # A headless chat named an input pane still has nobody typing: no producer
+    # reads a line, and nothing echoes one.
+    it "gives a --non-interactive chat with an --input name no input and no echo", :seam do
+      built = []
+      allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+        built << kwargs.slice(:input, :echo_input)
+        original.call(**kwargs)
+      end
+
+      Dir.mktmpdir do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        wiring = new_wiring(options: { grace: 5, non_interactive: true, input: "socket:wiring-headless" },
+                            chronicle:, status_feed:, paths:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(built).to eq([{ input: Lain::Frontend::StdinPump::Idle, echo_input: false }])
     end
 
     it "wires the queue-shaped NoApprovals under --non-interactive, so the env reader stays nil-free", :seam do

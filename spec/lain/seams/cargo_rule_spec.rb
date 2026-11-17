@@ -38,6 +38,7 @@ RSpec.describe "A cargo build the composed_term rule approves", :seam do
   let(:arms) { Lain::CLI::Arms::OFF.with(confine:) }
   let(:switchboard) do
     Lain::CLI::Wiring::BoardBuild.for(
+      human: Lain::CLI::Human.new(kind: :terminal),
       chronicle:, options: { approval: :auto }, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model",
       project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]), arms:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new), resolver:,

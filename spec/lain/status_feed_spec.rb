@@ -1919,7 +1919,8 @@ RSpec.describe Lain::StatusFeed do
     # a move would leave the HUD silent, as if the session were in auto.
     it "publishes ASK for a board launched under --approval ask" do
       feed = described_class.new(path:)
-      Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: { approval: "ask" },
+      Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                 chronicle: chronicle_teed_to(feed), options: { approval: "ask" },
                                  judge: Lain::CLI::Switchboard::DEFERRING,
                                  model: "claude-opus-4-8", toolset: Lain::Toolset.new,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared).journal_launch
@@ -1941,7 +1942,8 @@ RSpec.describe Lain::StatusFeed do
     def queue_over_a_real_chronicle(feed)
       # An empty base set says what this example is not about: it wants the
       # board's queue, and nothing on this path reads a tool.
-      Lain::CLI::Switchboard.for(chronicle: chronicle_teed_to(feed), options: {},
+      Lain::CLI::Switchboard.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                 chronicle: chronicle_teed_to(feed), options: {},
                                  judge: Lain::CLI::Switchboard::DEFERRING,
                                  model: "claude-opus-4-8", toolset: Lain::Toolset.new,
                                  test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared).approvals

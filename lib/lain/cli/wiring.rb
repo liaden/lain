@@ -175,11 +175,6 @@ module Lain
       # The parked-approval queue, nil under --non-interactive.
       def approvals = @switchboard&.approvals
 
-      # ONE reading of `--non-interactive`, threaded to the Repl, the askers and
-      # the Switchboard, so those three cannot come to disagree about whether a
-      # human is there -- the way `--yolo` once did when it was read twice.
-      def attended? = !options[:non_interactive]
-
       # The run's ONE line to the human at the terminal, late for {#replies}'
       # reason and read the same way: the frontend is built in #run, strictly
       # AFTER the toolset, so what is handed downward is this thunk and the slot
@@ -293,7 +288,8 @@ module Lain
         agent = wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:, views: nvim, notice:)
         startup = [*resumed&.notices, *memory_notices(recorder, resumed), *@observers.notices, *backend.startup_notices]
         tty = open_terminal(agent, notice, startup, backend)
-        @rail = IntakeBuild.rail(tty:, human:, notes:, on_cycle: approval_key, surface: -> { @command_surface })
+        @rail = IntakeBuild.rail(tty:, human: human_input, notes:, on_cycle: approval_key,
+                                 surface: -> { @command_surface })
         @conductor = open_conductor(tty, @rail)
         @conductor.guard do
           build_repl(tty:, agent:, backend:, input: input_for(@rail, tty))
@@ -310,7 +306,7 @@ module Lain
       # Its close gives back the checkouts the chat's stopped children kept.
       def open_conductor(tty, rail)
         @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
-                               countdown: Conductor::RailCountdown.where(rail:, socketed: human.socket_name),
+                               countdown: Conductor::RailCountdown.where(rail:, socketed: human_input.socket_name),
                                stops: Conductor::Stops.new(@toolset_build.spawn_leases, @switchboard, tty:))
       end
 
@@ -384,7 +380,7 @@ module Lain
 
       def terminal_keywords(agent, notice)
         { channel:, input: Lain::Frontend::StdinPump.keys(@stdin), prompt_renderer: prompt_renderer(agent, notice),
-          layers: @switchboard.mode_switch.method(:layers), alternate_screen: human.alternate_screen?,
+          layers: @switchboard.mode_switch.method(:layers), alternate_screen: human_input.alternate_screen?,
           tmux: attention.notifier, completion_sources: Frontend::Completion::Sources.new(skills: typed_names),
           **Frontend::Theme.on_stdout(paths: @paths).terminal }
       end
@@ -400,8 +396,9 @@ module Lain
         @skill_catalog = backend.library.catalog
         @herdr.tty_factory.call(**terminal_keywords(agent, notice)).then do |tty|
           @human_line = tty.method(:render_wait)
-          startup.each(&(human.pane? ? tty.method(:render_warning) : notice))
-          human.alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin) ? ScreenNotices.new(tty, startup) : tty
+          startup.each(&(human_input.pane? ? tty.method(:render_warning) : notice))
+          screened = human_input.alternate_screen? && Lain::Frontend::StdinPump.terminal?(@stdin)
+          screened ? ScreenNotices.new(tty, startup) : tty
         end
       end
 
@@ -430,16 +427,22 @@ module Lain
       def approval_key = -> { @switchboard.cycle_approval(surface: Switchboard::KEY_SURFACE) }
 
       def input_for(rail, tty)
-        InputProducer.new(human:, attended: attended?, cockpit: options[:nvim] ? true : false, stdin: @stdin, notes:,
-                          paths: @paths, pending: Lain::Review::Queue::Pending.new(paths: @paths), root:,
+        InputProducer.new(human: human_input, attended: human.answers_at_terminal?,
+                          cockpit: options[:nvim] ? true : false, stdin: @stdin, notes:, paths: @paths, root:,
+                          pending: Lain::Review::Queue::Pending.new(paths: @paths),
                           status_feed: @status_feed, switchboard: @switchboard, commands: method(:command_names),
                           registration: @registration)
                      .call(rail, tty)
       end
 
-      def human
-        @human ||= HumanInput.new(input: options[:input], attended: attended?, stdin: @stdin, paths: @paths,
-                                  cwd: project.cwd)
+      # ONE reading of `--non-interactive`, so the Repl, the input, the askers
+      # and the board cannot come to disagree about whether a human is there --
+      # the way `--yolo` once did when it was read twice.
+      def human = @human ||= Human.from(options)
+
+      def human_input
+        @human_input ||= HumanInput.new(input: options[:input], attended: human.answers_at_terminal?,
+                                        stdin: @stdin, paths: @paths, cwd: project.cwd)
       end
 
       # Lazily: the command surface is assembled after the producer is built,
@@ -734,7 +737,7 @@ module Lain
       # routable for exactly as long as the run. A CHILD's must be kept and
       # deregistered on the lease that reaps it -- see {Askers::Enrolled}.
       def wire_askers(parent)
-        @askers = Askers.new(observer: chronicle.observer, attended: attended?, journal: chronicle.record_journal,
+        @askers = Askers.new(observer: chronicle.observer, human:, journal: chronicle.record_journal,
                              epic_slug: -> { epic_mount.slug if epic_mount.mounted? })
         @askers.enrol(parent, agent: Lain::Requester.main.label).asker
       end
@@ -907,8 +910,9 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, config:),
                                         model: backend.model, middleware: backend.middleware, display: @channel,
-                                        options:, resolver: exec_resolver, worker_env: chat_env, stops: observers.stops,
-                                        toolset:, project:, verdict:, config:, paths: @paths, arms:, **chat_reads)
+                                        options:, human:, resolver: exec_resolver, worker_env: chat_env,
+                                        stops: observers.stops, toolset:, project:, verdict:, config:, paths: @paths,
+                                        arms:, **chat_reads)
       end
 
       # A chat assembled with no toolset build, as a spec's, leaves the board its defaults.
@@ -956,10 +960,10 @@ module Lain
 
       def repl_over(agent:, tty:, backend:, input:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
-                 supervisor:, middleware: @command_surface.middleware, attended: attended?,
+                 supervisor:, middleware: @command_surface.middleware, attended: human.answers_at_terminal?,
                  commands: @command_surface.commands, remote: remote_surface,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
-                 echo_input: attended? && !human.socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
+                 echo_input: human_input.pane?, notes:, mode_switch: @switchboard.mode_switch,
                  idle: idle_compaction(agent:, backend:), notices: attention.notices, heard:,
                  registration: @registration)
       end

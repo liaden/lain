@@ -161,10 +161,12 @@ RSpec.describe Lain::CLI::Switchboard do
   describe ".for, the wiring entry" do
     let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
 
-    def board_for(**options)
-      described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base,
+    def board_for(human: Lain::CLI::Human.new(kind: :terminal), **options)
+      described_class.for(chronicle:, judge:, options:, human:, model: "claude-opus-4-8", toolset: base,
                           test_layout: layout_run)
     end
+
+    def nobody = Lain::CLI::Human.new(kind: :none)
 
     # The session's ONE layout run, which the parent's tool guard and every
     # child's read off the board. `.for` requires it: a chat with no layout
@@ -172,14 +174,18 @@ RSpec.describe Lain::CLI::Switchboard do
     describe "the test layout it carries" do
       it "holds the run it was handed, by identity" do
         run = layout_run
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: run)
 
         expect(board.test_layout).to be(run)
       end
 
       it "refuses a wiring entry that names no test layout" do
-        expect { described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base) }
+        expect do
+          described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                              chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base)
+        end
           .to raise_error(ArgumentError, /test_layout/)
       end
 
@@ -187,7 +193,8 @@ RSpec.describe Lain::CLI::Switchboard do
       # slots rather than copies of them.
       it "holds the guard's inputs as one value, over the board's own slots" do
         run = layout_run
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: run)
         inputs = board.guard_inputs
 
@@ -203,7 +210,7 @@ RSpec.describe Lain::CLI::Switchboard do
       # reported in -- decided once, because whether a human is attached does
       # not change for a session's whole life.
       it "carries the board's one policy switch and its refusal sentence among the guard's inputs" do
-        board = described_class.for(chronicle:, judge:, options: { non_interactive: true }, model: "claude-opus-4-8",
+        board = described_class.for(chronicle:, judge:, options: {}, human: nobody, model: "claude-opus-4-8",
                                     toolset: base, test_layout: layout_run)
 
         expect(board.guard_inputs.policy).to be(board.policy_switch)
@@ -213,7 +220,8 @@ RSpec.describe Lain::CLI::Switchboard do
       it "carries the secrets source it is given among the guard's inputs, by identity" do
         secrets = Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env: {}),
                                                          history: Lain::Sensitivity::HistoryLiterals::Null)
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: layout_run, secrets:)
 
         expect(board.guard_inputs.secrets).to be(secrets)
@@ -227,7 +235,8 @@ RSpec.describe Lain::CLI::Switchboard do
         token = "zq7lowentropyprobevalue42"
         child_env = Lain::Exec::ChildEnv.new(env: { "PROBE_API_TOKEN" => token })
         secrets = Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null)
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: layout_run, secrets:)
         channel = RecordingChannel.new
         sink = board.live_display.sinks(Lain::Tool::Invocation.new(tool_use_id: "tu_1", channel:)).fetch(:stdout_sink)
@@ -238,7 +247,8 @@ RSpec.describe Lain::CLI::Switchboard do
 
       it "carries the configured middleware among the guard's inputs, by identity" do
         middleware = Lain::Config::Middleware.new
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     test_layout: layout_run, middleware:)
 
         expect(board.guard_inputs.middleware).to be(middleware)
@@ -258,7 +268,8 @@ RSpec.describe Lain::CLI::Switchboard do
     # entry dropped would be a rung disarmed everywhere while `new` stayed green.
     it "carries the classifier factory through to the ladder's triage rung" do
       factory = ->(_cwd) { Lain::Approval::Escalation::Triage::AnyPath.new }
-      board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+      board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                  chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                   classifiers: factory, test_layout: layout_run)
 
       expect(board.ladder.first.instance_variable_get(:@sensitivity)).to be(factory)
@@ -266,7 +277,8 @@ RSpec.describe Lain::CLI::Switchboard do
 
     it "asks the judge it is handed under auto" do
       asked = []
-      board = described_class.for(chronicle:, options: { approval: "auto" }, model: "claude-opus-4-8",
+      board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                  chronicle:, options: { approval: "auto" }, model: "claude-opus-4-8",
                                   toolset: base, test_layout: layout_run, judge: judge_answering(:approve, asked))
 
       expect(board.policy_switch.call(gated_call, nil)).to be(true)
@@ -277,14 +289,15 @@ RSpec.describe Lain::CLI::Switchboard do
     # silently ask a human for everything.
     it "refuses a wiring entry that names no judge" do
       expect do
-        described_class.for(chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
+        described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                            chronicle:, options: {}, model: "claude-opus-4-8", toolset: base,
                             test_layout: layout_run)
       end.to raise_error(ArgumentError, /judge/)
     end
 
     # Scenario: An unattended auto run keeps triage and rules
     describe "--non-interactive with --approval auto" do
-      def unattended_auto = board_for(non_interactive: true, approval: "auto")
+      def unattended_auto = board_for(human: nobody, approval: "auto")
 
       it "keeps triage and rules above the judged rung" do
         expect(unattended_auto.policy_switch.current.map(&:name)).to eq(%w[triage rules auto])
@@ -300,7 +313,8 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     it "denies an unanswered call once the configured approval timeout passes" do
-      board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+      board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                  chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                   test_layout: layout_run, approval_timeout: 0.01)
 
       expect(Sync { board.approvals.call(gated_call, nil) }).to be(false)
@@ -322,13 +336,31 @@ RSpec.describe Lain::CLI::Switchboard do
     end
 
     # `--non-interactive` answers "who decides a gated call" with "nobody can".
-    # It and `--approval`, which seeds the starting approval, are the two flags
-    # this entry reads.
+    # The Human the chat built from it says so; `--approval`, which seeds the
+    # starting approval, is the one flag this entry reads.
     it "wires no queue for an unattended session, and a gate that denies" do
-      board = board_for(non_interactive: true)
+      board = board_for(human: nobody)
 
       expect(board.approvals).to be_nil
       expect(board.policy_switch.call(gated_call, nil)).to be(false)
+    end
+
+    # A forgotten Human must be loud: defaulted, a headless caller would get a
+    # queue nobody drains instead of the refusing ladder.
+    it "refuses a wiring entry that names no Human" do
+      expect do
+        described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+                            test_layout: layout_run)
+      end.to raise_error(ArgumentError, /human/)
+    end
+
+    # Only a human away from the terminal tells "can be asked" from "is at the
+    # terminal": the queue and the attended denial follow the first.
+    it "wires the queue and the attended denial for a human who answers away from the terminal" do
+      board = board_for(human: Lain::CLI::Human.new(kind: :remote))
+
+      expect(board.approvals).to be_a(Lain::Approval::Parked::Queue)
+      expect(board.guard_inputs.denial).to eq(Lain::Middleware::Gate::DENIAL)
     end
   end
 
@@ -458,7 +490,8 @@ RSpec.describe Lain::CLI::Switchboard do
       # entry dropped would be the exclusion table disarmed everywhere while
       # `new` stayed green.
       it "carries it through the wiring entry to the ladder" do
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     verdict: excluding_curl, test_layout: layout_run)
 
         expect(verdict_of(board)).to be(excluding_curl)
@@ -550,7 +583,8 @@ RSpec.describe Lain::CLI::Switchboard do
       let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
 
       def board_with(denials, judge)
-        described_class.for(chronicle:, judge:, options: { approval: "auto" }, model: "claude-opus-4-8",
+        described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                            chronicle:, judge:, options: { approval: "auto" }, model: "claude-opus-4-8",
                             toolset: base, test_layout: layout_run,
                             arms: Lain::CLI::Arms.from({ judge_denials: denials }, Lain::CLI::Arms::OFF))
       end
@@ -1260,7 +1294,8 @@ RSpec.describe Lain::CLI::Switchboard do
       # Scenario: a project exclusion deny names the exclusion
       it "names the program the project's [shell] exclude table refuses" do
         excluding_curl = Lain::Shell::Verdict.new(capability_set: Lain::Shell::Exclusions.new(patterns: ["curl"]))
-        board = described_class.for(chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
                                     verdict: excluding_curl, test_layout: layout_run)
 
         refusal = told(board, "curl http://example.com")
@@ -1418,7 +1453,8 @@ RSpec.describe Lain::CLI::Switchboard do
       board = nil
       build = toolset_build(options, -> { board })
       build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
-      board = described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
+      board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                  chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, sensitivity:,
                                   test_layout: layout_run)
       [board, build]
     end
@@ -1551,7 +1587,8 @@ RSpec.describe Lain::CLI::Switchboard do
       fresh = Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/") }.new(root)
       resolver ||= Lain::Shell::Executable::Resolver.new(root:, fresh:)
       Lain::CLI::Wiring::BoardBuild.for(
-        chronicle:, options: { approval: "auto", non_interactive: true }, model: "m", toolset: base, project:,
+        chronicle:, options: { approval: "auto" }, human: Lain::CLI::Human.new(kind: :none), model: "m", toolset: base,
+        project:,
         paths: Lain::Paths.new(env: { "HOME" => home }),
         judge: Lain::Approval::Judge.new(provider: judge_provider, model: "m",
                                          slots: Lain::Prompt::Slots.new(fills: {})),
@@ -1660,7 +1697,8 @@ RSpec.describe Lain::CLI::Switchboard do
     let(:classifiers) { Lain::CLI::Wiring::BoardBuild::Classifiers.new(home:, cwd: "#{home}/project") }
 
     def board_for(**options)
-      described_class.for(chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, classifiers:,
+      described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                          chronicle:, judge:, options:, model: "claude-opus-4-8", toolset: base, classifiers:,
                           test_layout: layout_run)
     end
 

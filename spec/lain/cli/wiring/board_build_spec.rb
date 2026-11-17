@@ -50,8 +50,9 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     described_class.classifier(project:, paths:, table: described_class.rules(project:, paths:))
   end
 
-  def board_for(root, home, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, **rest)
-    described_class.for(chronicle:, options:, judge:, model: "m", toolset:, project: project_at(root),
+  def board_for(root, home, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
+                human: Lain::CLI::Human.new(kind: :terminal), **rest)
+    described_class.for(chronicle:, options:, judge:, human:, model: "m", toolset:, project: project_at(root),
                         paths: paths_at(home), **rest)
   end
 
@@ -66,6 +67,15 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   end
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
+
+  it "hands the board the Human it is given, so nobody attached wires no queue" do
+    Dir.mktmpdir("board-human") do |dir|
+      base = File.realpath(dir)
+      root, home = %w[repo home].map { File.join(base, _1).tap { |made| FileUtils.mkdir_p(made) } }
+
+      expect(board_for(root, home, human: Lain::CLI::Human.new(kind: :none)).approvals).to be_nil
+    end
+  end
 
   describe "whether the session can contain a call" do
     it "reaches the board's queue as the toolset says it" do
@@ -92,8 +102,9 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         sandbox = Lain::Confine::Sandbox.new(root:, home:, probe:, fence: "/srv/lain-fence", journal:,
                                              masks: Lain::Confine::MaskList.new(root:, policy: -> { :the_policy }))
 
-        [{}, { non_interactive: true }].product(%i[ask auto bypass]).each do |options, approval|
-          board_for(root, home, options: options.merge(approval:), containment: sandbox.containment)
+        %i[terminal none].product(%i[ask auto bypass]).each do |kind, approval|
+          board_for(root, home, options: { approval: }, human: Lain::CLI::Human.new(kind:),
+                                containment: sandbox.containment)
         end
 
         expect(asked.flatten).not_to include("--unshare-net")
@@ -325,7 +336,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "refuses a build that names no judge" do
       in_tree do |root, home|
         expect do
-          described_class.for(chronicle:, options: {}, model: "m", toolset:, project: project_at(root),
+          described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                              chronicle:, options: {}, model: "m", toolset:, project: project_at(root),
                               paths: paths_at(home))
         end.to raise_error(ArgumentError, /judge/)
       end
@@ -400,7 +412,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:),
                                              home:, root:, file_facts: recorded)
       allow(described_class).to receive(:policy).and_return(policy)
-      [recorded, described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
+      [recorded, described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                     chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
                                      toolset:, project:, paths: paths_at(home))]
     end
 
@@ -1059,7 +1072,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |_root, home|
         FileUtils.mkdir_p(home)
         project = Lain::Project.new(root: home, cwd: home, kind: :home, detected_by: :flag)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
                                     judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat README.md", "cwd" => home)) do
@@ -1073,7 +1087,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "approves nothing automatically when no project was detected" do
       in_tree do |root, home|
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
                                     judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat README.md", "cwd" => root)) do
@@ -1104,7 +1119,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         FileUtils.mkdir_p(home)
         base = File.dirname(root)
         project = Lain::Project.new(root: base, cwd: base, kind: :project, detected_by: :flag)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
                                     judge: Lain::CLI::Switchboard::DEFERRING)
 
         while_parked(board, bash_of("cat home/notes.txt", "cwd" => base)) do
@@ -1476,7 +1492,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "anchors on the project root even where the root confines nothing" do
       in_tree(config: %(sensitivity denied: %w[/vault/]\n)) do |root, home|
         project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :none)
-        board = described_class.for(chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, options: {}, model: "m", toolset:, project:, paths: paths_at(home),
                                     judge: Lain::CLI::Switchboard::DEFERRING)
 
         expect(board.policy_switch.call(bash_of("cat #{root}/vault/a.txt", "cwd" => root), nil)).to be(false)
@@ -1913,7 +1930,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       in_tree do |root, home|
         state = File.join(File.dirname(home), "elsewhere-state")
         paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => state })
-        board = described_class.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "m",
                                     toolset:, project: project_at(root), paths:)
 
         expect(board.sensitivity.read_roots.first).to eq(Lain::Tool::Spill.home(paths, root))

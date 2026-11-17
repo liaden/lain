@@ -12,7 +12,8 @@ module SpecNulls
   # answer to the first's asker.
   module UnwiredAskers
     def self.build
-      Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
+      Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                    observer: Lain::EventLog::ChainWriter::Null.new)
     end
   end
 end

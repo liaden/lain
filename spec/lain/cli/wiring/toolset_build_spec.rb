@@ -808,6 +808,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
         let(:switchboard) do
           Lain::CLI::Wiring::BoardBuild.for(
+            human: Lain::CLI::Human.new(kind: :terminal),
             chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
             paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
           )
@@ -945,6 +946,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         let(:project) { Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag) }
         let(:switchboard) do
           Lain::CLI::Wiring::BoardBuild.for(
+            human: Lain::CLI::Human.new(kind: :terminal),
             chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
             paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
           )
@@ -1076,7 +1078,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # second answer to "who is holding this question".
     describe "the ask-the-human seam a child inherits" do
       let(:askers) do
-        Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new)
+        Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                      observer: Lain::EventLog::ChainWriter::Null.new)
       end
 
       it "hands the spawn seam the run's own askers, never a second one" do
@@ -1645,6 +1648,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     let(:resolver) { Lain::Shell::Executable::Resolver.new(root: project_root, fresh: Lain::Shell::Executable::Resolver::NeverFresh) }
     let(:switchboard) do
       Lain::CLI::Wiring::BoardBuild.for(
+        human: Lain::CLI::Human.new(kind: :terminal),
         chronicle:, options: { approval: :auto }, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model",
         project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
         arms: Lain::CLI::Arms::OFF.with(confine: :classes),

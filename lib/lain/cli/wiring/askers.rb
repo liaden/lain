@@ -20,22 +20,22 @@ module Lain
         # @param observer [#call] the chronicle's -- Q and A are exactly the
         #   events a Timeline walk can never find, so a missing observer is
         #   silent record loss; required for that reason, not defaulted.
-        # @param attended [Boolean] whether a human is at the terminal at all.
-        #   `--non-interactive` says no, and then the announcement half of this
-        #   object has nothing to reach: the arrival would go onto a queue with
-        #   no drain and the ask would park forever. So the asker itself
-        #   refuses -- see {Lain::Tools::AskHuman::Unattended} -- and this is
-        #   the one place that decides, because it is the one place that builds
-        #   an asker.
+        # @param human [Human] who answers this run. When nobody can be asked,
+        #   the announcement half of this object has nothing to reach: the
+        #   arrival would go onto a queue with no drain and the ask would park
+        #   forever. So the asker itself refuses -- see
+        #   {Lain::Tools::AskHuman::Unattended} -- and this is the one place
+        #   that decides, because it is the one place that builds an asker.
+        #   Required, so a headless caller cannot forget to say so.
         # @param journal [#<<] where a wait's end names its question consumed;
         #   the chronicle's record journal, so the live inbox views fold it.
         # @param epic_slug [#call, String, nil] the mounted epic's slug, or a thunk
         #   reading it: the mount is resolved after the asker is built.
-        def initialize(observer:, attended: true, journal: Lain::Channel::Null.instance, epic_slug: nil)
+        def initialize(observer:, human:, journal: Lain::Channel::Null.instance, epic_slug: nil)
           @observer = observer
           @epic_slug = epic_slug
           @journal = journal
-          @attended = attended
+          @human = human
           @questions = Async::Queue.new
           @directory = Lain::Tools::AskHuman::Directory.new
         end
@@ -80,7 +80,7 @@ module Lain
         # run holding a half-built one would differ from an attended one in a
         # second place for no reason.
         def asker_over(parent, agent:, spawn:, &notify)
-          return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @attended
+          return Lain::Tools::AskHuman::Unattended.new(parent:, observer: @observer, agent:) unless @human.can_be_asked?
 
           Lain::Tools::AskHuman.new(parent:, observer: @observer, agent:, notify:, journal: @journal,
                                     epic_slug: @epic_slug, spawn:)

@@ -4211,7 +4211,10 @@ RSpec.describe Lain::Tools::Subagent do
   # block passes for a child whose questions never reach the TTY. The queue,
   # and the sender the arrival carries, are what say they do.
   describe "asking the human from inside a child" do
-    let(:askers) { Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new) }
+    let(:askers) do
+      Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                    observer: Lain::EventLog::ChainWriter::Null.new)
+    end
 
     # The chat the human is having, holding its own asker on the SAME seam --
     # so "parent and child are pending at once" is a claim about two real
@@ -4278,7 +4281,8 @@ RSpec.describe Lain::Tools::Subagent do
 
     it "names the spawn the child was started by in its question's wait" do
       journal = []
-      askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new, journal:)
+      askers = Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                             observer: Lain::EventLog::ChainWriter::Null.new, journal:)
       tool = described_class.new(seam: asking_seam(mock(asks, text_response("done"))).with(askers:), toolset: union,
                                  policy: spawn_policy(only: []))
 
@@ -4336,7 +4340,7 @@ RSpec.describe Lain::Tools::Subagent do
       let(:observer) { ->(event) { scribe.call(event) } }
       # The chronicle's own wiring: ONE scribe observes the whole funnel, the
       # askers' Q/A included.
-      let(:askers) { Lain::CLI::Wiring::Askers.new(observer:) }
+      let(:askers) { Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal), observer:) }
 
       def recorded_tool(provider: mock(asks, text_response("done")), toolset: union,
                         policy: spawn_policy(only: []), depth: 1)
@@ -4897,7 +4901,7 @@ RSpec.describe Lain::Tools::Subagent do
           record.call(event)
         end
       end
-      let(:askers) { Lain::CLI::Wiring::Askers.new(observer: observed) }
+      let(:askers) { Lain::CLI::Wiring::Askers.new(human: Lain::CLI::Human.new(kind: :terminal), observer: observed) }
       let(:telemetry) { Lain::Channel.new }
 
       after { FileUtils.rm_rf(feed_dir) }
