@@ -566,10 +566,16 @@ dependencies = [
 name = "lain-daemon"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "lain-rpc",
  "lain-wire",
+ "landlock",
+ "nix",
  "rmpv",
+ "serde",
+ "subtle",
  "tempfile",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",

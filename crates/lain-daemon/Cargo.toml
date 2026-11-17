@@ -12,7 +12,8 @@ path = "src/main.rs"
 
 [dependencies]
 # Out-of-process by the placement rule: an async runtime never runs inside a magnus FFI call (ext/lain/CLAUDE.md).
-tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal"] }
+# `process` and `io-util` to run and talk to the relay worker.
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal", "process", "io-util"] }
 lain-rpc = { path = "../lain-rpc", version = "0.1.0" }
 lain-wire = { path = "../lain-wire", version = "0.1.0" }
 rmpv = "1.3"
@@ -20,8 +21,27 @@ rmpv = "1.3"
 tracing = "0.1"
 # `default-features = false` keeps `nu-ansi-term` out (deny.toml bans it): this process owns no terminal.
 tracing-subscriber = { version = "0.3", default-features = false, features = ["fmt", "std", "smallvec"] }
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+# The relay's token check: the guess's digest against each paired device's, in constant time, so
+# its timing tells a peer neither which device nor how much of a guess matched.
+subtle = "2.6"
+blake3 = "1"
+# `getifaddrs` without unsafe, to find this host's tailscale0 address, and `O_NOFOLLOW` (`fs`), so
+# the devices file is never read through a symlink.
+nix = { version = "0.31", default-features = false, features = ["fs", "net"] }
 
 [dev-dependencies]
+lain-rpc = { path = "../lain-rpc", version = "0.1.0", features = ["test-support"] }
+# `signal`, so a test shows the confined relay cannot signal a process outside its ruleset.
+nix = { version = "0.31", default-features = false, features = ["fs", "net", "signal"] }
 tempfile = "3"
-# `process` and `io-util` for tests/lifecycle.rs, which drives the real binary.
-tokio = { version = "1.53", features = ["process", "io-util"] }
+# `test-util` for paused time, so the relay's 5 s auth deadline is tested without a 5 s wait.
+tokio = { version = "1.53", features = ["process", "io-util", "test-util"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# The relay worker confines itself after taking its sockets, without unsafe here.
+landlock = "0.4.7"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+blake3 = { version = "1", features = ["pure"] }

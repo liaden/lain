@@ -2,11 +2,13 @@
 
 use std::collections::BTreeMap;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use lain_rpc::{Peer, RpcError};
+use lain_rpc::{Peer, Push, RpcError};
 use lain_wire::Register;
 use rmpv::Value;
+use tokio::sync::mpsc;
 
 /// How far up a caller's parents the daemon looks for a registered session.
 const MAX_ANCESTORS: usize = 64;
@@ -112,11 +114,14 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
     era * 146_097 + day_of_era - 719_468
 }
 
-/// A registered chat: what it said about itself, and the start the daemon read for its pid.
+/// A registered chat: what it said about itself, the start the daemon read for its pid, and the
+/// connection that registered it, which is where its answers are pushed.
 #[derive(Clone, Debug)]
 pub(crate) struct Record {
     pub(crate) register: Register,
     pub(crate) start: String,
+    pub(crate) registration: u64,
+    pub(crate) outlet: Option<Push>,
 }
 
 impl Record {
@@ -152,6 +157,8 @@ impl Record {
 pub(crate) struct Registry<P: Procs = ProcTable> {
     procs: P,
     sessions: Mutex<BTreeMap<String, Record>>,
+    registrations: AtomicU64,
+    departures: Mutex<Option<mpsc::UnboundedSender<u64>>>,
 }
 
 /// A session's place in the [`Registry`], held by the connection that registered it; dropping it,
@@ -159,11 +166,43 @@ pub(crate) struct Registry<P: Procs = ProcTable> {
 pub(crate) struct Registration<P: Procs = ProcTable> {
     registry: Arc<Registry<P>>,
     session_id: String,
+    root: String,
+    registration: u64,
+}
+
+impl<P: Procs> Registration<P> {
+    pub(crate) fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
+    /// The project the session registered with, which is what its published items belong to.
+    pub(crate) fn root(&self) -> &str {
+        &self.root
+    }
+
+    /// Unique to this registration, where a session id may be registered again once it leaves.
+    pub(crate) fn registration(&self) -> u64 {
+        self.registration
+    }
+
+    pub(crate) fn attach(&self, outlet: Push) {
+        if let Some(record) = self.registry.sessions().get_mut(&self.session_id) {
+            record.outlet = Some(outlet);
+        }
+    }
 }
 
 impl<P: Procs> Drop for Registration<P> {
     fn drop(&mut self) {
         self.registry.sessions().remove(&self.session_id);
+        if let Some(departures) = &*self
+            .registry
+            .departures
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+        {
+            let _closed = departures.send(self.registration);
+        }
     }
 }
 
@@ -177,11 +216,34 @@ impl<P: Procs> Registry<P> {
         Arc::new(Self {
             procs,
             sessions: Mutex::new(BTreeMap::new()),
+            registrations: AtomicU64::new(0),
+            departures: Mutex::new(None),
         })
+    }
+
+    /// Each registration that ends from now on, by its number.
+    pub(crate) fn departures(&self) -> mpsc::UnboundedReceiver<u64> {
+        let (sender, receiver) = mpsc::unbounded_channel();
+        *self
+            .departures
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(sender);
+        receiver
     }
 
     fn sessions(&self) -> MutexGuard<'_, BTreeMap<String, Record>> {
         self.sessions.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Where to push to `registration` of `session_id`, while it lasts.
+    pub(crate) fn outlet(&self, session_id: &str, registration: u64) -> Option<Push> {
+        let sessions = self.sessions();
+        let record = sessions.get(session_id)?;
+        if record.registration == registration {
+            record.outlet.clone()
+        } else {
+            None
+        }
     }
 
     /// Every registered session, in session id order.
@@ -238,10 +300,22 @@ impl<P: Procs> Registry<P> {
             ));
         }
         let session_id = register.session_id.clone();
-        sessions.insert(session_id.clone(), Record { register, start });
+        let root = register.root.clone();
+        let registration = self.registrations.fetch_add(1, Ordering::Relaxed) + 1;
+        sessions.insert(
+            session_id.clone(),
+            Record {
+                register,
+                start,
+                registration,
+                outlet: None,
+            },
+        );
         Ok(Registration {
             registry: Arc::clone(self),
             session_id,
+            root,
+            registration,
         })
     }
 
