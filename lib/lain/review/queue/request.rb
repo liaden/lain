@@ -29,6 +29,8 @@ module Lain
         # Terminal escape sequences, CSI and OSC whole, so none of their bytes outlive the strip.
         ESCAPES = %r{\e\[[0-?]*[ -/]*[@-~]|\e\][^\a\e]*(?:\a|\e\\)?|\e.}m
 
+        UNPRINTABLE = /[[:cntrl:]\p{Cf}\p{Zl}\p{Zp}\s]+/
+
         SHA = /\A[0-9a-f]{40}\z/
         PULL = %r{\Ahttps://github\.com/(?<name>[A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/[1-9][0-9]*\z}
         # Printable ASCII only: a focus is spliced into a line the chat runs.
@@ -48,7 +50,14 @@ module Lain
           "dirty" => Shape.new(required: %w[repo_root], optional: []),
           "pr" => Shape.new(required: %w[url], optional: %w[since focus])
         }.freeze
-        private_constant :Shape, :SHA, :PULL, :PRINTABLE, :FOCUS_LIMIT, :FOCUS, :UNFOCUSABLE, :UNSEEN, :SHAPES
+        private_constant :UNPRINTABLE, :Shape, :SHA, :PULL, :PRINTABLE, :FOCUS_LIMIT, :FOCUS, :UNFOCUSABLE, :UNSEEN,
+                         :SHAPES
+
+        # @param text [Object] any text, including an escape sequence or a newline
+        # @return [String] one line with no control character in it
+        def self.plain(text)
+          text.to_s.scrub.gsub(ESCAPES, "").gsub(UNPRINTABLE, " ").strip
+        end
 
         # Free text, such as a row's reason, cut to what a focus may be rather
         # than refused for it: an accent folds to its letter first, so a

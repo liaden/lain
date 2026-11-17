@@ -267,6 +267,48 @@ RSpec.describe Lain::CLI::Queue, :seam do
       expect([status, out]).to eq([0, "offered #{feature} to chat\n"])
       expect(offered(rail)).to start_with("lain queue: /review refs/heads/feature")
     end
+
+    describe "the rows pick lists" do
+      def seen_by_pick(source)
+        bin = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "bin")
+        FileUtils.mkdir_p(bin)
+        File.write(File.join(bin, "fzf"), "#!/bin/sh\ncat > #{File.join(bin, "seen")}\n")
+        File.chmod(0o755, File.join(bin, "fzf"))
+        with_env("PATH" => "#{bin}:#{ENV.fetch("PATH")}") { run("pick", source) }
+        File.read(File.join(bin, "seen"))
+      end
+
+      before { finished_plan }
+
+      it "are the plan runs and the branches for here" do
+        seen = seen_by_pick("here")
+
+        expect(seen).to include(feature)
+        expect(capture("here").first.lines).to all(satisfy { |line| seen.include?(line) })
+        expect(capture("here").first.lines.size).to be > capture("local").first.lines.size
+      end
+
+      it "are the branches alone for local" do
+        seen = seen_by_pick("local")
+
+        expect(seen.lines.sort).to eq(capture("local").first.lines.sort)
+        expect(seen).to include(feature)
+      end
+    end
+
+    it "is what pick opens from the here source too" do
+      rail = chat(@repo)
+      bin = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "bin")
+      FileUtils.mkdir_p(bin)
+      File.write(File.join(bin, "chosen"), "\n#{capture("here").first.lines.find { _1.start_with?(feature) }}")
+      File.write(File.join(bin, "fzf"), "#!/bin/sh\ncat #{File.join(bin, "chosen")}\n")
+      File.chmod(0o755, File.join(bin, "fzf"))
+
+      status, out, = with_env("PATH" => "#{bin}:#{ENV.fetch("PATH")}") { run("pick", "here") }
+
+      expect([status, out]).to eq([0, "offered #{feature} to chat\n"])
+      expect(offered(rail)).to start_with("lain queue: /review refs/heads/feature")
+    end
   end
 
   describe "local" do
@@ -333,6 +375,83 @@ RSpec.describe Lain::CLI::Queue, :seam do
 
       expect(out.lines.map { |line| JSON.parse(line) })
         .to match([include("id" => "pr:acme/api#12", "reason" => "direct, no local checkout")])
+    end
+
+    describe "listing for a human" do
+      def listed_at = Lain::Review::Queue::Log.new(paths: Lain::Paths.new).last_listed_at
+
+      it "appends a listed event when prs prints rows" do
+        capture("prs")
+
+        expect(listed_at).to be_within(60).of(Time.now)
+      end
+
+      it "appends a listed event when pick shows the prs" do
+        runtime = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "bin")
+        FileUtils.mkdir_p(runtime)
+        File.write(File.join(runtime, "fzf"), "#!/bin/sh\ncat >/dev/null\n")
+        File.chmod(0o755, File.join(runtime, "fzf"))
+        with_env("PATH" => "#{runtime}:#{ENV.fetch("PATH")}") { run("pick", "prs") }
+
+        expect(listed_at).to be_within(60).of(Time.now)
+      end
+
+      it "lists pull request rows to pick from" do
+        runtime = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "bin")
+        FileUtils.mkdir_p(runtime)
+        File.write(File.join(runtime, "fzf"), "#!/bin/sh\ncat > #{File.join(runtime, "seen")}\n")
+        File.chmod(0o755, File.join(runtime, "fzf"))
+        with_env("PATH" => "#{runtime}:#{ENV.fetch("PATH")}") { run("pick", "prs") }
+
+        expect(File.read(File.join(runtime, "seen"))).to include("pr:acme/api#12")
+      end
+
+      it "appends none under --json" do
+        capture("prs", "--json")
+
+        expect(listed_at).to be_nil
+      end
+
+      it "counts only the requests made after the listing as new" do
+        log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new)
+        log.append(Lain::Review::Queue::Log::Event.new(kind: :listed, at: Time.utc(2026, 11, 12), row_id: nil,
+                                                       head_sha: nil))
+        with_env("HERDR_BIN_PATH" => "/bin/true") { capture("poll") }
+        counts = JSON.parse(File.read(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "reviews.json")))
+
+        expect(counts).to include("total" => 1, "new_direct" => 0)
+      end
+    end
+
+    describe "poll" do
+      let(:sent) { File.join(bin, "sent.txt") }
+
+      before do
+        File.write(File.join(bin, "notify-feed"), "#!/bin/sh\nprintf '%s|' \"$@\" >> #{sent}\ncat >> #{sent}\n")
+        File.chmod(0o755, File.join(bin, "notify-feed"))
+      end
+
+      it "reads the account from the user's config and the environment, never the directory's project config" do
+        FileUtils.mkdir_p(File.join(@repo, ".lain"))
+        File.write(File.join(@repo, ".lain", "config.rb"), "github account: \"projacct\"\n")
+        File.write(File.join(bin, "gh"), "#!/bin/sh\necho \"$@\" >> #{File.join(bin, "gh.log")}\n" \
+                                         "exec cat #{File.join(bin, "answer.json")}\n")
+        with_env("HERDR_BIN_PATH" => "/bin/true") { capture("poll") }
+
+        expect(File.read(File.join(bin, "gh.log"))).not_to include("projacct")
+        expect(File.exist?(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "reviews.json"))).to be(true)
+      end
+
+      it "writes the count file and notifies once, from the environment and config alone" do
+        with_env("HERDR_BIN_PATH" => "/bin/true") do
+          capture("poll")
+          capture("poll")
+        end
+        counts = JSON.parse(File.read(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "reviews.json")))
+
+        expect(counts).to include("total" => 1, "direct" => 1, "new_direct" => 1, "hud" => "rv 1+1")
+        expect(File.read(sent).scan("lain-queue|review requested").size).to eq(1)
+      end
     end
 
     context "with a request that reached me through a team" do

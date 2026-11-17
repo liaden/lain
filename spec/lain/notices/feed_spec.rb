@@ -37,12 +37,12 @@ RSpec.describe Lain::Notices::Feed do
     expect(shell_out).to have_received(:new).with("nf", "lain", "t", input: "b", timeout: 2)
   end
 
-  it "returns nil and names the status on the notes sink when the program fails" do
+  it "returns false and names the status on the notes sink when the program fails" do
     stub_program(exit_status: 1)
 
     result = described_class.new(program:, notes:).call("lain", "t", "b")
 
-    expect(result).to be_nil
+    expect(result).to be(false)
     expect(notes.string).to eq("#{program} exited 1\n")
   end
 
@@ -55,19 +55,19 @@ RSpec.describe Lain::Notices::Feed do
     expect(notes.string).to eq("#{program} exited 1\n")
   end
 
-  it "returns nil and says so when the program cannot be spawned" do
+  it "returns false and says so when the program cannot be spawned" do
     missing = File.join(dir, "missing")
     result = described_class.new(program: missing, notes:).call("lain", "t")
 
-    expect(result).to be_nil
+    expect(result).to be(false)
     expect(notes.string).to start_with("#{missing} failed: ").and end_with("\n")
   end
 
-  it "is silent on success" do
+  it "is silent on success, and says it sent" do
     stub_program
 
-    described_class.new(program:, notes:).call("lain", "t", "b")
+    sent = described_class.new(program:, notes:).call("lain", "t", "b")
 
-    expect(notes.string).to eq("")
+    expect([sent, notes.string]).to eq([true, ""])
   end
 end

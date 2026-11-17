@@ -31,6 +31,16 @@ RSpec.describe Lain::Review::Queue::Request, :seam do
     e.field
   end
 
+  describe ".plain" do
+    it "strips escape sequences, control characters and runs of space into one printable line" do
+      expect(described_class.plain("-rf \e[31m\n\tboom\e]0;x\a ")).to eq("-rf boom")
+    end
+
+    it "reads anything as text" do
+      expect(described_class.plain(nil)).to eq("")
+    end
+  end
+
   describe "a range" do
     let(:hash) { { "kind" => "range", "base" => base, "head" => head, "repo_root" => @repo } }
 

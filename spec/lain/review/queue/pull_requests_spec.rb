@@ -4,15 +4,12 @@ require "stringio"
 require "fileutils"
 
 RSpec.describe Lain::Review::Queue::PullRequests, :seam do
-  let(:dir) { Dir.mktmpdir }
-  let(:notes) { StringIO.new }
-  let(:checkouts) { instance_double(Lain::Review::Queue::Checkouts) }
-  let(:config) { Lain::Config::Github.resolve(project: github, user: Lain::Config::Github.empty, env: {}) }
-  let(:github) { Lain::Config::Github.empty }
-  let(:requests) { [] }
-  let(:found) { [] }
-  let(:queries) { [] }
-  let(:sinks_seen) { [] }
+  let(:rows) do
+    described_class.new(reads:, config:, checkouts:, scope:, matches: with_matches, notes:, clock:).call
+  end
+  let(:with_matches) { false }
+  let(:scope) { :mine }
+  let(:clock) { -> { Time.utc(2026, 11, 16, 12) } }
   let(:reads) do
     asked = requests
     matched = found
@@ -26,14 +23,26 @@ RSpec.describe Lain::Review::Queue::PullRequests, :seam do
       end
     end.new
   end
-  let(:clock) { -> { Time.utc(2026, 11, 16, 12) } }
-  let(:scope) { :mine }
-  let(:with_matches) { false }
-  let(:rows) do
-    described_class.new(reads:, config:, checkouts:, scope:, matches: with_matches, notes:, clock:).call
+  let(:sinks_seen) { [] }
+  let(:queries) { [] }
+  let(:found) { [] }
+  let(:requests) { [] }
+  let(:github) { Lain::Config::Github.empty }
+  let(:config) { Lain::Config::Github.resolve(project: github, user: Lain::Config::Github.empty, env: {}) }
+  let(:checkouts) { instance_double(Lain::Review::Queue::Checkouts) }
+  let(:notes) { StringIO.new }
+  let(:dir) { Dir.mktmpdir }
+
+  before do
+    SeedRepo.derived("pull requests", into: dir) { nil }
+    allow(checkouts).to receive(:for).and_return(nil)
   end
 
   after { FileUtils.remove_entry(dir) }
+
+  it "names the one search that finds requests asked of me" do
+    expect(described_class::REQUESTS).to eq("is:open is:pr review-requested:@me archived:false")
+  end
 
   def git(*args) = SeedRepo.git(dir, *args).stdout.strip
 
@@ -48,11 +57,6 @@ RSpec.describe Lain::Review::Queue::PullRequests, :seam do
       author: "alice", paths: paths.freeze, paths_truncated: truncated, requested_at: nil, via:,
       team: (via == :team ? "fuze/platform" : nil), my_last_review: mine
     )
-  end
-
-  before do
-    SeedRepo.derived("pull requests", into: dir) { nil }
-    allow(checkouts).to receive(:for).and_return(nil)
   end
 
   describe ".id_for" do

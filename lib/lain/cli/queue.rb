@@ -16,14 +16,6 @@ module Lain
 
       # A row as text: every field safe to print, whichever source wrote it.
       class Entry
-        UNPRINTABLE = /[[:cntrl:]\p{Cf}\p{Zl}\p{Zp}\s]+/
-
-        # @param text [Object] any text, including an escape sequence or a newline
-        # @return [String] one line with no control character in it
-        def self.plain(text)
-          text.to_s.scrub.gsub(::Lain::Review::Queue::Request::ESCAPES, "").gsub(UNPRINTABLE, " ").strip
-        end
-
         # @param row [::Lain::Review::Queue::Row]
         # @param pull [Forge::Gh::ReviewRequest, nil] what GitHub said of a pull request row
         def initialize(row, pull)
@@ -46,13 +38,13 @@ module Lain
 
         private
 
-        def id = self.class.plain(@row.id)
+        def id = ::Lain::Review::Queue::Request.plain(@row.id)
 
-        def reason = self.class.plain(@row.reason)
+        def reason = ::Lain::Review::Queue::Request.plain(@row.reason)
 
         def summary
           fields = @row.request.to_h
-          self.class.plain(fields["kind"] == "pr" ? @pull&.title || fields["url"] : span)
+          ::Lain::Review::Queue::Request.plain(fields["kind"] == "pr" ? @pull&.title || fields["url"] : span)
         end
 
         def span
@@ -68,7 +60,10 @@ module Lain
           fields = @row.request.to_h
           case fields["kind"]
           when "range" then "#{fields["base"]}..#{fields["head"]}"
-          when "pr" then self.class.plain([fields["url"], *("since #{fields["since"]}" if fields["since"])].join(" "))
+          when "pr" then ::Lain::Review::Queue::Request.plain([fields["url"],
+                                                               *(if fields["since"]
+                                                                   "since #{fields["since"]}"
+                                                                 end)].join(" "))
           else span
           end
         end
@@ -76,10 +71,11 @@ module Lain
         def pull_detail
           return [] unless @pull
 
-          ["title: #{self.class.plain(@pull.title)}", "author: #{self.class.plain(@pull.author)}",
+          ["title: #{::Lain::Review::Queue::Request.plain(@pull.title)}", "author: #{::Lain::Review::Queue::Request.plain(@pull.author)}",
            "requested: #{@pull.requested_at&.utc&.iso8601 || "unknown"}"]
         end
       end
+
       private_constant :Entry
 
       # Keeps each pull request the reads returned, so a row's title, author and
@@ -114,7 +110,7 @@ module Lain
 
       # Where a source's note goes: stderr, so a row stream stays rows.
       Notes = Struct.new(:cli) do
-        def puts(text) = cli.say_error(Entry.plain(text))
+        def puts(text) = cli.say_error(::Lain::Review::Queue::Request.plain(text))
       end
       private_constant :Notes
 
@@ -144,7 +140,7 @@ module Lain
       method_option :json, type: :boolean, default: false, desc: "One JSON object per row"
       method_option :all, type: :boolean, default: false, desc: "Also requests asked of my teams or as code owner"
       method_option :matches, type: :boolean, default: false, desc: "Also pull requests a keyword or path picks out"
-      def prs = list { pr_sources }
+      def prs = list(listed: true) { prs_sources }
 
       desc "show ID", "Why a row is queued, its range, and for a pull request who asked and when"
       def show(id) = render(newline: false) { lines(entry(row_for(id)).detail) }
@@ -158,13 +154,29 @@ module Lain
         end
       end
 
+      desc "poll", "Count the review requests asked of me, for the HUDs; meant for a timer"
+      def poll
+        config = Config.github(root: nil)
+        account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
+        paths = Paths.new
+        ::Lain::Review::Queue::Poll.new(
+          reads: Forge::Gh::Reads.new(cwd: Dir.pwd, account:), log: ::Lain::Review::Queue::Log.new(paths:),
+          counts: paths.review_counts, workspaces: Herdr::Workspaces.new, feed: Notices.for(env: ENV, notes:),
+          orgs: config.orgs
+        ).call
+      end
+
       desc "pick [here|local|prs]", "Choose a row in fzf and open it; Alt-Enter opens it with a critique"
       def pick(source = "here")
-        raise ::Thor::Error, "no queue source #{Entry.plain(source)}" unless PICKABLE.include?(source)
+        unless PICKABLE.include?(source)
+          raise ::Thor::Error,
+                "no queue source #{::Lain::Review::Queue::Request.plain(source)}"
+        end
 
         render(newline: false) do
-          picker = Picker.new(rows: rows(send("#{source}_sources")), source:, lain: [Gem.ruby, EXE],
-                              out: Printer.new(self), opener: method(:open_row))
+          shown = rows(sources_for(source), listed: source == "prs")
+          picker = Picker.new(rows: shown, source:, lain: [Gem.ruby, EXE], out: Printer.new(self),
+                              opener: method(:open_row))
           exit 130 if picker.call == :cancelled
           ""
         rescue Picker::NoFzf => e
@@ -173,22 +185,37 @@ module Lain
       end
 
       no_commands do
-        def list = render(newline: false) { rows(yield) }
+        def list(listed: false) = render(newline: false) { rows(yield, listed: listed && !options[:json]) }
       end
 
       private
 
-      def rows(sources)
-        queue = ::Lain::Review::Queue.new(sources:, log: ::Lain::Review::Queue::Log.new(paths: Paths.new))
+      def rows(sources, listed: false)
+        log = ::Lain::Review::Queue::Log.new(paths: Paths.new)
+        queue = ::Lain::Review::Queue.new(sources:, log:)
         lines(queue.map { |row| options[:json] ? JSON.generate(entry(row).to_h) : entry(row).line })
+          .tap { listed(log) if listed }
+      end
+
+      def listed(log)
+        log.append(::Lain::Review::Queue::Log::Event.new(kind: :listed, at: nil, row_id: nil, head_sha: nil))
+      end
+
+      def sources_for(source)
+        case source
+        when "here" then here_sources
+        when "local" then local_sources
+        when "prs" then prs_sources
+        else raise ArgumentError, "no queue source #{source.inspect}"
+        end
       end
 
       def open_row(id, critique:) = invoke(:open, [id], critique:)
 
       def row_for(id)
         sources = id.start_with?("pr:") ? [pull_requests] : [plan_runs, local_changes]
-        row = sources.flat_map(&:call).find { |candidate| Entry.plain(candidate.id) == Entry.plain(id) }
-        row || raise(::Thor::Error, "no queue row #{Entry.plain(id)}")
+        row = sources.flat_map(&:call).find { |candidate| ::Lain::Review::Queue::Request.plain(candidate.id) == ::Lain::Review::Queue::Request.plain(id) }
+        row || raise(::Thor::Error, "no queue row #{::Lain::Review::Queue::Request.plain(id)}")
       end
 
       def critiqued(row, critique)
@@ -205,9 +232,10 @@ module Lain
 
       def said(result, row, critique)
         case result.outcome
-        when :held then lines(["offered #{Entry.plain(row.id)} to #{session(result.chat)}", *also(result)])
+        when :held then lines(["offered #{::Lain::Review::Queue::Request.plain(row.id)} to #{session(result.chat)}",
+                               *also(result)])
         when :browsed
-          lines(["no local checkout of #{Entry.plain(row.id)}; opened it in the browser" \
+          lines(["no local checkout of #{::Lain::Review::Queue::Request.plain(row.id)}; opened it in the browser" \
                  "#{", so --critique was not used" if critique}"])
         else raise ::Thor::Error, [refusal(result, row), *also(result)].join("\n")
         end
@@ -216,7 +244,7 @@ module Lain
       def refusal(result, row)
         case result.outcome
         when :no_chat then "no lain chat is running in #{row.request.repo_root}"
-        when :refused then "the chat refused the request's #{Entry.plain(result.field)}"
+        when :refused then "the chat refused the request's #{::Lain::Review::Queue::Request.plain(result.field)}"
         when :silent then "the chat #{session(result.chat)} has not answered the offer, and may still show it"
         else TURNED_AWAY.fetch(result.outcome)
         end
@@ -228,7 +256,7 @@ module Lain
       end
 
       # A live record is a file any same-uid process can write.
-      def session(record) = Entry.plain(record.session_id)
+      def session(record) = ::Lain::Review::Queue::Request.plain(record.session_id)
 
       def delivery
         ::Lain::Review::Queue::Delivery.new(
@@ -249,7 +277,7 @@ module Lain
 
       def local_sources = [local_changes]
 
-      def pr_sources = [pull_requests]
+      def prs_sources = [pull_requests]
 
       def plan_runs = ::Lain::Review::Queue::PlanRuns.new(checkout:, notes:)
 

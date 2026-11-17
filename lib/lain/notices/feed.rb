@@ -19,14 +19,14 @@ module Lain
         @reported = Concurrent::AtomicBoolean.new
       end
 
-      # @return [nil]
+      # @return [Boolean] whether the program ran and exited 0
       def call(source, title, body = "")
         status = run(source, title, body).exitstatus
         report("exited #{status.inspect}") unless status.eql?(0)
-        nil
+        status.eql?(0)
       rescue StandardError => e
         report("failed: #{e.message}")
-        nil
+        false
       end
 
       private

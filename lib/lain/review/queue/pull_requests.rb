@@ -10,7 +10,11 @@ module Lain
         REQUESTS = "is:open is:pr review-requested:@me archived:false"
         MATCHES = "is:open is:pr archived:false -author:@me"
         SCOPES = { mine: %i[direct], all: %i[direct team code_owner] }.freeze
-        private_constant :REQUESTS, :MATCHES, :SCOPES
+        private_constant :MATCHES, :SCOPES
+
+        # @param pull [Forge::Gh::ReviewRequest]
+        # @param orgs [Array<String>] the organizations to keep; empty keeps every one
+        def self.in_orgs?(pull, orgs) = orgs.empty? || orgs.include?(pull.repo.split("/").first)
 
         # @param pull [Forge::Gh::ReviewRequest]
         # @return [String] the id of the row that stands for the pull request
@@ -48,7 +52,7 @@ module Lain
 
         private
 
-        def in_orgs?(pull) = @config.orgs.empty? || @config.orgs.include?(pull.repo.split("/").first)
+        def in_orgs?(pull) = self.class.in_orgs?(pull, @config.orgs)
 
         def request_row(pull)
           since, count = rereview(pull)

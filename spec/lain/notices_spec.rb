@@ -23,7 +23,7 @@ RSpec.describe Lain::Notices do
       notices = described_class.for(env: { "PATH" => bin }, notes:)
 
       expect(notices).to be_a(Lain::Notices::Null)
-      expect(notices.call("lain", "title", "body")).to be_nil
+      expect(notices.call("lain", "title", "body")).to be(false)
     end
 
     it "is a Feed over the notify-feed found on PATH" do
