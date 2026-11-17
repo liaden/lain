@@ -1,6 +1,7 @@
 # Review queue, HUD count and review simplifications
 
-status: in-progress
+status: done
+head: 38d3f560667b6ddeaab6b665ef6793749814079a
 base: af8591cd98446be0cfb25f05f48b4d22c3ab6c5b
 commit-mode: orchestrator-commits
 language: ruby, rust (T1 only)
@@ -1452,6 +1453,22 @@ end
 **Stop and report if:**
 - `close_session` doesn't run on a signal-ended chat (`cli/signals.rb`), leaving records behind. Report it rather than adding a second cleanup path. The reader already skips dead pids.
 
+### Fix cards added during the run
+
+These were written in the run's briefs, not here, because each came from a finding while the run was in flight. Each line gives what it fixed and where it landed.
+
+| Card | Risk | Landed | What it fixed |
+|---|---|---|---|
+| F1 | high | f6504763 | A row is marked seen only when the human presses Enter on its offer, live or held; `x` or Ctrl-D leaves it listed (user ruling 2026-11-17). `Intake#offer` returns the answer, the offer frame and the held file carry the row as `Review::Queue::Mark`, and a stopping chat ends its offers within 2 s. Replaced T26's 0.1 s grace. |
+| F2 | medium | 03aa43ec | `lain queue show` and `open` find a team or match row that `pick prs` listed after ctrl-t or ctrl-k. Found by T30 while writing scenarios. |
+| F3 | low | 6c49e95e | 7 files subclassed `SimpleDelegator` without `require "delegate"`; zeitwerk-census seed 376309 found it. Pre-existing on base. |
+| F4 | medium | 44e3cc3f | The repeat `Exec::Local` stop flake was a real race: a stop met no process group before `setsid` ran. 3 of 100 runs under load before, 0 of 100 after. |
+| F5 | medium | 38d3f560 | Every chat launch ran 1 `bwrap --unshare-net` (since f6db4dca) to learn whether the box gives a private network; the answer is now deferred to the first gated call that reads a secret. wire_ready went from about 21 ms to 17.4 to 17.8 ms, still over its 17.1 ceiling. |
+| F6 | medium | ae0042ba | Every `Config` reader requires `paths:` and every caller passes the Paths it holds; `lain worktrees` read its config under the default Paths. |
+| F7 | low | 947b5d9e | `/review --critique` and a typed `/critique` refuse a bad `critics=` before anything opens. |
+
+Not carded, left for later: wire_ready still reads 0.3 to 0.7 ms over its 17.1 ms ceiling after F5 (3 of 3 logs at load just under 2), which F5 attributes, unproven, to extra git spawns in d7aaf58c and bdd602d8; `frontend/tty.rb:117` and `provider/ollama.rb:557` build a Paths in classes that hold none; a cockpit chat with an offer showing takes about 60 s to exit on SIGTERM; 2 checkouts with the same directory name share one herdr `review <dir>` label; Intake#offer's draft after a restored draft counts `you>` as touched, so later offers wait behind it until the human sends a line.
+
 ## Main-session dotfiles steps
 
 These run after T30 lands, in the dotfiles bare repo:
@@ -1507,3 +1524,312 @@ The user ruled (2026-11-16) that the main session makes these changes. The work 
 - **Test-runner pattern for wait-quiet:** `rspec|parallel_rspec|rake (pspec|check)|cargo (test|clippy|build)`.
 - **Concurrency cap:** 15 GB RAM with another project's cargo build on the box, so 4 agents, with a landing counted as 1.
 - **Paths that need user approval:** none in the cards; the dotfiles steps D0 to D5 run in `~/.cfg` after T30.
+
+### Where the run departed from the cards
+
+The cards above are as planned. These are the rulings and scope changes made during the run; the log below has the detail and the time of each.
+
+- T3: 3 comment-only files joined by scope ruling.
+- T4: stdin and stderr are injected from `exe/lain`; `endpoint_env_isolation`'s read widened.
+- T5: `lib/lain/cli/pane_command.rb` joined, for the `LAIN_GH_ACCOUNT` name ratchet.
+- T7: the deletability and introspect maps fixed in the card; the refusal keyword renamed rather than widening `OFF_RAIL`.
+- T9: 2 specs that name `LainCLI::Bench` and 4 docs that name the verbs joined; bench, verify, usage and friction examples moved from `cli_spec` to `qa_lain_spec`.
+- T11: the `qa_lain_spec` example T9 moved, red alone, fixed in T11's round.
+- T12: `Account#environment` returns the exported `GH_TOKEN` for a configured account; `account.rb` and its spec joined. A configured account with no gh is refused, not raised. `Config.load` takes `paths:`.
+- T13: teams come from the viewer's orgs (`role: MEMBER|ADMIN`) in the same query, matched by org-qualified slug; a `paths_truncated` field.
+- T14: Submit places comments against the whole PR changeset (`Changeset#placement`); `source.rb`, `changeset.rb`, `submit.rb` and its spec joined.
+- T15: `Command::Review` reaches the critique through a callable `Surface` injects over a public `SkillDispatch` method; `surface.rb` joined. The `--critique` path does not run the Repl's extras, so "the same path" in the card is looser than written. The up-front `critics=` check became F7.
+- T16: the log frames each record with a leading newline, so a torn last line cannot swallow the next append.
+- T20: `Reads#matches(query:)` added, with `via: :match` and a shared parse; T13's `reads.rb` and `review_request.rb` joined.
+- T21: `pull_requests.rb` joined for one shared PR id builder; `chat_flags_spec` joined (`ELSEWHERE` may name a Thor class). The `Pulls` decorator is interim.
+- T22: ctrl-t toggles scope mine/all and ctrl-k toggles matches; `prs` gains `--all` and `--matches`. A reload of 1.3 to 3 s was accepted.
+- T23: the branch shape gains an optional base, `refs/heads/<trunk>`.
+- T24: `x` drops an offer (no producer delivers Esc at a line prompt); text refused at an offer stays an unsent `you>` draft; `input_pane.rb` joined.
+- T25: the socket replies to the sender only, `{v: offered, outcome: held|crowded|repeat|refused}`; `input_socket.rb`, `intake.rb` and `offer.rb` joined. Delivery waits 5 s for the greeting, then 30 s for the reply. Marking seen on `held` was replaced by F1.
+- T26: Wiring's human input moved to `Wiring::InputProducer` rather than raising ClassLength; outcomes `:pending`, `:started`, `:herdr_failed`, `:replaced`, `:replaced_started`, `:replaced_herdr_failed`; the offer waits for the chat's first `you>`; the held file is refused unless it is a regular private file under 64 KiB and under 1 day old.
+- T28: `lain queue prs` (text and pick) appends `:listed`; `--json` does not. With no prior counts file and GitHub down, nothing is written; an overlapping poll does nothing. `PullRequests::REQUESTS` and `Request.plain` reused.
+- T29: `reviews.json` is named once, by `Paths#review_counts`, which creates nothing; the HUD line change moved into `InputProducer#hud_line` after T26.
+- T31: dead live records are skipped and never deleted.
+
+### Close-out (2026-11-17)
+
+- **Landed:** all 31 cards and fix cards F1 to F7; 45 commits from `af8591cd` to `38d3f560`, among them `d6dae6ef` (flake records in `docs/toolchain-traps.md`).
+- **Integration checks on `38d3f560`:** `bundle exec rake check` green: rubocop 2760 files, no offenses; pspec 35881 examples, 0 failures, 15 pending. `cargo clippy --all-targets -- -D warnings`, `cargo test` and `cargo check --target aarch64-apple-darwin` for lain-wire, lain-core and lain-fence all clean. `bin/zeitwerk-census --check` and `bin/comment-census --check-tickets` clean. `pre-commit run --all-files` was not run: its whitespace fixers would rewrite the user's uncommitted planning edits; `rake check` covers its Ruby half, and every landing ran the hook on its own files.
+- **Not met:** `bin/hot-path-bench --check` still fails on wire_ready (17.36, 17.85 and 17.82 ms against 17.1). No ceiling was raised.
+- **Dotfiles (`~/.cfg`):** D0 shim rewritten (it pointed at Ruby 4.0.6); D1 `481b862` (herdr config check ok, reloaded, `reviews` workspace created); D2 `fdc7655`; D3 `64aa41f` (the plist force-added past the `Library` ignore; the timer is enabled and its first poll wrote `reviews.json` with `rv 0`); D4 `d12edd0`; D5 `0b335e6`.
+- **Owed to the user:** the manual QA pass (`/manual-qa planning/qa/scenarios/review-queue.md` and `changeset-review.md`, with a throwaway PR on the personal account); the live check after D0 to D3 (prefix+p, ctrl-t, Enter into a running `lain up --nvim`, 1 timer tick); rebasing `/home/tara/w/ir`; pushing `main`.
+- **Worktrees and branches** match the start: the main checkout, `/home/tara/w/ir` and the 82 stale `card/<id>` worktrees from earlier plans; no `rqh-` worktree or branch is left.
+
+### Run log
+
+As written during the run, times in local time.
+
+- 09:29 T3, T4, T5, T16 started (sonnet), cut at d2cf4814.
+- 09:33 T3 implemented (+3 comment-only files by scope ruling); low review started. T16 fix round: torn last line swallowed the next append.
+- 09:35 T3 approved-with-fixes (2 comment fixes), landing attempt 1. T16 fix round done (pread last byte, leading newline); review waits on the landing.
+- 09:36 T5 implemented; docs wiring applied in its worktree. Review waits on the landing and a docs spec run.
+- 10:05 T3 landing 1 red: 30 failures, all watchdog STARVED (load to 230, swap full) from other projects' cargo builds. Main restored clean. Not a card defect.
+- 10:11 User ruling: stricter quiet wait (load < 4, memory PSI < 5), 3 agents. T4 stopped on 3 discipline specs; ruled: inject stdin and stderr from exe/lain, widen endpoint_env_isolation's read. T3 landing attempt 2.
+- 10:16 User asked to fan out: cap raised to about 7 agents; T1, T2, T6, T27 to start after the T3 landing.
+- 10:26 T3 landing 2 stopped by pid: deadlock between the quiet wait and an agent's piped grep; wait fixed. T1, T2, T6, T27 cut at d2cf4814.
+- 10:27 T1 (rust), T2, T6, T27 started (sonnet). T5 and T16 medium reviews started. T3 landing attempt 3.
+- 10:36 T3 attempt 3 red, card-caused: deletability_spec github_pr row (consumers moved to Review::Target) and yard-lint ReferenceTypo pre-existing at lib/lain/cli/survey.rb:62. Fix round sent. deletability_spec added to ratchet list. T4 fix round done, 1747 examples green.
+- 10:37 T5 review APPROVE-WITH-FIXES (mechanical, 5 items), sent. T16 review APPROVE-WITH-FIXES with 3 substantive items, fix round sent, second review owed. T4 medium review started. T1 done, medium review started.
+- 10:37 T2 done (88 examples green), low review started.
+- 10:37 T27 done (12 examples, ratchets 727 green), low review started. herdr create argv unverified live: agent's herdr --help call was denied.
+- 10:37 T6 done (6 examples, ratchets 639 green), medium review started.
+- 10:38 T27 review APPROVE-WITH-FIXES: 2 mechanical (shape guards, no NoMethodError rescue), sent. Carried to T29: Herdr::Workspaces#create passes no --focus/--label (herdr-park passes both); T29 decides whether the user must see the new workspace, and confirms the argv live.
+- 10:40 T3 fix round done (942 green; main fixed a rubocop-mangled comment). T5 fixes done (1433 green). T2 APPROVE. T1 fixes done (crate attrs restored). T27 fixes done (760 green). T16 fix round done, second review started. Landing queue: T3 4, T5 1, T2 1, T1 1, T27 1.
+- 10:41 T6 review APPROVE-WITH-FIXES, mechanical (2 read-tree specs, unborn-HEAD raise pinned, MESSAGE order), sent. Carried to T23: unborn HEAD raises; snapshot sha not deterministic.
+- 10:41 T4 review APPROVE (1502 green, help output byte-identical across commands). Follow-up noted: chat_flags_spec SOURCES excludes lib/lain/cli/exe, so flag reads in the Thor layer are unchecked by design.
+- 10:42 User ruling: delete and clean up old code as cards change it, no backwards compatibility. Added to the brief template and reviewer briefs. Checked the in-flight card diffs: no compat aliases or shims found.
+- 11:08 T3 attempt 4 red: starvation, not the card. A zsh in this session's scope grew to 4.8 GB, OOM-killed 11:06. Asked T16 reviewer and T6 implementer what they ran. Brief template bans large captures and unlocked probes.
+- 11:08 Quiet check now also needs MemAvailable >= 7000 MB. Landing queue relaunched: T3 5, T5 1, T2 1, T1 1, T27 1, T4 1.
+- 11:09 T6 fixes done (663 green); ready to land after the queue. T6 agent ran no captures in the OOM window.
+- 11:18 T3 attempt 5 red: 1 failure, "Lain::Ext::Timeline#messages re-entering Ruby frees the render state when the fiber is dropped inside Canonical.adopt" (leaked 1001401, limit 1000000), worker seed 30242. Green alone, green 3 of 3 on base: flaky, not reproduced. To record in docs/toolchain-traps.md. Landing past it.
+- 11:19 T16 second review APPROVE-WITH-FIXES with 1 substantive (false torn reads under concurrent appends make blank lines; 4-process spec latent flake). Fix round 3 sent (leading-newline framing suggested), third review owed. Landing queue relaunched: T3 6, T5, T2, T1, T27, T4, T6 (output rqh-queue-2.out).
+- 11:21 T3 landed af4a0410
+- 11:26 T3 landed af4a0410. T5 attempt 1 red, card-caused: pane_command_spec LAIN_ name ratchet misses LAIN_GH_ACCOUNT. Ratchet grep redone (Dir/glob/ls-files over lib or exe): 22 more nested specs added to briefs. T5 scope adds lib/lain/cli/pane_command.rb. Queue stopped after T5; T2, T1, T27, T4, T6 still to land.
+- 11:30 T5 fix done (pane_command RUNTIME_ENV, 3032 green), diff verified. Wider ratchets: T27 and T6 green (1627), T4 red on pane_command_spec drift example (scans exe/lain only); T4 fix sent. Queue: T5 2, T2, T1, T27, T6.
+- 11:30 T3 worktree and branch removed, hand-back copied. T7 cut at af4a0410, started (sonnet). Queue: T5 2, T2 1, T1 1, T27 1, T6 1.
+- 11:34 T5 landed cad00ae1
+- 11:34 T4 fix done (pane_command drift spec scans lib/lain/cli/exe too; 1599 wider ratchets green), diff verified. Landing queued.
+- 11:38 T2 landed 61f54141
+- 11:40 T16 third review APPROVE (probe clean, backout red, no pread code left, 840 green). 1 docstring nit sent.
+- 11:40 T5 landed cad00ae1. T2 landed 61f54141. T10 (high, opus) and T19 (low, after T16 lands) briefs ready; cut at next hook gap.
+- 11:45 T1 landed 831375d7
+- 11:46 T16 nit done; wider ratchets then landing queued after T4.
+- 11:50 T27 landed c5bae705
+- 11:54 T6 landed 04be9853
+- 11:54 T1 landed 831375d7. T27 landed c5bae705. T6 landed 04be9853. Worktrees T5 T2 T1 T27 T6 removed, hand-backs copied. T10 cut at 04be9853, started (opus, high).
+- 11:57 T7 stopped on 3 ratchet reds (deletability, introspect outbox.hold holder, refusal_width slot word). Ruling: fix the 2 maps in-card, rename the refusal: keyword rather than widen OFF_RAIL.
+- 12:01 T7 ratchet fixes done (keyword renamed sentence:), medium review started.
+- 12:02 T4 and T16 landing waiters were stuck: pgrep -f matched the waiter's own command line (~25 min lost). Stopped; relaunched as 1 queue. T16 wider ratchets 1627 green.
+- 12:05 T4 attempt 1: suite green, yard-lint --staged red (3 pre-existing ReferenceTypo in improvements.rb, 2 OptionTags on moved flag methods). yard-lint <files> misses them; main now runs rqh-yard-staged.sh before each landing. T4 doc fix sent.
+- 12:06 T4 doc fixes done; yard-lint --staged clean in worktree. Landing attempt 2 queued on the gate behind T16.
+- 12:12 T7 review APPROVE-WITH-FIXES (14/15 mutants red, deviations forced). Fix round sent: yard refs, dedupe Survey.source_name into Outbox::CORPUS (substantive-small; narrow re-check by same reviewer), matcher once, bind target once.
+- 12:15 T16 landed 5af3aaa3
+- 12:15 T16 landed 5af3aaa3.
+- 12:19 T4 landed fc981266
+- 12:19 T4 landed fc981266. Worktrees T16 T4 removed. T17, T18, T19, T31 cut at fc981266 and started (sonnet).
+- 12:21 T10 done (4702 green). Wiring applied in worktree (wiring.rb paths: @paths), patch rqh-wiring-T10.patch. High review started (opus), fake gh only.
+- 12:26 T17, T18, T19, T31 done. Wider ratchets: T17 T18 green; T19 red on checkout_calls_spec (Checkout.new). T19 review APPROVE-WITH-FIXES, fix round sent with the ratchet. T18 RANKS wiring applied (plan gap: card listed none). T17 low, T18 medium, T31 medium reviews started. T7 fixes done, narrow re-check sent.
+- 12:26 T17 review APPROVE-WITH-FIXES; ruling: drop branch: and review base..HEAD; fix round sent. Carried to T23: delete interim request forms.
+- 12:29 T19 fixes verified (1627 ratchets, staged yard clean, 6 card examples). T17 fix round verified same way. Landing T19, T17. T18 REQUEST-CHANGES (status rewrites index; fingerprint parsing; RANKS spec), fix round sent. T7 re-check: 3 small items sent. T31 APPROVE-WITH-FIXES.
+- 12:29 T18 fix round done (40 green); second review started. T31 fix round sent (reap dead same-host records, 0600, pre-flight example, require, comment).
+- 12:31 T19 landed 4fa82cce
+- 12:35 T17 landed 00864486
+- 12:44 T19 T17 worktrees removed. T10 fix round 1 sent (6 items, item 2 substantive: 1 Account injected by Wiring). T23 cut at 00864486, started (opus, high).
+- 12:47 T7 verified (1627 wider ratchets, staged yard clean after a tag-order swap in outbox.rb). T18 verified (1627, yard clean); 2 optional nits skipped. Landing queue T7 1, T18 1.
+- 12:50 T7 landed 84efdba5
+- 12:54 T18 landed c1b4cde7
+- 12:55 (12:47) T7 landed 84efdba5. 12:50 T18 landed c1b4cde7. Worktrees removed. T8 cut at c1b4cde7. Note: the main checkout has the user's unstaged edit to qa-sandbox.sh (a T8 file); land T8's change to it as a patch and check with the user before staging over their edit.
+- 12:55 T8 started (sonnet, medium).
+- 12:57 T31 user ruling: follow the card (reader skips dead records, no reap). Fix round 2 sent: remove reap, fix class comment, keep 0600/preflight/require/comment. All remaining items mechanical, so no second review: main verifies, then lands.
+- 12:58 T23 done (27 card examples green). Worktree ff'd to c1b4cde7; fold of T18 LocalChanges onto Request sent. URL_NUMBER reuse dropped (deletability map). Zeitwerk census red at 2 seeds on missing require "delegate" (Rerouting at 230004, ToolsetBuild at 798853), pre-existing: candidate F-card at the end of the plan.
+- 12:59 T10 fix round 1 done (489 card, 4708 ratchets green). Wiring now builds 1 Account (gh_account:), paths: @paths reverted; rqh-wiring-T10.patch is stale, regenerate before landing. ClassLength 311/306 on Wiring: ruled raise to 311 in its own commit (precedent: 302, 306), landing now. Second review sent to the same reviewer.
+- 13:04 Raise landed bb726733. T31 fix round 2 verified (1627 ratchets; staged yard needed {LiveViews} made plain at chat_launch.rb:32). Landing T31 attempt 1.
+- 13:05 T8 done (182 card, 7005 wider green). Follow-up sent: own docs/commands.md, rename lain review/survey mentions to qa-lain. T8 and T10 both touch exe/lain: land the second by patch. T23 fold done (65 queue, 2254 ratchets green); root-commit example has no red on old code, so the reviewer backs it out. T23 high review waits for T31's landing to finish. Zeitwerk: a 3rd SimpleDelegator site (Wiring::JudgeSource).
+- 13:14 T31 landed e0b437a2
+- 13:14 T31 landed e0b437a2; worktree removed.
+- 13:14 T23 high review started (opus). No new card ready: next spawns are T11+T12 on T10, T9 on T8, T24 on T23.
+- 13:18 T10 second review APPROVE-WITH-FIXES with 1 substantive (Account.configured, 3 copies; production notes untested). Fix round 2 sent with all 6; third review after (memory: third-review-after-failed-second). Follow-up on main after T10 lands: lower ClassLength to Wiring's real count (309 expected) and drop the bash-environment claim from the .rubocop.yml comment.
+- 13:19 T8 rename sweep done (docs/commands.md owned, 8 lib comment files; MESSAGE and Lua string kept as generic). 7005 green. Medium review started. Second friction: implementer used & despite the rule.
+- 13:24 T8 review APPROVE-WITH-FIXES, mechanical (spec comment renames); sent, no second review. User ruled: commit their qa-sandbox.sh edit first (backup at qa-sandbox.user-backup.sh); landing it now. It leaves the start-of-run unstaged list at close-out. T8 then lands qa-sandbox.sh as a patch.
+- 13:25 T23 high review REQUEST-CHANGES (2 blockers: encoding compare, hostile values escape Refused; plus refname:short, master trunk, one bad row aborts listing, bidi branch names). Fix round 1 sent, 14 items. Rulings: the branch shape gains an optional base (plan change to record); refused rows are skipped with a note via a required notes: sink; sha256 stays refused; root normalised via show-toplevel.
+- 13:30 User's qa-sandbox.sh edit landed 7b0aa2ef (file intact). T8 verified (1627 ratchets, staged yard clean); its qa-sandbox change rebuilt on main as rqh-wiring-T8.patch and dropped from the paths list. Landing T8 attempt 1. T10 fix round 2 done (649 card, 4713 ratchets; Wiring 309).
+- 13:37 T8 attempt 1 RED: qa_sandbox_pane_resolution_spec 5 failures, also red alone on main at 7b0aa2ef (the user's sandbox commit set TMUX_TMPDIR; its hook skipped rspec because only a .sh was staged). Also exec/local_spec 'stop leaves no side effect' red once (flake check pending). Lower commit landed 84b37076. Landings held. F1 cut to fix the spec.
+- 13:37 Flake: "Lain::Exec::Local a stop leaves no side effect from a String command stopped before it got there" red in T8 attempt 1 suite; green alone, 3 of 3 on base 84b37076. Record by name; land past it.
+- 13:39 F1 done (red 5 of 7, green 3 runs; socket 82-89 bytes). Reviewed inline at low depth (spec-only, 25 lines). Landing F1 then T8 attempt 2.
+- 13:48 F1 landed a3b8ff91
+- 13:51 T23 fix round 1 done (81 queue, 2254 ratchets). Round 1b sent: PlanRuns skip-with-note, stamp on non-ASCII, drop realpath. Second review after.
+- 13:54 T8 landed 18208da3
+- 13:55 F1 landed a3b8ff91. T8 landed 18208da3. Worktrees removed. T9 cut at 18208da3 (shares exe/lain and cli_spec with T10: land the second by patch).
+- 13:55 T9 started (sonnet, medium).
+- 13:56 T9 stopped on scope (2 specs reference LainCLI::Bench; 4 docs name the verbs). Widened: those specs and docs, bench/verify/usage/friction examples move from cli_spec to qa_lain_spec; historical notes untouched.
+- 13:57 T23 round 1b done (83 queue, 2254 ratchets). Second review sent to the same reviewer.
+- 13:57 T10 third review APPROVE-WITH-FIXES, 1 mechanical (spec for EpicFinish.local's NoGithub); sent. Main verifies, then lands. Census seed 631068 fails on Wiring::Askers (same SimpleDelegator family).
+- 14:00 T10 fix round 3 verified (9-line spec, red with plain Gh). 1627 ratchets green; staged yard [C] fixed (param text). Wiring patch regenerated (26 lines, applies). Landing T10 attempt 1.
+- 14:05 T10 landed efb75259
+- 14:05 T10 landed efb75259; worktree removed. T11 and T12 cut at efb75259 and started (T11 sonnet medium, T12 opus high).
+- 14:06 T9 done (271/76 red; 4657 green; 42 files lint clean). exe/lain and cli_spec diffs apply cleanly on efb75259. Medium review started.
+- 14:07 T12 stopped: 'exported token is what bash gets' unbuildable (environment returns {} when exported). Ruling: Account#environment returns the exported GH_TOKEN for a configured account; account.rb and its spec join T12 scope. Owed after T12: .rubocop.yml comment names the bash backend too.
+- 14:10 T23 second review APPROVE-WITH-FIXES (14/14 confirmed; 2 should-fix in readers, 6 nits). Fix round 2 sent (7 items incl. shared skip-with-note home and \p{M} refusal); narrow re-check by the same reviewer after.
+- 14:11 T11 done; sent back before review: required account: on Target and Command::Review (no None default), qa-lain review builds Account.configured, full rerun.
+- 14:14 T9 review APPROVE (2 nits skipped). 1627 ratchets green. Staged yard: 7 pre-existing unresolvable {refs} in touched comments made plain. T9 also edits planning/qa/README.md and method.md, which hold the user's uncommitted edits: asking.
+- 14:14 User ruled: commit their planning/qa README and method edits first (backups taken), then T9 by patch. Landing both.
+- 14:22 T23 fix round 2 done (85 queue, 2254 ratchets; new Queue::Listing). Narrow re-check sent to the same reviewer.
+- 14:25 T9 landed d65cb680
+- 14:25 User's QA docs landed 29f65322 (files intact, qa doc specs green). T9 landed d65cb680; worktree removed. No card newly ready (T21 waits on T20).
+- 14:25 T11 notes: required, bin/qa-lain passes $stderr. qa_lain_spec conflicted with T9: worktree ff'd to d65cb680 (both files reset first, bin/qa-lain patch reapplied); implementer re-adding its example, then full rerun, then medium review.
+- 14:27 T23 narrow re-check APPROVE (all 7 hold); 4 last small items sent, main verifies. T12 done (164 card; 2 reader specs pin old {}); fixing those. Wiring applied in T12 worktree (lend: gh_account; .rubocop.yml comment names the bash backend), rqh-wiring-T12.patch. High review after the spec fix.
+- 14:30 T12 reader specs fixed (5856 green). High review started (opus). provenance_spec 'records the running lain's harness' red once in T12's run, green alone: watch.
+- 14:31 T23 last 4 items verified (Latin-1 red; UNSEEN comment; injected factory). 1627 ratchets, staged yard clean. Plan edit owed: T23 branch shape gains optional base. Landing T23 attempt 1.
+- 14:32 T11 example re-added on main's qa_lain_spec (5380 green over 104 files). Medium review started. 2nd agent this run started a whole-tree rspec from an empty file list (killed by pid).
+- 14:35 T23 landed 45fb2c07
+- 14:36 Plan edit owed: T23 branch shape gains optional base refs/heads/<trunk>.
+- 14:36 T24 started
+- 14:40 T24 stopped: no producer delivers Esc at a line prompt. User ruling: x drops (Enter opens, x drops); other text keeps the offer. Plan edit owed: T24 criterion 1 wording. Wiring: checkouts from Config::Github#roots.
+- 14:41 T11 review APPROVE-WITH-FIXES (mechanical: reads: required, Remote#gh inline). Scope add: qa_lain_spec LainCLI example from T9 (d65cb680) red when run alone, fixed in T11's round.
+- 14:47 T11 fixes verified (reads: required, rename, LainCLI load). 1627 ratchets, staged yard clean. Landing T11 attempt 1.
+- 14:47 T12 review REQUEST-CHANGES: BLOCKER live display unmasked on the first lent command (mask built before the lend resolves). Fix round items 1-6; rulings: refusal re-asked, LeaseCommit asks carry no lend, no lend under docker. Second review owed (opus, high).
+- 14:51 T11 attempt 1 RED: local_changes_spec:56 (landed by T23 after T11's cut) builds Target without account:. Not a flake. Integration fix lands with T11 as rqh-wiring-T11.patch (Account::None at that call). Landing T11 attempt 2.
+- 14:57 T11 landed e4831457
+- 14:58 T11 landed e4831457 (attempt 2). T13 started. T14 started.
+- 14:59 T24 done (x drops; other text held for you>, sent to reviewer to judge). Wiring: InputSocket checkouts from Config.github roots; needs ClassLength 309->312 raise in its own commit (rubocop-raise-T24.yml, rqh-msg-raise-T24.txt), land before T24. High review started.
+- 15:00 T12 fix round done (6 items, reds recorded). Second high review sent to the same reviewer. Owed before landing: bin/hot-path-bench --check (Display#sinks on the bash-call path).
+- 15:02 T13 done; stop condition checked live by main session (rails/rails, read-only GraphQL): latestReviews keeps force-pushed-away reviews with their old oid (19 of 30). Sent back: pin it in the fixture, rerun ratchets.
+- 15:05 T13 addendum: force-push pin added (passes at once; parser never compares oid to head), ratchets 2408/0. Medium review started; asked to judge 'any Team node counts as mine'.
+- 15:06 T14 stop fired: a since round's comments can anchor outside the whole PR diff (GitHub 422) and old-side lines use A's numbers. Ruling (main session): Submit places against the whole PR changeset; Placer's existing degrade/refuse handles both. Scope widens to the placement path. Plan edit owed.
+- 15:09 T13 review APPROVE-WITH-FIXES, substantive: wrong team picked (first Team node); paths cap silent. Ruling: viewer orgs' teams(role: MEMBER|ADMIN) in the same query, org-qualified slug match; paths_truncated field. Second review owed (medium). Plan edit owed: ReviewRequest gains paths_truncated, team is org/slug.
+- 15:12 T13 fix round done (teams via viewer orgs, paths_truncated, latest request time). Item 3/4 reds only via keyword; second review (same reviewer) to back out mutants.
+- 15:13 T12 second review REQUEST-CHANGES: BLOCKER configured account + no gh -> Errno::ENOENT escapes Lend, every bash call fails. Fix round 2 sent (rescue SystemCallError -> Refused; memo pin; drop structural spec). Third review owed per user memory (high risk).
+- 15:15 T14 ruling implemented (Changeset#placement; scope +source.rb, changeset.rb, submit.rb, submit_spec). docs/commands.md wiring applied in worktree. Medium review started.
+- 15:15 T13 second review APPROVE-WITH-FIXES (mechanical: 2 surviving-mutant specs, cap docs). Live cost 4 points. Main session verifies; no third review.
+- 15:24 T24 high review APPROVE-WITH-FIXES. User ruling: refused offer text stays as an unsent you> draft. Checkouts wiring + ClassLength raise dropped (no reader). Fix round sent; second review owed.
+- 15:24 T14 review APPROVE-WITH-FIXES (abbrev sha resolve, substantive small; api_answerable spec). Fix round sent; narrow re-check owed.
+- 15:24 T12 third review APPROVE-WITH-FIXES (mechanical: errno message, /share export fallback). Main verifies. hot-path-bench owed.
+- 15:24 T13 yard duplicate-docstring fixed; landing.
+- 15:28 T13 landed 944dcdd6
+- 15:28 T13 landed 944dcdd6. T20 started.
+- 15:29 T20 stopped: Reads#review_requests drops unrequested PRs, so path/keyword rows had no input. Ruling: scope widens to T13's reads.rb/review_request.rb; add Reads#matches(query:) with via :match, shared parse. Plan edit owed.
+- 15:30 T12 final mechanical fixes verified by diff (errno-specific message; /share export fallback). Hot-path bench running under the gate (3 records + check).
+- 15:35 T12 hot-path bench --check FAIL: wire_ready 21.0 vs 17.1 (3/3), request_1000000 3.06 vs 2.98 (2/3). Bash rows all under. Running the same bench on main HEAD in a base worktree to compare.
+- 15:38 T14 re-check APPROVE (NIT left: no spec that the full sha reaches merge-base). 2 pre-existing yard [W] refs in touched files made plain. Base bench: wire_ready 20.7 over on main too (pre-existing); request_1000000 2.55 under on main vs 3.06 on T12 (busier box) -> rerunning T12 bench. Landing T14 attempt 1 (queued behind the bench).
+- 15:47 T14 landed db26bead
+- 15:49 T20 done (Reads#matches, via :match; search first: 50 no cursor). Medium review started. T24 fix round done; draft lost in cockpit pane -> input_pane.rb joins T24 scope. F-card owed: wire_ready over ceiling on main.
+- 15:49 T12 bench: request_1000000 2.90 under on rerun; only wire_ready over, also over on main (pre-existing, F-card). Final fixes verified, pre-existing yard ref made plain. Landing T12 attempt 1.
+- 15:54 T12 attempt 1 RED: child_read_scope_spec:172 Untrusted (gh_account reads Config.github with injected paths; Config.load ignores paths). Red alone in worktree: card-caused. Sent back to implementer: Config.load takes paths:, Wiring#config passes @paths.
+- 15:54 T15 cut at db26bead
+- 15:54 T15 started (sonnet)
+- 15:55 T20 review APPROVE-WITH-FIXES: 4 should-fix (org filter unpinned, truncated paths dropped silently, 50 search cap silent, scope :mine leaks hidden requests as match rows) + nits. Fix round sent.
+- 15:55 T15 stop: Command::Review cannot reach dispatch. Ruled seam 1 (Surface injects critique callable over a public SkillDispatch method with spawnability pre-check); surface.rb joins scope. Plan edit owed: T15 Files + surface.rb.
+- 15:56 T12 fix: paths through Config.load not enough (8 readers ignore paths). Ruled: Account.configured drops paths:, Config.github uses default like all readers; revert the partial threading.
+- 16:00 T12 fix verified (Account.configured drops paths:; integration patch adds cli/review.rb caller). Landing T12 attempt 2.
+- 16:01 T15 hand-back done (seam 1); docs wiring applied in worktree. Review waits for T12 landing to finish. Note: model=x the provider does not serve still refuses after open (needs Review::Critique hook; out of scope).
+- 16:01 T20 fixes done (12 red first; items 1,4 red by backing out). Second review (same reviewer) queued until T12 landing ends; reads.rb was truncated by an edit script then rewritten: reviewer reads it whole.
+- 16:06 T12 attempt 2: suite green, yard-lint red on pre-existing wiring.rb offenses (ReviewSeams ref, tag order); yard script did not cover patch files. Fixed both, script now includes patch files. Landing attempt 3.
+- 16:06 T24 draft handling done (pane applies draft at next redraw; Draft.typed_back escapes controls). Pre-existing {Intake} yard refs made plain. Second high review (opus) after T12 landing.
+- 16:10 T12 landed 6b7ff11c
+- 16:10 T12 landed 6b7ff11c (21 of 31)
+- 16:11 Reviews started: T15 (new, medium), T20 second (same reviewer), T24 second high (same reviewer).
+- 16:13 T15 review APPROVE-WITH-FIXES: surface wiring unpinned; late refusals after open lose headline (ruled rescue + up-front critics= check); docs prose. Plan edit owed: T15 'same path' wording (Repl extras not on the --critique path). Fix round sent.
+- 16:14 T20 approved (2nd review, mechanical fixes verified: notes pin red-first, sort pin cannot go red, unused arg gone). Landing T20 attempt 1.
+- 16:19 T20 landed d1df0c1b
+- 16:19 T20 landed (22 of 31)
+- 16:19 T21 cut at d1df0c1b
+- 16:19 T21 started (sonnet)
+- 16:20 T15 fixes: wiring pinned, late refusal rescued (headline kept). 2b (up-front critics=) dropped: check private to Review::Critique, out of scope. Docs prose applied. Second review (same reviewer) sent.
+- 16:22 T15 second review APPROVE (1 mechanical nit: pin rescue from above; sent). F-card candidate: public Review::Critique critics= check so bad critics= refuses before open.
+- 16:23 T15 nit verified (re-raise pin red-first). Landing T15 attempt 1.
+- 16:27 T15 landed f0f7f02d
+- 16:27 T15 landed (23 of 31). T22 waits on T21.
+- 16:28 T21 hand-back done; docs section applied in worktree; medium review started.
+- 16:30 T24 second high review REQUEST-CHANGES: pane applied draft at next stop_drawing, so during a run it merged into an approval and reached the model. Fix round sent; third review (opus) follows per user rule.
+- 16:30 T21 review APPROVE-WITH-FIXES: duplicated PR id format, @pulls side effect, show vs plain id, stderr + hidden-row unpinned, author escape. Fix round sent (pull_requests.rb joins scope for a shared id builder). Plan note: Pulls decorator is interim; PR title/author/requested on the row belongs in T17's Row.
+- 16:33 T21 fixes in (pull_requests.rb + spec joined). Guards for stderr/hidden-row/author passed first run; narrow re-check by same reviewer to prove they can fail.
+- 16:34 T21 re-check APPROVE (all 7 back-outs red).
+- 16:35 Landing T21 attempt 1.
+- 16:42 T21 attempt 1 RED: chat_flags_spec:186 (options[:json] undeclared; ELSEWHERE cannot name a subcommand class). Card-caused, deterministic by construction. Sent back: ELSEWHERE may name a Thor class; chat_flags_spec joins scope. Ratchet list gains spec/lain/cli/chat_flags_spec.rb.
+- 16:42 Ratchet scan list widened by 6 nested specs that glob lib/ via Pathname (chat_flags, project_dir, scribe_write_side, root_defaults, review/bounds, run_clock).
+- 16:43 T24 round 3 fixes done (draft held until next you> prompt; seam example with approval after drop). Third review (opus, high) waits for T21 landing.
+- 16:44 T21 guard fix verified (red first, backing check bites). Landing T21 attempt 2.
+- 16:48 T21 landed 728de381
+- 16:48 T21 landed (24 of 31). T22 ready.
+- 16:48 T22 cut at 728de381
+- 16:48 T22 started (sonnet). T24 third review started (fresh opus reviewer, high).
+- 16:56 T22 stops: (1) reload 1.3-3s; accepted (here measured at load 7; prs network-bound, fzf spinner). (2) open needs T25: by design, seam pinned by stub. Toggle ruling: ctrl-t = scope mine/all, ctrl-k = matches off/on, per T20; prs gains --all/--matches; chat_flags_spec joins scope. Plan edits owed: T22 toggle meaning, reload ruling.
+- 17:00 T22 done under rulings; docs rows applied; medium review started.
+- 17:08 T22 review REWORK: pick after toggle refused (membership check), vacuous no-toggle spec, class_options leak onto pick/here/show. Fix round sent; second review by same reviewer.
+- 17:11 T22 rework done (5 red first); docs updated; second review (same reviewer) sent.
+- 17:13 T22 second review APPROVE-WITH-FIXES (reap spec, mechanical; sent).
+- 17:16 T22 reap spec verified (red without reap). Landing T22 attempt 1.
+- 17:21 T22 landed fbba8756
+- 17:21 T22 landed (25 of 31). T25 waits on T24 third review.
+- 17:25 T24 third review APPROVE-WITH-FIXES (live drive clean in 8 cases; typed_back use unpinned, cross-offer drafts glued, thread cleanup unpinned, &&nil). Fixes sent; main verifies. Plan edit owed: T24 card text (x drops, draft rule) and Files (input_pane.rb, draft.rb, specs, seam).
+- 17:33 T24 round 4 verified by main (typed_back seam red from mutant, single-space join, &&nil gone; thread cleanup left unpinned, no observable difference).
+- 17:35 Landing T24 attempt 1.
+- 17:36 T24 attempt 1 stopped at lint (no suite): stale rqh-wiring-T24.patch from the dropped checkouts wiring pushed Wiring to 312/309. Patch moved aside; attempt 2.
+- 17:40 T24 landed 83822daf
+- 17:40 T24 landed (26 of 31). T25 ready.
+- 17:40 T25 cut at 83822daf
+- 17:40 T25 started (opus, high).
+- 17:41 T25 stop: socket never tells the sender the offer's fate. Ruled: reply frame {v:offered,outcome:held|crowded|repeat|refused} to sender only; mark seen only on held; input_socket.rb, intake.rb(+offer.rb) and specs join scope. Plan edit owed: T25 Files and the offered frame.
+- 17:58 T25 review started (opus, high)
+- 18:15 T25 review APPROVE-WITH-FIXES: 1 substantive (5 s reply bound covers a slow snapshot, CLI says silent while chat later shows the offer), 3 should-fix mechanical, 5 nits. Fix round sent; 2nd review owed (same reviewer).
+- 18:25 T25 fix round done (309 green, wide 4099 green); docs row replaced; 2nd review sent.
+- 18:33 T25 2nd review APPROVE (3 nits carried). Main fixed 2 pre-land offenses: delivery.rb clock via RunClock::MONOTONIC (run_clock_spec ratchet), input_socket.rb yard refs to backticks. Landing T25 attempt 1.
+- 18:37 T25 landed c799487b
+- 18:38 T25 worktree removed. T26 cut at c799487b, started (opus, high). T28 cut at c799487b, started (sonnet, medium).
+- 18:42 T28 done (37 green, 790 ratchets). Pre-review fix round: reuse PullRequests::REQUESTS and Entry.plain (scope +pull_requests.rb); ruling: lain queue prs (text, pick) appends :listed, --json does not.
+- 18:46 T28 fix round done (644 green); found main's pick prs NoMethodError (pr_sources vs send prs_sources) and fixed it. Review started (sonnet, medium).
+- 18:49 T28 review APPROVE-WITH-FIXES: 4 substantive (overlap race double notice, org filter copy untested, write errors swallowed as stale, notified recorded on failed send), layering move of plain to Request; fix round 2 sent; 2nd review owed. Docs row rewritten.
+- 18:55 T26 done but wiring trips Wiring ClassLength 314/309. Ruling: no raise; T26 gets wiring.rb + wiring_spec and extracts 1 collaborator from Wiring; delivery_spec joins, pending: required. rubocop Exclude accepted as wiring. queue.diff lands on top of T28.
+- 18:57 T28 2nd review APPROVE-WITH-FIXES: 1 should-fix (pick examples do not observe which source feeds fzf), 2 nits; all mechanical, fix round 3 sent, main verifies.
+- 19:01 T28 fix round 3 verified by main (mechanical). Checks green (yard, ratchets 1941, msg). Landing T28 attempt 1.
+- 19:05 T28 landed dad7d9a2
+- 19:05 T28 landed dad7d9a2, worktree removed. T29 cut at dad7d9a2, started (sonnet, medium).
+- 19:10 T26 rulings done: Wiring::InputProducer extracted (Wiring 295/309), pending: required, Unheld deleted, require delegate added (zeitwerk seed 671324). T26 worktree ff'd to dad7d9a2 (no overlap); queue.diff did not apply on T28's queue.rb, so queue.rb + queue_spec join T26 to fold in. T29 told hud_line moves to InputProducer.
+- 19:13 T29 done (373 green, 2608 wide). hud_line wiring applied in its wiring.rb (ClassLength 312/309 known; lands in InputProducer after T26) + docs paragraph. Review started (sonnet, medium).
+- 19:14 T26 queue fold done (3185 green incl ratchets, LAIN_SLOW). rubocop Exclude + docs applied as wiring. Review started (opus, high).
+- 19:21 T29 review APPROVE-WITH-FIXES: 6 mechanical (null reviews.json crash, reader mkdir every refresh, Ruby whitelist, 2 surviving mutants, header comment) + stale key order; fix round sent, main verifies. Docs note applied.
+- 19:26 T26 review REQUEST-CHANGES: FIFO/dir planted file, herdr failure swallowed, 2nd open makes 2 workspaces, review taken before socket bind/editor attach (lost on crash), 4 surviving mutants. Fix round sent. Incident: reviewer probe ran exe with inherited HERDR_* and hit real herdr 4x; herdr workspace list shows only w1 'lain', no review workspaces left.
+- 19:34 T29 fixes verified by main (reviews.json named once in Paths; readers create nothing). Approved; waits for T26 to land, then wiring re-targets InputProducer#hud_line.
+- 19:41 T26 fix round 1 done (72/16 red, 3202/0 green). Wiring re-applied (.rubocop.yml rationale: thread joined; docs held-review sentences). 2nd review sent to aa482e5ee7a167cf8, copy2. Carry: Ctrl-D at offer = drop, not held again (needs Intake#offer distinct value).
+- 19:57 T26 2nd review APPROVE-WITH-FIXES (replaced blocks herdr retry; 5 surviving mutants; x-then-stop re-holds; :crowded loses review). Fix round 2 sent to adf6c3fd438ab80a7; 3rd review follows. Docs owe a Ctrl-D-drops clause.
+- 20:07 T26 fix round 2 done (79/9 red, 3210/0 green); wiring re-applied; 3rd review (fresh opus panel) spawned, copy3.
+- 20:43 T26 3rd review APPROVE-WITH-FIXES, mechanical (SystemCallError in thread, untested Refused rescue, EEXIST, herdr replaced message, comment/type). Fix round 3 sent; coordinator verifies. Docs: 'for 1 keypress' wrong (x needs Enter) -> main fixes wording.
+- 20:52 T26 round 3 verified by main (455/0 card specs, ratchets 1941/0, yard clean). Landing.
+- 20:55 T26 landed ceccccff
+- 20:56 T26 landed ceccccff
+- 21:00 T29 ff to ceccccff; hud_line re-targeted to InputProducer with new spec (red 2/1, green 2/0); dead {#spawn_chat_pane} YARD ref on main fixed to {#run_chat}; card specs 852/0, ratchets 1942/0. Landing.
+- 21:04 T29 landed 0e02eac5
+- 21:05 T29 landed 0e02eac5. T30 started (cut 0e02eac5, sonnet a92751c422039e015).
+- 00:30 T30 implementer done (docs; flagged 2 defects). User ruling: seen only on Enter, drop keeps listed. F1 (seen on Enter, high, opus a4ca338b4442aa2dd) and F2 (pick scope for show/open, medium, sonnet a61ce3a8ab78c0224) cut at 0e02eac5. T30 review held until F1/F2 land, then scenarios updated to match.
+- 00:34 F2 done (red 4/2, green 264/0, ratchets 2321/0). Review spawned.
+- 00:35 F2 review spawned (sonnet ab9c74522f9c4ff42). F3 (require delegate, low, sonnet a56dc042df06b557f) cut 0e02eac5.
+- 00:36 F2 review APPROVE-WITH-FIXES: a miss repeats the @me read (3 gh calls per team/match row, per picker cursor move). Fix round 1 sent.
+- 00:39 F2 round 1 verified by main (cache by query; spec 2 calls on a miss). Landing.
+- 00:39 F3 done (7 requires; seed 376309 red at cut, 4+3 seeds green; 2975/0). Coordinator-verified (mechanical, low risk); lands after F2.
+- 00:40 F4 (Exec::Local repeat flake, medium, sonnet ad89726a2f510184b) and F7 (critics= up front, low, sonnet ab968c3fb2b56eb16) cut 0e02eac5. Owed later: F5 wire_ready bench (quiet box), F6 Paths through Config readers (after F1). Lock-line empty-list guard is a skill/brief fix, logged as friction, not a lain card.
+- 00:44 F2 landed 03aa43ec
+- 00:44 F2 landed 03aa43ec. Landing F3.
+- 00:50 F3 landed 6c49e95e
+- 00:50 F3 landed 6c49e95e.
+- 00:51 F7 done (red 156/4, green 196/0; ratchets 2361/1 fixed). Low review spawned.
+- 00:53 F7 review APPROVE-WITH-FIXES: move check into SkillDispatch#prepared_critique (1 parse, typed /critique too); pin BAD_CRITICS text. Fix round 1 sent; scope + skill_dispatch.rb.
+- 00:54 F4 stop: cause is Shell::Pipeline::Run#signal killing -pid before setsid made the group (ESRCH swallowed); 3/100 under 80 burners; deterministic red via slow setsid wrapper. Scope widened to shell/pipeline.rb + spec; asked to judge the reverse window.
+- 00:58 F7 round 1 verified by main (196/0, 5 files clean, yard clean). Landing.
+- 01:04 F7 landed 947b5d9e
+- 01:04 F7 landed 947b5d9e.
+- 01:05 F4 fixed (pid then group; red 1/1; 3/100 -> 0/100 under 80 burners; 3192/0). Medium review spawned. F6 (Paths through Config, medium, sonnet ab6282038cdf3cbd7) cut 947b5d9e. toolchain-traps retire note folded into close-out docs.
+- 01:07 F1 done (red 290/90, green 290/0; 2 out-of-scope specs fixed by wiring, 357/0 with wiring; input_producer log: wiring; docs seen wording). High review spawned (opus). F4 review APPROVE-WITH-FIXES (double signal -> group first, pid on ESRCH; spec sleep); fix round 1 sent.
+- 01:13 F4 round 1 verified by main (mutant red 1/1, green). Landing.
+- 01:19 F4 landed 44e3cc3f
+- 01:20 F4 landed 44e3cc3f.
+- 01:35 F6 done (77 files; red 11/10; 2733/0). queue.rb wiring (paths: on Config.github x2) applied, queue_spec 48/0. Review spawned (sonnet, medium). Lands after F1.
+- 01:39 F1 review APPROVE-WITH-FIXES (opus): unbounded join at chat exit; socket stop kills offers before end_offer; 6 untested guards; log: default; Mark moves to review/queue/mark.rb. Live cockpit drive confirmed Enter/x/Ctrl-D/end semantics. Fix round 1 sent; second review follows.
+- 01:42 F6 review APPROVE-WITH-FIXES (Surface 4 Paths.new; EarlierRounds default -> thread from Surface; wiring spec gaps; altitude default). Strace of real chat: 0 reads outside sandbox. Fix round 1 sent.
+- 01:56 F6 round 1 done (294 files 12611/0; rubocop 87 clean). Coordinator-verified; waits for F1 to land, then ff + land.
+- 01:56 F1 fix round 1 done (305/0 card; 8 spec-only mutants red; Mark -> review/queue/mark.rb). 3 seam specs given log: as wiring (14/0), docs wording. Second review sent to ad6c936d581e9d022 (copy2).
+- 02:18 F1 2nd review APPROVE-WITH-FIXES, mechanical (60 s wait on blocked snapshot -> shared 2 s offers-end bound; pin end_offer in socket stop). All 11 round-1 items verified red under mutants; 9 live cockpit scenarios pass. Fix round 2 sent; coordinator verifies.
+- 02:27 F1 round 2 verified by main (real chat exit probe: 2.1 s, held again 1, nothing left). Landing.
+- 02:27 T30 sent back to match F1/F2 behaviour.
+- 02:32 F1 landed f6504763
+- 02:32 F1 landed f6504763.
+- 02:34 F6 ff'd onto F1 f6504763; overlap re-applied clean; 87 files rubocop clean, 6174/0 over changed specs; 9 pre-existing dead yard links made plain. Landing.
+- 02:35 T30 review APPROVE-WITH-FIXES (HUD 'counted' conflation, HUD control check, stale SHA stamps, 2 wording nits). Fix round 2 sent.
+- 02:35 T30 round 2 done (verified by main: files, no em dashes). Lands after F6.
+- 02:39 F6 attempt 1 RED in hook: improve_spec x3, consolidate_spec x2, worktrees_spec x7, account_spec x2 (Untrusted under injected Paths; not flakes). Returned to implementer. Landing T30 meanwhile.
+- 02:40 T30 landed d4af133b
+- 02:40 T30 landed d4af133b. All 31 plan cards landed.
+- 02:54 F6 round 2: worktrees.rb passed no paths (prod defect), 3 specs trust under injected Paths; 518 files 19426/0. 3 more dead yard links plain. Landing attempt 2.
+- 02:57 F6 landed ae0042ba
+- 02:58 F6 landed ae0042ba.
+- 03:02 Dotfiles: D0 shim rewritten (was ruby 4.0.6, now 4.0.9; lain queue --help ok). D1 481b862 (herdr config check ok, reload applied, reviews workspace w9 created). D2 fdc7655 (tmux parses). D3 64aa41f (units verify; plist force-added past Library ignore; timer NOT yet enabled, waits for F5 bench). D4 d12edd0. D5 0b335e6. Committed toolchain-traps d6dae6ef.
+- 03:20 F5: cause f6db4dca (Sandbox#containment probes bwrap at wire, +3.1 ms; round 29 F23 never landed). Fix: Containment::Deferred. Red 2/2, green 369/0, 6756/0. No 3 bench logs: game held load 2.4-7.8. High review spawned (opus).
+- 03:32 F5 review APPROVE-WITH-FIXES (opus; deferred never allows what eager refused; strace confirms no wire probe). Fix round 1 sent: probe only for secret reads, wiring-level spec, delegate coverage, YARD types, Mutex on probe memo.
+- 03:38 F5 round 1 done (541/0 subject; 9291/0 related; off? answered without probe; probe only after holds_secrets?). 5 pre-existing yard links (Rule, Ladder) made plain. Bench recording script started (waits load<2).
+- 03:42 F5 bench: wire_ready 17.36, 17.85, 17.82 ms (3/3 over 17.1; loads 1.79-1.99 at start, up to 2.5 after); was ~21. Landing the fix; remaining ~0.5 ms goes to a follow-up card.
+- 03:47 F5 landed 38d3f560
+- 03:47 F5 landed 38d3f560.
