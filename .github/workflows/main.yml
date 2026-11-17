@@ -249,6 +249,47 @@ jobs:
             pipx run pre-commit run --all-files "$hook"
           done
 
+  remote-android:
+    # The runner image already carries the SDK, an NDK and JDK 17; apps/lain-remote/bin/android-setup installs them locally.
+    if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.remote == 'true' }}
+    needs: changes
+    runs-on: ubuntu-latest
+    name: lain-remote android
+    timeout-minutes: 40
+    env:
+      APP: apps/lain-remote
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: rustup target add aarch64-linux-android
+      - uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            apps/lain-remote/target/
+          key: android-${{ runner.os }}-${{ hashFiles('apps/lain-remote/Cargo.lock') }}
+          restore-keys: android-${{ runner.os }}-
+      - name: Install the Dioxus CLI the app's Cargo.lock pins
+        run: |
+          version=$(awk '/^name = "dioxus"$/ { getline; gsub(/version = |"/, ""); print; exit }' "$APP/Cargo.lock")
+          echo "DIOXUS_CLI=dioxus-cli@$version" >> "$GITHUB_ENV"
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: ${{ env.DIOXUS_CLI }}
+      - name: Build the APK
+        working-directory: ${{ env.APP }}
+        run: |
+          export JAVA_HOME=$JAVA_HOME_17_X64 NDK_HOME=$ANDROID_NDK_LATEST_HOME
+          dx build --platform android --target aarch64-linux-android
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lain-remote-debug-apk
+          path: ${{ env.APP }}/target/dx/lain-remote/debug/android/app/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 7
+
   mutants:
     # 13 minutes, so it runs only when ext/lain/ (the baseline included) or the Rakefile changed.
     if: ${{ github.event_name == 'workflow_dispatch' || needs.changes.outputs.mutants == 'true' }}
