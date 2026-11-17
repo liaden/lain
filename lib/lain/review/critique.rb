@@ -132,6 +132,17 @@ module Lain
       HEADLINE = "critique of %<base>s..%<head>s in %<count>d chunk%<plural>s, each read by the %<role>s role " \
                  "from a checkout of %<head>s"
 
+      # The one rule for a critics count, public so a caller can refuse before it opens anything.
+      #
+      # @param critics [Object] the count a caller named
+      # @return [nil]
+      # @raise [Refused] unless it is a whole number from 1 to {MAX_CRITICS}
+      def self.refuse_bad_critics!(critics)
+        return if critics.is_a?(Integer) && (1..MAX_CRITICS).cover?(critics)
+
+        raise Refused, format(BAD_CRITICS, max: MAX_CRITICS, critics: critics.inspect)
+      end
+
       # @param text [String]
       # @return [Integer] canonical bytes, the unit every request is measured in
       def self.bytes(text) = Canonical.dump(text.to_s).bytesize
@@ -178,7 +189,7 @@ module Lain
       # @raise [Refused] before any checkout or spawn
       def call
         @subject.refuse_unreadable!
-        raise Refused, format(BAD_CRITICS, max: MAX_CRITICS, critics: @critics.inspect) unless critics?
+        self.class.refuse_bad_critics!(@critics)
 
         refuse_unserved_model!
         chunks = @subject.chunks(budget:, brief: method(:brief))
@@ -199,8 +210,6 @@ module Lain
       def refuse_unserved_model!
         @model.bind(@spawn.seam.context_factory.call, provider: @spawn.seam.provider)
       end
-
-      def critics? = @critics.is_a?(Integer) && (1..MAX_CRITICS).cover?(@critics)
 
       def reviewer(context) = @model.model.empty? ? context.model : @model.model
 

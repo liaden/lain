@@ -501,6 +501,12 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       expect(events.first).to eq([:checked, "critics=2 the error paths", false])
     end
 
+    it "still opens the review for a good critics count" do
+      command.call("#{number} --critique=critics=3 the error paths", env)
+
+      expect(events).to eq([[:checked, "critics=3 the error paths", false], [:ran, true]])
+    end
+
     it "refuses with the critique's own refusal before opening anything" do
       expect { command.call("#{number} --critique=unspawnable", env) }
         .to raise_error(Lain::Error, "the critique's own refusal")

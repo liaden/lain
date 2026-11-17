@@ -458,6 +458,12 @@ RSpec.describe Lain::Review::Critique do
       expect(journal.map(&:critic)).to eq([1, 1])
     end
 
+    it "names a bad count through the one public check" do
+      expect { described_class.refuse_bad_critics!(0) }.to raise_error(described_class::Refused, /got 0/)
+      expect { described_class.refuse_bad_critics!("abc") }.to raise_error(described_class::Refused, /got "abc"/)
+      expect(described_class.refuse_bad_critics!(described_class::MAX_CRITICS)).to be_nil
+    end
+
     it "refuses a count below 1 before spawning" do
       expect { critics(0).call }.to raise_error(described_class::Refused, /critics/)
       expect(spawn.calls).to be_empty

@@ -549,6 +549,18 @@ RSpec.describe Lain::Middleware::SkillDispatch do
         end
       end
 
+      %w[0 99 abc].each do |count|
+        it "refuses critics=#{count} while preparing, before the held round is read or anything spawns" do
+          spawn = SkillDispatchCritiqueSpawn.new
+          round = SkillDispatchRound.new(nil)
+          with_dispatch(shipped: critique_skill, role_spawn: spawn, outbox: round) do |dispatch|
+            expect { dispatch.critique("critics=#{count} the error paths") }
+              .to raise_error(Lain::Review::Critique::Refused, /critics must be a whole number.*got "?#{count}/)
+            expect(spawn.calls).to be_empty
+          end
+        end
+      end
+
       it "reads the held round when the prepared critique is called, not when it was prepared" do
         round = SkillDispatchRound.new(nil)
         with_dispatch(shipped: critique_skill, role_spawn: SkillDispatchCritiqueSpawn.new, outbox: round) do |dispatch|

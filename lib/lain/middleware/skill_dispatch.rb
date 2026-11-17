@@ -170,6 +170,7 @@ module Lain
       # RUNS, which is what lets a caller prepare it ahead of opening the round.
       def prepared_critique(invocation)
         options, focus = CritiqueOptions.split(invocation.args)
+        Review::Critique.refuse_bad_critics!(options.fetch(:critics)) if options.key?(:critics)
         lambda do
           critique = Review::Critique.new(subject: Review::Critique::Diff.new(@outbox.held_changeset),
                                           instructions: expand(invocation.with(args: focus)), **@critique, **options)
