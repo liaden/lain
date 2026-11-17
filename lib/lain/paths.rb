@@ -242,6 +242,10 @@ module Lain
       File.join(base, "lain")
     end
 
+    # Creates nothing: the daemon's starter makes it, 0700, under its lock.
+    # @return [String] where the per-user daemon's socket and trace live
+    def daemon_dir = File.join(runtime_dir, "daemon")
+
     # The same recipe DEBUGGING_NVIM.md gives for the nvim socket path, so a
     # project resolves to one identifier everywhere: `sha256(realpath)[0,12]`.
     #

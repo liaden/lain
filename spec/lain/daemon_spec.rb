@@ -1,0 +1,282 @@
+# frozen_string_literal: true
+
+require "async"
+require "fileutils"
+require "msgpack"
+require "socket"
+
+RSpec.describe Lain::Daemon do
+  def ping_pid(client) = client.call("ping").fetch("pid")
+
+  def alive?(pid)
+    Process.kill(0, pid)
+    true
+  rescue Errno::ESRCH
+    false
+  end
+
+  describe ".socket" do
+    it "is daemon.sock in the daemon directory of the runtime dir" do
+      paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => "/run/user/7" })
+
+      expect(described_class.socket(paths:)).to eq("/run/user/7/lain/daemon/daemon.sock")
+    end
+  end
+
+  describe "an unbuilt binary" do
+    it "answers Absent, telling the notes how to build it, and Absent registers nothing" do
+      Dir.mktmpdir("unbuilt-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        launch = Lain::Daemon::Launch.current(paths:).with(binary: File.join(dir, "missing"))
+        notes = StringIO.new
+
+        absent = described_class.ensure(paths:, launch:, notes:, env: {})
+
+        expect(absent).to be_a(Lain::Daemon::Absent)
+        expect(absent.reason).to include("rake daemon:build")
+        expect(notes.string).to include("rake daemon:build")
+        expect(absent.registration).to be_a(Lain::Daemon::Registration::Null)
+      end
+    end
+  end
+
+  describe "the env it is given" do
+    it "is where it looks for the binary" do
+      socket_tmpdir("env-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        env = { "CARGO_TARGET_DIR" => File.join(dir, "no-build") }
+
+        result = Sync { described_class.ensure(paths:, env:).tap { |answer| answer.stop if answer.respond_to?(:stop) } }
+
+        expect(result).to be_a(Lain::Daemon::Absent)
+        expect(result.reason).to include(File.join(dir, "no-build"))
+      ensure
+        Sync { described_class.stop(paths:) }
+      end
+    end
+  end
+
+  describe "a binary path that is a directory" do
+    it "answers Absent, and starts nothing that could write to this process's streams" do
+      socket_tmpdir("dir-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        launch = Lain::Daemon::Launch.current(paths:).with(binary: dir)
+        result = nil
+
+        expect { result = Sync { described_class.ensure(paths:, launch:, env: {}) } }
+          .not_to output.to_stderr_from_any_process
+        expect(result).to be_a(Lain::Daemon::Absent)
+      end
+    end
+  end
+
+  describe "the off switch" do
+    it "is read before the binary is hashed" do
+      Dir.mktmpdir("off-hash") do |dir|
+        FileUtils.mkdir_p(File.join(dir, "release"))
+        File.write(File.join(dir, "release", "lain-daemon"), "built")
+        allow(Digest::SHA256).to receive(:file).and_call_original
+
+        described_class.ensure(paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir }),
+                               env: { "LAIN_DAEMON" => "off", "CARGO_TARGET_DIR" => dir })
+
+        expect(Digest::SHA256).not_to have_received(:file)
+      end
+    end
+  end
+
+  describe "in an example that does not opt in" do
+    it "answers Absent without making the runtime dir" do
+      Dir.mktmpdir("off-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+
+        expect(described_class.ensure(paths:)).to be_a(Lain::Daemon::Absent)
+        expect(Dir.children(dir)).to be_empty
+      end
+    end
+  end
+
+  # A Ruby stand-in for a daemon from another launch with a run still going: it answers ping with
+  # the pid of a process it does not own, so a wrongful stop would be seen, never suffered.
+  describe "a daemon from another launch with live runs" do
+    around do |example|
+      socket_tmpdir("busy-daemon") do |dir|
+        @paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        FileUtils.mkdir_p(File.dirname(described_class.socket(paths: @paths)), mode: 0o700)
+        @stand_in = Process.spawn("sh", "-c", 'trap "" TERM; exec sleep 60')
+        @live_runs = 1
+        @refuse_info = false
+        @hangups = Thread::Queue.new
+        @server = UNIXServer.new(described_class.socket(paths: @paths))
+        @serving = Thread.new { loop { answer(@server.accept) } }
+        example.run
+      ensure
+        @serving&.kill
+        @server&.close
+        Process.kill("KILL", @stand_in)
+        Process.wait(@stand_in)
+      end
+    end
+
+    def answer(connection)
+      Thread.new do
+        MessagePack::Unpacker.new(connection).each do |_kind, msgid, method, _params|
+          connection.write(MessagePack.pack([Lain::Core::Client::RESPONSE, msgid, *reply(method)]))
+        end
+        @hangups << :hangup
+      rescue IOError, SystemCallError
+        connection.close
+      end
+    end
+
+    def reply(method)
+      return ["refused", nil] if method == "daemon.info" && @refuse_info
+
+      [nil, { "ping" => { "version" => Lain::Core::Client::PROTOCOL_VERSION, "pid" => @stand_in },
+              "daemon.info" => { "launch_digest" => "another", "live_runs" => @live_runs } }.fetch(method)]
+    end
+
+    it "hangs up on it when its answer about its launch is refused" do
+      @refuse_info = true
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+
+      expect { Sync { described_class.ensure(paths: @paths, launch:, env: {}) } }
+        .to raise_error(Lain::Core::Client::Refused)
+      expect(@hangups.pop(timeout: 2)).to eq(:hangup)
+    end
+
+    it "keeps it, and says once that a restart is pending" do
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+      notes = StringIO.new
+
+      pid = Sync do
+        client = described_class.ensure(paths: @paths, launch:, notes:, env: {})
+        ping_pid(client).tap { client.stop }
+      end
+
+      expect(pid).to eq(@stand_in)
+      expect(alive?(@stand_in)).to be(true)
+      expect(notes.string.lines.grep(/restart/).size).to eq(1)
+    end
+
+    it "refuses in words when an idle one ignores the stop" do
+      @live_runs = 0
+      stub_const("Lain::Daemon::STOP_BUDGET", 0.2)
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+
+      expect { Sync { described_class.ensure(paths: @paths, launch:, env: {}) } }
+        .to raise_error(Lain::Daemon::Unstopped, /#{@stand_in}/)
+    end
+  end
+
+  describe "a binary that exits instead of serving" do
+    it "refuses in words, naming its exit status and its trace" do
+      socket_tmpdir("failed-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        launch = Lain::Daemon::Launch.current(paths:).with(binary: "/bin/false")
+
+        expect { Sync { described_class.ensure(paths:, launch:, env: {}) } }
+          .to raise_error(Lain::Daemon::Unstarted, /exit 1.*daemon\.trace/)
+      end
+    end
+
+    it "names the signal that killed it" do
+      socket_tmpdir("killed-daemon") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        binary = File.join(dir, "suicidal")
+        File.write(binary, "#!/bin/sh\nkill -KILL $$\n")
+        File.chmod(0o755, binary)
+        launch = Lain::Daemon::Launch.current(paths:).with(binary:)
+
+        expect { Sync { described_class.ensure(paths:, launch:, env: {}) } }
+          .to raise_error(Lain::Daemon::Unstarted, /SIGKILL/)
+      end
+    end
+  end
+
+  describe "with the daemon opted in", :daemon do
+    def fds(pid) = Dir.children("/proc/#{pid}/fd").to_h { |fd| [fd.to_i, File.readlink("/proc/#{pid}/fd/#{fd}")] }
+
+    it "starts one in its own session at /, its stdio on /dev/null, with only the launch's env" do
+      launch = daemon_launch
+      pid = Sync do
+        client = described_class.ensure(paths: daemon_paths, env: daemon_env)
+        ping_pid(client).tap { client.stop }
+      end
+      skip("no /proc to read the daemon's process from") unless File.directory?("/proc/#{pid}")
+
+      stat = File.read("/proc/#{pid}/stat").split(") ").last.split
+      expect(stat[3].to_i).to eq(pid)
+      expect(File.readlink("/proc/#{pid}/cwd")).to eq("/")
+      expect((0..2).map { |fd| File.readlink("/proc/#{pid}/fd/#{fd}") }).to all(eq(File::NULL))
+      environ = File.read("/proc/#{pid}/environ").split("\0").to_h { |pair| pair.split("=", 2) }
+      expect(environ).to eq(launch.env)
+      expect(environ.fetch("XDG_RUNTIME_DIR")).to eq(File.dirname(daemon_paths.runtime_dir))
+    end
+
+    # A lock or a pipe the starter holds open would otherwise be held by the daemon for its whole life.
+    it "inherits no descriptor from the lain that started it" do
+      Dir.mktmpdir("inherited") do |dir|
+        pid = File.open(File.join(dir, "held.lock"), "w") do |inherited|
+          inherited.close_on_exec = false
+          Sync do
+            client = described_class.ensure(paths: daemon_paths, env: daemon_env)
+            ping_pid(client).tap { client.stop }
+          end
+        end
+        skip("no /proc to read the daemon's process from") unless File.directory?("/proc/#{pid}")
+
+        own = fds(pid).reject { |fd, target| fd <= 2 || target == daemon_launch.trace }
+        expect(own.values).to all(match(/\A(?:socket|anon_inode):/))
+      end
+    end
+
+    it "connects to the daemon this launch started, and says which launch it is" do
+      info = Sync do
+        client = described_class.ensure(paths: daemon_paths, env: daemon_env)
+        client.call("daemon.info").tap { client.stop }
+      end
+
+      expect(info.fetch("launch_digest")).to eq(daemon_launch.digest)
+    end
+
+    it "starts 1 daemon for 4 callers at once, and all 4 connect to it" do
+      pids = Array.new(4) do
+        Thread.new do
+          Sync do
+            client = described_class.ensure(paths: daemon_paths, env: daemon_env)
+            ping_pid(client).tap { client.stop }
+          end
+        end
+      end.map(&:value)
+
+      expect(pids.uniq.size).to eq(1)
+    end
+
+    it "replaces an idle daemon from another launch" do
+      socket = described_class.socket(paths: daemon_paths)
+      FileUtils.mkdir_p(File.dirname(socket), mode: 0o700)
+      stale = Process.spawn(daemon_launch.binary, "--socket", socket, "--launch-digest", "another",
+                            in: File::NULL, out: File::NULL, err: File::NULL)
+      waiter = Process.detach(stale)
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+      sleep 0.02 until File.socket?(socket) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      info, pid = Sync do
+        client = described_class.ensure(paths: daemon_paths, env: daemon_env)
+        [client.call("daemon.info"), ping_pid(client)].tap { client.stop }
+      end
+
+      expect(waiter.join(5)).not_to be_nil
+      expect(pid).not_to eq(stale)
+      expect(info.fetch("launch_digest")).to eq(daemon_launch.digest)
+    end
+
+    it "puts its socket in the example's own runtime dir" do
+      Sync { described_class.ensure(paths: daemon_paths, env: daemon_env).stop }
+
+      expect(File.socket?(described_class.socket(paths: daemon_paths))).to be(true)
+      expect(described_class.socket(paths: daemon_paths)).not_to eq(described_class.socket(paths: Lain::Paths.new))
+    end
+  end
+end

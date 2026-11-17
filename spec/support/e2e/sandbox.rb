@@ -71,7 +71,8 @@ module E2E
       inherited.merge(
         "PATH" => ENV.fetch("PATH"), "LANG" => "C.UTF-8", "TERM" => "xterm", "HOME" => home,
         "TMPDIR" => tmp, "XDG_STATE_HOME" => dir.join("state").to_s, "XDG_CONFIG_HOME" => dir.join("config").to_s,
-        "XDG_CACHE_HOME" => dir.join("cache").to_s, "XDG_RUNTIME_DIR" => dir.join("run").to_s
+        "XDG_CACHE_HOME" => dir.join("cache").to_s, "XDG_RUNTIME_DIR" => dir.join("run").to_s,
+        "LAIN_DAEMON" => "off"
       )
     end
 
