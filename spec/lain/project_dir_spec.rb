@@ -110,6 +110,7 @@ module ProjectDirDiscipline
     # all three bind. The right-hand side sits at a different index in each,
     # which is the whole of the difference.
     ASSIGNMENTS = { assign: 2, opassign: 3, massign: 2 }.freeze
+    NOTHING = [].freeze
 
     def initialize(path)
       @path = path
@@ -117,6 +118,7 @@ module ProjectDirDiscipline
       # table it is still building -- asks the same question every later reader
       # asks, and gets "nothing bound yet" instead of a NoMethodError.
       @bindings = {}
+      @names = {}.compare_by_identity
     end
 
     # @return [Array<Violation>] at most one per line, since the composition
@@ -125,8 +127,9 @@ module ProjectDirDiscipline
       sexp = ParsedSource.sexp(source)
       raise "could not parse #{@path}" if sexp.nil?
 
-      @bindings = bindings_in(sexp)
-      walk(sexp).uniq(&:line)
+      assignments, compositions = index(sexp)
+      @bindings = bindings_in(assignments)
+      compositions.flat_map { |node| violation(node) }.uniq(&:line)
     end
 
     private
@@ -142,9 +145,14 @@ module ProjectDirDiscipline
     # interesting: a local bound to `state_home` for a SIBLING container must
     # not inherit an anchor it never saw.
     #
-    # Two passes, not one and not a fixed point: a name can be hoisted through
-    # a second local (`a = STATE_FILE; b = a`), and nothing in `lib/` has ever
-    # gone deeper. This is a gate, not a prover.
+    # Two passes, not a fixed point. The first reads an empty table and records
+    # what each assignment names directly. The second walks the assignments again
+    # in SOURCE ORDER and binds into the table it is reading, so a name hoisted
+    # through any number of locals or constants resolves (`a = STATE_FILE; b = a;
+    # c = b`) when the chain is written in order. Binding into a copy instead
+    # stops the chain at depth 2, because `c = b` would not see what `b = a` just
+    # bound; do not "simplify" it back. A chain written in reverse order is still
+    # missed, which is as far as this gate goes.
     #
     # == What it CANNOT see, so round 11 does not over-trust it
     #
@@ -170,23 +178,33 @@ module ProjectDirDiscipline
     # in ONE expression, or by hoisting a piece of it into a local one line
     # above. That is the shape a reviewer misses and the shape the finding came
     # back as; the rest is what the class docstring in `project_dir.rb` is for.
-    def bindings_in(sexp)
-      @bindings = collect_bindings(sexp, {})
-      collect_bindings(sexp, @bindings)
+    def bindings_in(assignments)
+      first = assignments.each_with_object({}) { |node, found| bind(node, found) }
+      @names.clear
+      @bindings = first
+      assignments.each { |node| bind(node, @bindings) }
+      @bindings
     end
 
-    def collect_bindings(node, found)
-      return found unless node.is_a?(Array)
-
-      bind(node, found)
-      node.each { |child| collect_bindings(child, found) }
-      found
+    # One traversal gathers both lists, in source order, so the two binding
+    # passes revisit only the assignments rather than every node of the file.
+    def index(node, assignments = [], compositions = [])
+      if node.is_a?(Array)
+        # A statement list leads with an Array, and hashing that is hashing the subtree.
+        kind = node[0] if node[0].is_a?(Symbol)
+        assignments << node if ASSIGNMENTS.key?(kind)
+        compositions << node if COMPOSITIONS.include?(kind)
+        node.each { |child| index(child, assignments, compositions) }
+      end
+      [assignments, compositions]
     end
 
     def bind(node, found)
-      rhs = ASSIGNMENTS[node[0]]
-      names = rhs ? names_in(node[rhs]) : []
-      bound_targets(node[1]).each { |target| found[target] = (found[target] || []) | names } unless names.empty?
+      names = names_in(node[ASSIGNMENTS.fetch(node[0])])
+      return if names.empty?
+
+      bound_targets(node[1]).each { |target| found[target] = (found[target] || []) | names }
+      @names.clear
     end
 
     # A multiple assignment binds EVERY target to the whole right-hand side.
@@ -209,14 +227,6 @@ module ProjectDirDiscipline
       inner.is_a?(Array) && BINDABLE.include?(inner[0]) ? inner[1] : nil
     end
 
-    def walk(node, found = [])
-      return found unless node.is_a?(Array)
-
-      found.concat(violation(node)) if COMPOSITIONS.include?(node[0])
-      node.each { |child| walk(child, found) }
-      found
-    end
-
     def violation(node)
       names = names_in(node)
       return [] unless recomposition?(names)
@@ -235,17 +245,38 @@ module ProjectDirDiscipline
     end
 
     # Which of the ingredients this expression names, deduplicated.
-    def names_in(node, found = [])
-      return found unless node.is_a?(Array)
+    #
+    # Memoised per node: every composition ancestor asks for its whole subtree,
+    # so an unmemoised walk repeats each node's work once per enclosing node,
+    # and that repetition was most of the scan's cost. Identity-keyed, because
+    # equal-looking subtrees can sit on different lines; dropped whenever the
+    # binding table changes, since a bound name's answer depends on it.
+    def names_in(node)
+      return NOTHING unless node.is_a?(Array)
 
-      found.concat(named_here(node))
-      node.each { |child| names_in(child, found) }
-      found.uniq
+      @names.fetch(node) { @names[node] = union_below(node) }
     end
 
+    def union_below(node)
+      node.inject(named_here(node)) do |found, child|
+        below = names_in(child)
+        below.empty? ? found : found | below
+      end
+    end
+
+    # Dispatched on the node's type because nearly every node of a parse is a
+    # token or a list that names nothing, and asking each of them every
+    # question was the larger half of the scan.
     def named_here(node)
-      [("Dir.pwd" if cwd_read?(node)), ("#dir" if project_dir_read?(node)), constant_name(node),
-       xdg_reader(node), *literal_names(node), *bound_names(node), *concatenated_names(node)].compact
+      case node[0]
+      when :call then [("Dir.pwd" if cwd_read?(node)), ("#dir" if project_dir_read?(node))].compact
+      when :const_path_ref then [constant_name(node)].compact
+      when :@ident then [xdg_reader(node), *bound_names(node)].compact
+      when :@const, :@ivar then bound_names(node)
+      when :@tstring_content then literal_names(node)
+      when :binary then concatenated_names(node)
+      else NOTHING
+      end
     end
 
     # A reference to a name the file bound to an ingredient earlier.
@@ -348,12 +379,29 @@ module ProjectDirDiscipline
 
   def lib_root = Pathname(__dir__).join("../../lib").expand_path
 
-  # @return [Array<Violation>] every recomposition across the non-exempt `lib/` tree
-  def violations
-    lib_root.glob("**/*.rb").flat_map do |file|
-      relative = file.relative_path_from(lib_root).to_s
-      EXEMPT.include?(relative) ? [] : Scanner.new(relative).scan(file.read)
+  # The `lib/` files by their first two directories, so the scan is one example per
+  # group: the spec watchdog times an example, and one example over the whole
+  # tree stalled it on a loaded box.
+  # @return [Hash{String => Array<String>}] paths relative to `lib/`
+  def groups
+    lib_root.glob("**/*.rb").map { |file| file.relative_path_from(lib_root).to_s }
+            .reject { |relative| EXEMPT.include?(relative) }
+            .group_by { |relative| File.dirname(relative).split("/").first(2).join("/") }
+  end
+
+  # @param group [String] a key of {groups}
+  def label(group)
+    case group
+    when "." then "lib/ (root)"
+    when "lain" then "files directly in lib/lain/"
+    else "lib/#{group}"
     end
+  end
+
+  # @param relatives [Array<String>] paths relative to `lib/`
+  # @return [Array<Violation>] every recomposition across those files
+  def violations(relatives)
+    relatives.flat_map { |relative| Scanner.new(relative).scan(lib_root.join(relative).read) }
   end
 end
 
@@ -770,15 +818,17 @@ RSpec.describe Lain::ProjectDir do
   describe "one locator for every governed path" do
     def scan(source) = ProjectDirDiscipline::Scanner.new("fixture.rb").scan(source)
 
-    it "is the only place lib/ composes a governed path" do
-      violations = ProjectDirDiscipline.violations
+    ProjectDirDiscipline.groups.each do |group, relatives|
+      it "is the only place #{ProjectDirDiscipline.label(group)} composes a governed path" do
+        violations = ProjectDirDiscipline.violations(relatives)
 
-      expect(violations).to be_empty, lambda {
-        listing = violations.map { |violation| "  #{violation}" }.join("\n")
-        "Every path `.lain/` governs and every durable state container has one locator, " \
-          "Lain::ProjectDir -- #config, #epics, #slots, #skills, #prompt, #meta, #summarizers, " \
-          "#services, #state_path, #container. Ask it instead of rebuilding the path:\n#{listing}"
-      }
+        expect(violations).to be_empty, lambda {
+          listing = violations.map { |violation| "  #{violation}" }.join("\n")
+          "Every path `.lain/` governs and every durable state container has one locator, " \
+            "Lain::ProjectDir -- #config, #epics, #slots, #skills, #prompt, #meta, #summarizers, " \
+            "#services, #state_path, #container. Ask it instead of rebuilding the path:\n#{listing}"
+        }
+      end
     end
 
     {
@@ -818,11 +868,24 @@ RSpec.describe Lain::ProjectDir do
         %(x = File.join(paths.state_home, "status", hash, "state" + ".json")),
       "the retired location concatenated a piece at a time" =>
         %(x = File.join(Dir.pwd, ".lain") + "/" + "state" + ".json"),
-      # A second level of hoisting, which is as far as the table chases. Deeper
-      # is a prover's job, not a gate's, and nothing in `lib/` has ever gone
-      # there.
+      # The table chases a name through any number of locals, because it binds in
+      # source order into a live table. The depth-3 and depth-4 shapes pin that.
       "the filename hoisted twice" =>
         %(a = "state.json"\nb = a\nx = File.join(paths.state_home, "status", hash, b)\n),
+      "the filename hoisted three times" =>
+        %(a = "config.rb"\nb = a\nc = b\nx = File.join(paths.state_home, c)\n),
+      "the filename hoisted four times" =>
+        %(a = "config.rb"\nb = a\nc = b\nd = c\nx = File.join(paths.state_home, d)\n),
+      "the directory hoisted four times" =>
+        %(a = ".lain"\nb = a\nc = b\nd = c\nx = File.join(root, d)\n),
+      "the filename hoisted three times with conditional assignments" =>
+        %(a ||= "config.rb"\nb ||= a\nc ||= b\nx = File.join(root, ".lain", c)\n),
+      "the filename hoisted four times with conditional assignments" =>
+        %(a ||= "config.rb"\nb ||= a\nc ||= b\nd ||= c\nx = File.join(paths.state_home, d)\n),
+      "the directory hoisted through three constants" =>
+        %(A = ".lain"\nB = A\nC = B\nx = File.join(root, C)\n),
+      "the filename hoisted through four constants" =>
+        %(A = "config.rb"\nB = A\nC = B\nD = C\nx = File.join(paths.state_home, D)\n),
       # Three more the re-review found, all token-level: the binding table
       # looked at `@ident` and `@const` only, and at plain `=` only.
       "the filename hoisted into an instance variable" =>
