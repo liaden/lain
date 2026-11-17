@@ -49,9 +49,10 @@ module Lain
         # business: {Meta} reads the project's `.lain/` config from it.
         # `gh_account:` is the process's one {Forge::Gh::Account}, built by
         # {Wiring}, so `/review-submit` and `/share` share 1 token ask.
+        # `paths:` is the chat's own, which the budget table's trust is read under.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
-                       gh_account:, approvals: nil, root: Dir.pwd, cwd: Dir.pwd,
+                       gh_account:, paths:, approvals: nil, root: Dir.pwd, cwd: Dir.pwd,
                        approval_prompt: nil, goal_driver: GoalDriver::Null,
                        epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail,
                        herdr: Wiring::HerdrBinding::Null.new, profile: RunProfile.from_options({}))
@@ -60,7 +61,7 @@ module Lain
           @configured = middleware
           @window = window
           @goal_driver = goal_driver
-          seat(root:, cwd:, herdr:, gh_account:)
+          seat(root:, cwd:, herdr:, gh_account:, paths:)
           @rail = rail
           @library = library
           @ledger = ledger
@@ -77,8 +78,9 @@ module Lain
 
         attr_reader :env, :goal_driver
 
-        def seat(root:, cwd:, herdr:, gh_account:)
+        def seat(root:, cwd:, herdr:, gh_account:, paths:)
           @root = root
+          @paths = paths
           @cwd = cwd
           @notes = herdr.notes
           @gh_account = gh_account
@@ -115,7 +117,7 @@ module Lain
         # read when the line starts. A chat in no epic has no issues to count,
         # and an epic file that cannot be read yet is an epic with none.
         def allowance
-          Budget::Allowance.new(table: Lain::Config.budget(root: @root), issues: -> { mounted_issues })
+          Budget::Allowance.new(table: Lain::Config.budget(root: @root, paths: @paths), issues: -> { mounted_issues })
         end
 
         def mounted_issues
@@ -130,7 +132,7 @@ module Lain
         # gc` reaps one a killed process left behind.
         def critique_checkouts
           Lain::Review::Critique::Checkouts.new(repo_root: @root,
-                                                root: IsolationBackend.worktree_root(@root, paths: Paths.new))
+                                                root: IsolationBackend.worktree_root(@root, paths: @paths))
         end
 
         # What `/implement-epic` drives, resolved HERE rather than in {Wiring}
@@ -160,7 +162,7 @@ module Lain
           Env.new(
             status: status_feed, sessions: Lain::CLI::Sessions.new(project: place),
             approvals: approvals || Env::NoApprovals, supervisor:,
-            replies:, fork_point: ForkPoint.new(dir: Paths.new.filing_dir(root: place.root)),
+            replies:, fork_point: ForkPoint.new(dir: @paths.filing_dir(root: place.root)),
             tmux_surface: herdr.window_surface, agent:, chronicle:,
             model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:,
             reporter: herdr.reporter, child_argv: ChildArgv.for(root: @root, cwd: @cwd, chronicle:, profile:)
@@ -211,7 +213,7 @@ module Lain
         # `/share` publishes the session record, which only a chat with a file has. Its own group for
         # #builtins' reason; the export is opened per call because promotion renames the file.
         def share_commands
-          exports = ->(file) { Export.new(selector: file, paths: Paths.new, project: place) }
+          exports = ->(file) { Export.new(selector: file, paths: @paths, project: place) }
           [Share.new(exports:, journal: @env.chronicle.record_journal, account: @gh_account)]
         end
 
@@ -226,7 +228,7 @@ module Lain
         # keep (`/pin`, `/unpin`, `/keep`).
         def history_commands
           [Rewind.new, Undo.new, Fork.new, Pin.new, Unpin.new, Keep.new, Label.new,
-           Park.new(root: @root, notes: @notes), ResumeSession.new(dir: Paths.new.filing_dir(root: @root))]
+           Park.new(root: @root, notes: @notes), ResumeSession.new(dir: @paths.filing_dir(root: @root))]
         end
 
         # The critique `/review --critique` runs, asked of the dispatch the chat
@@ -242,9 +244,10 @@ module Lain
         # it. Their own line because they share {#outbox} AS A ROUND, where
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
-          [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account, critique: method(:critique)),
+          [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account, paths: @paths,
+                      critique: method(:critique)),
            ReviewSubmit.new(root: @root, outbox:, account: @gh_account),
-           Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity)]
+           Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity, paths: @paths)]
         end
       end
     end

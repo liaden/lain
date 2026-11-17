@@ -151,7 +151,7 @@ module Lain
       end
 
       # The drainer reads the config after the entry is queued, so an untrusted file must refuse here.
-      def trusted_root = main_root.tap { |root| Config.load(root:) }
+      def trusted_root = main_root.tap { |root| Config.load(root:, paths: @paths) }
 
       def main_root = Isolation::MergeCoordinator.main_root(upstream, shell_out_factory: @shell_out_factory)
 

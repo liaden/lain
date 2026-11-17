@@ -4,7 +4,7 @@ RSpec.describe Lain::CLI::Backend::SkillLocals do
   let(:tier) { instance_double(Lain::CLI::Backend::OllamaTier, concurrency: "has no concurrency limit that lain enforces") }
 
   def locals(root: Dir.pwd, epic_home: -> { "/home/epics" }, tier: self.tier)
-    described_class.new(root, epic_home) { tier }.to_h
+    described_class.new(root, Lain::Paths.new, epic_home) { tier }.to_h
   end
 
   it "names the four values a skill template may read bare" do

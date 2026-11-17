@@ -1177,21 +1177,18 @@ module Lain
         # @param binary [String] the built `lain-core`
         # @return [Relay]
         def self.for(cwd:, paths: Paths.new, interfaces: LOCAL_ADDRESSES, binary: BINARY)
-          root = project_root(cwd)
+          root = project_root(cwd, paths)
           return new(address: nil, root: cwd, paths:, interfaces:, binary:) unless root
 
           begin
-            new(address: Config.load(root:).remote_relay, root:, paths:, interfaces:, binary:)
+            new(address: Config.load(root:, paths:).remote_relay, root:, paths:, interfaces:, binary:)
           rescue Error => e
             new(address: nil, root:, paths:, interfaces:, binary:, skipped: e.message)
           end
         end
 
-        # Resolved with the default paths because {Config.load} reads those, so the
-        # directory a project's trust is looked up in cannot differ from the one it was found in.
-        def self.project_root(cwd)
-          lookup = Paths.new
-          Project::Resolver.new(home: lookup.home_or_nil, paths: lookup).call(cwd:).project.root
+        def self.project_root(cwd, paths)
+          Project::Resolver.new(home: paths.home_or_nil, paths:).call(cwd:).project.root
         rescue Error
           nil
         end

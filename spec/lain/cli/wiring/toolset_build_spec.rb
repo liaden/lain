@@ -955,7 +955,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
                                  "XDG_STATE_HOME" => state })
         end
         let(:epic_home) do
-          Lain::Epic::Home.container(config: Lain::Config.load(root: project_root), paths:, root: project_root)
+          Lain::Epic::Home.container(config: Lain::Config.load(root: project_root, paths: Lain::Paths.new), paths:,
+                                     root: project_root)
         end
         let(:issue_file) { File.join(epic_home, "demo", "issues", "a.md") }
         let(:provider) do
@@ -1647,7 +1648,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         chronicle:, options: { approval: :auto }, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model",
         project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
         arms: Lain::CLI::Arms::OFF.with(confine: :classes),
-        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:), resolver:, worker_env: session.worker_env
+        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new), resolver:,
+        worker_env: session.worker_env
       ).bind_session(session)
     end
     let(:requests) { [] }

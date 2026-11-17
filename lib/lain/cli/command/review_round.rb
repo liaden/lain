@@ -23,8 +23,10 @@ module Lain
         end
 
         # @param outbox [Lain::Review::Submit::Outbox] the run's ONE open review
-        def initialize(outbox:)
+        # @param paths [Paths] the state home an earlier session of the chain is found under
+        def initialize(outbox:, paths:)
           @outbox = outbox
+          @paths = paths
           freeze
         end
 
@@ -46,7 +48,7 @@ module Lain
         def open(opening, env, scope:, hold_after_draw: false)
           surface = env.replies.review_surface
           Lain::Review::Surface.check!(surface)
-          banner = Review.not_carried_over(env, opening.target)
+          banner = Review.not_carried_over(env, opening.target, paths: @paths)
           session = session_for(opening, env, surface)
           closing = Lain::Review::Handover::Closing.new(outbox: @outbox, rails: env.replies, surface:)
           docent = docent_for(opening, session, env, surface)

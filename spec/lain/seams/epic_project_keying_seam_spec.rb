@@ -170,7 +170,8 @@ RSpec.describe "the epic tier's project keying", :seam do
 
     it "is the container the chat's own project resolves" do
       in_subdirectory_of_a_project do |root, _sub|
-        container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:)
+        container = Lain::Epic::Home.container(config: Lain::Config.load(root:, paths: Lain::Paths.new),
+                                               paths: Lain::Paths.new, root:)
 
         expect(Lain::Project::Resolver.default_project.root).to eq(root)
         expect(container).to eq(File.join(root, ".lain", "epics"))
@@ -184,6 +185,6 @@ RSpec.describe "the epic tier's project keying", :seam do
   # example above is about is that the journal directory does NOT follow it.
   def mount_for(root)
     Lain::CLI::EpicMount.new(slug: "alpha", journal: Lain::Journal.new(io: StringIO.new), root:,
-                             told: ->(_text) {}, paths: Lain::Paths.new, config: Lain::Config.load(root:))
+                             told: ->(_text) {}, paths: Lain::Paths.new, config: Lain::Config.load(root:, paths: Lain::Paths.new))
   end
 end

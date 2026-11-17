@@ -1290,7 +1290,8 @@ RSpec.describe "lain epic finish and the GitHub account" do
   it "writes to stderr that an exported GH_TOKEN wins over the configured account" do
     Dir.mktmpdir("lain-finish-notes") do |tmp|
       allow(Lain::CLI::EpicFinish).to receive(:new) do |notes:|
-        Lain::CLI::EpicFinish.github(root: tmp, shell_out_factory: GhParity.factory, notes:).pr_list(head: "x")
+        Lain::CLI::EpicFinish.github(root: tmp, paths: Lain::Paths.new, shell_out_factory: GhParity.factory,
+                                     notes:).pr_list(head: "x")
         instance_double(Lain::CLI::EpicFinish, finish: Lain::CLI::Said.new(text: "finished demo", status: 0))
       end
 

@@ -153,7 +153,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        expect(described_class.load(root:).approval).to eq(Lain::Config::Answers.empty)
+        expect(described_class.load(root:, paths: Lain::Paths.new).approval).to eq(Lain::Config::Answers.empty)
       end
     end
 
@@ -161,7 +161,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval do\n  allow \"read_file\", \"README.md\"\nend\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -175,7 +175,7 @@ RSpec.describe Lain::Config do
           end
         RUBY
 
-        config = described_class.load(root:)
+        config = described_class.load(root:, paths: Lain::Paths.new)
 
         expect(config.epics_home).to eq(:repo)
         expect(config.approval.allow.length).to eq(1)

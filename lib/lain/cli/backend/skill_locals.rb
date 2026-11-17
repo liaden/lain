@@ -8,10 +8,12 @@ module Lain
       # render rather than at launch, and a width narrowed since is seen.
       class SkillLocals
         # @param root [String] the project root whose config sets the gate window
+        # @param paths [Paths] the state home the project's trust is read under
         # @param epic_home [#call] the epic home directory
         # @yieldreturn [OllamaTier] the chat's tier, asked at each render
-        def initialize(root, epic_home, &tier)
+        def initialize(root, paths, epic_home, &tier)
           @root = root
+          @paths = paths
           @epic_home = epic_home
           @tier = tier
         end
@@ -24,12 +26,12 @@ module Lain
 
         private
 
-        def gate_window = format("%g", Config.approval_timeout(root: @root))
+        def gate_window = format("%g", Config.approval_timeout(root: @root, paths: @paths))
 
         def provider_width = @tier.call.concurrency
 
         def researcher_limits
-          "#{Config.budget(root: @root).iterations(role: :researcher)} iterations and a " \
+          "#{Config.budget(root: @root, paths: @paths).iterations(role: :researcher)} iterations and a " \
             "#{Tools::Subagent::ANSWER_BOUND.limit}-byte answer"
         end
       end

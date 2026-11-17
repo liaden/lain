@@ -25,7 +25,7 @@ module Lain
 
       # @return [Chores::Queue] the project's chore file, as its config names it
       def self.queue_for(project, paths)
-        ::Lain::Chores::Queue.at(project.root, file: ::Lain::Config.load(root: project.root).todos.file, paths:)
+        ::Lain::Chores::Queue.at(project.root, file: ::Lain::Config.load(root: project.root, paths:).todos.file, paths:)
       end
 
       # @param project [Project] whose root holds the chore file

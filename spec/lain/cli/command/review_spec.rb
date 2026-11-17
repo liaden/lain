@@ -114,7 +114,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   let(:command) do
     described_class.new(root: @repo, outbox:, shell_out_factory: Lain::Shell::Out.public_method(:new),
                         gh_account: Lain::Forge::Gh::Account::None.new,
-                        ledger: Lain::Sensitivity::Ledger.new)
+                        ledger: Lain::Sensitivity::Ledger.new, paths: Lain::Paths.new)
   end
 
   # The REAL outbox `/review-submit` reads, never a spy: what has to be true is
@@ -166,7 +166,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   it "runs its git through Shell::Out when no factory is injected" do
     allow(Lain::Shell::Out).to receive(:new).and_call_original
     defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new,
-                                    gh_account: Lain::Forge::Gh::Account::None.new)
+                                    gh_account: Lain::Forge::Gh::Account::None.new, paths: Lain::Paths.new)
 
     attached
     defaulted.call("feature", env)
@@ -244,7 +244,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   end
 
   it "refuses to be built without a gh account" do
-    expect { described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new) }
+    expect { described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, paths: Lain::Paths.new) }
       .to raise_error(ArgumentError, /gh_account/)
   end
 
@@ -262,7 +262,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
     let(:command) do
       described_class.new(root: @repo, outbox:, shell_out_factory: refusing, gh_account: account,
-                          ledger: Lain::Sensitivity::Ledger.new)
+                          ledger: Lain::Sensitivity::Ledger.new, paths: Lain::Paths.new)
     end
 
     it "reads the pull request as that account" do
@@ -391,7 +391,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
     let(:command) do
       described_class.new(root: @repo, outbox:, shell_out_factory: pull_factory, ledger: Lain::Sensitivity::Ledger.new,
-                          gh_account: Lain::Forge::Gh::Account::None.new)
+                          gh_account: Lain::Forge::Gh::Account::None.new, paths: Lain::Paths.new)
     end
 
     before do
@@ -467,7 +467,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
     let(:command) do
       described_class.new(root: @repo, outbox:, shell_out_factory: pull_factory, ledger: Lain::Sensitivity::Ledger.new,
-                          gh_account: Lain::Forge::Gh::Account::None.new, critique:)
+                          gh_account: Lain::Forge::Gh::Account::None.new, critique:, paths: Lain::Paths.new)
     end
 
     before do
@@ -1020,7 +1020,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       let(:survey) do
         home = File.join(@repo, ".home")
         Lain::CLI::Command::Survey.new(outbox:, cwd: @repo, ledger: Lain::Sensitivity::Ledger.new,
-                                       sensitivity: Lain::Sensitivity.new(home:, cwd: @repo))
+                                       sensitivity: Lain::Sensitivity.new(home:, cwd: @repo), paths: Lain::Paths.new)
       end
 
       before do
@@ -1049,15 +1049,31 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
   # A `/review` of the same target says so, rather than letting a human believe
   # the notes they left there are on the sidebar they are now reading.
   describe "reopening a target in a resumed chat" do
+    around do |example|
+      Dir.mktmpdir("lain-review-state") do |state|
+        @state = File.realpath(state)
+        example.run
+      end
+    end
+
+    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
+    let(:command) do
+      described_class.new(root: @repo, outbox:, shell_out_factory: Lain::Shell::Out.public_method(:new), paths:,
+                          gh_account: Lain::Forge::Gh::Account::None.new, ledger: Lain::Sensitivity::Ledger.new)
+    end
+
+    def earlier_chat
+      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new,
+                          gh_account: Lain::Forge::Gh::Account::None.new, paths:)
+    end
+
     # The earlier chat, which opened a review of `earlier` and stopped with it
     # open, written where its session file would be; then the resumed one,
     # whose header names that file.
     def resumed(dir, earlier: "feature", earlier_dir: dir)
       prior = StringIO.new
-      described_class.new(root: @repo, outbox: Lain::Review::Submit::Outbox.new, ledger: Lain::Sensitivity::Ledger.new,
-                          gh_account: Lain::Forge::Gh::Account::None.new)
-                     .call(earlier, build_command_env(replies:,
-                                                      chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
+      earlier_chat.call(earlier, build_command_env(replies:,
+                                                   chronicle: chronicle_on(Lain::Journal.new(io: prior), nil)))
       File.write(File.join(earlier_dir, "earlier.ndjson"), prior.string)
       current = File.join(dir, "resumed.ndjson")
       File.write(current, "#{JSON.generate("type" => Lain::SessionRecord::HEADER_TYPE,
@@ -1086,13 +1102,12 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       end
     end
 
-    it "finds the earlier session when it is filed under another project's directory" do
+    it "finds the earlier session under the Paths the command was handed, not the environment's" do
       attached
-      Dir.mktmpdir("lain-review-resumed") do |state|
-        with_env("XDG_STATE_HOME" => state) do
-          store = Lain::Paths.new
-          elsewhere = store.sessions_dir(project: "0123456789ab")
-          answer = command.call("feature", resumed(store.sessions_dir(project: "ba9876543210"), earlier_dir: elsewhere))
+      Dir.mktmpdir("lain-review-resumed") do |other|
+        with_env("XDG_STATE_HOME" => other, "HOME" => other) do
+          elsewhere = paths.sessions_dir(project: "0123456789ab")
+          answer = command.call("feature", resumed(paths.sessions_dir(project: "ba9876543210"), earlier_dir: elsewhere))
 
           expect(answer).to include("not carried over").and include("branch feature")
           expect(answer).not_to include("could not read")
@@ -1192,7 +1207,7 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     def bounded(**ceilings)
       described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new,
                           bounds: Lain::Review::Bounds.new(**ceilings),
-                          shell_out_factory: Lain::Shell::Out.public_method(:new))
+                          shell_out_factory: Lain::Shell::Out.public_method(:new), paths: Lain::Paths.new)
     end
 
     # A branch off `main` wide enough to meet {Lain::Review::Bounds}' own

@@ -4,7 +4,7 @@ require "fileutils"
 require "tmpdir"
 
 RSpec.describe Lain::Approval::Remembered do
-  def remembered_at(root) = described_class.from(Lain::Config.load(root:))
+  def remembered_at(root) = described_class.from(Lain::Config.load(root:, paths: Lain::Paths.new))
 
   def call_for(tool, input) = Lain::Approval::Rule::Call.for(tool:, input:)
 

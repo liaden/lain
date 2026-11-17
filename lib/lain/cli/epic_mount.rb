@@ -100,6 +100,9 @@ module Lain
         # @return [String] the project root a path is shown relative to
         attr_reader :root
 
+        # @return [Paths] the state home the project's trust and the sessions are read under
+        attr_reader :paths
+
         # @return [#<<] the chat's session journal, where an epic_review round lands
         attr_reader :journal
 

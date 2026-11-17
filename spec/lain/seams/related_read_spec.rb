@@ -33,13 +33,13 @@ RSpec.describe "A read under a related directory", :seam do
   def project = Lain::Project.new(root: @repo, cwd: @repo, kind: :project, detected_by: :git)
   def session = @session ||= Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: @repo))
 
-  def configure(entries) = write_config(@repo, "sensitivity related: #{entries.inspect}\n")
+  def configure(entries) = write_config(@repo, "sensitivity related: #{entries.inspect}\n", paths:)
 
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
       chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
       model: "m", toolset:, project:, paths:,
-      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     ).bind_session(session)
   end
 

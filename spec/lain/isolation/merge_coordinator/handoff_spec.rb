@@ -195,7 +195,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Handoff, :seam do
 
   describe "a drained entry" do
     it "lands on the chat's branch, and lain land wait for its id exits 0" do
-      write_config(@repo, %(isolation verify: ["sh", "-c", "exit 0"]\n))
+      write_config(@repo, %(isolation verify: ["sh", "-c", "exit 0"]\n), paths:)
       report = handoff.reclaim(committed_lease, worker_id: "dev-1")
 
       Lain::Isolation::MergeCoordinator::Drain.for(repo_root: @repo, branch: "feat", paths:).call

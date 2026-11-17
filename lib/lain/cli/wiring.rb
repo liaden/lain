@@ -369,7 +369,7 @@ module Lain
       # The process's one GitHub account, so every gh it runs asks for the token once. Read when
       # the command surface is built, while `.lain/config.rb` holds the bytes the launch trusted.
       def gh_account
-        @gh_account ||= Lain::Forge::Gh::Account.configured(root: project.root, notes: @herdr.notes)
+        @gh_account ||= Lain::Forge::Gh::Account.configured(root: project.root, paths: @paths, notes: @herdr.notes)
       end
 
       attr_reader :options, :chronicle, :run_clock, :paths
@@ -451,7 +451,7 @@ module Lain
       # The backend a run leases every worker's WorkerEnv from -- the actors a
       # {Supervisor} adopts AND the children a model dispatches, which
       # {ToolsetBuild} is handed this same instance for. The main chat's Session
-      # is built on {WorkerEnv.default} deliberately, because the user's own
+      # is built on `WorkerEnv.default` deliberately, because the user's own
       # edits belong in the user's own tree.
       #
       # MEMOIZED, and the sharing is not an optimization. Every consumer keys
@@ -460,7 +460,7 @@ module Lain
       # so two backends cannot refuse each other's checkout paths, and a
       # service pool that allocates without a worker key in it hands the same
       # slot out twice. `.lain/services.rb` is read once for the reason
-      # {IsolationBackend#services} gives about a file edited mid-resolution.
+      # `IsolationBackend#services` gives about a file edited mid-resolution.
       #
       # It takes NO argument, and that is the memo's own honesty: a `journal:`
       # parameter would be honoured on the first call and silently discarded on
@@ -817,7 +817,7 @@ module Lain
       def handback_over(base, settings)
         strategy = Isolation::MergeStrategy.from(settings)
         sync = Isolation::SelfSync.new(base:, strategy:, retries: settings.rebase_retries)
-        checks = Isolation::Checked.configured(base:, layout: Config.test_layout(root:), settings:)
+        checks = Isolation::Checked.configured(base:, layout: Config.test_layout(root:, paths: @paths), settings:)
         Handback.new(handoff: Isolation::MergeCoordinator::Handoff.over(repo_root: fleet_isolation.repo_root,
                                                                         branch: base.name, journal: durable_journal),
                      sync: Isolation::Checked.new(checks:, sync:))
@@ -827,7 +827,7 @@ module Lain
 
       # `.lain/config.rb`, evaluated once per chat start, so the epic mount, the
       # gate submitter, the board and the isolation settings read the same file.
-      def config = @config ||= Config.load(root:)
+      def config = @config ||= Config.load(root:, paths: @paths)
 
       # Which epic this chat is seated in, resolved ONCE and read twice: the
       # toolset takes the mount's tools, and an attached editor's lain://status
@@ -922,7 +922,7 @@ module Lain
       # Reached first from #build_toolset, which is ahead of `chronicle.start`:
       # the same refusal-before-journal ordering #switchboard keeps, and it
       # matters because a config that will not load refuses the launch.
-      def verdict = @verdict ||= BoardBuild.shell_verdict(project:, home: chat_env.env["HOME"])
+      def verdict = @verdict ||= BoardBuild.shell_verdict(project:, paths: @paths, home: chat_env.env["HOME"])
 
       # What the drain is handed is the DIRECTORY, not the run's one asker:
       # "which asker holds the set this answer names" is a question only the
@@ -979,6 +979,7 @@ module Lain
         Command::Surface.new(agent:, replies: @replies, supervisor:, role_spawn:, approvals:, goal_driver:, library:,
                              window:, chronicle: @chronicle, status_feed: @status_feed, root: project.root,
                              cwd: project.cwd, middleware:, rail: @rail, herdr: @herdr, profile:, gh_account:,
+                             paths: @paths,
                              epic: EpicDriver::Seams.new(mount: epic_mount, paths: @paths, journal: durable_journal,
                                                          toolset_build:, asker: @ask_human, conductor: @conductor,
                                                          endpoint:),

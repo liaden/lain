@@ -15,6 +15,7 @@ require "tmpdir"
 # command that ran.
 RSpec.describe "A leased child's shell calls are judged in its own worktree", :seam do
   let(:journal_io) { StringIO.new }
+  let(:paths) { Lain::Paths.new(env: { "HOME" => @home }) }
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:chronicle) do
     instance_double(Lain::CLI::Chronicle, record_journal: journal,
@@ -37,7 +38,7 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
       FileUtils.mkdir_p([@home, @repo])
       FileUtils.cp_r("#{SeedRepo.at({ "README.md" => "a readme\n" })}/.", @repo)
       FileUtils.mkdir_p(File.join(@repo, "vault"))
-      write_config(@repo, "sensitivity denied: %w[/vault/]\n")
+      write_config(@repo, "sensitivity denied: %w[/vault/]\n", paths:)
       File.write(File.join(@repo, "vault", "token"), "opaque\n")
       File.chmod(0o644, File.join(@repo, "vault", "token"))
       example.run
@@ -51,8 +52,8 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
   def board
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
       chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
-      model: "m", toolset:, project:, paths: Lain::Paths.new(env: { "HOME" => @home }),
-      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+      model: "m", toolset:, project:, paths:,
+      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     )
   end
 

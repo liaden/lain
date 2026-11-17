@@ -6,7 +6,7 @@ require "fileutils"
 RSpec.describe Lain::Grader::Sealed do
   def subject_project = File.expand_path("../../fixtures/altitude/subjects/order-total", __dir__)
 
-  def level_in(root) = Lain::Config.test_layout(root:).mapping.level("unit")
+  def level_in(root) = Lain::Config.test_layout(root:, paths: Lain::Paths.new).mapping.level("unit")
 
   def lease_over(checkout)
     Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.new(cwd: checkout, env: ENV.to_h),

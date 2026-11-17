@@ -28,7 +28,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
 
   def configure(verify:, **settings)
     table = { verify:, **settings }.map { |key, value| "#{key}: #{value.inspect}" }.join(", ")
-    write_config(@repo, "isolation #{table}\n")
+    write_config(@repo, "isolation #{table}\n", paths:)
   end
 
   def drain(**) = described_class.for(repo_root: @repo, branch: "main", paths:, **)

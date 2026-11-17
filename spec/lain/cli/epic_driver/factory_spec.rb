@@ -159,6 +159,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       @root = File.realpath(dir)
       FileUtils.mkdir_p(repo)
       SeedRepo.with_layout(layout_mini, into: repo)
+      trust_project(repo, paths:)
       FileUtils.mkdir_p(paths.filing_dir(root: repo))
       example.run
     end

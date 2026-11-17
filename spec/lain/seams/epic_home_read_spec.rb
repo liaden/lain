@@ -38,7 +38,8 @@ RSpec.describe "A spawned child in the XDG epic home", :seam do
   end
 
   def mount_epic
-    container = Lain::Epic::Home.container(config: Lain::Config.load(root: @root), paths: @paths, root: @root)
+    container = Lain::Epic::Home.container(config: Lain::Config.load(root: @root, paths: Lain::Paths.new),
+                                           paths: @paths, root: @root)
     File.join(container, "demo").tap do |epic|
       FileUtils.mkdir_p(File.join(epic, "issues"))
       File.write(File.join(epic, "epic.md"), "zq_epic_mark\n")

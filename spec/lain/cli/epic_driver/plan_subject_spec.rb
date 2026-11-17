@@ -8,7 +8,7 @@ require "tmpdir"
 # from a plan's text, over a project declaring the rspec layout on `app`.
 RSpec.describe Lain::CLI::EpicDriver::PlanSubject do
   let(:layout_mini) { File.expand_path("../../../fixtures/projects/layout_mini", __dir__) }
-  let(:layout) { Lain::Config.test_layout(root: @root) }
+  let(:layout) { Lain::Config.test_layout(root: @root, paths: Lain::Paths.new) }
 
   around do |example|
     Dir.mktmpdir("lain-plan-subject") do |dir|

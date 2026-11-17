@@ -130,8 +130,10 @@ module Lain
       # @param sink [#puts] where the cost warning is said; only the frontend
       #   may touch a real stream, so this is injected and defaults to the Null
       # @param journal [#<<] where a {Telemetry::FixtureTampered} record lands
-      def initialize(fixture_path:, arms:, spawn_seam:, grader:, isolation: nil, sink: Sink::Null.new,
+      # @param paths [Paths] the state home every subject's trust is read under
+      def initialize(fixture_path:, arms:, spawn_seam:, grader:, paths:, isolation: nil, sink: Sink::Null.new,
                      journal: Channel::Null.instance)
+        @paths = paths
         @fixture_path = fixture_path
         @arms = Array(arms).freeze
         @spawn_seam = spawn_seam
@@ -184,11 +186,11 @@ module Lain
         untrusted = projects.filter_map { |project| untrusted_in(project) }
         raise Project::Trust::Untrusted, untrusted.join("\n") unless untrusted.empty?
 
-        projects.each { |project| Config.test_layout(root: project) }
+        projects.each { |project| Config.test_layout(root: project, paths: @paths) }
       end
 
       def untrusted_in(project)
-        Project::Trust.for(project_dir: ProjectDir.new(root: project)).require!
+        Project::Trust.for(project_dir: ProjectDir.new(root: project, paths: @paths), paths: @paths).require!
         nil
       rescue Project::Trust::Untrusted => e
         e.message
@@ -267,16 +269,19 @@ module Lain
         @pristine[task.id] ||= Grader::LeaseHarness.manifest(task.project, level:)
       end
 
-      def pristine_level(task) = Config.test_layout(root: task.project).mapping.level(task.level)
+      def pristine_level(task) = Config.test_layout(root: task.project, paths: @paths).mapping.level(task.level)
 
       def level_in(lease, task)
         worker_env = lease.worker_env
         raise Grader::LeaseHarness::NoCheckout, no_checkout(task) if worker_env.nil?
 
-        Config.test_layout(root: worker_env.cwd, vouched_by: subject_trust(task)).mapping.level(task.level)
+        Config.test_layout(root: worker_env.cwd, paths: @paths,
+                           vouched_by: subject_trust(task)).mapping.level(task.level)
       end
 
-      def subject_trust(task) = Project::Trust.for(project_dir: ProjectDir.new(root: task.project))
+      def subject_trust(task)
+        Project::Trust.for(project_dir: ProjectDir.new(root: task.project, paths: @paths), paths: @paths)
+      end
 
       def no_checkout(task)
         "altitude task #{task.id.inspect} was graded through a lease holding no checkout, so its subject's " \

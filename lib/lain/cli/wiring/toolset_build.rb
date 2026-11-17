@@ -418,7 +418,8 @@ module Lain
         def capability_floor(recorder)
           Lain::Toolset.new(BaseTools.build(recorder, exec: bash_exec, verdict: @verdict, journal: seam.journal,
                                                       resolver: @resolver, spill:,
-                                                      search: Lain::Config.search(root: @root)))
+                                                      search: Lain::Config.search(root: @root,
+                                                                                  paths: @in_chat.fetch(:paths))))
         end
 
         def bash_exec = @arms.sandboxed? ? confined(@exec) : @exec

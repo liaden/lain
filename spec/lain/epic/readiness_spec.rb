@@ -49,7 +49,7 @@ RSpec.describe Lain::Epic::Readiness do
         FileUtils.mkdir_p(File.join(dir, ".lain"))
         File.write(File.join(dir, ".lain", "config.rb"), "#{line}\n")
         trust_project(dir)
-        Lain::Config.test_layout(root: dir)
+        Lain::Config.test_layout(root: dir, paths: Lain::Paths.new)
       end
     end
 

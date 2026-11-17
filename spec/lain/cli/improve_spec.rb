@@ -452,21 +452,21 @@ RSpec.describe Lain::CLI::Improve do
 
     it "knows a value only the project's own table marks secret" do
       seed_history
-      trust_project(root)
+      trust_project(root, paths:)
 
       expect(described_class.secrets_of(project, paths).to_a).to include(history, table)
     end
 
     it "masks both values on the dry surface" do
       seed_history
-      trust_project(root)
+      trust_project(root, paths:)
 
       expect(pass.dry_report).not_to include(history, table)
     end
 
     it "sends the improver request with both values masked" do
       seed_history
-      trust_project(root)
+      trust_project(root, paths:)
       chat = stub_request(:post, "http://localhost:11434/api/chat")
              .to_return(status: 200, headers: { "Content-Type" => "application/x-ndjson" },
                         body: "#{JSON.generate("model" => "qwen3:4b", "done" => true, "done_reason" => "stop",

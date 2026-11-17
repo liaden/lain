@@ -44,7 +44,19 @@ RSpec.describe Lain::CLI::Command::Surface do
     described_class.new(agent:, replies: instance_spy(Lain::CLI::HumanReplies),
                         supervisor: Lain::Supervisor::Null, role_spawn:, approvals:, root:, gh_account:,
                         chronicle: Lain::CLI::Chronicle::Null.new, library: Lain::Skill::Library.load(root:),
-                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:, **rest)
+                        status_feed:, model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, window:,
+                        paths: Lain::Paths.new, **rest)
+  end
+
+  it "builds every part of the surface from the Paths it was handed, never the environment's" do
+    with_project do |root|
+      surface = build_surface(root, paths: Lain::Paths.new(env: { "HOME" => root, "XDG_STATE_HOME" => root }))
+      expect(Lain::Paths).not_to receive(:new)
+
+      surface.commands
+      surface.middleware
+      surface.send(:share_commands).first.instance_variable_get(:@exports).call("session.ndjson")
+    end
   end
 
   it "hands the herdr binding's reporter and window surface to the env its commands read" do

@@ -211,7 +211,12 @@ RSpec.describe Lain::Bench::Altitude do
   def fixture_path = File.expand_path("../../fixtures/altitude/tasks.yml", __dir__)
 
   def altitude(fixture_path: self.fixture_path, **)
-    described_class.new(fixture_path:, arms:, spawn_seam:, grader:, sink:, **)
+    described_class.new(fixture_path:, arms:, spawn_seam:, grader:, sink:, **, paths: Lain::Paths.new)
+  end
+
+  it "refuses to be built without the Paths its subjects' trust is read under" do
+    expect { described_class.new(fixture_path:, arms:, spawn_seam:, grader:, sink:) }
+      .to raise_error(ArgumentError, /paths/)
   end
 
   # One titled, blank-line-separated block of the rendered report.
@@ -348,7 +353,9 @@ RSpec.describe Lain::Bench::Altitude do
     let(:seen) { [] }
     let(:arms) { [AltitudeSubjectArm.new("one-shot", seen)] }
 
-    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+    def bench_over(path)
+      described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
+    end
 
     # A lease's copy is deleted on release, so a refusal naming it would send
     # the human to a path that is gone -- and by then an arm has been paid for.
@@ -416,7 +423,9 @@ RSpec.describe Lain::Bench::Altitude do
     let(:journal) { [] }
     let(:arms) { [AltitudeTamperingArm.new("cheat"), AltitudeTamperingArm.new("honest", edit: false)] }
 
-    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:)
+    def bench_over(path)
+      described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:, paths: Lain::Paths.new)
+    end
 
     it "reports the row as fixture tampered with no score, not a low one" do
       report = with_task { |path| bench_over(path).report }
@@ -459,7 +468,9 @@ RSpec.describe Lain::Bench::Altitude do
     end
     let(:journal) { [] }
 
-    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:)
+    def bench_over(path)
+      described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, journal:, paths: Lain::Paths.new)
+    end
 
     it "scores an arm whose fix survives all three runs in full" do
       report = with_three_arm_tasks { |path| bench_over(path).report }
@@ -525,7 +536,9 @@ RSpec.describe Lain::Bench::Altitude do
     end
     let(:arms) { [AltitudeTestWritingArm.new("writer", tests)] }
 
-    def bench_over(path) = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+    def bench_over(path)
+      described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
+    end
 
     it "scores an arm whose tests kill every mutation in full" do
       report = with_mutation_tasks { |path| bench_over(path).report }
@@ -607,7 +620,7 @@ RSpec.describe Lain::Bench::Altitude do
     # name, and neither end knows about the other.
     it "gives every task a subject project declaring a layout with the level that task names" do
       committed_tasks.each do |task|
-        layout = Lain::Config.test_layout(root: File.join(fixtures, task.fetch("subject")))
+        layout = Lain::Config.test_layout(root: File.join(fixtures, task.fetch("subject")), paths: Lain::Paths.new)
 
         expect(layout).to be_in_force
         expect(layout.mapping.level(task.fetch("level")).root).to eq("spec/unit")
@@ -666,7 +679,7 @@ RSpec.describe Lain::Bench::Altitude do
     # comparison the sample cannot support.
     it "refuses a size carrying only one task, naming the size" do
       with_fixture([task("a", "small"), task("b", "small"), task("c", "large")]) do |path|
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(Lain::Error, /"large" size carries 1 task/)
       end
@@ -674,14 +687,14 @@ RSpec.describe Lain::Bench::Altitude do
 
     it "refuses a task declaring no size, naming the task" do
       with_fixture([task("a", "small").tap { |entry| entry.delete("size") }, task("b", "small")]) do |path|
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(described_class::MalformedTask, /"a"|size/)
       end
     end
 
     it "refuses a fixture that is not there, naming the path" do
-      bench = described_class.new(fixture_path: "/nowhere/tasks.yml", arms:, spawn_seam:, grader:, sink:)
+      bench = described_class.new(fixture_path: "/nowhere/tasks.yml", arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
       expect { bench.report }.to raise_error(Lain::Bench::Fixture::Missing, %r{/nowhere/tasks\.yml})
     end
@@ -690,7 +703,7 @@ RSpec.describe Lain::Bench::Altitude do
     # would make one of the two unreachable rather than loud.
     it "refuses duplicate task ids" do
       with_fixture([task("a", "small"), task("a", "small")]) do |path|
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(described_class::MalformedTask, /a/)
       end
@@ -703,7 +716,7 @@ RSpec.describe Lain::Bench::Altitude do
       Dir.mktmpdir("lain-altitude-fixture") do |dir|
         path = File.join(dir, "tasks.yml")
         File.write(path, YAML.dump([{ "id" => "a" }]))
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(described_class::MalformedTask, /#{Regexp.escape(path)}/)
       end
@@ -714,7 +727,7 @@ RSpec.describe Lain::Bench::Altitude do
     # the operator about a size when the problem is the file.
     it "refuses a fixture declaring no tasks at all, naming the file" do
       with_fixture([]) do |path|
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(described_class::MalformedTask, /#{Regexp.escape(path)}/)
       end
@@ -735,7 +748,7 @@ RSpec.describe Lain::Bench::Altitude do
                                      { "id" => "b", "size" => "small", "subject" => "#{present}-is-not-there",
                                        "level" => "unit", "prompt" => "do b" }
                                    ]))
-        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:)
+        bench = described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new)
 
         expect { bench.report }.to raise_error(Lain::Error, /altitude task "b" names the subject project/)
         # The shared log carries both the cost warning and every arm run, so an
@@ -752,7 +765,7 @@ RSpec.describe Lain::Bench::Altitude do
     it "reads not measured rather than taking the whole render down" do
       bench = described_class.new(fixture_path:, spawn_seam:, grader:, sink:,
                                   arms: [AltitudeJudgeFirstArm.new("one-shot")],
-                                  isolation: Lain::Arm::NoIsolation)
+                                  isolation: Lain::Arm::NoIsolation, paths: Lain::Paths.new)
 
       expect(bench.report).to match(/^one-shot\s+2\s+not measured/)
     end
@@ -763,7 +776,7 @@ RSpec.describe Lain::Bench::Altitude do
   describe "the header's counts" do
     it "says one size when every task shares one, and two when they do not" do
       one_size = with_one_size do |path|
-        described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:).report
+        described_class.new(fixture_path: path, arms:, spawn_seam:, grader:, sink:, paths: Lain::Paths.new).report
       end
 
       expect(one_size).to include("2 tasks over 1 size,")

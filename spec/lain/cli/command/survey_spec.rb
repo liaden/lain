@@ -105,7 +105,7 @@ RSpec.describe Lain::CLI::Command::Survey do
   # so a name is only openable if it is relative to where the chat stands. Left
   # to its `Dir.pwd` default the fixture would name every file by a `..` climb
   # out of the repository and into a tmpdir, which is correct and unreadable.
-  let(:command) { described_class.new(cwd: @root, outbox:, ledger:, sensitivity:) }
+  let(:command) { described_class.new(cwd: @root, outbox:, ledger:, sensitivity:, paths: Lain::Paths.new) }
 
   # The run's ONE region ledger, injected because {Lain::Sensitivity::Ledger}'s
   # own class doc makes that rule 1 of three and "a raise rather than a note": a
@@ -181,6 +181,11 @@ RSpec.describe Lain::CLI::Command::Survey do
   end
 
   # An editor attached, exactly as {Lain::CLI::Repl#run} attaches one.
+  def review_command(outbox: self.outbox)
+    Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, paths: Lain::Paths.new,
+                                   gh_account: Lain::Forge::Gh::Account::None.new)
+  end
+
   def attached
     replies.bind_editor(rail)
     replies.bind_review_editor(editor)
@@ -255,7 +260,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # sees -- a released region still rendering `<redacted:N>` with every object
     # present and nothing about the wiring looking wrong.
     it "refuses to construct without the run's region ledger, rather than minting one of its own" do
-      expect { described_class.new(outbox:, sensitivity:) }
+      expect { described_class.new(outbox:, sensitivity:, paths: Lain::Paths.new) }
         .to raise_error(ArgumentError, /ledger/)
     end
 
@@ -266,7 +271,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # paths the gate beside it still refuses -- both halves working, neither
     # wrong to look at, and the boundary narrowed in silence.
     it "refuses to construct without the run's classifier, rather than compiling a second table" do
-      expect { described_class.new(outbox:, ledger:) }
+      expect { described_class.new(outbox:, ledger:, paths: Lain::Paths.new) }
         .to raise_error(ArgumentError, /sensitivity/)
     end
 
@@ -461,7 +466,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     it "names files from the working directory when nobody says where the chat stands" do
       two_documents
       attached
-      defaulted = Dir.chdir(@root) { described_class.new(outbox:, ledger:, sensitivity:) }
+      defaulted = Dir.chdir(@root) { described_class.new(outbox:, ledger:, sensitivity:, paths: Lain::Paths.new) }
 
       defaulted.call(@root, env)
 
@@ -510,7 +515,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       replies.bind_editor(rail)
       replies.bind_review_editor(recording)
       bounded = described_class.new(outbox:, cwd: @root, ledger:, sensitivity:,
-                                    bounds: Lain::Review::Bounds.new(max_files: 1))
+                                    bounds: Lain::Review::Bounds.new(max_files: 1), paths: Lain::Paths.new)
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Error)
 
@@ -645,7 +650,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     it "resolves a typo'd scope before the tree is measured, so the refusal is the typo and not the size" do
       attached
       oversized = described_class.new(outbox:, ledger:, sensitivity:,
-                                      bounds: Lain::Review::Bounds.new(max_files: 1))
+                                      bounds: Lain::Review::Bounds.new(max_files: 1), paths: Lain::Paths.new)
 
       expect { oversized.call("#{@root} --scope cumulatve", env) }
         .to raise_error(Lain::Review::Session::UnknownScope, /cumulatve/)
@@ -657,7 +662,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
     def bounded(**ceilings)
       described_class.new(outbox:, ledger:, sensitivity:,
-                          bounds: Lain::Review::Bounds.new(**ceilings))
+                          bounds: Lain::Review::Bounds.new(**ceilings), paths: Lain::Paths.new)
     end
 
     it "refuses a tree past the file ceiling, in Bounds' own words" do
@@ -803,7 +808,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     # notices.
     it "does not lift the ceilings that the other switch lifts", :seam do
       bounded = described_class.new(cwd: @root, outbox:, ledger:, sensitivity:,
-                                    bounds: Lain::Review::Bounds.new(max_files: 1))
+                                    bounds: Lain::Review::Bounds.new(max_files: 1), paths: Lain::Paths.new)
       attached
 
       expect { bounded.call("#{@root} --permissive", env) }.to raise_error(Lain::Review::Bounds::TooLarge)
@@ -875,7 +880,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
       command.call(@root, env)
 
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
+      expect { review_command.call("feature", env) }
         .to raise_error(Lain::Error, /is already open in this chat/)
     end
 
@@ -886,7 +891,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
       command.call(@root, env)
 
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
+      expect { review_command.call("feature", env) }
         .to raise_error(Lain::Error, a_string_including(@root).and(include("is already open in this chat")))
     end
 
@@ -903,12 +908,12 @@ RSpec.describe Lain::CLI::Command::Survey do
     it "holds nothing when the LINE ceiling refuses, so a later /review is not locked out", :seam do
       attached
       bounded = described_class.new(outbox:, ledger:, sensitivity:,
-                                    bounds: Lain::Review::Bounds.new(max_lines: 1))
+                                    bounds: Lain::Review::Bounds.new(max_lines: 1), paths: Lain::Paths.new)
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
       expect(outbox).not_to be_open
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
+      expect { review_command.call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -919,7 +924,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     it "leaves the rails unbound and draws the refusal where the sidebar was when the LINE ceiling refuses", :seam do
       attached
       bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
-                                    bounds: Lain::Review::Bounds.new(max_lines: 1))
+                                    bounds: Lain::Review::Bounds.new(max_lines: 1), paths: Lain::Paths.new)
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
@@ -934,7 +939,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       attached
       outbox.hold(session: settled_changeset_round, number: 12, label: "pull request 12")
       bounded = described_class.new(outbox:, ledger:, sensitivity:, cwd: @root,
-                                    bounds: Lain::Review::Bounds.new(max_lines: 1))
+                                    bounds: Lain::Review::Bounds.new(max_lines: 1), paths: Lain::Paths.new)
 
       expect { bounded.call(@root, env) }.to raise_error(Lain::Review::Bounds::TooLarge)
 
@@ -949,7 +954,7 @@ RSpec.describe Lain::CLI::Command::Survey do
 
       expect(outbox).not_to be_open
       expect(editor.bound).to be_nil
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
+      expect { review_command.call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -970,7 +975,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       command.call("#{@root} --permissive", env)
 
       expect(editor.bound.wrote_verdict("approve")).to be_nil
-      expect { Lain::CLI::Command::Review.new(root: @root, outbox:, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call("feature", env) }
+      expect { review_command.call("feature", env) }
         .to raise_error(Lain::Review::Source::UnknownRef)
     end
 
@@ -1028,7 +1033,7 @@ RSpec.describe Lain::CLI::Command::Survey do
     def earlier(dir)
       prior = StringIO.new
       held = Lain::Review::Submit::Outbox.new
-      yield described_class.new(cwd: @root, outbox: held, ledger:, sensitivity:),
+      yield described_class.new(cwd: @root, outbox: held, ledger:, sensitivity:, paths: Lain::Paths.new),
             build_command_env(replies:, chronicle: chronicle_on(Lain::Journal.new(io: prior), nil),
                               role_spawn: lending_spawn), held
       File.write(File.join(dir, "earlier.ndjson"), prior.string)
@@ -1093,9 +1098,7 @@ RSpec.describe Lain::CLI::Command::Survey do
       in_session_dir do |dir|
         earlier(dir) do |survey, earlier_env, held|
           survey.call(@root, earlier_env)
-          Lain::CLI::Command::Review.new(root: @root, outbox: held, ledger: Lain::Sensitivity::Ledger.new, gh_account: Lain::Forge::Gh::Account::None.new).call(
-            "close", earlier_env
-          )
+          review_command(outbox: held).call("close", earlier_env)
         end
 
         expect(command.call(@root, resumed(dir))).not_to include("not carried over")

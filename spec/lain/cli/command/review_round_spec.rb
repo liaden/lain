@@ -33,7 +33,7 @@ class RoundSurface < Lain::Review::Surface::Text
 end
 
 RSpec.describe Lain::CLI::Command::ReviewRound do
-  subject(:round) { described_class.new(outbox:) }
+  subject(:round) { described_class.new(outbox:, paths: Lain::Paths.new) }
 
   let(:outbox) { Lain::Review::Submit::Outbox.new }
   let(:sink) { StringIO.new }

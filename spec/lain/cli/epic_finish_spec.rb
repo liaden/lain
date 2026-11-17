@@ -424,7 +424,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       allow(Lain::Config).to receive(:github).and_call_original
 
       with_env(env) do
-        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
+        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:, paths: Lain::Paths.new),
+                                        paths: Lain::Paths.new, root:, slug: "demo")
         home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "a", status: "done")]))
         expect { Dir.chdir(root) { LainCLI::Epic.start(%w[finish demo --local], debug: true) } }
           .to output(/finished demo.*nothing was pushed/m).to_stdout
@@ -441,7 +442,8 @@ RSpec.describe Lain::CLI::EpicFinish, :seam do
       journal_gates(["0" * 40, Lain::Epic::GateDecision::Deferred.new], [tip, Lain::Approval::Verdict::Approve.new])
 
       with_env(env) do
-        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:, slug: "demo")
+        home = Lain::Epic::Home.resolve(config: Lain::Config.load(root:, paths: Lain::Paths.new),
+                                        paths: Lain::Paths.new, root:, slug: "demo")
         home.write_epic(Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "a", status: "done")]))
         expect { Dir.chdir(root) { LainCLI::Epic.start(%w[finish demo --local], debug: true) } }
           .to output(/finished demo.*nothing was pushed/m).to_stdout

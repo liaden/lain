@@ -53,7 +53,7 @@ module Lain
 
       def readiness(slug)
         resolved = @homes.epics.resolve_slug(slug, remedy: CLI::Epic::BY_SLUG)
-        layout = Lain::Config.test_layout(root: @homes.root)
+        layout = Lain::Config.test_layout(root: @homes.root, paths: @homes.paths)
         Epic::Readiness.of(@homes.for(resolved).read_epic, layout).to_s
       end
 

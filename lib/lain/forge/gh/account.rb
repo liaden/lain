@@ -50,11 +50,12 @@ module Lain
         # The account the config names for a project, or for no project with a nil root.
         #
         # @param root [String, nil] the project whose `.lain/config.rb` is read
+        # @param paths [Paths] where the project's trust and the user's config are read
         # @param notes [#puts]
         # @param shell_out_factory [#call]
         # @return [Account, None]
-        def self.configured(root:, notes:, shell_out_factory: Shell::Out.public_method(:new))
-          self.for(Config.github(root:), shell_out_factory:, notes:)
+        def self.configured(root:, paths:, notes:, shell_out_factory: Shell::Out.public_method(:new))
+          self.for(Config.github(root:, paths:), shell_out_factory:, notes:)
         end
 
         # @param name [String] the account gh is asked for a token of

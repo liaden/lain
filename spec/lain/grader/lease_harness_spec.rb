@@ -35,7 +35,7 @@ RSpec.describe Lain::Grader::LeaseHarness do
   # The level roots come from the subject's OWN `[tests]` table, so what is
   # under test is the layout wiring an arm would really have, not a root this
   # spec invented.
-  def level_in(checkout, name) = Lain::Config.test_layout(root: checkout).mapping.level(name)
+  def level_in(checkout, name) = Lain::Config.test_layout(root: checkout, paths: Lain::Paths.new).mapping.level(name)
 
   # A Timeline-shaped stand-in for what an arm actually hands its grader. It is
   # deliberately never consulted: the subject's suite is the judgement.

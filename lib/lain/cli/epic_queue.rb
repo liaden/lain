@@ -170,7 +170,7 @@ module Lain
 
       def epics = @epics ||= Epic.new(paths: @paths)
 
-      def digests = EpicSubmit::Digests.new(config: @config || Config.load(root:), paths: @paths, root:)
+      def digests = EpicSubmit::Digests.new(config: @config || Config.load(root:, paths: @paths), paths: @paths, root:)
 
       # {Journal.open} creates a fresh file under the root's session directory, deliberately:
       # the fold reads every file there, so a decision journaled from a one-shot

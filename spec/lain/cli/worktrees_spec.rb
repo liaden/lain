@@ -87,7 +87,7 @@ RSpec.describe Lain::CLI::Worktrees do
   end
 
   it "hands the reaper the root chat leases under, the configured retain_days, and a journal under state_home", :seam do
-    write_config(@repo, "isolation retain_days: 3\n")
+    write_config(@repo, "isolation retain_days: 3\n", paths:)
     seen = {}
 
     worktrees(gc_factory: reaper([record(:kept, :worktree, "/x", "live")], seen)).gc

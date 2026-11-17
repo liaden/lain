@@ -16,7 +16,7 @@ module Lain
     class ChatLaunch
       # A MODE rather than a flag, and forced: `lain up` forwards the operator's
       # `-- ARGS` verbatim and may not add a word to that vector
-      # ({Up#default_chat_command}), so an environment variable is the one
+      # (`Up#default_chat_command`), so an environment variable is the one
       # channel that reaches the child without touching the argv they typed.
       PREFLIGHT_ENV = "LAIN_PREFLIGHT"
 
@@ -51,7 +51,7 @@ module Lain
       #   for the project's root; the real one spawns with the real process
       #   spawner
       # @param middleware_reader [#call] reads the configured middleware for a
-      #   `root:`; called once per launch, ahead of the record
+      #   `root:` under `paths:`; called once per launch, ahead of the record
       # @param paths [Paths] names the state home the live record is filed under
       # @param env [#[]] the environment, read for $TMUX by
       #   {#refuse_windows_outside_tmux!}
@@ -160,7 +160,7 @@ module Lain
         refuse_contradictory_flags!
         resolve_project!
         refuse_isolation!
-        Config.load(root: project.root)
+        Config.load(root: project.root, paths: @paths)
         configured_middleware
         @recorded_header = preflight_header
         constructed
@@ -288,7 +288,7 @@ module Lain
       def arms = @arms ||= Arms.from(@options, recorded_arms)
 
       def environment
-        related = Config.sensitivity(root: project.root).related
+        related = Config.sensitivity(root: project.root, paths: @paths).related
         Prompt::Environment.current(project:, related:)
       end
 
@@ -407,7 +407,7 @@ module Lain
       # so an edit made mid-launch cannot give two phases two answers. The
       # first {#backend} read forces it, which in {#call} is ahead of the
       # record: an untrusted or broken file refuses before a session file exists.
-      def configured_middleware = @configured_middleware ||= @middleware_reader.call(root: project.root)
+      def configured_middleware = @configured_middleware ||= @middleware_reader.call(root: project.root, paths: @paths)
 
       # The collaborators the flags decide, built and thrown away. Split out so
       # the one refusal whose answer depends on WHERE the check ran has

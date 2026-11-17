@@ -199,7 +199,7 @@ module Lain
       #   revision lands in; nil opens (and closes) one per edit
       # @param homes [#call, nil] answers a slug with the home an edit reads and
       #   writes through; nil resolves the plain home
-      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:, paths:),
                      ignores: GitIgnores.new(root), journal: nil, homes: nil)
         @journal = journal
         @homes = homes || method(:home_for)

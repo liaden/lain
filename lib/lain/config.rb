@@ -29,11 +29,12 @@ module Lain
     @lock = Mutex.new
 
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Config]
     # @raise [Project::Trust::Untrusted] when the file's bytes are not trusted
     # @raise [Refusal] naming the file and line of whatever it got wrong
-    def self.load(root: Dir.pwd)
-      built = built(root)
+    def self.load(paths:, root: Dir.pwd)
+      built = built(root, paths:)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
           todos: built.todos, approval_timeout: built.approval_timeout, approval_silence: built.approval_silence,
           judge_timeout: built.judge_timeout, judge_memo: built.judge_memo, review: built.review, budget: built.budget,
@@ -49,63 +50,70 @@ module Lain
     # `spec/lain/project/root_defaults_spec.rb` is the guard.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Sensitivity::Rules] empty when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.sensitivity(root:) = built(root).sensitivity
+    def self.sensitivity(root:, paths:) = built(root, paths:).sensitivity
 
     # The programs this project has ruled out of every shell command, whatever
     # else the command says. `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Shell::Exclusions] empty -- restricting nothing -- when the file
     #   or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.shell_exclusions(root:) = built(root).shell
+    def self.shell_exclusions(root:, paths:) = built(root, paths:).shell
 
     # How long an unanswered parked call or epic gate waits before it denies.
     # `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Numeric] seconds, above 0; {Approval::Parked::Queue::DEFAULT_TIMEOUT} when unset
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.approval_timeout(root:) = built(root).approval_timeout
+    def self.approval_timeout(root:, paths:) = built(root, paths:).approval_timeout
 
     # The reasoning level a project asks its chats to send, when the model accepts it.
     # `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [String, nil] nil when the file or the key is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.think(root:) = built(root).think
+    def self.think(root:, paths:) = built(root, paths:).think
 
     # The model a project reviews documents with. `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Review] naming no model when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.review(root:) = built(root).review
+    def self.review(root:, paths:) = built(root, paths:).review
 
     # How many iterations an ask may run, by skill and role. `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [Budget::Table] the defaults, with any row the file's `budget` verb replaces
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.budget(root:) = built(root).budget
+    def self.budget(root:, paths:) = built(root, paths:).budget
 
     # What a project searches beyond the files git shows, and how much one
     # walk may cost. `root:` is REQUIRED, as {.sensitivity}'s is.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @return [SearchRules] empty when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.search(root:) = built(root).search
+    def self.search(root:, paths:) = built(root, paths:).search
 
     # The middleware the user's config.rb and then this project's ask to run in
     # each phase. The only reader of the user's file: it runs in every project,
@@ -118,7 +126,7 @@ module Lain
     # @raise [Project::Trust::Untrusted] as {.load}, for either file
     # @raise [Project::Trust::Unreadable] when either file's path is not a regular file
     # @raise [Refusal] as {.load}, for either file
-    def self.middleware(root:, paths: Paths.new) = user(paths).middleware + built(root, paths:).middleware
+    def self.middleware(root:, paths:) = user(paths).middleware + built(root, paths:).middleware
 
     # The keys the user's config.rb rebinds. Only that file may declare them.
     #
@@ -126,7 +134,7 @@ module Lain
     # @return [Keys] every key at its default when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] naming the user's file and line
-    def self.keys(paths: Paths.new) = user(paths).keys
+    def self.keys(paths:) = user(paths).keys
 
     # The styles the user's config.rb gives tokens. Only that file may declare them.
     #
@@ -134,7 +142,7 @@ module Lain
     # @return [Theme] every token at its default when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] naming the user's file and line
-    def self.theme(paths: Paths.new) = user(paths).theme
+    def self.theme(paths:) = user(paths).theme
 
     # How long a blocked or finished chat waits before it asks for the person. Only the user's config.rb may declare it.
     #
@@ -142,7 +150,7 @@ module Lain
     # @return [Attention] a 30 second delay when the file or the table is absent
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] naming the user's file and line
-    def self.attention(paths: Paths.new) = user(paths).attention
+    def self.attention(paths:) = user(paths).attention
 
     # The GitHub account and review-request filters: the environment, then the
     # project's file, then the user's, field by field. `root: nil` is a caller
@@ -154,7 +162,7 @@ module Lain
     # @return [Github] every field resolved, the account nil for gh's own
     # @raise [Project::Trust::Untrusted] as {.load}, for either file
     # @raise [Refusal] as {.load}, for either file
-    def self.github(root:, paths: Paths.new, env: ENV)
+    def self.github(root:, paths:, env: ENV)
       project = root ? built(root, paths:).github : Github.empty
       Github.resolve(project:, user: user(paths).github, env:)
     end
@@ -165,6 +173,7 @@ module Lain
     # harness that knows how loads long after this file does.
     #
     # @param root [String] a project root; `.lain/config.rb` is resolved under it
+    # @param paths [Paths] the state home the project's trust is kept in
     # @param framework [String, nil] a detected test framework. A caller that
     #   enforces the layout never passes one, so enforcement is opt-in: a
     #   detected preset imposes level roots the project never declared, and
@@ -174,7 +183,9 @@ module Lain
     # @return [TestLayout] {TestLayout::None} when neither says what the layout is
     # @raise [Project::Trust::Untrusted] as {.load}
     # @raise [Refusal] as {.load}
-    def self.test_layout(root:, framework: nil, vouched_by: nil) = built(root, vouched_by:).test_layout(framework:)
+    def self.test_layout(root:, paths:, framework: nil, vouched_by: nil)
+      built(root, paths:, vouched_by:).test_layout(framework:)
+    end
 
     # A catalog whose own file is absent reads nothing else, the posture
     # {DslCatalog.load} takes, so an untrusted sibling cannot refuse a project
@@ -182,7 +193,7 @@ module Lain
     #
     # A path that exists but is not a regular file refuses: reading it as
     # absent would drop the restricting tables in silence.
-    def self.built(root, paths: Paths.new, vouched_by: nil)
+    def self.built(root, paths:, vouched_by: nil)
       project_dir = ProjectDir.new(root:, paths:)
       path = project_dir.config
       return Builder.new(path).built unless File.exist?(path)

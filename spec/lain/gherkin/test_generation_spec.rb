@@ -15,7 +15,7 @@ RSpec.describe Lain::Gherkin::TestGeneration do
   let(:store) { Lain::Dag::Factory.store }
   let(:parent) { Lain::Dag::Factory.timeline(store:) }
   let(:child_context) { Lain::Context.new(model: "child-model", max_tokens: 256) }
-  let(:guard) { Lain::TestLayout::Guard.new(layout: Lain::Config.test_layout(root:), root:) }
+  let(:guard) { Lain::TestLayout::Guard.new(layout: Lain::Config.test_layout(root:, paths: Lain::Paths.new), root:) }
   let(:target) { "spec/unit/models/order_spec.rb" }
 
   # test_engineer's only-set (role/catalog.rb) -- the union it attenuates from

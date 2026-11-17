@@ -48,7 +48,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
     @board ||= Lain::CLI::Wiring::BoardBuild.for(
       chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
       model: "m", toolset: Lain::Toolset.new([]), project:, paths:,
-      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     ).bind_session(Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: @repo)))
   end
 
@@ -162,7 +162,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
   describe "with extends naming a related git repository" do
     before do
       seed(@other, { "OTHER.md" => "the other repository\n" })
-      write_config(@repo, "sensitivity related: [\"~/dev/other\"]\n")
+      write_config(@repo, "sensitivity related: [\"~/dev/other\"]\n", paths:)
     end
 
     it "works in a new worktree of it on its own lain/plan branch, and keeps both after the child ends" do

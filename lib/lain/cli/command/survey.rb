@@ -88,13 +88,14 @@ module Lain
         #   The corpus names its files from it because it is the directory the
         #   attached editor was started in; naming from the root breaks
         #   `/survey .` for every chat opened below the repository top.
-        def initialize(outbox:, ledger:, sensitivity:, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new)
+        # @param paths [Paths] the state home an earlier session of the chain is found under
+        def initialize(outbox:, ledger:, sensitivity:, paths:, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new)
           @outbox = outbox
           @cwd = cwd
           @bounds = bounds
           @sensitivity = sensitivity
           @projection = Lain::Survey::Projection.new(ledger:)
-          @round = ReviewRound.new(outbox:)
+          @round = ReviewRound.new(outbox:, paths:)
           freeze
         end
 

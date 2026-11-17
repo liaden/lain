@@ -477,17 +477,19 @@ module Lain
       # @param isolation [String, nil] the `--isolation` name; nil leases nothing
       # @param journal [#<<, nil] where lease telemetry lands; REQUIRED with an `isolation`
       # @param price_book [Lain::PriceBook] prices every arm's journal
+      # @param state [Lain::Paths] the state home every subject's trust is read under
       # @param spawn_options [Hash] forwarded verbatim to {SpawnSeam}
       # @return [String] the report; never printed here
       # @raise [Refusal] on an `isolation` with no journal
       # @raise [Fixture::Missing] when the suite path is not there
       # @raise [Altitude::MalformedTask, Error] on a suite it cannot fold
       def altitude_report(fixture_path:, backend:, seams:, grader:, sink: Sink::Null.new,
-                          isolation: nil, journal: nil, price_book: PriceBook.default, **spawn_options)
+                          isolation: nil, journal: nil, price_book: PriceBook.default, state: Paths.new,
+                          **spawn_options)
         WriteContainment.refuse!(spawn_options.fetch(:tools, Harness::TOOLS), isolation:)
         Altitude.new(fixture_path:, spawn_seam: SpawnSeam.new(backend:, **spawn_options), grader:, sink:,
                      arms: LiveArms.altitude(seams:, price_book:), journal: journal || Channel::Null.instance,
-                     **altitude_isolation(isolation, journal)).report
+                     paths: state, **altitude_isolation(isolation, journal)).report
       end
 
       # Record `runs` fresh live sessions of one task file (user prompts, one

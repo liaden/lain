@@ -120,7 +120,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # config never reaches.
   def step(provider, harness: rspec, since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1",
            subject: "app/models/order.rb", level: nil, name: nil, shell_out_factory: Lain::Shell::Out.public_method(:new))
-    layout = Lain::Config.test_layout(root: repo)
+    layout = Lain::Config.test_layout(root: repo, paths: Lain::Paths.new)
     described_class.new(renderer:, role_spawn: role_spawn(provider), layout:, harness:, shell_out_factory:,
                         test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:, root: repo))
                    .call(criteria, worker_env, subject:, since:, lane:, level:, name:)
@@ -176,7 +176,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
   # file inside an existing module reads as a split sibling of the module's test.
   describe "a new file inside an existing module, behind the board's layout guard" do
     let(:nested) { "spec/unit/models/order/hello_spec.rb" }
-    let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::Config.test_layout(root: repo), root: repo) }
+    let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::Config.test_layout(root: repo, paths: Lain::Paths.new), root: repo) }
     let(:journal) { [] }
     let(:greeting) do
       "require_relative \"../../../../app/models/order\"\n\nRSpec.describe Order do\n  " \
@@ -197,7 +197,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueTests, :seam do
     end
 
     def nested_step
-      described_class.new(renderer:, role_spawn: guarded_spawn, layout: Lain::Config.test_layout(root: repo),
+      described_class.new(renderer:, role_spawn: guarded_spawn, layout: Lain::Config.test_layout(root: repo, paths: Lain::Paths.new),
                           test_layout: run, harness: rspec)
                      .call(criteria, worker_env, subject: "app/models/order/hello.rb",
                                                  since: git(repo, "rev-parse", "HEAD"), lane: "issue.demo.a.1")

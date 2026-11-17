@@ -698,7 +698,7 @@ module Lain
       # @param epics [CLI::Epic] answers WHICH epic a bare invocation means.
       #   Asked rather than reimplemented: two spellings of "the sole epic in the
       #   home" would disagree without either of them raising.
-      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:, paths:),
                      input: nil, output: nil, asker: Prompt.on(input:, output:), journal: nil, role_spawn: nil,
                      brief: nil, spike_journal: Adjudication::Destination.new, policies: WholePipeline,
                      tool_guard: HomedGuard.new(root:), epics: Epic.new(root:, paths:, config:))
@@ -738,7 +738,8 @@ module Lain
       # @option options [String] :model the model flag band's model id
       # @return [EpicSubmit]
       def self.from_options(options, input:, output:, profile: RunProfile.from_options(options),
-                            root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+                            root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:,
+                                                                                                                paths:),
                             backend: -> { Backend.headless(options, profile:, root:) })
         spike_journal = Adjudication::Destination.new
         tool_guard = HomedGuard.new(root:)
@@ -1192,7 +1193,7 @@ module Lain
         private
 
         # What both roles attenuate FROM: the researcher reads and searches,
-        # the adjudicator only reads. {Toolset#only} refuses a role whose tools
+        # the adjudicator only reads. `Toolset#only` refuses a role whose tools
         # the union lacks, so it holds every one either names.
         def union
           Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::ListFiles.new, Lain::Tools::Glob.new,

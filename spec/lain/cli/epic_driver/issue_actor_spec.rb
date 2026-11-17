@@ -217,7 +217,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   end
 
   def red_step(renderer)
-    layout = Lain::Config.test_layout(root: repo)
+    layout = Lain::Config.test_layout(root: repo, paths: Lain::Paths.new)
     Lain::CLI::EpicDriver::IssueTests.new(renderer:, role_spawn: build.role_spawn, layout:, harness: failing,
                                           test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout:,
                                                                                                   root: repo))
@@ -463,6 +463,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
     def leased_stack(checkout)
       project = Lain::Project.new(root: repo, cwd: repo, kind: :project, detected_by: :flag)
+      trust_project(repo, paths:)
       board = Lain::CLI::Wiring::BoardBuild.for(chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING,
                                                 model: "m", toolset:, project:, paths:)
       Lain::CLI::ToolGuard.leased(chronicle, board.guard_inputs, Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:),

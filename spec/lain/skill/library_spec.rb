@@ -45,7 +45,8 @@ RSpec.describe Lain::Skill::Library do
       with_project do |root|
         write(File.join(root, ".lain", "skills", "where", "skill.md"), "# Where\n<%= epic_home %>\n")
         backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths: Lain::Paths.new)
-        expected = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths: Lain::Paths.new, root:)
+        expected = Lain::Epic::Home.container(config: Lain::Config.load(root:, paths: Lain::Paths.new),
+                                              paths: Lain::Paths.new, root:)
 
         expect(backend.library.renderer.render(:where)).to include(expected).and(satisfy { expected.start_with?("/") })
       end

@@ -11,7 +11,7 @@ RSpec.describe Lain::TestLayout::Guard do
   let(:layout_mini) { File.expand_path("../../fixtures/projects/layout_mini", __dir__) }
   let(:guard) { guard_over(layout_mini) }
 
-  def guard_over(root) = described_class.new(layout: Lain::Config.test_layout(root:), root:)
+  def guard_over(root) = described_class.new(layout: Lain::Config.test_layout(root:, paths: Lain::Paths.new), root:)
 
   describe "the file facts it resolves its root by" do
     it "resolves the root through the injected facts, with nothing on disk" do

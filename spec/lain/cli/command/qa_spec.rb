@@ -303,7 +303,7 @@ RSpec.describe Lain::CLI::Command::QA do
         ),
         snapshots: instance_double(Lain::Agent::SnapshotSlot),
         window: Lain::CLI::Backend::WindowBook::Served.new(model: "probe", window_tokens: 32_768),
-        gh_account: Lain::Forge::Gh::Account::None.new
+        gh_account: Lain::Forge::Gh::Account::None.new, paths: Lain::Paths.new
       )
     end
   end

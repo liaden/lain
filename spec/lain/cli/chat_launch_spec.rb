@@ -808,7 +808,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
         FileUtils.mkdir_p([cwd, File.join(root, ".git")])
         project = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
         rules = Lain::Sensitivity::Rules.new(denied: [], gated: [], exempt: [], related: ["/srv/related-app"])
-        allow(Lain::Config).to receive(:sensitivity).with(root:).and_return(rules)
+        allow(Lain::Config).to receive(:sensitivity).with(root:, paths: an_instance_of(Lain::Paths)).and_return(rules)
 
         backend = launch({ journal: false, provider: "ollama", model: nil, max_tokens: 16 },
                          project_factory: -> { project }).backend
@@ -1913,9 +1913,9 @@ RSpec.describe Lain::CLI::ChatLaunch, "reading configured middleware" do
   it "reads the config once into the backend the wiring runs on" do
     write_config(root, declaring_model_and_http)
     reads = []
-    reader = lambda do |root:|
+    reader = lambda do |root:, paths:|
       reads << root
-      Lain::Config.middleware(root:)
+      Lain::Config.middleware(root:, paths:)
     end
     wiring_factory = ->(**kwargs) { Lain::CLI::Wiring.new(**kwargs).tap { |wiring| allow(wiring).to receive(:run) } }
     chat = launch(middleware_reader: reader, wiring_factory:)

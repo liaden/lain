@@ -167,7 +167,7 @@ RSpec.describe Lain::Config::Middleware do
         write_config(root, "class Stamp < Lain::Middleware::Base; end\nmiddleware { tool Stamp }\n")
         digest = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:), paths: Lain::Paths.new).digest
 
-        expect(Lain::Config.middleware(root:).to_header).to eq("project" => digest)
+        expect(Lain::Config.middleware(root:, paths: Lain::Paths.new).to_header).to eq("project" => digest)
       end
     end
 
@@ -191,7 +191,7 @@ RSpec.describe Lain::Config::Middleware do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[curl]\n")
 
-        expect(Lain::Config.middleware(root:).to_header).to eq({})
+        expect(Lain::Config.middleware(root:, paths: Lain::Paths.new).to_header).to eq({})
       end
     end
   end

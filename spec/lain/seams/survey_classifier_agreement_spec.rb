@@ -62,7 +62,7 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
       @root = File.join(@tmp, "repo")
       @home = File.join(@tmp, "home")
       FileUtils.mkdir_p(@home)
-      write_config(@root, "sensitivity denied: %w[*.ledger]\n")
+      write_config(@root, "sensitivity denied: %w[*.ledger]\n", paths:)
       File.write(File.join(@root, "payroll.ledger"), "a roster of salaries\n")
       File.write(File.join(@root, "notes.md"), "# Notes\n\nOne line of prose.\n")
       example.run
@@ -92,7 +92,8 @@ RSpec.describe "a survey and the gate beside it, after the config changes mid-se
       role_spawn: instance_spy(Lain::Skill::RoleSpawn), chronicle: Lain::CLI::Chronicle::Null.new,
       status_feed: instance_double(Lain::StatusFeed), library: Lain::Skill::Library.load(root: @root),
       root: @root, cwd: @root, window: Lain::CLI::Backend::WindowBook::Served.new(model: "m", window_tokens: 32_768),
-      gh_account: Lain::Forge::Gh::Account::None.new, **board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
+      gh_account: Lain::Forge::Gh::Account::None.new, paths:,
+      **board.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
     )
   end
 

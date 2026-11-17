@@ -8,7 +8,7 @@ RSpec.describe Lain::Config do
   describe "absence is all defaults" do
     it "resolves epics_home to :xdg without raising" do
       Dir.mktmpdir do |root|
-        config = described_class.load(root:)
+        config = described_class.load(root:, paths: Lain::Paths.new)
 
         expect(config.epics_home).to eq(:xdg)
       end
@@ -16,13 +16,13 @@ RSpec.describe Lain::Config do
 
     it "is the same value .empty returns" do
       Dir.mktmpdir do |root|
-        expect(described_class.load(root:)).to eq(described_class.empty)
+        expect(described_class.load(root:, paths: Lain::Paths.new)).to eq(described_class.empty)
       end
     end
 
     it "gives the worktree lifecycle its ruled defaults" do
       Dir.mktmpdir do |root|
-        expect(described_class.load(root:).isolation.to_h)
+        expect(described_class.load(root:, paths: Lain::Paths.new).isolation.to_h)
           .to eq(retain_days: 7, rebase_retries: 1, diff_algorithm: "histogram", conflict_style: "zdiff3",
                  verifier: "command", verify: [], verify_timeout: 1800, verify_keep: ["target/"],
                  batch_cap: 8, rebuild_cap: 3, check: [], lint: [], lint_files: [], check_retries: 1)
@@ -40,14 +40,14 @@ RSpec.describe Lain::Config do
     end
 
     it "is TODOS.md without the verb" do
-      Dir.mktmpdir { |root| expect(described_class.load(root:).todos.file).to eq("TODOS.md") }
+      Dir.mktmpdir { |root| expect(described_class.load(root:, paths: Lain::Paths.new).todos.file).to eq("TODOS.md") }
     end
 
     it "is the project's file name" do
       Dir.mktmpdir do |root|
         write_config(root, "todos file: \"CHORES.md\"\n")
 
-        expect(described_class.load(root:).todos.file).to eq("CHORES.md")
+        expect(described_class.load(root:, paths: Lain::Paths.new).todos.file).to eq("CHORES.md")
       end
     end
   end
@@ -71,7 +71,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval silence: :deny\n")
 
-        expect([described_class.load(root:).approval_silence, described_class.empty.approval_silence])
+        expect([described_class.load(root:, paths: Lain::Paths.new).approval_silence,
+                described_class.empty.approval_silence])
           .to eq(%i[deny hold])
       end
     end
@@ -80,7 +81,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "\napproval silence: :approve\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /config\.rb:2.*silence must be :hold or :deny, got :approve/)
       end
     end
@@ -102,7 +103,7 @@ RSpec.describe Lain::Config do
     it "reads the relay's address and the ntfy topic" do
       Dir.mktmpdir do |root|
         write_config(root, "remote relay: \"100.64.0.1:7820\", ntfy: \"http://100.101.102.103:8090/lain-x7\"\n")
-        config = described_class.load(root:)
+        config = described_class.load(root:, paths: Lain::Paths.new)
 
         expect([config.remote_relay, config.remote_ntfy])
           .to eq(["100.64.0.1:7820", "http://100.101.102.103:8090/lain-x7"])
@@ -113,7 +114,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "\nremote relay: \"phone.local\"\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /config\.rb:2.*relay must be an IP address and a port/)
       end
     end
@@ -122,7 +123,10 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "remote relay: \"100.64.0.1:70000\"\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
+        expect do
+          described_class.load(root:,
+                               paths: Lain::Paths.new)
+        end.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
       end
     end
 
@@ -130,7 +134,10 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "remote relay: \"phone.local:7820\"\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
+        expect do
+          described_class.load(root:,
+                               paths: Lain::Paths.new)
+        end.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
       end
     end
 
@@ -138,7 +145,7 @@ RSpec.describe Lain::Config do
       refusals = ["0.0.0.0:7820", "[::]:7820"].map do |relay|
         Dir.mktmpdir do |root|
           write_config(root, "remote relay: #{relay.inspect}\n")
-          described_class.load(root:)
+          described_class.load(root:, paths: Lain::Paths.new)
         rescue Lain::Config::Refusal => e
           e.message
         end
@@ -151,7 +158,10 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "remote ntfy: \"http://100.101.102.103:8090/\"\n")
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /ntfy must be an http or https/)
+        expect do
+          described_class.load(root:,
+                               paths: Lain::Paths.new)
+        end.to raise_error(Lain::Config::Refusal, /ntfy must be an http or https/)
       end
     end
 
@@ -159,7 +169,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "remote ntfy: \"ftp://host/topic\"\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /ntfy must be an http or https URL/)
       end
     end
@@ -178,7 +188,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval judge_timeout: 90\n")
 
-        expect([described_class.load(root:).judge_timeout, described_class.empty.judge_timeout]).to eq([90, 30])
+        expect([described_class.load(root:, paths: Lain::Paths.new).judge_timeout,
+                described_class.empty.judge_timeout]).to eq([90, 30])
       end
     end
 
@@ -200,7 +211,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval judge_memo: false\n")
 
-        expect([described_class.load(root:).judge_memo, described_class.empty.judge_memo]).to eq([false, true])
+        expect([described_class.load(root:, paths: Lain::Paths.new).judge_memo,
+                described_class.empty.judge_memo]).to eq([false, true])
       end
     end
 
@@ -218,7 +230,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "env pass: %w[DATABASE_URL]\n")
 
-        expect(described_class.load(root:).env_pass).to eq(%w[DATABASE_URL])
+        expect(described_class.load(root:, paths: Lain::Paths.new).env_pass).to eq(%w[DATABASE_URL])
       end
     end
 
@@ -237,7 +249,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "isolation retain_days: 3, rebase_retries: 0\n")
 
-        expect(described_class.load(root:).isolation.to_h)
+        expect(described_class.load(root:, paths: Lain::Paths.new).isolation.to_h)
           .to include(retain_days: 3, rebase_retries: 0)
       end
     end
@@ -246,7 +258,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "\nisolation retain_days: -1\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}:2.*retain_days/)
       end
     end
@@ -265,7 +277,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "isolation retian_days: 7\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*retian_days/)
       end
     end
@@ -273,14 +285,14 @@ RSpec.describe Lain::Config do
 
   describe "the think level" do
     it "is nil when no config declares one" do
-      Dir.mktmpdir { |root| expect(described_class.think(root:)).to be_nil }
+      Dir.mktmpdir { |root| expect(described_class.think(root:, paths: Lain::Paths.new)).to be_nil }
     end
 
     it "reads the level the config names" do
       Dir.mktmpdir do |root|
         write_config(root, "think \"low\"\n")
 
-        expect(described_class.think(root:)).to eq("low")
+        expect(described_class.think(root:, paths: Lain::Paths.new)).to eq("low")
       end
     end
   end
@@ -295,14 +307,16 @@ RSpec.describe Lain::Config do
     end
 
     it "is the author's when no config declares one" do
-      Dir.mktmpdir { |root| expect(described_class.review(root:).choose(author: "glm-5.3").model).to eq("glm-5.3") }
+      Dir.mktmpdir { |root| expect(described_class.review(root:, paths: Lain::Paths.new).choose(author: "glm-5.3").model).to eq("glm-5.3") }
     end
 
     it "reads the model the config names" do
       Dir.mktmpdir do |root|
         write_config(root, "review model: \"claude-sonnet-5-5\"\n")
 
-        expect(described_class.load(root:).review.choose(author: "glm-5.3").model).to eq("claude-sonnet-5-5")
+        review = described_class.load(root:, paths: Lain::Paths.new).review
+
+        expect(review.choose(author: "glm-5.3").model).to eq("claude-sonnet-5-5")
       end
     end
   end
@@ -310,7 +324,7 @@ RSpec.describe Lain::Config do
   describe "the approval timeout" do
     it "is 300 seconds when no config declares one" do
       Dir.mktmpdir do |root|
-        expect(described_class.approval_timeout(root:)).to eq(300)
+        expect(described_class.approval_timeout(root:, paths: Lain::Paths.new)).to eq(300)
       end
     end
 
@@ -318,7 +332,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval do\n  deny_tool \"web_fetch\"\nend\n")
 
-        expect(described_class.approval_timeout(root:)).to eq(300)
+        expect(described_class.approval_timeout(root:, paths: Lain::Paths.new)).to eq(300)
       end
     end
 
@@ -326,7 +340,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval timeout: 900\n")
 
-        expect(described_class.approval_timeout(root:)).to eq(900)
+        expect(described_class.approval_timeout(root:, paths: Lain::Paths.new)).to eq(900)
       end
     end
 
@@ -334,7 +348,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval timeout: 900 do\n  deny_tool \"web_fetch\"\nend\n")
 
-        expect([described_class.approval_timeout(root:), described_class.load(root:).approval.deny_tools])
+        expect([described_class.approval_timeout(root:, paths: Lain::Paths.new), described_class.load(root:, paths: Lain::Paths.new).approval.deny_tools])
           .to eq([900, ["web_fetch"]])
       end
     end
@@ -343,7 +357,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval timeout: 900\n")
 
-        expect([described_class.load(root:).approval_timeout,
+        expect([described_class.load(root:, paths: Lain::Paths.new).approval_timeout,
                 described_class.new(epics: Lain::Config::Epics.new(home: :xdg), approval_timeout: 7).approval_timeout,
                 described_class.empty.approval_timeout]).to eq([900, 7, 300])
       end
@@ -353,7 +367,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "\napproval timeout: 0\n")
 
-        expect { described_class.approval_timeout(root:) }
+        expect { described_class.approval_timeout(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /config\.rb:2.*timeout.*must be above 0/)
       end
     end
@@ -362,7 +376,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval timeout: \"soon\"\n")
 
-        expect { described_class.approval_timeout(root:) }
+        expect { described_class.approval_timeout(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /timeout.*must be above 0/)
       end
     end
@@ -371,7 +385,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "approval timeout: Float::INFINITY\n")
 
-        expect { described_class.approval_timeout(root:) }
+        expect { described_class.approval_timeout(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /timeout.*must be above 0/)
       end
     end
@@ -381,7 +395,7 @@ RSpec.describe Lain::Config do
         FileUtils.mkdir_p(File.join(root, ".lain"))
         File.write(config_path(root), "# #{SecureRandom.hex}\napproval timeout: 900\n")
 
-        expect { described_class.approval_timeout(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.approval_timeout(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
   end
@@ -389,7 +403,7 @@ RSpec.describe Lain::Config do
   describe "the search table" do
     it "is empty when the file or the table is absent" do
       Dir.mktmpdir do |root|
-        expect(described_class.search(root:)).to eq(Lain::SearchRules.empty)
+        expect(described_class.search(root:, paths: Lain::Paths.new)).to eq(Lain::SearchRules.empty)
       end
     end
 
@@ -397,7 +411,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "search include: [\"notes/**/*.md\"], max_entries: 5, max_bytes: 10\n")
 
-        rules = described_class.search(root:)
+        rules = described_class.search(root:, paths: Lain::Paths.new)
 
         expect([rules.include, rules.limit.entries, rules.limit.bytes]).to eq([["notes/**/*.md"], 5, 10])
       end
@@ -407,7 +421,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "\nsearch incldue: [\"x\"]\n")
 
-        expect { described_class.search(root:) }
+        expect { described_class.search(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /config\.rb:2.*incldue.*include, max_entries, max_bytes/)
       end
     end
@@ -416,7 +430,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "search include: [\"../other/**\"]\n")
 
-        expect { described_class.search(root:) }
+        expect { described_class.search(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, %r{\.\./other/\*\*.*stay under the project root})
       end
     end
@@ -426,7 +440,7 @@ RSpec.describe Lain::Config do
         FileUtils.mkdir_p(File.join(root, ".lain"))
         File.write(config_path(root), "search max_entries: 5\n")
 
-        expect { described_class.search(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.search(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
   end
@@ -436,7 +450,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\nshell exclude: [\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}:\d+/)
       end
     end
@@ -445,7 +459,9 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :nowhere\nshell exclude: %w[curl]\n")
 
-        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Config::Refusal, /home/)
+        expect do
+          described_class.shell_exclusions(root:, paths: Lain::Paths.new)
+        end.to raise_error(Lain::Config::Refusal, /home/)
       end
     end
   end
@@ -459,7 +475,9 @@ RSpec.describe Lain::Config do
         File.write(config_path(root), "# #{SecureRandom.hex}\nshell exclude: %w[curl]\n")
         allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
-        expect { described_class.load(root:) }.to raise_error(Lain::Project::Trust::Untrusted, /lain trust/)
+        expect do
+          described_class.load(root:, paths: Lain::Paths.new)
+        end.to raise_error(Lain::Project::Trust::Untrusted, /lain trust/)
         expect(Lain::Config::Builder).not_to have_received(:evaluate)
       end
     end
@@ -469,7 +487,7 @@ RSpec.describe Lain::Config do
         write_config(root, "shell exclude: %w[curl]\n")
         File.write(File.join(root, ".lain", "services.rb"), "# #{SecureRandom.hex}\n")
 
-        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.shell_exclusions(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
   end
@@ -484,7 +502,7 @@ RSpec.describe Lain::Config do
           original.call(**kwargs).tap { File.write(config_path(root), "shell exclude: %w[wget]\n") }
         end
 
-        exclusions = described_class.shell_exclusions(root:)
+        exclusions = described_class.shell_exclusions(root:, paths: Lain::Paths.new)
 
         expect([exclusions.permits?("curl"), exclusions.permits?("wget")]).to eq([false, true])
       end
@@ -498,8 +516,8 @@ RSpec.describe Lain::Config do
           write_config(two, body)
           allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
-          described_class.test_layout(root: one)
-          described_class.test_layout(root: two)
+          described_class.test_layout(root: one, paths: Lain::Paths.new)
+          described_class.test_layout(root: two, paths: Lain::Paths.new)
 
           expect(Lain::Config::Builder).to have_received(:evaluate).twice
         end
@@ -512,7 +530,7 @@ RSpec.describe Lain::Config do
         allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
         refusals = %i[load sensitivity shell_exclusions test_layout].map do |reader|
-          described_class.public_send(reader, root:)
+          described_class.public_send(reader, root:, paths: Lain::Paths.new)
         rescue Lain::Config::Refusal => e
           e.message
         end
@@ -525,11 +543,11 @@ RSpec.describe Lain::Config do
     it "refuses a file already evaluated once its trust mark is gone" do
       Dir.mktmpdir do |root|
         write_config(root, "#{unique}shell exclude: %w[curl]\n")
-        described_class.shell_exclusions(root:)
+        described_class.shell_exclusions(root:, paths: Lain::Paths.new)
         trust = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:))
         File.delete(Lain::Project::Trust::Record.new.path_for(trust.digest))
 
-        expect { described_class.shell_exclusions(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.shell_exclusions(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
 
@@ -538,13 +556,15 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "#{unique}raise \"flagged\" if ENV[\"LAIN_CONFIG_SPEC_FLAG\"]\n")
         with_env("LAIN_CONFIG_SPEC_FLAG" => "1") do
-          expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /flagged/)
+          expect do
+            described_class.load(root:, paths: Lain::Paths.new)
+          end.to raise_error(Lain::Config::Refusal, /flagged/)
         end
-        expect { described_class.load(root:) }.to raise_error(Lain::Config::Refusal, /flagged/)
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Config::Refusal, /flagged/)
 
         described_class.forget!
 
-        expect(described_class.load(root:)).to be_a(described_class)
+        expect(described_class.load(root:, paths: Lain::Paths.new)).to be_a(described_class)
       end
     end
 
@@ -554,7 +574,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         FileUtils.mkdir_p(config_path(root))
 
-        expect { described_class.shell_exclusions(root:) }
+        expect { described_class.shell_exclusions(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Project::Trust::Unreadable, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -564,10 +584,10 @@ RSpec.describe Lain::Config do
         write_config(root, "shell exclude: %w[curl]\ntests preset: :rspec\n")
         allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
-        described_class.load(root:)
-        described_class.sensitivity(root:)
-        described_class.shell_exclusions(root:)
-        described_class.test_layout(root:)
+        described_class.load(root:, paths: Lain::Paths.new)
+        described_class.sensitivity(root:, paths: Lain::Paths.new)
+        described_class.shell_exclusions(root:, paths: Lain::Paths.new)
+        described_class.test_layout(root:, paths: Lain::Paths.new)
 
         expect(Lain::Config::Builder).to have_received(:evaluate).once
       end
@@ -576,10 +596,10 @@ RSpec.describe Lain::Config do
     it "evaluates an edited file afresh once its new bytes are trusted" do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[curl]\n")
-        described_class.shell_exclusions(root:)
+        described_class.shell_exclusions(root:, paths: Lain::Paths.new)
         write_config(root, "shell exclude: %w[wget]\n")
 
-        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(true)
+        expect(described_class.shell_exclusions(root:, paths: Lain::Paths.new).permits?("curl")).to be(true)
       end
     end
   end
@@ -589,7 +609,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[curl]\n")
 
-        expect(described_class.load(root:).epics_home).to eq(:xdg)
+        expect(described_class.load(root:, paths: Lain::Paths.new).epics_home).to eq(:xdg)
       end
     end
   end
@@ -658,7 +678,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "sensitivity denied: %w[*.secret], gated: %w[*.private], exempt: %w[.gitconfig]\n")
 
-        rules = described_class.sensitivity(root:)
+        rules = described_class.sensitivity(root:, paths: Lain::Paths.new)
 
         expect([rules.denied.size, rules.gated.size, rules.exempt.size]).to eq([1, 1, 1])
       end
@@ -671,13 +691,13 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        expect(described_class.sensitivity(root:)).to eq(Lain::Sensitivity::Rules.empty)
+        expect(described_class.sensitivity(root:, paths: Lain::Paths.new)).to eq(Lain::Sensitivity::Rules.empty)
       end
     end
 
     it "answers empty rules for a root with no config file at all" do
       Dir.mktmpdir do |root|
-        expect(described_class.sensitivity(root:)).to eq(Lain::Sensitivity::Rules.empty)
+        expect(described_class.sensitivity(root:, paths: Lain::Paths.new)).to eq(Lain::Sensitivity::Rules.empty)
       end
     end
 
@@ -685,7 +705,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "sensitivity denied: \"*.secret\"\n")
 
-        expect { described_class.sensitivity(root:) }
+        expect { described_class.sensitivity(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -694,7 +714,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "sensitivity denied: %w[config/secrets/prod.key]\n")
 
-        expect { described_class.sensitivity(root:) }
+        expect { described_class.sensitivity(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -707,7 +727,7 @@ RSpec.describe Lain::Config do
 
     it "permits every program for a root with no config file at all" do
       Dir.mktmpdir do |root|
-        expect(described_class.shell_exclusions(root:).permits?("curl")).to be(true)
+        expect(described_class.shell_exclusions(root:, paths: Lain::Paths.new).permits?("curl")).to be(true)
       end
     end
 
@@ -715,7 +735,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        expect(described_class.shell_exclusions(root:)).to eq(Lain::Shell::Exclusions.empty)
+        expect(described_class.shell_exclusions(root:, paths: Lain::Paths.new)).to eq(Lain::Shell::Exclusions.empty)
       end
     end
 
@@ -723,7 +743,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[curl wget]\n")
 
-        exclusions = described_class.shell_exclusions(root:)
+        exclusions = described_class.shell_exclusions(root:, paths: Lain::Paths.new)
 
         expect([exclusions.permits?("/usr/bin/curl"), exclusions.permits?("cat")]).to eq([false, true])
       end
@@ -735,7 +755,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[*]\n")
 
-        expect(described_class.shell_exclusions(root:).permits?("cat")).to be(false)
+        expect(described_class.shell_exclusions(root:, paths: Lain::Paths.new).permits?("cat")).to be(false)
       end
     end
 
@@ -743,7 +763,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "shell excluded: %w[curl]\n")
 
-        expect { described_class.shell_exclusions(root:) }
+        expect { described_class.shell_exclusions(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -752,7 +772,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "shell exclude: %w[/usr/bin/curl]\n")
 
-        expect { described_class.shell_exclusions(root:) }
+        expect { described_class.shell_exclusions(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}/)
       end
     end
@@ -765,7 +785,7 @@ RSpec.describe Lain::Config do
 
     it "is TestLayout::None for a root with no config file and no detected framework" do
       Dir.mktmpdir do |root|
-        expect(described_class.test_layout(root:)).to be(Lain::TestLayout::None)
+        expect(described_class.test_layout(root:, paths: Lain::Paths.new)).to be(Lain::TestLayout::None)
       end
     end
 
@@ -773,7 +793,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        expect(described_class.test_layout(root:, framework: "rspec").preset.name).to eq("rspec")
+        expect(described_class.test_layout(root:, framework: "rspec",
+                                           paths: Lain::Paths.new).preset.name).to eq("rspec")
       end
     end
 
@@ -781,7 +802,8 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "tests preset: :rspec, source_roots: %w[app]\n")
 
-        expect(described_class.test_layout(root:).mapping.test_path("app/models/order.rb", level: "unit"))
+        expect(described_class.test_layout(root:, paths: Lain::Paths.new).mapping.test_path("app/models/order.rb",
+                                                                                            level: "unit"))
           .to eq("spec/unit/models/order_spec.rb")
       end
     end
@@ -796,11 +818,12 @@ RSpec.describe Lain::Config do
         File.write(config_path(copy), body)
         voucher = Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: original))
 
-        expect { described_class.test_layout(root: copy) }.to raise_error(Lain::Project::Trust::Untrusted)
-        expect(described_class.test_layout(root: copy, vouched_by: voucher).preset.name).to eq("rspec")
+        expect { described_class.test_layout(root: copy, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect(described_class.test_layout(root: copy, vouched_by: voucher,
+                                           paths: Lain::Paths.new).preset.name).to eq("rspec")
 
         File.write(config_path(copy), "#{body}# edited\n")
-        expect { described_class.test_layout(root: copy, vouched_by: voucher) }
+        expect { described_class.test_layout(root: copy, vouched_by: voucher, paths: Lain::Paths.new) }
           .to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
@@ -809,7 +832,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "tests preset: :cargo, timeout: 1800\n")
 
-        expect(described_class.test_layout(root:).timeout).to eq(1800)
+        expect(described_class.test_layout(root:, paths: Lain::Paths.new).timeout).to eq(1800)
       end
     end
 
@@ -817,7 +840,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "tests preset: :cargo, timeout: 0\n")
 
-        expect { described_class.test_layout(root:) }
+        expect { described_class.test_layout(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /tests.*timeout/m)
       end
     end
@@ -826,7 +849,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "tests prest: :rspec\n")
 
-        expect { described_class.test_layout(root:) }
+        expect { described_class.test_layout(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /#{Regexp.escape(config_path(root))}.*prest/)
       end
     end
@@ -843,7 +866,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "#{stamp}middleware do\n  tool Stamp\n  model { |env, &down| down.call(env) }\nend\n")
 
-        middleware = described_class.middleware(root:)
+        middleware = described_class.middleware(root:, paths: Lain::Paths.new)
 
         expect([middleware.members(:tool).size, middleware.members(:model).map(&:class)])
           .to eq([1, [Lain::Middleware::Inline]])
@@ -854,14 +877,14 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "#{stamp}middleware { modle Stamp }\n")
 
-        expect { described_class.middleware(root:) }
+        expect { described_class.middleware(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, %r{\.lain/config\.rb:2: .*model, tool, turn, repl, http})
       end
     end
 
     it "answers the empty value for a root with no config file" do
       Dir.mktmpdir do |root|
-        expect(described_class.middleware(root:).members(:tool)).to be_empty
+        expect(described_class.middleware(root:, paths: Lain::Paths.new).members(:tool)).to be_empty
       end
     end
 
@@ -870,7 +893,7 @@ RSpec.describe Lain::Config do
         FileUtils.mkdir_p(File.join(root, ".lain"))
         File.write(config_path(root), "# #{SecureRandom.hex}\nmiddleware { }\n")
 
-        expect { described_class.middleware(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.middleware(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
 
@@ -879,8 +902,8 @@ RSpec.describe Lain::Config do
         write_config(root, "#{stamp}middleware { tool Stamp }\nshell exclude: %w[curl]\n")
         allow(Lain::Config::Builder).to receive(:evaluate).and_call_original
 
-        described_class.middleware(root:)
-        described_class.shell_exclusions(root:)
+        described_class.middleware(root:, paths: Lain::Paths.new)
+        described_class.shell_exclusions(root:, paths: Lain::Paths.new)
 
         expect(Lain::Config::Builder).to have_received(:evaluate).once
       end
@@ -1102,10 +1125,10 @@ RSpec.describe Lain::Config do
         write_user("# #{SecureRandom.hex}\nmiddleware { }\n", trusted: false)
         write_config(root, "shell exclude: %w[curl]\nisolation retain_days: 3\n")
 
-        expect([described_class.shell_exclusions(root:).permits?("curl"),
-                described_class.load(root:).isolation.retain_days])
+        expect([described_class.shell_exclusions(root:, paths: Lain::Paths.new).permits?("curl"),
+                described_class.load(root:, paths: Lain::Paths.new).isolation.retain_days])
           .to eq([false, 3])
-        expect { described_class.middleware(root:) }.to raise_error(Lain::Project::Trust::Untrusted)
+        expect { described_class.middleware(root:, paths: Lain::Paths.new) }.to raise_error(Lain::Project::Trust::Untrusted)
       end
     end
   end
@@ -1127,7 +1150,7 @@ RSpec.describe Lain::Config do
         write_config(main, "isolation retain_days: 3\n")
         FileUtils.mkdir_p(File.join(lease, ".lain"))
 
-        expect(described_class.load(root: lease).isolation.retain_days).to eq(3)
+        expect(described_class.load(root: lease, paths: Lain::Paths.new).isolation.retain_days).to eq(3)
       end
     end
 
@@ -1137,8 +1160,68 @@ RSpec.describe Lain::Config do
         write_config(main, "isolation retain_days: 3\n")
         write_config(lease, "isolation retain_days: 5\n")
 
-        expect(described_class.load(root: lease).isolation.retain_days).to eq(5)
+        expect(described_class.load(root: lease, paths: Lain::Paths.new).isolation.retain_days).to eq(5)
       end
+    end
+  end
+
+  describe "the injected Paths" do
+    around do |example|
+      Dir.mktmpdir("lain-injected-paths") do |tmp|
+        @tmp = tmp
+        @elsewhere = File.join(tmp, "elsewhere").tap { |dir| FileUtils.mkdir_p(dir) }
+        with_env("HOME" => @elsewhere, "XDG_CONFIG_HOME" => File.join(@elsewhere, "config"),
+                 "XDG_STATE_HOME" => File.join(@elsewhere, "state")) { example.run }
+      end
+    end
+
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+    let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+    let(:body) do
+      <<~RUBY
+        sensitivity denied: %w[*.secret]
+        shell exclude: %w[curl]
+        approval timeout: 900
+        think "low"
+        review model: "claude-sonnet-5-5"
+        budget iterations: { default: 7 }
+        search include: ["notes/**/*.md"]
+        tests preset: :rspec
+        github account: "injected"
+      RUBY
+    end
+
+    before { write_config(root, body, paths:) }
+
+    {
+      sensitivity: [->(config, root, paths) { config.sensitivity(root:, paths:).denied.size }, 1],
+      shell_exclusions: [->(config, root, paths) { config.shell_exclusions(root:, paths:).patterns }, ["curl"]],
+      approval_timeout: [->(config, root, paths) { config.approval_timeout(root:, paths:) }, 900],
+      think: [->(config, root, paths) { config.think(root:, paths:) }, "low"],
+      review: [lambda { |config, root, paths|
+        config.review(root:, paths:).choose(author: "x").model
+      }, "claude-sonnet-5-5"],
+      budget: [->(config, root, paths) { config.budget(root:, paths:).iterations }, 7],
+      search: [->(config, root, paths) { config.search(root:, paths:).include }, ["notes/**/*.md"]],
+      test_layout: [->(config, root, paths) { config.test_layout(root:, paths:).preset.name }, "rspec"],
+      load: [->(config, root, paths) { config.load(root:, paths:).approval_timeout }, 900],
+      github: [->(config, root, paths) { config.github(root:, paths:, env: {}).account }, "injected"]
+    }.each do |reader, (read, value)|
+      it "reads #{reader} from a trusted project config under the injected Paths, not the environment's" do
+        expect(read.call(described_class, root, paths)).to eq(value)
+      end
+    end
+  end
+
+  describe "the readers' signatures" do
+    it "require paths: on every public reader, so none builds a default from the environment" do
+      readers = described_class.singleton_class.public_instance_methods(false) - %i[empty forget!]
+      unrequired = readers.reject { |reader| described_class.method(reader).parameters.include?(%i[keyreq paths]) }
+
+      expect([readers.size > 10, unrequired]).to eq([true, []])
     end
   end
 end

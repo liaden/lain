@@ -141,7 +141,7 @@ RSpec.describe Lain::Config do
           end
         RUBY
 
-        config = described_class.load(root:)
+        config = described_class.load(root:, paths: Lain::Paths.new)
 
         expect(config.gate_policy_for("research")).to eq("hands_off")
         expect(config.gate_policy_for("epic_plan")).to eq("deferred")
@@ -152,7 +152,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { research: :hands_off }\n")
 
-        expect(described_class.load(root:).gate_policy_for("issue_plan")).to eq("interactive")
+        expect(described_class.load(root:, paths: Lain::Paths.new).gate_policy_for("issue_plan")).to eq("interactive")
       end
     end
 
@@ -160,7 +160,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        policies = Lain::Epic::STAGES.map { |stage| described_class.load(root:).gate_policy_for(stage) }
+        policies = Lain::Epic::STAGES.map { |stage| described_class.load(root:, paths: Lain::Paths.new).gate_policy_for(stage) }
 
         expect(policies).to all(eq("interactive"))
       end
@@ -168,7 +168,7 @@ RSpec.describe Lain::Config do
 
     it "is interactive everywhere with no config file at all" do
       Dir.mktmpdir do |root|
-        expect(described_class.load(root:).gate_policy_for("research")).to eq("interactive")
+        expect(described_class.load(root:, paths: Lain::Paths.new).gate_policy_for("research")).to eq("interactive")
       end
     end
 
@@ -180,7 +180,7 @@ RSpec.describe Lain::Config do
           end
         RUBY
 
-        config = described_class.load(root:)
+        config = described_class.load(root:, paths: Lain::Paths.new)
 
         expect(config.epics_home).to eq(:repo)
         expect(config.gate_policy_for("research")).to eq("hands_off")
@@ -191,7 +191,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { reserch: :deferred }\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /reserch/)
       end
     end
@@ -200,7 +200,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { reserch: :deferred }\n")
 
-        expect { described_class.load(root:) }.to raise_error(/research/)
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error(/research/)
       end
     end
 
@@ -208,7 +208,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { zzz: :deferred, aaa: :deferred }\n")
 
-        expect { described_class.load(root:) }.to raise_error do |error|
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error do |error|
           expect(error.key).to contain_exactly("zzz", "aaa")
         end
       end
@@ -218,7 +218,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { research: :yolo }\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /yolo/) do |error|
             expect(error.message).to include("hands_off")
             expect(error.message).to include("deferred")
@@ -230,7 +230,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { research: 3 }\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /names unknown gate policies 3/)
       end
     end
@@ -239,7 +239,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: \"deferred\"\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /must be a table/)
       end
     end
@@ -248,7 +248,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { reserch: :deferred }\n")
 
-        expect { described_class.load(root:) }.to raise_error do |error|
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error do |error|
           expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.key).to eq(["reserch"])
         end
@@ -261,7 +261,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { reserch: :deferred }\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}:1: `gate` has no stages \"reserch\"; " \
                           "the pipeline is research -> epic_plan -> issue_plan -> implementation")
@@ -276,7 +276,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics gates: { reserch: :deferred }\n")
 
-        loaded = refusal_from { described_class.load(root:) }
+        loaded = refusal_from { described_class.load(root:, paths: Lain::Paths.new) }
         hand_built = refusal_from { Lain::Config::Epics::Gates.new(table: { "reserch" => "deferred" }) }
 
         expect([loaded.class, loaded.message])

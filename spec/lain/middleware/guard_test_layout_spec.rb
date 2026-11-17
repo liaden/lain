@@ -9,7 +9,7 @@ require "tmpdir"
 # copy of the `layout_mini` fixture, which declares the rspec layout over app/.
 RSpec.describe Lain::Middleware::GuardTestLayout do
   let(:journal) { [] }
-  let(:layout) { Lain::Config.test_layout(root:) }
+  let(:layout) { Lain::Config.test_layout(root:, paths: Lain::Paths.new) }
   let(:run) { Lain::Middleware::GuardTestLayout::Run.new(layout:, root:) }
   let(:guard) { described_class.new(run:, journal:) }
 

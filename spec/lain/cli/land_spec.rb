@@ -243,7 +243,7 @@ RSpec.describe Lain::CLI::Land, :seam do
 
   describe "#drain" do
     it "drains the named project's queue through the production drainer" do
-      write_config(@repo, "isolation verify: #{%w[sh -c true].inspect}\n")
+      write_config(@repo, "isolation verify: #{%w[sh -c true].inspect}\n", paths:)
       land.enqueue(branch: "main")
       entry_id = spool.pending.sole.id
 

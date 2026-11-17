@@ -21,7 +21,7 @@ RSpec.describe Lain::Grader::ThreeArm do
     end
   end
 
-  def level_in(checkout) = Lain::Config.test_layout(root: checkout).mapping.level("unit")
+  def level_in(checkout) = Lain::Config.test_layout(root: checkout, paths: Lain::Paths.new).mapping.level("unit")
 
   def fix(checkout)
     path = File.join(checkout, "lib/order.rb")

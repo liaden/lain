@@ -123,7 +123,7 @@ RSpec.describe Lain::Epic::Gate do
 
     Dir.mktmpdir do |root|
       write_config(root, source)
-      Lain::Approval::Silence.from(Lain::Config.load(root:))
+      Lain::Approval::Silence.from(Lain::Config.load(root:, paths: Lain::Paths.new))
     end
   end
 

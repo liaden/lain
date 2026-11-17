@@ -68,7 +68,7 @@ module Lain
         # @return [Switchboard]
         def for(chronicle:, options:, model:, toolset:, project:, judge:, paths: Paths.new,
                 verdict: Lain::Shell::Verdict.new, middleware: Config::Middleware.empty,
-                config: Config.load(root: project.root), display: Channel::Null.instance,
+                config: Config.load(root: project.root, paths:), display: Channel::Null.instance,
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
                 child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None,
                 masks: Lain::Approval::Judgement::Unmasked, containment: Lain::Confine::Sandbox::Containment::NONE,
@@ -86,8 +86,8 @@ module Lain
                           approving: approving_under(arms, masks, child_env),
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
                           classifiers: factory, middleware:,
-                          test_layout: test_layout(project:, file_facts: sensitivity.file_facts),
-                          approval_timeout: Config.approval_timeout(root: project.root),
+                          test_layout: test_layout(project:, paths:, file_facts: sensitivity.file_facts),
+                          approval_timeout: Config.approval_timeout(root: project.root, paths:),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
                           request:, secrets: secrets(project:, sensitivity:, child_env:), containment:,
                           denied_tools: config.approval.deny_tools, stops:, masks:, memo: judge_memo(config))
@@ -239,11 +239,12 @@ module Lain
         # a child with no HOME a home it does not have.
         #
         # @param project [Lain::Project]
+        # @param paths [Paths] the state home the project's trust is read under
         # @param home [String, nil] the HOME the session's bash children run with
         # @return [Lain::Shell::Verdict]
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
-        def shell_verdict(project:, home: Lain::WorkerEnv.default.env["HOME"])
-          Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root), home:)
+        def shell_verdict(project:, paths:, home: Lain::WorkerEnv.default.env["HOME"])
+          Lain::Shell::Verdict.new(capability_set: Config.shell_exclusions(root: project.root, paths:), home:)
         end
 
         # The session's ONE layout guard, which the parent's tool phase and
@@ -254,11 +255,12 @@ module Lain
         # never chose, and refuse its existing flat specs as strays.
         #
         # @param project [Lain::Project]
+        # @param paths [Paths] the state home the project's trust is read under
         # @param file_facts [Lain::FileFacts::Live, Lain::FileFacts::Recorded] what the run resolves a root through
         # @return [Lain::Middleware::GuardTestLayout::Run]
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
-        def test_layout(project:, file_facts: Lain::FileFacts::LIVE)
-          layout_run(Config.test_layout(root: project.root), project, file_facts)
+        def test_layout(project:, paths:, file_facts: Lain::FileFacts::LIVE)
+          layout_run(Config.test_layout(root: project.root, paths:), project, file_facts)
         end
 
         def layout_run(layout, project, file_facts)
@@ -364,9 +366,9 @@ module Lain
         # @raise [Lain::Config::Refusal] when the file or the table is malformed
         def rules(project:, paths:)
           root = project.root
-          config = ProjectDir.new(root:).config
+          config = ProjectDir.new(root:, paths:).config
           not_a_directory = ->(dir) { File.exist?(dir) && !File.directory?(dir) }
-          Config.sensitivity(root:)
+          Config.sensitivity(root:, paths:)
                 .exempting_files!(->(anchored) { File.directory?(File.join(root, anchored)) }, path: config)
                 .relating_directories!(not_a_directory, home: paths.home, path: config)
         end
@@ -410,7 +412,7 @@ module Lain
         # before `classifiers:`. A security boundary must not rest on Ruby's
         # keyword evaluation order.
         #
-        # The {WorkerEnv} is hoisted for the same reason -- `@cwd` is the
+        # The `WorkerEnv` is hoisted for the same reason -- `@cwd` is the
         # wiring's, so its construction cannot fail on model input, and building
         # one per gated call meant a `Ractor.make_shareable` walk to reach one
         # pure function. Only `#resolve`, the part that touches the model's

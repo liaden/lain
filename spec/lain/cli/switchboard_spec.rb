@@ -1555,7 +1555,7 @@ RSpec.describe Lain::CLI::Switchboard do
         paths: Lain::Paths.new(env: { "HOME" => home }),
         judge: Lain::Approval::Judge.new(provider: judge_provider, model: "m",
                                          slots: Lain::Prompt::Slots.new(fills: {})),
-        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:),
+        verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new),
         arms: Lain::CLI::Arms.from(confine: "classes", judge_facts:),
         resolver:, request:,
         worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => path })

@@ -45,7 +45,7 @@ module Lain
                      config: nil, notice: ParentLock::Silent)
           root = MergeCoordinator.main_root(repo_root, shell_out_factory:)
           home = Home.for(repo_root: root, branch:, shell_out_factory:)
-          isolation = (config || Config.load(root:)).isolation
+          isolation = (config || Config.load(root:, paths:)).isolation
           journal_path = File.join(paths.sessions_dir(project: paths.project_hash(root)), ::Lain::Journal.stem)
           new(lock: home.drain_lock, branch:, spool: Spool.new(home), isolation:, home:,
               journal: -> { ::Lain::Journal.open(journal_path) },

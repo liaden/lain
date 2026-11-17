@@ -40,7 +40,8 @@ RSpec.describe "A cargo build the composed_term rule approves", :seam do
     Lain::CLI::Wiring::BoardBuild.for(
       chronicle:, options: { approval: :auto }, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model",
       project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]), arms:,
-      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:), resolver:, worker_env: session.worker_env
+      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new), resolver:,
+      worker_env: session.worker_env
     ).bind_session(session)
   end
   let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }

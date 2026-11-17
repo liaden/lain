@@ -657,6 +657,28 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    it "reads trust and every project setting through its own Paths, never the environment's" do
+      Dir.mktmpdir("lain-wiring-injected") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo").tap { |path| FileUtils.mkdir_p(path) }
+        elsewhere = File.join(base, "elsewhere").tap { |path| FileUtils.mkdir_p(path) }
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h"),
+                                       "XDG_CONFIG_HOME" => File.join(base, "c") })
+        write_config(root, "sensitivity denied: %w[*.secret]\nshell exclude: %w[curl]\napproval timeout: 900\n" \
+                           "review model: \"claude-sonnet-5-5\"\nbudget iterations: { default: 7 }\n" \
+                           "search include: [\"notes/**/*.md\"]\ntests preset: :rspec\n", paths:)
+        wiring = described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:, paths:,
+                                     project: throwaway_project(root))
+        recorder, session = wiring.run_state(nil)
+
+        with_env("HOME" => elsewhere, "XDG_STATE_HOME" => elsewhere, "XDG_CONFIG_HOME" => elsewhere) do
+          wiring.wire_agent(channel:, recorder:, session:, backend:)
+        end
+
+        expect(Dir.children(elsewhere)).to eq([])
+      end
+    end
+
     # A root apart from HOME, since a root holding HOME confines nothing and
     # the rule would abstain for that reason instead.
     describe "under --confine classes" do
@@ -5405,6 +5427,36 @@ RSpec.describe Lain::CLI::Wiring do
         _, session = wiring_for(project_at(root, cwd)).run_state(nil)
 
         expect(session.worker_env.cwd).to eq(cwd)
+      end
+    end
+
+    it "hands every Config reader the Paths it holds, from the isolation handback to the command surface" do
+      Dir.mktmpdir("lain-wiring-readers") do |dir|
+        base = File.realpath(dir)
+        root = File.join(base, "repo")
+        FileUtils.cp_r("#{SeedRepo.at({ "README.md" => "seed\n" })}/.", root)
+        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h") })
+        write_config(root, "approval timeout: 900\ntests preset: :rspec, source_roots: %w[app]\n", paths:)
+        seen = []
+        %i[load sensitivity shell_exclusions test_layout budget approval_timeout search].each do |reader|
+          allow(Lain::Config).to receive(reader).and_wrap_original do |original, **kwargs|
+            seen << [reader, kwargs.fetch(:paths)]
+            original.call(**kwargs)
+          end
+        end
+        wiring = described_class.new(options: { grace: 5, isolation: "worktree" }, chronicle:, status_feed:, paths:,
+                                     project: throwaway_project(root), herdr: null_herdr(project_tty_factory(base)),
+                                     stdin: StringIO.new("quit\n"))
+
+        with_env("HOME" => base, "XDG_STATE_HOME" => base, "XDG_CONFIG_HOME" => base) do
+          owned = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
+                                                                                                root:, paths:)
+          wiring.run(backend: owned, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(seen.map(&:first).tally).to include(test_layout: 2, budget: 2)
+        expect(seen.reject { |_, used| used.equal?(paths) }).to be_empty
       end
     end
 

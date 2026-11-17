@@ -117,7 +117,7 @@ module Lain
 
           # @param journal_path [String, nil] this chat's own session file
           # @param paths [Paths] finds an earlier file of the chain by basename
-          def initialize(journal_path, paths: Lain::Paths.new)
+          def initialize(journal_path, paths:)
             @journal_path = journal_path
             @paths = paths
             freeze
@@ -174,6 +174,7 @@ module Lain
         #   the round this opens is reachable from `/review-submit`. Required
         #   rather than defaulted: an outbox nothing else holds is a review that
         #   can never be posted, and nothing about the wiring would look wrong.
+        # @param paths [Paths] the state home an earlier session of the chain is found under
         # @param root [String] the repository every git call reads -- the
         #   project the chat was started in, threaded from {Command::Surface}
         # @param bounds [Lain::Review::Bounds] the sizes past which the sidebar
@@ -189,7 +190,7 @@ module Lain
         # @param critique [#call] takes what follows `/critique` and answers a callable that runs it,
         #   having raised every refusal a typed `/critique` raises before it spawns; asked BEFORE
         #   the round opens, so a critique that cannot run leaves no review behind
-        def initialize(outbox:, ledger:, gh_account:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
+        def initialize(outbox:, ledger:, gh_account:, paths:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
                        shell_out_factory: Lain::Shell::Out.public_method(:new), critique: NO_CRITIQUE)
           @outbox = outbox
           @ledger = ledger
@@ -198,7 +199,7 @@ module Lain
           @shell_out_factory = shell_out_factory
           @gh_account = gh_account
           @critique = critique
-          @round = ReviewRound.new(outbox:)
+          @round = ReviewRound.new(outbox:, paths:)
           freeze
         end
 
@@ -235,8 +236,9 @@ module Lain
         #
         # @param env [Env] read for the chat's session file
         # @param target [String] what this round is being opened on
+        # @param paths [Paths] finds an earlier file of the chain by basename
         # @return [String, nil]
-        def self.not_carried_over(env, target) = EarlierRounds.new(env.journal_path).banner(target)
+        def self.not_carried_over(env, target, paths:) = EarlierRounds.new(env.journal_path, paths:).banner(target)
 
         private
 

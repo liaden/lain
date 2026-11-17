@@ -167,9 +167,9 @@ module Lain
 
       desc "poll", "Count the review requests asked of me, for the HUDs; meant for a timer"
       def poll
-        config = Config.github(root: nil)
-        account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
         paths = Paths.new
+        config = Config.github(root: nil, paths:)
+        account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
         ::Lain::Review::Queue::Poll.new(
           reads: Forge::Gh::Reads.new(cwd: Dir.pwd, account:), log: ::Lain::Review::Queue::Log.new(paths:),
           counts: paths.review_counts, workspaces: Herdr::Workspaces.new, feed: Notices.for(env: ENV, notes:),
@@ -322,7 +322,9 @@ module Lain
 
       def pull_checkouts = @pull_checkouts ||= ::Lain::Review::Queue::Checkouts.new(roots: github_config.roots, notes:)
 
-      def github_config = @github_config ||= Config.github(root: Project::Resolver.default_project.root)
+      def github_config
+        @github_config ||= Config.github(root: Project::Resolver.default_project.root, paths: Paths.new)
+      end
     end
   end
 end

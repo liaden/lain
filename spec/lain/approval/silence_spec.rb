@@ -6,7 +6,7 @@ RSpec.describe Lain::Approval::Silence do
   def config_with(source)
     Dir.mktmpdir do |root|
       write_config(root, source)
-      Lain::Config.load(root:)
+      Lain::Config.load(root:, paths: Lain::Paths.new)
     end
   end
 

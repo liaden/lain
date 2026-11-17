@@ -1825,7 +1825,9 @@ RSpec.describe Lain::CLI::Up do
           FileUtils.mkdir_p(File.join(root, ".git"))
           with_env("XDG_STATE_HOME" => File.join(root, "state"), "HOME" => File.join(root, "home")) do
             write_config(root, "raise \"evaluated in \#{Dir.pwd}\" unless Dir.pwd == #{root.dump}\n")
-            expect { Lain::Config.load(root:) }.to raise_error(Lain::Config::Refusal, /evaluated in/)
+            expect do
+              Lain::Config.load(root:, paths: Lain::Paths.new)
+            end.to raise_error(Lain::Config::Refusal, /evaluated in/)
             spawned = Lain::CLI::Up::ChatPreflight.spawning(Lain::Shell::Out.public_method(:new), executable: lain_exe)
             args = %w[--provider ollama --no-journal]
 
@@ -4096,8 +4098,8 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
       expect(found.call.warnings.sole).to start_with("remote relay skipped: ").and include("trust")
     end
 
-    it "looks the project up under the default paths, the ones its trust is read from, whatever paths are injected" do
-      write_config(root, "remote relay: \"100.64.0.1:7820\"\n")
+    it "looks the project up under the injected paths, the ones its trust is read from" do
+      write_config(root, "remote relay: \"100.64.0.1:7820\"\n", paths:)
       looked_under = []
       allow(Lain::Project::Resolver).to receive(:new).and_wrap_original do |original, **kwargs|
         looked_under << kwargs.fetch(:paths).state_home
@@ -4106,7 +4108,7 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
 
       found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
 
-      expect(looked_under).to eq([Lain::Paths.new.state_home])
+      expect(looked_under).to eq([paths.state_home])
       up_with(found).call
       expect(relay_argv).to include("100.64.0.1:7820")
     end

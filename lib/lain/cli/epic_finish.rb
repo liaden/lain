@@ -66,11 +66,12 @@ module Lain
       # The gh a remote finish runs, as the configured GitHub account.
       #
       # @param root [String] where gh runs, and whose config names the account
+      # @param paths [Paths] where the project's trust and the user's config are read
       # @param shell_out_factory [#call]
       # @param notes [#puts]
       # @return [Forge::Gh]
-      def self.github(root:, shell_out_factory:, notes:)
-        account = Lain::Forge::Gh::Account.configured(root:, notes:, shell_out_factory:)
+      def self.github(root:, paths:, shell_out_factory:, notes:)
+        account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:, shell_out_factory:)
         Lain::Forge::Gh.new(cwd: root, account:, shell_out_factory:)
       end
 
@@ -102,10 +103,10 @@ module Lain
       # @param github [#pr_create, #pr_merge, #pr_view, #pr_list, #merge_state]
       # @param finisher [#call, #finished, #rerun, #untouched] {Remote}, or
       #   {Local} to merge into main here with no remote and no pull request
-      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:, paths:),
                      epics: Epic.new(root:, paths:, config:),
                      shell_out_factory: Shell::Out.public_method(:new), notes: Sink::Null.new,
-                     github: EpicFinish.github(root:, shell_out_factory:, notes:),
+                     github: EpicFinish.github(root:, paths:, shell_out_factory:, notes:),
                      finisher: Remote.new(root:, paths:, github:, shell_out_factory:))
         @root = root
         @paths = paths

@@ -170,7 +170,7 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
   end
 
   it "runs a child's read under a related directory with no park" do
-    write_config(@root, "sensitivity related: [#{File.join(@home, "notes").inspect}]\n")
+    write_config(@root, "sensitivity related: [#{File.join(@home, "notes").inspect}]\n", paths: @paths)
     child_calls("read_file", { "path" => File.join(@home, "notes", "a.md") })
     wiring, agent = wired
 

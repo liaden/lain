@@ -145,17 +145,21 @@ RSpec.describe Lain::Forge::Gh::Account do
     end
 
     let(:root) { File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) } }
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_STATE_HOME" => File.join(@tmp, "state"),
+                             "XDG_CONFIG_HOME" => File.join(@tmp, "config") })
+    end
 
     it "builds the account a project's config names" do
-      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n")
+      write_config(root, "github account: \"#{GhParity::ACCOUNT}\"\n", paths:)
 
-      account = described_class.configured(root:, notes:, shell_out_factory: factory)
+      account = described_class.configured(root:, paths:, notes:, shell_out_factory: factory)
 
       expect(account.environment).to eq("GH_TOKEN" => GhParity::TOKEN)
     end
 
     it "is None when no config names one" do
-      account = described_class.configured(root:, notes:, shell_out_factory: factory)
+      account = described_class.configured(root:, paths:, notes:, shell_out_factory: factory)
 
       expect(account).to be_a(described_class::None)
     end

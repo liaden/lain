@@ -8,7 +8,7 @@ module Lain
     # What carries an epic's issues from the chat: each issue launched as an
     # actor in a checkout of its own, once its failing tests exist.
     #
-    # {IssueActor} and {PlanSubject} are files of their own: the actor owns a
+    # `IssueActor` and {PlanSubject} are files of their own: the actor owns a
     # lifecycle, and the plan's declaration is read from outside this subtree.
     module EpicDriver
       # The conductor arrives as the OBJECT rather than as a thunk over its
@@ -427,7 +427,7 @@ module Lain
         # @param config [Config] `.lain/config.rb`, already read
         # @param interrupt [#call] answers whether the run should stop
         # @param actors [#call, nil] `fleet ->` what launches an issue; the
-        #   real {IssueActor} when nobody says otherwise
+        #   real `IssueActor` when nobody says otherwise
         # @param grading [#call, nil] `call(issue_id, registration)`, judged
         #   between an actor settling and its retirement, while its lease still
         #   holds the checkout; nil grades nothing. A bench binds its own
@@ -628,7 +628,7 @@ module Lain
         # git, and a `.lain/config.rb` the project keeps out of history is in
         # none of them: read there, the red step refused every issue and the
         # landing guard checked nothing.
-        def layout = Lain::Config.test_layout(root: @root)
+        def layout = Lain::Config.test_layout(root: @root, paths: @paths)
 
         # The issue's plan, as it stands now: approved. The one source file its
         # failing tests are written for is read off the issue in `epic.md`.
@@ -686,7 +686,7 @@ module Lain
 
         def checks(layout) = Lain::Isolation::Checked.configured(base: isolation.base, layout:, settings:)
 
-        def config = @config ||= @optional.fetch(:config) || Lain::Config.load(root: @root)
+        def config = @config ||= @optional.fetch(:config) || Lain::Config.load(root: @root, paths: @paths)
 
         def epics = @epics ||= Epic.new(root: @root, paths: @paths, config:)
 
@@ -1105,10 +1105,10 @@ module Lain
         #   issue's readiness is exactly that change
         # @param plans [#call] `issue_id ->` the issue's {PlanSubject}, raising
         #   when its plan is not approved or the issue carries no subject
-        # @param actors [#call] an {IssueActor}
+        # @param actors [#call] an `IssueActor`
         # @param supervisor [Supervisor] the epic's own, already running
         # @param gate [#call] `call(issue_id, sha:)`, answering the issue's
-        #   implementation gate as an {Epic::GateView} over that commit
+        #   implementation gate as an `Epic::GateView` over that commit
         # @param landing [#call] `call(issue_id, sha:, ref:)`, the landing queue
         #   -- the only thing that merges. Its answer is believed: an entry that
         #   is not `done` did not land.

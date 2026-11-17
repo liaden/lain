@@ -117,7 +117,7 @@ module Lain
       # before the journal opens.
       class UnknownSchedule < Error; end
 
-      # A `--compact-keep` that {Compaction.validate_keep_last} refuses, said in
+      # A `--compact-keep` that `Compaction.validate_keep_last` refuses, said in
       # the flag's name: its own ArgumentError names no flag.
       class InvalidKeep < Error; end
 
@@ -521,7 +521,9 @@ module Lain
       #
       # @return [Budget::Ceilings]
       # @raise [InvalidCeiling] on a `--max-cost` that is not positive
-      def ceilings = Budget.ceilings(iterations: Config.budget(root: @root).iterations).with(dollars: max_cost)
+      def ceilings
+        Budget.ceilings(iterations: Config.budget(root: @root, paths: @paths).iterations).with(dollars: max_cost)
+      end
 
       # `--num-ctx`, through the same {Ceiling} both `--max-tokens` flags go
       # through, and OPTIONAL: unset means "serve the model's own". What is NOT
@@ -544,7 +546,9 @@ module Lain
 
       # The reasoning level this chat sends, `--think` over the project's `think`.
       # @return [Thinking]
-      def thinking = @thinking ||= Thinking.new(level: @options[:think] || Config.think(root: @root), backend: self)
+      def thinking
+        @thinking ||= Thinking.new(level: @options[:think] || Config.think(root: @root, paths: @paths), backend: self)
+      end
 
       # `--keep-alive`, COERCED here because its two legal spellings are two
       # JSON types: an integer becomes an Integer (seconds, -1 forever), a
@@ -771,10 +775,11 @@ module Lain
         WindowBook::Unresolved.new(e)
       end
 
-      def skill_locals = SkillLocals.new(@root, method(:epic_home)) { ollama_tier(provider_name) }.to_h
+      def skill_locals = SkillLocals.new(@root, @paths, method(:epic_home)) { ollama_tier(provider_name) }.to_h
 
       def epic_home
-        @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root), paths: @paths, root: @root)
+        @epic_home ||= ::Lain::Epic::Home.container(config: Config.load(root: @root, paths: @paths), paths: @paths,
+                                                    root: @root)
       end
 
       def refuse_counts!(arm)
@@ -849,7 +854,7 @@ module Lain
       # {Backend::Summarizer::RunJournal}'s own reason, and it binds harder on
       # this path: `Wiring#spooled_provider` builds the chat provider inside
       # `#backing`, and {#pipeline_source} -- where {#journal} gets bound -- runs
-      # a line later, through {CompactionMount}. A provider handed `journal` by
+      # a line later, through `CompactionMount`. A provider handed `journal` by
       # value would hold {Channel::Null} for the whole session: every wait
       # served, none recorded, nothing raised.
       def run_journal = Summarizer::RunJournal.new(journal_slot)

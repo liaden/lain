@@ -10,7 +10,7 @@ module Lain
     # reaped and kept. Returns a String; only the exe says it, and for the
     # daily detached run that lands in the log {GcSchedule} opened.
     #
-    # The repository and its worktree root come from {IsolationBackend}'s own
+    # The repository and its worktree root come from `IsolationBackend`'s own
     # public search and formula, so the reaper sweeps the directory workers
     # are actually leased under. A seam spec holds the two to that answer.
     #
@@ -72,7 +72,7 @@ module Lain
 
       def reaper(repo, journal)
         @gc_factory.call(repo_root: repo, root: IsolationBackend.worktree_root(repo, paths: @paths),
-                         retain_days: @config.call(root: @root).isolation.retain_days, journal:,
+                         retain_days: @config.call(root: @root, paths: @paths).isolation.retain_days, journal:,
                          trunk: Isolation::Checkout.of(repo).trunk)
       end
 

@@ -29,7 +29,7 @@ RSpec.describe Lain::Grader::MutationReinsertion do
     end
   end
 
-  def level_in(checkout) = Lain::Config.test_layout(root: checkout).mapping.level("unit")
+  def level_in(checkout) = Lain::Config.test_layout(root: checkout, paths: Lain::Paths.new).mapping.level("unit")
 
   def graded(lease, checkout, base: subject_project, **)
     described_class.new(lease:, level: level_in(checkout), mutations:, base:, **)

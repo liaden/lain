@@ -28,8 +28,12 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       base = File.realpath(dir)
       root = File.join(base, "repo")
       FileUtils.mkdir_p(File.join(root, ".lain"))
-      write_config(root, config) if config
-      yield(root, File.join(base, "home"))
+      home = File.join(base, "home")
+      if config
+        write_config(root, config)
+        trust_project(root, paths: paths_at(home))
+      end
+      yield(root, home)
     end
   end
 
@@ -57,7 +61,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # because the whole point of the object is that the toolset holds the SAME
   # instance and a default built here could not be shared.
   def board_over(root, home, **rest)
-    board_for(root, home, verdict: described_class.shell_verdict(project: project_at(root)), **rest)
+    board_for(root, home, verdict: described_class.shell_verdict(project: project_at(root), paths: paths_at(home)),
+                          **rest)
   end
 
   def read_of(path) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file", input: { "path" => path })
@@ -208,7 +213,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "reads the answers dir and the XDG epic home as the session's read roots, and writes neither" do
       in_tree do |root, home|
         paths = paths_at(home)
-        container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths:, root:)
+        container = Lain::Epic::Home.container(config: Lain::Config.load(root:, paths: Lain::Paths.new), paths:, root:)
         policy = board_for(root, home).sensitivity
 
         expect(policy.read_roots).to eq([Lain::Tool::Spill.home(paths, root), container])
@@ -219,7 +224,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
 
     it "refuses a raw write into the XDG epic home, naming epic_write and epic_graph" do
       in_tree do |root, home|
-        container = Lain::Epic::Home.container(config: Lain::Config.load(root:), paths: paths_at(home), root:)
+        container = Lain::Epic::Home.container(config: Lain::Config.load(root:, paths: Lain::Paths.new),
+                                               paths: paths_at(home), root:)
         write = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "write_file",
                                            input: { "path" => File.join(container, "k", "epic.md"), "content" => "x" })
 
@@ -338,7 +344,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   # The `[tests]` table restricts where a test may be written, and a file the
   # project wrote wrong refuses the launch like every other reader of it.
   describe ".test_layout" do
-    def run_at(root) = described_class.test_layout(project: project_at(root))
+    def run_at(root) = described_class.test_layout(project: project_at(root), paths: Lain::Paths.new)
 
     it "holds the project to the layout its [tests] table declares" do
       in_tree(config: "tests preset: :rspec, source_roots: %w[app]\n") do |root, _home|
@@ -413,8 +419,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         in_tree(config: "\n#{line}\n") do |root, home|
           project = project_at(root)
           readers = [-> { described_class.rules(project:, paths: paths_at(home)) },
-                     -> { described_class.shell_verdict(project:) },
-                     -> { described_class.test_layout(project:) },
+                     -> { described_class.shell_verdict(project:, paths: Lain::Paths.new) },
+                     -> { described_class.test_layout(project:, paths: Lain::Paths.new) },
                      -> { board_for(root, home) }]
 
           readers.each { |reader| expect(&reader).to raise_error(Lain::Config::Refusal, /config\.rb:2/) }
@@ -424,7 +430,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
   end
 
   describe ".shell_verdict" do
-    def verdict_at(root) = described_class.shell_verdict(project: project_at(root))
+    def verdict_at(root) = described_class.shell_verdict(project: project_at(root), paths: Lain::Paths.new)
 
     it "compiles the project's own [shell] table into the capability set" do
       in_tree(config: %(shell exclude: %w[curl]\n)) do |root, _home|
@@ -575,7 +581,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     # a fully green suite.
     it "hands the triage rung the session's own verdict rather than the permissive default" do
       in_tree(config: %(shell exclude: %w[curl]\n)) do |root, home|
-        verdict = described_class.shell_verdict(project: project_at(root))
+        verdict = described_class.shell_verdict(project: project_at(root), paths: Lain::Paths.new)
         board = board_for(root, home, verdict:)
 
         expect(board.ladder.first.instance_variable_get(:@verdict)).to be(verdict)
@@ -938,7 +944,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       # The bash tool holds the board's verdict, as {Lain::CLI::Wiring} hands it,
       # because the term rule reads the term off the tool it would dispatch.
       def homed_board(root, home)
-        verdict = described_class.shell_verdict(project: project_at(root), home:)
+        verdict = described_class.shell_verdict(project: project_at(root), paths: Lain::Paths.new, home:)
         tools = toolset.to_a.map { _1.name == "bash" ? Lain::Tools::Bash.new(verdict:) : _1 }
         board_for(root, home, verdict:, toolset: Lain::Toolset.new(tools))
       end
@@ -1321,7 +1327,7 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     it "keeps a remembered answer ahead of it, so a human's refusal still wins" do
       in_tree do |root, home|
         shape = %(command: "cat README.md | head -20", cwd: #{root.inspect})
-        write_config(root, %(approval do\n  deny "bash", #{shape}\nend\n))
+        write_config(root, %(approval do\n  deny "bash", #{shape}\nend\n), paths: paths_at(home))
         board = board_over(root, home)
         rules = board.ladder.to_a[1].instance_variable_get(:@rules)
 

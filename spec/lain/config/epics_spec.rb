@@ -130,7 +130,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics hoem: :repo\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /hoem/)
       end
     end
@@ -139,7 +139,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics hoem: :repo\n")
 
-        expect { described_class.load(root:) }.to raise_error do |error|
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error do |error|
           expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.key).to eq(["hoem"])
         end
@@ -152,7 +152,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics zzz: 1, aaa: 2\n")
 
-        expect { described_class.load(root:) }.to raise_error do |error|
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error do |error|
           expect(error.key).to contain_exactly("zzz", "aaa")
         end
       end
@@ -165,7 +165,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics zzz: 1, aaa: 2\n")
 
-        expect { described_class.load(root:) }.to raise_error(/no keys/)
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error(/no keys/)
       end
     end
 
@@ -176,7 +176,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics widht: 2\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /widht.*known keys: home, gates, width/)
       end
     end
@@ -185,7 +185,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics sub: { k: 1 }\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /sub/)
       end
     end
@@ -196,7 +196,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics\n")
 
-        expect(described_class.load(root:).epics_home).to eq(:xdg)
+        expect(described_class.load(root:, paths: Lain::Paths.new).epics_home).to eq(:xdg)
       end
     end
   end
@@ -206,7 +206,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics width: 4\n")
 
-        expect(described_class.load(root:).epics.width).to eq(4)
+        expect(described_class.load(root:, paths: Lain::Paths.new).epics.width).to eq(4)
       end
     end
 
@@ -214,7 +214,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics width: 0\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}:1: `epics` width 0 is not a whole number of issues above zero")
       end
@@ -226,7 +226,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\n")
 
-        expect(described_class.load(root:).epics_home).to eq(:repo)
+        expect(described_class.load(root:, paths: Lain::Paths.new).epics_home).to eq(:repo)
       end
     end
 
@@ -234,7 +234,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :repo\r\n")
 
-        expect(described_class.load(root:).epics_home).to eq(:repo)
+        expect(described_class.load(root:, paths: Lain::Paths.new).epics_home).to eq(:repo)
       end
     end
 
@@ -242,7 +242,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :somewhere_else\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /somewhere_else/) do |error|
             expect(error.message).to include("xdg")
             expect(error.message).to include("repo")
@@ -254,7 +254,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: \"\"\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /`epics` home: "" is not one of xdg, repo/)
       end
     end
@@ -267,7 +267,7 @@ RSpec.describe Lain::Config do
         Dir.mktmpdir do |root|
           write_config(root, "epics home: #{literal}\n")
 
-          expect { described_class.load(root:) }
+          expect { described_class.load(root:, paths: Lain::Paths.new) }
             .to raise_error(Lain::Config::Refusal) do |error|
               expect(error.message).to include("xdg")
               expect(error.message).to include("repo")
@@ -280,7 +280,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: [\"repo\"]\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal, /`epics` home: \["repo"\] is not one of/)
       end
     end
@@ -289,7 +289,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: 3\n")
 
-        expect { described_class.load(root:) }.to raise_error do |error|
+        expect { described_class.load(root:, paths: Lain::Paths.new) }.to raise_error do |error|
           expect(error.path).to eq("#{config_path(root)}:1")
           expect(error.value).to eq(3)
         end
@@ -305,7 +305,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics hoem: :repo\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}:1: `epics` has no keys \"hoem\"; known keys: home, gates, width")
       end
@@ -315,7 +315,7 @@ RSpec.describe Lain::Config do
       Dir.mktmpdir do |root|
         write_config(root, "epics home: :somewhere_else\n")
 
-        expect { described_class.load(root:) }
+        expect { described_class.load(root:, paths: Lain::Paths.new) }
           .to raise_error(Lain::Config::Refusal,
                           "#{config_path(root)}:1: `epics` home: \"somewhere_else\" is not one of xdg, repo")
       end

@@ -110,7 +110,7 @@ RSpec.describe "a survey of a subdirectory, from the walk to the editor's buffer
   # `cwd:` is what {Command::Surface} threads from {Lain::Project}'s other half,
   # and it is a different directory from the repository top in every monorepo
   # chat -- which is this whole fixture.
-  let(:command) { Lain::CLI::Command::Survey.new(cwd: @here, outbox:, ledger:, sensitivity:) }
+  let(:command) { Lain::CLI::Command::Survey.new(cwd: @here, outbox:, ledger:, sensitivity:, paths: Lain::Paths.new) }
 
   # The run's ONE classifier, which the board compiles and
   # {Lain::CLI::Command::Surface} threads in -- anchored on the chat's own cwd,

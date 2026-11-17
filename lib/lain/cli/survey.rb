@@ -139,7 +139,7 @@ module Lain
       # it: the table under the root, the anchor at the cwd.
       def classifier(project)
         Lain::Sensitivity.new(home: @paths.home, cwd: project.cwd, root: project.root,
-                              rules: Config.sensitivity(root: project.root))
+                              rules: Config.sensitivity(root: project.root, paths: @paths))
       end
 
       # `named_from: @cwd`, `/survey`'s own choice ({CLI::Command::Survey#round}):

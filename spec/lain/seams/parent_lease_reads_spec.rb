@@ -48,7 +48,7 @@ RSpec.describe "A parent's read of its child's lease", :seam do
       chronicle:, options: {}, judge:, model: "m",
       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new]), project:,
       paths: Lain::Paths.new(env: { "HOME" => @home }),
-      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:)
+      verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new)
     )
   end
 

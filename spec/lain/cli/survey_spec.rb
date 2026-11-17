@@ -157,7 +157,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
     # The survey builds its own classifier from the project's table, so an
     # anchored pattern there has to reach it with the root it is anchored on.
     it "withholds a path a project-anchored pattern denies" do
-      write_config(@root, "sensitivity denied: %w[/vault/]\n")
+      write_config(@root, "sensitivity denied: %w[/vault/]\n", paths:)
       write("vault/keys.md", document("# Keys", "", "Nothing a survey should list."))
 
       rendered = command.present(@root)
@@ -496,7 +496,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
       @project = File.join(@tmp, "monorepo")
       @here = File.join(@project, "services", "api")
       FileUtils.mkdir_p(File.join(@here, "secrets"))
-      write_config(@project, table)
+      write_config(@project, table, paths:)
       File.write(File.join(@here, "secrets", "payroll.ledger"), "a roster of salaries\n")
       File.write(File.join(@here, "secrets", "README.md"), "# What lives here\n\nSalaries.\n")
     end
@@ -539,7 +539,7 @@ RSpec.describe Lain::CLI::Survey, :seam do
   describe "a config file that will not parse" do
     before do
       two_documents
-      write_config(@root, "sensitivity denied: [\n")
+      write_config(@root, "sensitivity denied: [\n", paths:)
     end
 
     it "refuses rather than surveying with the project's rules silently dropped" do

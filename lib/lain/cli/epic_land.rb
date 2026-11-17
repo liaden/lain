@@ -32,7 +32,7 @@ module Lain
       # @param shell_out_factory [#call] every git subprocess the landing runs
       # @param notice [#call] told who holds the branch's landing drain, or the
       #   parent checkout's lock, when a landing waits on it for long
-      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:),
+      def initialize(root: Project::Resolver.default_project.root, paths: Paths.new, config: Config.load(root:, paths:),
                      epics: Epic.new(root:, paths:, config:), shell_out_factory: Shell::Out.public_method(:new),
                      notice: Lain::Isolation::ParentLock::Silent)
         @root = root
@@ -150,8 +150,8 @@ module Lain
           epic_slug:, repo_root: root, base:, signoff:,
           plan: ->(issue) { submit.ensure_plan_approved!(issue, epic_slug) },
           progress: -> { @epics.progress(epic_slug) }, scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
-          queue: queue(base, journal, root), layout: Config.test_layout(root: @root), landings: -> { landings.to_a },
-          shell_out_factory: @shell_out_factory
+          queue: queue(base, journal, root), layout: Config.test_layout(root: @root, paths: @paths),
+          landings: -> { landings.to_a }, shell_out_factory: @shell_out_factory
         )
       end
 

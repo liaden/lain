@@ -96,11 +96,14 @@ RSpec.describe "a survey docent reading outside the project", :seam do
                       role_spawn:)
   end
 
+  def survey_command
+    Lain::CLI::Command::Survey.new(cwd: @project, outbox: Lain::Review::Submit::Outbox.new,
+                                   ledger: Lain::Sensitivity::Ledger.new, paths: Lain::Paths.new,
+                                   sensitivity: Lain::Sensitivity.new(home: "/home/nobody", cwd: @project))
+  end
+
   def surveyed_question(editor)
-    command = Lain::CLI::Command::Survey.new(cwd: @project, outbox: Lain::Review::Submit::Outbox.new,
-                                             ledger: Lain::Sensitivity::Ledger.new,
-                                             sensitivity: Lain::Sensitivity.new(home: "/home/nobody", cwd: @project))
-    command.call(@tree, command_env(editor))
+    survey_command.call(@tree, command_env(editor))
     path = Pathname(@tree).relative_path_from(@project).join("doc.md").to_s
     handover = editor.bound
     handover.wrote_annotation({ "path" => path, "side" => "new", "line" => 3, "anchor_text" => "One line of prose.",

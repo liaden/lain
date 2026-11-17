@@ -74,7 +74,7 @@ module Lain
         @root = root
         @bounds = bounds
         @surface = surface
-        account = Lain::Forge::Gh::Account.configured(root:, notes:, shell_out_factory:)
+        account = Lain::Forge::Gh::Account.configured(root:, paths:, notes:, shell_out_factory:)
         @targets = Lain::Review::Target.new(repo_root:, shell_out_factory:, account:)
       end
 

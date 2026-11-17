@@ -98,7 +98,7 @@ RSpec.describe Lain::Tools::EpicStatus do
     def write_config(text)
       FileUtils.mkdir_p(File.join(@dir, ".lain"))
       File.write(File.join(@dir, ".lain", "config.rb"), text)
-      trust_project(@dir)
+      trust_project(@dir, paths:)
     end
 
     it "appends the readiness report to the status when asked" do

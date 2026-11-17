@@ -307,12 +307,13 @@ RSpec.describe Lain::CLI::Command::ReviewSubmit do
       @surface ||= Lain::CLI::Command::Surface.new(
         agent: instance_spy(Lain::Agent), replies: instance_spy(Lain::CLI::HumanReplies),
         supervisor: Lain::Supervisor::Null, role_spawn: instance_spy(Lain::Skill::RoleSpawn), root:, gh_account:,
+        paths: Lain::Paths.new,
         chronicle:, library: Lain::Skill::Library.load(root:), herdr:, **unread_collaborators
       )
     end
 
     # The account as Wiring builds it for the process.
-    def gh_account = Lain::Forge::Gh::Account.configured(root:, notes:)
+    def gh_account = Lain::Forge::Gh::Account.configured(root:, paths: Lain::Paths.new, notes:)
 
     def herdr
       Struct.new(:reporter, :window_surface, :notes).new(Lain::Herdr::Reporter::Null.new, Lain::CLI::TmuxSurface.new,
