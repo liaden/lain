@@ -40,9 +40,24 @@ module InputPaneSocket
     header = lambda do
       File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).hud(now: Time.now) : ""
     end
-    queue_log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
-    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox research research-epic] }, header:, tick: 0.05,
-                                        log: queue_log)
+    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox research research-epic] }, header:, tick: 0.05)
+    # Under :daemon the chat registers with the spec's daemon and takes the review queue's offers from it.
+    registration = Lain::Daemon::Registration::Null.new
+    producer = socket
+    if (runtime = ENV["LAIN_SPEC_DAEMON_RUNTIME"])
+      daemon_env = ENV.to_h.merge("XDG_RUNTIME_DIR" => runtime)
+      writer = Lain::Liveness::Writer.current
+      record = Lain::LiveSessions::Record.new(session_id: "pane-chat", pid: Process.pid, start: writer.start,
+                                              host: writer.host, root: dir, cwd: dir, input_socket: path, journal: nil,
+                                              attended: true, started_at: "2026-11-17T10:00:00Z")
+      registration = Lain::Daemon::Registration.new(record:, notes: $stderr, daemon: lambda { |pushes:, replace:|
+        Lain::Daemon.ensure(paths: Lain::Paths.new(env: daemon_env), env: daemon_env, pushes:, replace:)
+      })
+      producer = Lain::CLI::Wiring::InputProducer::QueueOffers.new(
+        socket, registration:, rail:, notice: ->(_) {},
+        log: Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+      )
+    end
     begin
       socket.bind
     rescue Lain::CLI::InputSocket::InUse => e
@@ -112,7 +127,9 @@ module InputPaneSocket
     File.write(File.join(dir, "bound"), "yes")
     conductor.guard do
       Sync do |task|
-        socket.start(task)
+        producer.start(task)
+        registration.open(task)
+        File.write(File.join(dir, "registered"), "")
         { "lines" => lines, "approval" => approval,
           "decided_elsewhere" => ->(inner) { approval.call(inner, elsewhere: true) }, "countdown" => countdown,
           "parked" => parked, "running" => running,
@@ -126,9 +143,12 @@ module InputPaneSocket
             lines.call(inner)
           end,
           "long_approval" => ->(inner) { approval.call(inner, "FIRSTWORD " + ("x" * 2600) + " LASTWORD") } }.fetch(shape).call(task)
+      ensure
+        registration.close
+        rail.end_offer
       end
     end
-    socket.stop
+    producer.stop
     File.write(File.join(dir, "exited"), "")
   RUBY
 
@@ -317,6 +337,11 @@ RSpec.describe "a chat fed by an input pane", :seam do
     end
   end
 
+  # A chat started under :daemon registers with this example's daemon.
+  around(:each, :daemon) do |example|
+    with_env("LAIN_SPEC_DAEMON_RUNTIME" => daemon_env.fetch("XDG_RUNTIME_DIR")) { example.run }
+  end
+
   it "boots the pane before the chat, and forks the chat holding none of the worker's descriptors" do
     cockpit.watch_screen
     waited = cockpit.settles { cockpit.screen.include?("waiting for a lain chat") || nil }
@@ -499,16 +524,24 @@ RSpec.describe "a chat fed by an input pane", :seam do
     expect(cockpit.settles { cockpit.screen.scan("fleet:1 inbox:0").size > shown || nil }).to be(true)
   end
 
-  # The queue offers a review over the chat's own socket, as `lain queue open`
-  # does. Left open: a peer gone before the chat greets it is dropped unread.
+  # The queue offers a review through the daemon, as `lain queue open` does,
+  # once the chat has registered. The socket it answers is a 2nd pane on the
+  # chat's own input socket, which hears the offer's prompt as the pane does;
+  # left open, since a peer gone before the chat greets it is dropped unread.
   def offer(url)
-    UNIXSocket.new(cockpit.path).tap do |queue|
+    cockpit.settles { File.exist?(File.join(dir, "registered")) || nil }
+    UNIXSocket.new(cockpit.path).tap do
       row = { "id" => "pr:fuze/api#12", "head_sha" => "c" * 40 }
-      queue.write("#{JSON.generate({ "v" => "offer", "request" => { "kind" => "pr", "url" => url }, "row" => row })}\n")
+      Sync do
+        client = Lain::Daemon.ensure(paths: daemon_paths, env: daemon_env)
+        client.call("offer.send", [{ "root" => dir, "request" => { "kind" => "pr", "url" => url }, "row" => row }])
+      ensure
+        client&.stop
+      end
     end
   end
 
-  it "keeps text typed at a queued review offer as the pane's unsent draft when it is dropped" do
+  it "keeps text typed at a queued review offer as the pane's unsent draft when it is dropped", :daemon do
     cockpit_at("lines")
     queue = offer("https://github.com/fuze/api/pull/12")
     offered = cockpit.settles { cockpit.screen.include?("(Enter opens, x drops)") || nil }
@@ -561,7 +594,7 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.quiet { cockpit.screen }.split("you> ").last.to_s
   end
 
-  it "joins the drafts of 2 dropped offers with 1 space at the next you>" do
+  it "joins the drafts of 2 dropped offers with 1 space at the next you>", :daemon do
     cockpit.watch_screen
     expect_bound(cockpit.chat("offers_then_lines"))
     queues = [dropped_offer_with("alpha"), dropped_offer_with("beta")]
@@ -572,7 +605,7 @@ RSpec.describe "a chat fed by an input pane", :seam do
   end
 
   # Any same-uid process can answer at the offer, with bytes no keyboard sends.
-  it "types a raw answer's line ends and controls back as text, so none of it reaches the model" do
+  it "types a raw answer's line ends and controls back as text, so none of it reaches the model", :daemon do
     cockpit.watch_screen
     expect_bound(cockpit.chat("offers_then_lines"))
     queue, drawn = offer_drawn
@@ -589,7 +622,7 @@ RSpec.describe "a chat fed by an input pane", :seam do
     queue&.close
   end
 
-  it "keeps a dropped offer's draft out of the approval that follows, and puts it at the next you>" do
+  it "keeps a dropped offer's draft out of the approval that follows, and puts it at the next you>", :daemon do
     cockpit.watch_screen
     expect_bound(cockpit.chat("offer_then_approval"))
     queue = dropped_offer_with("maybe")

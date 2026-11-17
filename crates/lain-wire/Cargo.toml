@@ -10,3 +10,5 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 # Structs encode as maps (`to_vec_named`) so Ruby's msgpack gem reads fields by name.
 rmp-serde = "1.3"
+# An offer's request and row cross the daemon as values it never reads.
+rmpv = { version = "1.3", features = ["with-serde"] }

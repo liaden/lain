@@ -37,12 +37,7 @@ module Lain
     # names it completes against, since it holds no registry), `touch` is the
     # pane's answer to `untouched?`, and `closed` is the goodbye that tells a
     # clean shutdown from a kill. `cycle` is the approval key pressed in the
-    # pane (`Frontend::Intake#cycle`), and `offer` is a review the queue asks
-    # the human to open (`Frontend::Intake#offer`), naming its queue row beside
-    # it. `offered` answers an `offer` to its sender alone: `held`, `crowded`,
-    # `repeat`, or `refused` with the field. The row is marked seen here, and
-    # only once the human presses Enter at the offer. The row is not checked
-    # against the request: any same-uid process can append to the log anyway.
+    # pane (`Frontend::Intake#cycle`).
     class InputSocket
       # What an `--input` option asks for. The name is the tmux session's, so
       # two cockpits on one project do not share a socket.
@@ -61,13 +56,6 @@ module Lain
       # The bound is filled in at the call, since {Client} is defined below.
       OVER_LIMIT = "input pane sent one line past %<bytes>d bytes and it was refused whole. " \
                    "Nothing of it reached the chat."
-      # The request's own reason, which names a field and never its value: the
-      # value is whatever a same-uid writer put there.
-      OFFER_REFUSED = "lain queue: an offer was dropped: %<reason>s"
-
-      # Nothing in the chat reads an offered request's repo_root, so no clone is looked up.
-      NO_CHECKOUTS = ::Lain::Review::Queue::Checkouts.new(roots: [])
-      private_constant :NO_CHECKOUTS
 
       # Another chat is already listening. Named rather than a sentence because
       # the refusal has to name the path: the human's next move is to look at
@@ -167,11 +155,9 @@ module Lain
       #   {Frontend::TTY#render_warning} in a live chat. A pane dropped or a
       #   line refused in SILENCE is a flicker the human cannot account for,
       #   and the pane itself is the one surface that cannot report it
-      # @param log [Review::Queue::Log] where an offer the human takes marks its row seen
-      def initialize(rail:, path:, log:, header: -> { "" }, commands: -> { [] }, layers: -> { [] }, tick: TICK,
+      def initialize(rail:, path:, header: -> { "" }, commands: -> { [] }, layers: -> { [] }, tick: TICK,
                      notice: SILENT)
         @rail = rail
-        @log = log
         @path = path
         @header = header
         @commands = commands
@@ -182,7 +168,6 @@ module Lain
         @clients = []
         @lock = Mutex.new
         @threads = []
-        @offers = []
         @sent = nil
         @attending = Frontend::Intake::Unattended
       end
@@ -245,7 +230,6 @@ module Lain
       # @param goodbye [Boolean] false when a restarted chat is about to take the
       #   path, so the pane keeps waiting for it instead of exiting
       def stop(goodbye: true)
-        ended_offers
         @attending.stop
         broadcast(Codec.dump({ "v" => "closed" })) if goodbye
         @rail.detach(self)
@@ -331,19 +315,6 @@ module Lain
         @lock.synchronize { Thread.new(&body).tap { @threads << _1 } }
       end
 
-      def spawn_offer(&body)
-        @lock.synchronize { Thread.new(&body).tap { |thread| [@threads, @offers].each { _1 << thread } } }
-      end
-
-      # Offers end before any thread is killed, so an Enter already typed
-      # still marks its row seen; a line still being built is not waited on past
-      # {Frontend::Intake::OFFERS_END}.
-      def ended_offers
-        @rail.end_offer
-        deadline = RunClock::MONOTONIC.call + Frontend::Intake::OFFERS_END
-        @lock.synchronize { @offers.dup }.each { |offer| offer.join((deadline - RunClock::MONOTONIC.call).clamp(0, nil)) }
-      end
-
       def connected = @lock.synchronize { @clients.dup }
 
       def accepting
@@ -397,29 +368,10 @@ module Lain
         when "eof" then @rail << Frontend::Intake::Eof.new
         when "touch" then client.touched(frame["generation"].to_i, frame["untouched"] == true)
         when "cycle" then @rail.cycle
-        when "offer" then spawn_offer { offered(client, frame) }
         end
       end
-
-      def reply(client, said) = deliver(client, Codec.dump({ "v" => "offered" }.merge(said)))
 
       def line_in(frame) = Frontend::Intake::Line.new(text: frame["text"].to_s, generation: frame["generation"].to_i)
-
-      # On a thread of its own: the offer waits for an answer that arrives
-      # through the very reader that heard it.
-      def offered(client, frame)
-        mark = ::Lain::Review::Queue::Mark.load(frame["row"])
-        answer = @rail.offer(::Lain::Review::Queue::Request.load(frame["request"],
-                                                                 checkouts: NO_CHECKOUTS)) do |outcome|
-          reply(client, "outcome" => outcome.to_s)
-        end
-        mark.seen(@log, notice: @notice) if answer == :taken
-      rescue ::Lain::Review::Queue::Request::Refused => e
-        reply(client, "outcome" => "refused", "field" => Utf8.escaped(e.field))
-        @notice.call(format(OFFER_REFUSED, reason: Utf8.escaped(e.message)))
-      ensure
-        @lock.synchronize { [@threads, @offers].each { |threads| threads.delete(Thread.current) } }
-      end
 
       # The rail's nudge says the prompt changed; the tick says the header may
       # have. One loop serves both, so a pane's header is live while it waits

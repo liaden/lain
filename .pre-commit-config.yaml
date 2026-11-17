@@ -116,10 +116,12 @@ repos:
       # extension is built). rspec itself runs parallel_rspec, one worker per
       # core. Touching either language re-runs the lot; rubocop now checks the
       # whole repo (cached) rather than staged filenames, the same scope
-      # `rake default` and CI use.
+      # `rake default` and CI use. The daemon is built here too: the suite runs
+      # :daemon examples whenever a lain-daemon binary exists, so a stale one
+      # from before a protocol change reds them for a reason the commit lacks.
       - id: ruby-checks
         name: ruby checks (rubocop + rspec, parallel)
-        entry: bundle exec rake compile check
+        entry: bundle exec rake compile daemon:build check
         language: system
         types_or: [ruby, rust]
         # Neither the phone app's Rust nor lain-core's reaches this suite: the app never touches Ruby,

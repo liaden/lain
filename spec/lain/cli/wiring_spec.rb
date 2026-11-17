@@ -4043,6 +4043,19 @@ RSpec.describe Lain::CLI::Wiring do
 
         expect(handed).to eq([registration])
       end
+
+      it "hands the chat's daemon registration the review queue's offers" do
+        registration = instance_spy(Lain::Daemon::Registration, call: nil)
+
+        Dir.mktmpdir do |dir|
+          wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                              tty_factory: tty_factory(dir), conductor_opener:, registration:)
+          wiring.run(backend:, resumed: nil, nvim: nil)
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(registration).to have_received(:on).with("offer")
+      end
     end
 
     describe "the idle compaction surface", :seam do

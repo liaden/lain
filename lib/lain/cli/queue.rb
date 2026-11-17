@@ -266,17 +266,22 @@ module Lain
 
       def refusal(result)
         case result.outcome
-        when :refused then "the chat refused the request's #{::Lain::Review::Queue::Request.plain(result.field)}"
+        when :refused then refused(result.field)
         when :silent then "the chat #{session(result.chat)} has not answered the offer, and may still show it"
         else TURNED_AWAY.fetch(result.outcome)
         end
       end
 
+      def refused(field)
+        return "the chat could not offer the review; it says why on its screen" if field.nil?
+
+        "the chat refused the request's #{::Lain::Review::Queue::Request.plain(field)}"
+      end
+
       def held(result, row) = format(HELD.fetch(result.outcome), root: row.request.repo_root)
 
       def also(result)
-        [*("also running there: #{result.others.map { session(_1) }.join(", ")}" if result.others.any?),
-         *("did not answer: #{result.skipped.map { session(_1) }.join(", ")}" if result.skipped.any?)]
+        [*("also running there: #{result.others.map { session(_1) }.join(", ")}" if result.others.any?)]
       end
 
       # A listed session's fields are whatever its chat registered.
@@ -284,7 +289,7 @@ module Lain
 
       def delivery
         ::Lain::Review::Queue::Delivery.new(
-          live_sessions: LiveSessions.new(paths: Paths.new, notes:),
+          notes:,
           account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:),
           pending: ::Lain::Review::Queue::Pending.new(paths: Paths.new)
         )

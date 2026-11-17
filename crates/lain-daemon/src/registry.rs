@@ -1,14 +1,19 @@
 //! The live chats the daemon knows, each registered by its own process over its own connection.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::time::Duration;
 
 use lain_rpc::{Peer, Push, RpcError};
-use lain_wire::Register;
+use lain_wire::{OfferReply, Register};
 use rmpv::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
+
+/// How long `offer.send` waits for the chat to say what it did with an offer. The chat answers
+/// once it has rebuilt the review's line, and a dirty tree's snapshot can take that long.
+pub(crate) const OFFER_REPLY: Duration = Duration::from_secs(30);
 
 /// How far up a caller's parents the daemon looks for a registered session.
 const MAX_ANCESTORS: usize = 64;
@@ -153,12 +158,52 @@ impl Record {
     }
 }
 
-/// The live chats, keyed by session id.
+/// The live chats, keyed by session id, and the offers waiting on their replies.
 pub(crate) struct Registry<P: Procs = ProcTable> {
     procs: P,
     sessions: Mutex<BTreeMap<String, Record>>,
     registrations: AtomicU64,
     departures: Mutex<Option<mpsc::UnboundedSender<u64>>>,
+    offers: Mutex<HashMap<u64, Waiting>>,
+    offer_ids: AtomicU64,
+}
+
+/// An offer pushed to 1 registration, which alone may reply to it.
+struct Waiting {
+    registration: u64,
+    reply: oneshot::Sender<OfferReply>,
+}
+
+/// The chat an offer goes to, and the other attended chats in its root, newest first.
+pub(crate) struct Recipients {
+    pub(crate) chosen: Record,
+    pub(crate) others: Vec<Record>,
+}
+
+/// 1 offer's wait for its reply. Dropping it forgets the offer, so a sender that gives up
+/// leaves nothing behind.
+pub(crate) struct PendingOffer<P: Procs = ProcTable> {
+    registry: Arc<Registry<P>>,
+    id: u64,
+    reply: Option<oneshot::Receiver<OfferReply>>,
+}
+
+impl<P: Procs> PendingOffer<P> {
+    pub(crate) fn id(&self) -> u64 {
+        self.id
+    }
+
+    /// The chat's reply, or None when the bound passes first or the chat leaves.
+    pub(crate) async fn reply(mut self, bound: Duration) -> Option<OfferReply> {
+        let reply = self.reply.take()?;
+        tokio::time::timeout(bound, reply).await.ok()?.ok()
+    }
+}
+
+impl<P: Procs> Drop for PendingOffer<P> {
+    fn drop(&mut self) {
+        self.registry.offers().remove(&self.id);
+    }
 }
 
 /// A session's place in the [`Registry`], held by the connection that registered it; dropping it,
@@ -190,11 +235,34 @@ impl<P: Procs> Registration<P> {
             record.outlet = Some(outlet);
         }
     }
+
+    /// Hands `reply` to the offer's sender, when the offer was pushed to this registration.
+    pub(crate) fn reply(&self, reply: OfferReply) -> Result<(), RpcError> {
+        let mut offers = self.registry.offers();
+        match offers.get(&reply.offer_id) {
+            Some(waiting) if waiting.registration == self.registration => {
+                if let Some(waiting) = offers.remove(&reply.offer_id) {
+                    let _sender_gone = waiting.reply.send(reply);
+                }
+                Ok(())
+            }
+            _ => Err(refused(
+                "no_offer",
+                format!(
+                    "offer {} is not waiting on a reply from this session",
+                    reply.offer_id
+                ),
+            )),
+        }
+    }
 }
 
 impl<P: Procs> Drop for Registration<P> {
     fn drop(&mut self) {
         self.registry.sessions().remove(&self.session_id);
+        self.registry
+            .offers()
+            .retain(|_, waiting| waiting.registration != self.registration);
         if let Some(departures) = &*self
             .registry
             .departures
@@ -218,7 +286,53 @@ impl<P: Procs> Registry<P> {
             sessions: Mutex::new(BTreeMap::new()),
             registrations: AtomicU64::new(0),
             departures: Mutex::new(None),
+            offers: Mutex::new(HashMap::new()),
+            offer_ids: AtomicU64::new(0),
         })
+    }
+
+    fn offers(&self) -> MutexGuard<'_, HashMap<u64, Waiting>> {
+        self.offers.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// The newest attended chat in `root` by the start it registered, and the others there.
+    pub(crate) fn recipients(&self, root: &str) -> Option<Recipients> {
+        let mut attended: Vec<Record> = self
+            .sessions()
+            .values()
+            .filter(|record| record.register.attended && record.register.root == root)
+            .cloned()
+            .collect();
+        attended.sort_by(|a, b| b.register.started_at.cmp(&a.register.started_at));
+        let mut attended = attended.into_iter();
+        let chosen = attended.next()?;
+        Some(Recipients {
+            chosen,
+            others: attended.collect(),
+        })
+    }
+
+    /// Opens an offer to `registration`, which waits until it is replied to or dropped.
+    pub(crate) fn open_offer(self: &Arc<Self>, registration: u64) -> PendingOffer<P> {
+        let id = self.offer_ids.fetch_add(1, Ordering::Relaxed) + 1;
+        let (sender, receiver) = oneshot::channel();
+        self.offers().insert(
+            id,
+            Waiting {
+                registration,
+                reply: sender,
+            },
+        );
+        PendingOffer {
+            registry: Arc::clone(self),
+            id,
+            reply: Some(receiver),
+        }
+    }
+
+    #[cfg(test)]
+    fn pending_offers(&self) -> usize {
+        self.offers().len()
     }
 
     /// Each registration that ends from now on, by its number.
@@ -342,7 +456,7 @@ mod tests {
     use std::sync::Mutex;
 
     use lain_rpc::{Peer, RpcError};
-    use lain_wire::Register;
+    use lain_wire::{OfferReply, Register};
 
     use super::*;
 
@@ -607,6 +721,171 @@ mod tests {
             Err(other) => panic!("not a refusal: {other}"),
             Ok(_) => panic!("a child registered"),
         }
+    }
+
+    /// pids 4242, 5000 and 5001 are unrelated, so all 3 can register.
+    fn neighbours() -> Arc<Registry<Table>> {
+        Registry::new(Table::with(&[
+            (1, "1", 0),
+            (4242, "123", 1),
+            (5000, "140", 1),
+            (5001, "141", 1),
+        ]))
+    }
+
+    fn chat(session_id: &str, pid: u32, root: &str, started_at: &str, attended: bool) -> Register {
+        Register {
+            root: root.to_string(),
+            started_at: started_at.to_string(),
+            attended,
+            ..register(session_id, pid)
+        }
+    }
+
+    fn reply(offer_id: u64, outcome: &str) -> OfferReply {
+        OfferReply {
+            offer_id,
+            outcome: outcome.to_string(),
+            field: None,
+        }
+    }
+
+    fn names(records: &[Record]) -> Vec<String> {
+        records
+            .iter()
+            .map(|record| record.register.session_id.clone())
+            .collect()
+    }
+
+    #[test]
+    fn an_offer_goes_to_the_newest_attended_chat_in_its_root_naming_the_others() {
+        let registry = neighbours();
+        let _nine = registry
+            .register(
+                peer(4242),
+                chat("nine", 4242, "/work/api", "2026-11-16T09:00:00Z", true),
+            )
+            .expect("registered");
+        let _ten = registry
+            .register(
+                peer(5000),
+                chat("ten", 5000, "/work/api", "2026-11-16T10:00:00Z", true),
+            )
+            .expect("registered");
+        let _eleven = registry
+            .register(
+                peer(5001),
+                chat("eleven", 5001, "/work/api", "2026-11-16T11:00:00Z", false),
+            )
+            .expect("registered");
+        let recipients = registry.recipients("/work/api").expect("a chat runs there");
+        assert_eq!("ten", recipients.chosen.register.session_id);
+        assert_eq!(vec!["nine".to_string()], names(&recipients.others));
+    }
+
+    #[test]
+    fn an_offer_for_a_root_with_no_attended_chat_has_no_recipient() {
+        let registry = neighbours();
+        let _web = registry
+            .register(
+                peer(4242),
+                chat("web", 4242, "/work/web", "2026-11-16T09:00:00Z", true),
+            )
+            .expect("registered");
+        let _headless = registry
+            .register(
+                peer(5000),
+                chat("headless", 5000, "/work/api", "2026-11-16T10:00:00Z", false),
+            )
+            .expect("registered");
+        assert!(registry.recipients("/work/api").is_none());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_offered_chats_reply_reaches_the_sender_and_the_offer_is_forgotten() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        let pending = registry.open_offer(ten.registration());
+        ten.reply(reply(pending.id(), "held"))
+            .expect("its own offer");
+        assert_eq!(
+            Some(reply(pending.id(), "held")),
+            pending.reply(OFFER_REPLY).await
+        );
+        assert_eq!(0, registry.pending_offers());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_reply_from_another_session_is_refused_and_the_offer_still_waits() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        let other = registry
+            .register(peer(5000), register("other", 5000))
+            .expect("registered");
+        let pending = registry.open_offer(ten.registration());
+        match other.reply(reply(pending.id(), "held")) {
+            Err(RpcError::Refused { code, .. }) => assert_eq!("no_offer", code),
+            other => panic!("not refused: {other:?}"),
+        }
+        ten.reply(reply(pending.id(), "crowded"))
+            .expect("its own offer");
+        assert_eq!(
+            Some(reply(pending.id(), "crowded")),
+            pending.reply(OFFER_REPLY).await
+        );
+    }
+
+    #[test]
+    fn a_reply_to_no_open_offer_is_refused() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        match ten.reply(reply(99, "held")) {
+            Err(RpcError::Refused { code, .. }) => assert_eq!("no_offer", code),
+            other => panic!("not refused: {other:?}"),
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_offer_unanswered_past_its_bound_is_silent_and_forgotten() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        let pending = registry.open_offer(ten.registration());
+        let id = pending.id();
+        assert_eq!(None, pending.reply(OFFER_REPLY).await);
+        assert_eq!(0, registry.pending_offers());
+        assert!(ten.reply(reply(id, "held")).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_offer_whose_session_leaves_is_silent_and_forgotten() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        let pending = registry.open_offer(ten.registration());
+        let waiting = tokio::spawn(pending.reply(OFFER_REPLY));
+        tokio::task::yield_now().await;
+        drop(ten);
+        assert_eq!(0, registry.pending_offers());
+        assert_eq!(None, waiting.await.expect("joined"));
+    }
+
+    #[test]
+    fn an_offer_abandoned_by_its_sender_is_forgotten() {
+        let registry = neighbours();
+        let ten = registry
+            .register(peer(4242), register("ten", 4242))
+            .expect("registered");
+        drop(registry.open_offer(ten.registration()));
+        assert_eq!(0, registry.pending_offers());
     }
 
     #[test]

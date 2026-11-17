@@ -5,6 +5,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
 /// Bumped on any change a peer running the old version cannot read.
@@ -262,6 +264,36 @@ pub struct Register {
     pub attended: bool,
     /// When the chat started, as the chat writes it.
     pub started_at: String,
+}
+
+/// A review the queue asks the newest attended chat in `root` to offer its human: `offer.send`.
+///
+/// The daemon routes on `root` alone. `request` and `row` pass through unread, and the chat
+/// checks both before it shows anything.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Offer {
+    /// The checkout root the review belongs to.
+    pub root: String,
+    /// The review request, as the queue writes it.
+    pub request: BTreeMap<String, rmpv::Value>,
+    /// The queue row the chat marks seen once the human opens the review.
+    pub row: BTreeMap<String, rmpv::Value>,
+}
+
+/// The chat's answer to 1 pushed offer: `offer.reply`.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OfferReply {
+    /// The id the daemon pushed with the offer.
+    pub offer_id: u64,
+    /// What the chat did with it, in the chat's own words.
+    pub outcome: String,
+    /// The request field a refusing chat named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
 }
 
 /// Encodes a message with named struct fields.
@@ -711,6 +743,103 @@ mod tests {
         assert_eq!(None, register.input_socket);
         assert_eq!(None, register.journal);
         assert!(!register.attended);
+    }
+
+    fn offer() -> Offer {
+        Offer {
+            root: s("/work/api"),
+            request: [
+                (s("kind"), rmpv::Value::from("pr")),
+                (
+                    s("url"),
+                    rmpv::Value::from("https://github.com/fuze/api/pull/12"),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            row: [
+                (s("id"), rmpv::Value::from("pr:fuze/api#12")),
+                (s("head_sha"), rmpv::Value::from("c".repeat(40))),
+            ]
+            .into_iter()
+            .collect(),
+        }
+    }
+
+    #[test]
+    fn an_offer_round_trips_its_request_and_row_whole() {
+        let offer = offer();
+        let bytes = encode(&offer).expect("encode");
+        assert_eq!(decode::<Offer>(&bytes).expect("decode"), offer);
+    }
+
+    #[test]
+    fn an_offers_request_and_row_round_trip_values_of_any_type() {
+        let offer = Offer {
+            root: s("/work"),
+            request: [
+                (s("n"), rmpv::Value::from(7)),
+                (
+                    s("nested"),
+                    rmpv::Value::Array(vec![rmpv::Value::Boolean(true), rmpv::Value::Nil]),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+            row: [(s("id"), rmpv::Value::from("pr:fuze/api#12"))]
+                .into_iter()
+                .collect(),
+        };
+        let bytes = encode(&offer).expect("encode");
+        assert_eq!(decode::<Offer>(&bytes).expect("decode"), offer);
+    }
+
+    #[test]
+    fn an_offer_carries_whatever_fields_its_request_has() {
+        #[derive(Serialize)]
+        struct Unknown {
+            root: String,
+            request: BTreeMap<String, String>,
+            row: BTreeMap<String, String>,
+        }
+        let bytes = encode(&Unknown {
+            root: s("/work"),
+            request: [(s("kind"), s("nothing lain knows")), (s("extra"), s("x"))]
+                .into_iter()
+                .collect(),
+            row: BTreeMap::new(),
+        })
+        .expect("encode");
+        let offer: Offer = decode(&bytes).expect("decode");
+        assert_eq!(Some(&rmpv::Value::from("x")), offer.request.get("extra"));
+    }
+
+    #[test]
+    fn an_offer_reply_round_trips_with_and_without_a_field() {
+        for field in [None, Some(s("repo_root"))] {
+            let reply = OfferReply {
+                offer_id: 7,
+                outcome: s("refused"),
+                field,
+            };
+            let bytes = encode(&reply).expect("encode");
+            assert_eq!(decode::<OfferReply>(&bytes).expect("decode"), reply);
+        }
+    }
+
+    #[test]
+    fn an_offer_reply_without_its_field_key_decodes_it_as_none() {
+        #[derive(Serialize)]
+        struct Bare {
+            offer_id: u64,
+            outcome: String,
+        }
+        let bytes = encode(&Bare {
+            offer_id: 7,
+            outcome: s("held"),
+        })
+        .expect("encode");
+        assert_eq!(None, decode::<OfferReply>(&bytes).expect("decode").field);
     }
 
     #[test]

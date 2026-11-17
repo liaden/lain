@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  class LiveSessions
+  module LiveSessions
     # One running chat, as the review queue needs to find it. `input_socket` and
     # `journal` are nil for a headless or `--no-journal` chat. `start` is the
     # daemon's own reading of the pid's start; what a chat registers is ignored.

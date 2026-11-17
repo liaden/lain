@@ -432,7 +432,8 @@ module Lain
       def input_for(rail, tty)
         InputProducer.new(human:, attended: attended?, cockpit: options[:nvim] ? true : false, stdin: @stdin, notes:,
                           paths: @paths, pending: Lain::Review::Queue::Pending.new(paths: @paths), root:,
-                          status_feed: @status_feed, switchboard: @switchboard, commands: method(:command_names))
+                          status_feed: @status_feed, switchboard: @switchboard, commands: method(:command_names),
+                          registration: @registration)
                      .call(rail, tty)
       end
 

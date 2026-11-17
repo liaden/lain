@@ -1,46 +1,42 @@
 # frozen_string_literal: true
 
-require "socket"
+require "async"
 
 module Lain
   module Review
     class Queue
-      # Hands a row's review to the chat running in the row's checkout, over
-      # that chat's input socket, with the row named beside it: that chat marks
-      # the row seen only when the human presses Enter at the offer. A pull
-      # request with no local clone opens in the browser instead, and nothing
-      # is sent.
+      # Hands a row's review to the chat running in the row's checkout, with
+      # the row named beside it: lain-daemon pushes it to the newest attended
+      # chat there, and that chat marks the row seen only when the human
+      # presses Enter at the offer. A pull request with no local clone opens in
+      # the browser instead, and nothing is sent.
       class Delivery
         # What became of a row. `chat` is the live record the offer went to,
-        # `others` the other live chats in that checkout, `skipped` those whose
-        # socket never greeted, and `field` what a refusing chat named.
+        # `others` the other attended chats in that checkout, and `field` what
+        # a refusing chat named.
         #
         # `outcome` is the chat's own answer (`:held`, `:crowded`, `:repeat`,
-        # `:refused`), or `:silent` when a chat that greeted gave none, which
-        # an older chat with no reply does. This side's own are `:browsed`, and
-        # for a checkout with no chat whatever {Pending#hold} answers.
-        Result = Data.define(:outcome, :chat, :others, :skipped, :field)
+        # `:refused`), or `:silent` when the chat never gave one before the
+        # daemon stopped waiting or the chat went away. This side's own are
+        # `:browsed`, and for a checkout with no chat whatever {Pending#hold} answers.
+        Result = Data.define(:outcome, :chat, :others, :field)
 
         REPLIES = %w[held crowded repeat refused].freeze
-        # A chat greets the moment it accepts, so a short wait is enough to call
-        # a silent socket dead. Its reply waits on rebuilding the line, and a
-        # dirty tree's snapshot can take far longer than the greeting.
-        GREETING = 5
-        REPLY = 30
+        UNOFFERED = "cannot offer the review through lain-daemon: %<reason>s"
         private_constant :REPLIES
 
-        # @param live_sessions [LiveSessions] the chats running now
         # @param account [#environment] the GitHub account `gh` runs as
         # @param pending [Pending] keeps the review for a checkout with no chat
+        # @param notes [#puts] told why the daemon could not be asked
+        # @param daemon [#call] answers a {Core::Client} or a {Daemon::Absent}; called once per row
         # @param shell_out_factory [#call] builds the `gh` runner
-        # @param greeting [Numeric] seconds a socket has to greet; its reply then has {REPLY}
-        def initialize(live_sessions:, account:, pending:, shell_out_factory: Shell::Out.public_method(:new),
-                       greeting: GREETING)
-          @live_sessions = live_sessions
+        def initialize(account:, pending:, notes:, daemon: -> { Daemon.ensure(paths: Paths.new) },
+                       shell_out_factory: Shell::Out.public_method(:new))
           @account = account
-          @shell_out_factory = shell_out_factory
-          @greeting = greeting
           @pending = pending
+          @notes = notes
+          @daemon = daemon
+          @shell_out_factory = shell_out_factory
         end
 
         # @param row [Row]
@@ -50,23 +46,41 @@ module Lain
         def call(row, request = row.request)
           return browsed(request) if request.repo_root.nil?
 
-          chats = @live_sessions.in(request.repo_root).select(&:input_socket)
-          chat, io, skipped = first_greeting(chats)
-          return result(@pending.hold(request, Mark.of(row)), skipped:) unless io
+          mark = Mark.of(row)
+          answer = sent(request, mark)
+          return result(@pending.hold(request, mark)) unless answer&.fetch("session", nil)
 
-          offered(Mark.of(row), request, io).with(chat:, others: chats - skipped - [chat], skipped:)
+          delivered(answer)
         end
 
         private
 
-        # @return [Array] the chat that greeted, its socket, and the chats before it that did not
-        def first_greeting(chats)
-          chat, at, io = chats.each_with_index.lazy.map { |live, index| [live, index, greeted(live)] }.find(&:last)
-          [chat, io, chats.take(at || chats.size)]
+        def result(outcome, chat: nil, others: [], field: nil)
+          Result.new(outcome:, chat:, others:, field:)
         end
 
-        def result(outcome, chat: nil, others: [], skipped: [], field: nil)
-          Result.new(outcome:, chat:, others:, skipped:, field:)
+        def delivered(answer)
+          outcome = REPLIES.include?(answer["outcome"]) ? answer["outcome"].to_sym : :silent
+          result(outcome, chat: LiveSessions::Record.from_h(answer["session"]),
+                          others: answer.fetch("others").map { |fields| LiveSessions::Record.from_h(fields) },
+                          field: answer["field"])
+        end
+
+        # A daemon that cannot be asked is a checkout with no chat, so the review is held.
+        def sent(request, mark)
+          Sync do
+            client = @daemon.call
+            client.is_a?(Daemon::Absent) ? nil : offered(client, request, mark)
+          end
+        rescue StandardError => e
+          @notes.puts(format(UNOFFERED, reason: e.message))
+          nil
+        end
+
+        def offered(client, request, mark)
+          client.call("offer.send", [{ "root" => request.repo_root, "request" => request.to_h, "row" => mark.to_h }])
+        ensure
+          client.stop
         end
 
         def browsed(request)
@@ -77,47 +91,6 @@ module Lain
 
           result(:browsed)
         end
-
-        # A socket is trusted with the offer only once it has said hello, so
-        # one that never would is skipped with nothing sent to it.
-        def greeted(live)
-          io = UNIXSocket.new(live.input_socket)
-          return io if awaited(io, "context", @greeting)
-
-          io.close
-          nil
-        rescue IOError, SystemCallError
-          nil
-        end
-
-        def offered(mark, request, io)
-          io.write(CLI::InputSocket::Codec.dump({ "v" => "offer", "request" => request.to_h, "row" => mark.to_h }))
-          reply = awaited(io, "offered", REPLY) || {}
-          outcome = REPLIES.include?(reply["outcome"]) ? reply["outcome"].to_sym : :silent
-          result(outcome, field: reply["field"])
-        rescue IOError, SystemCallError
-          result(:silent)
-        ensure
-          io.close
-        end
-
-        # The first frame of `kind` before the deadline; the chat's prompt
-        # frames reach every client, this one included, and are passed over.
-        def awaited(io, kind, bound)
-          io.timeout = bound
-          deadline = clock + bound
-          Enumerator.produce { line_before(io, deadline) }.lazy.take_while(&:itself)
-                    .map { |line| CLI::InputSocket::Codec.load(line) }.find { |frame| frame&.fetch("v", nil) == kind }
-        end
-
-        def line_before(io, deadline)
-          left = deadline - clock
-          left.positive? && io.wait_readable(left) ? io.gets : nil
-        rescue IOError, SystemCallError
-          nil
-        end
-
-        def clock = RunClock::MONOTONIC.call
       end
     end
   end

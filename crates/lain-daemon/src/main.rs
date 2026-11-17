@@ -242,6 +242,8 @@ impl Handler for Daemon {
                     .map(registry::Record::to_value)
                     .collect(),
             )),
+            "offer.send" => self.offer(params).await,
+            "offer.reply" => self.offer_reply(caller, params),
             other => Err(RpcError::UnknownMethod(other.to_string())),
         }
     }
@@ -293,7 +295,7 @@ impl Daemon {
         if caller.registration.get().is_some() {
             return Err(already_registered());
         }
-        let register = decoded_register(params)?;
+        let register: Register = decoded(params, "session.register takes [Register]")?;
         let registry = Arc::clone(&self.registry);
         let peer = caller.peer;
         // The process table may be read through `ps`, which blocks.
@@ -310,6 +312,82 @@ impl Daemon {
             .map_err(|_raced| already_registered())?;
         Ok(Value::Nil)
     }
+}
+
+impl Daemon {
+    /// Pushes the offer to the newest attended chat in its root and waits for that chat to say
+    /// what it did. The request and row go to the chat unread.
+    async fn offer(&self, params: Vec<Value>) -> Result<Value, RpcError> {
+        let offer: lain_wire::Offer = decoded(params, "offer.send takes [Offer]")?;
+        let Some(recipients) = self.registry.recipients(&offer.root) else {
+            return Ok(offered(None, &[], None));
+        };
+        let pending = self.registry.open_offer(recipients.chosen.registration);
+        let pushed = recipients.chosen.outlet.as_ref().is_some_and(|outlet| {
+            outlet
+                .send("offer", vec![offer_push(pending.id(), &offer)])
+                .is_ok()
+        });
+        let reply = if pushed {
+            pending.reply(registry::OFFER_REPLY).await
+        } else {
+            None
+        };
+        Ok(offered(Some(&recipients.chosen), &recipients.others, reply))
+    }
+
+    fn offer_reply(&self, caller: &Caller, params: Vec<Value>) -> Result<Value, RpcError> {
+        let registration = caller.registration.get().ok_or_else(|| RpcError::Refused {
+            code: "not_registered",
+            message: "only a registered chat replies to an offer".to_string(),
+        })?;
+        registration.reply(decoded(params, "offer.reply takes [OfferReply]")?)?;
+        Ok(Value::Nil)
+    }
+}
+
+/// What the chat was pushed: the offer's id to reply with, and the request and row as sent.
+fn offer_push(offer_id: u64, offer: &lain_wire::Offer) -> Value {
+    let map = |fields: &std::collections::BTreeMap<String, Value>| {
+        Value::Map(
+            fields
+                .iter()
+                .map(|(key, value)| (Value::from(key.as_str()), value.clone()))
+                .collect(),
+        )
+    };
+    Value::Map(vec![
+        (Value::from("offer_id"), Value::from(offer_id)),
+        (Value::from("request"), map(&offer.request)),
+        (Value::from("row"), map(&offer.row)),
+    ])
+}
+
+/// `offer.send`'s answer: the chat chosen, the others in the root, and the chat's reply; a
+/// chat that never replied is `silent`, and a root with no chat is `none`.
+fn offered(
+    chosen: Option<&registry::Record>,
+    others: &[registry::Record],
+    reply: Option<lain_wire::OfferReply>,
+) -> Value {
+    let outcome = match (chosen, &reply) {
+        (None, _) => "none".to_string(),
+        (Some(_), None) => "silent".to_string(),
+        (Some(_), Some(reply)) => reply.outcome.clone(),
+    };
+    let field = reply.and_then(|reply| reply.field);
+    Value::Map(vec![
+        (
+            Value::from("session"),
+            chosen.map_or(Value::Nil, registry::Record::to_value),
+        ),
+        (
+            Value::from("others"),
+            Value::Array(others.iter().map(registry::Record::to_value).collect()),
+        ),
+        (Value::from("outcome"), Value::from(outcome)),
+        (Value::from("field"), field.map_or(Value::Nil, Value::from)),
+    ])
 }
 
 fn already_registered() -> RpcError {
@@ -332,10 +410,10 @@ fn readable_delta(delta: &Value) -> Result<(), RpcError> {
         .map_err(|error| unreadable(error.to_string()))
 }
 
-fn decoded_register(params: Vec<Value>) -> Result<Register, RpcError> {
+fn decoded<T: serde::de::DeserializeOwned>(params: Vec<Value>, usage: &str) -> Result<T, RpcError> {
     let malformed = || RpcError::Refused {
         code: "bad_params",
-        message: "session.register takes [Register]".to_string(),
+        message: usage.to_string(),
     };
     let [param] = <[Value; 1]>::try_from(params).map_err(|_| malformed())?;
     let mut bytes = Vec::new();
@@ -748,6 +826,91 @@ mod tests {
         )
     }
 
+    /// An offer for `root`, sent by a connection that never registered.
+    fn offer_for(root: &str) -> Value {
+        Value::Map(vec![
+            (Value::from("root"), Value::from(root)),
+            (
+                Value::from("request"),
+                Value::Map(vec![(Value::from("kind"), Value::from("pr"))]),
+            ),
+            (
+                Value::from("row"),
+                Value::Map(vec![(Value::from("id"), Value::from("pr:fuze/api#12"))]),
+            ),
+        ])
+    }
+
+    /// `offer.send`'s answer, read with no deadline of its own, since the daemon's bound is the one under test.
+    async fn offered_answer(sender: &mut TestClient<UnixStream>) -> Value {
+        let frame = sender
+            .next_frame()
+            .await
+            .expect("an answer")
+            .expect("a frame");
+        let (_, error, result) = response_parts(frame);
+        assert_eq!(Value::Nil, error);
+        result
+    }
+
+    fn outcome_and_session(answer: &Value) -> (Value, Value) {
+        let field = |name: &str| {
+            answer
+                .as_map()
+                .expect("a map")
+                .iter()
+                .find(|(key, _)| key.as_str() == Some(name))
+                .map(|(_, value)| value.clone())
+                .expect(name)
+        };
+        let session = field("session");
+        let session_id = session
+            .as_map()
+            .and_then(|record| {
+                record
+                    .iter()
+                    .find(|(key, _)| key.as_str() == Some("session_id"))
+            })
+            .map_or(Value::Nil, |(_, id)| id.clone());
+        (field("outcome"), session_id)
+    }
+
+    #[tokio::test]
+    async fn an_offer_the_chat_never_replies_to_is_silent_once_the_bound_passes() {
+        let served = Served::start(daemon(Registry::new(registry::ProcTable), PhoneRelay::Off));
+        let process = sleeper();
+        let mut chat = session(&served, "mute", &process).await;
+        let mut sender = served.connect(Some(OWNER), std::process::id());
+        tokio::time::pause();
+        sender
+            .send(request(1, "offer.send", vec![offer_for("/work")]))
+            .await;
+        let (method, _) = pushed(&mut chat).await;
+        assert_eq!(Value::from("offer"), method);
+        assert_eq!(
+            (Value::from("silent"), Value::from("mute")),
+            outcome_and_session(&offered_answer(&mut sender).await)
+        );
+    }
+
+    #[tokio::test]
+    async fn an_offer_whose_chat_leaves_before_replying_is_silent() {
+        let served = Served::start(daemon(Registry::new(registry::ProcTable), PhoneRelay::Off));
+        let process = sleeper();
+        let mut chat = session(&served, "leaving", &process).await;
+        let mut sender = served.connect(Some(OWNER), std::process::id());
+        tokio::time::pause();
+        sender
+            .send(request(1, "offer.send", vec![offer_for("/work")]))
+            .await;
+        pushed(&mut chat).await;
+        drop(chat);
+        assert_eq!(
+            (Value::from("silent"), Value::from("leaving")),
+            outcome_and_session(&offered_answer(&mut sender).await)
+        );
+    }
+
     #[tokio::test]
     async fn a_peer_of_another_user_or_of_no_known_user_is_refused_every_method() {
         let served = Served::start(daemon(Registry::new(registry::ProcTable), PhoneRelay::Off));
@@ -759,6 +922,8 @@ mod tests {
                 "session.register",
                 "agenda.publish",
                 "answer.send",
+                "offer.send",
+                "offer.reply",
             ] {
                 assert_eq!(
                     Value::from("only the daemon's own user may call it"),

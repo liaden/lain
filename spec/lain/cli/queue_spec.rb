@@ -6,21 +6,116 @@ require "json"
 require "shellwords"
 require "socket"
 
+# Support kept out of the RSpec block (Lint/ConstantDefinitionInBlock).
+module QueueSpecSupport
+  QUIET = ->(_) {}
+
+  # Plays lain-daemon's offer routing at the daemon client boundary, over chats
+  # in this process: offer.send pushes to the newest attended chat in the
+  # root and answers with what that chat replied, or `silent` once `bound`
+  # seconds pass with no reply.
+  class Router
+    def initialize(bound: 5)
+      @bound = bound
+      @chats = []
+      @ids = 0
+    end
+
+    # @param record [Lain::LiveSessions::Record] the chat as the daemon lists it
+    # @param reply [Symbol, Hash, nil] `:live` hands the push to the chat's subscriber;
+    #   a Hash is the reply a stand-in chat gives; nil never replies
+    # @return [Chat] the chat's registration
+    def chat(record, reply: :live) = Chat.new(record, reply).tap { @chats << _1 }
+
+    def call(method, params)
+      raise ArgumentError, method unless method == "offer.send"
+
+      offer = params.first
+      chosen, *others = @chats.select { _1.record.root == offer["root"] }.sort_by { _1.record.started_at }.reverse
+      return answer(nil, [], nil) unless chosen
+
+      chosen.push({ "offer_id" => (@ids += 1), "request" => offer["request"], "row" => offer["row"] })
+      answer(chosen, others, chosen.replies.pop(timeout: @bound))
+    end
+
+    def stop = nil
+
+    def close = @chats.each(&:close)
+
+    private
+
+    def answer(chosen, others, reply)
+      { "session" => chosen&.record&.to_h, "others" => others.map { _1.record.to_h },
+        "outcome" => chosen ? reply&.fetch("outcome") || "silent" : "none", "field" => reply&.fetch("field", nil) }
+    end
+
+    # 1 chat's end: its subscriber, the replies it sends, and a reactor on a
+    # thread of its own, as a chat in its own process has.
+    class Chat
+      attr_reader :record, :replies
+
+      def initialize(record, reply)
+        @record = record
+        @reply = reply
+        @replies = Thread::Queue.new
+        @inbox = Thread::Queue.new
+      end
+
+      def on(method, &handler) = (@handler = handler if method == "offer")
+
+      def call(_method, reply) = @replies << reply
+
+      # @param offers [Lain::CLI::Wiring::InputProducer::QueueOffers] started and stopped on the chat's reactor
+      # @return [self] once the chat takes offers
+      def run(offers)
+        started = Thread::Queue.new
+        @thread = Thread.new { delivering(offers, started) }
+        started.pop(timeout: 5)
+        self
+      end
+
+      def push(frame)
+        case @reply
+        when :live then @inbox << frame
+        when Hash then @replies << @reply
+        end
+      end
+
+      def close
+        @inbox.close
+        @thread&.join(5)
+      end
+
+      private
+
+      def delivering(offers, started)
+        Sync do |task|
+          offers.start(task)
+          started << true
+          Enumerator.produce { @inbox.pop }.lazy.take_while(&:itself).each { |frame| @handler.call([frame]) }
+        ensure
+          offers.stop
+        end
+      end
+    end
+  end
+end
+
 RSpec.describe Lain::CLI::Queue, :seam do
   let(:old) { { "GIT_AUTHOR_DATE" => "2020-01-01T00:00:00Z", "GIT_COMMITTER_DATE" => "2020-01-01T00:00:00Z" } }
 
-  # Serves session.list as the daemon does, from the records `live` adds.
-  let(:live_records) { [] }
-  let(:listing) { SessionListing.new(live_records) }
-  let(:daemon_source) { -> { listing } }
+  let(:router) { QueueSpecSupport::Router.new }
+  let(:daemon_source) { -> { router } }
 
   # Thor builds the command object from argv, so no constructor keyword reaches
-  # the LiveSessions it lists chats through; the stand-in goes in at `new`.
+  # the Delivery it offers through; the stand-in goes in at `new`.
   before do
-    allow(Lain::LiveSessions).to receive(:new).and_wrap_original do |original, **keywords|
+    allow(Lain::Review::Queue::Delivery).to receive(:new).and_wrap_original do |original, **keywords|
       original.call(**keywords, daemon: daemon_source)
     end
   end
+
+  after { router.close }
 
   around do |example|
     Dir.mktmpdir("lain-cli-queue") do |dir|
@@ -73,21 +168,21 @@ RSpec.describe Lain::CLI::Queue, :seam do
     $stdout, $stderr = saved
   end
 
-  # A live chat at `root`: a real input socket in front of a real Intake.
+  # A live chat at `root`: the chat's own offer subscriber in front of a real Intake.
   def chat(root, id: "chat", started_at: "2026-11-16T10:00:00Z")
     rail = Lain::Frontend::Intake.new
-    path = Lain::CLI::InputSocket.path(cwd: root, name: id, paths: Lain::Paths.new)
     log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new)
-    sockets << Lain::CLI::InputSocket.new(rail:, path:, log:).bind.start(nil)
-    live(id, root, path, started_at)
+    registration = router.chat(record(id, root, started_at))
+    offers = Lain::CLI::Wiring::InputProducer::QueueOffers.new(Lain::Frontend::StdinPump::Idle, registration:, rail:,
+                                                                                                log:, notice: QueueSpecSupport::QUIET)
+    registration.run(offers)
     rail
   end
 
-  def live(id, root, path, started_at = "2026-11-16T10:00:00Z")
+  def record(id, root, started_at = "2026-11-16T10:00:00Z")
     writer = Lain::Liveness::Writer.current
-    live_records << Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start,
-                                                   host: writer.host, root:, cwd: root, input_socket: path,
-                                                   journal: nil, attended: true, started_at:)
+    Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start, host: writer.host, root:,
+                                   cwd: root, input_socket: nil, journal: nil, attended: true, started_at:)
   end
 
   def offered(rail) = wait_until(reason: "the offer drawn") { rail.published.kind == :human && rail.published.text }
@@ -180,15 +275,10 @@ RSpec.describe Lain::CLI::Queue, :seam do
   end
 
   describe "open" do
-    let(:sockets) { [] }
-    let(:servers) { [] }
     let(:feature) { "branch:#{@repo}:feature" }
 
     around do |example|
       Dir.mktmpdir("lain-cli-queue-run") { |run| with_env("XDG_RUNTIME_DIR" => run) { example.run } }
-    ensure
-      sockets.each(&:stop)
-      servers.each { |server, thread| thread.kill.join && server.close }
     end
 
     before do
@@ -196,19 +286,9 @@ RSpec.describe Lain::CLI::Queue, :seam do
       unmerged_branch("other")
     end
 
-    # A listener that greets as a chat does, then answers an offer only with `reply`.
+    # A chat that replies to an offer only with `reply`, and never when it is nil.
     def stand_in(reply: nil)
-      path = File.join(ENV.fetch("XDG_RUNTIME_DIR"), "stand-in.sock")
-      server = UNIXServer.new(path)
-      kept = []
-      thread = Thread.new do
-        Enumerator.produce { server.accept }.each do |io|
-          kept << io.tap { _1.puts(JSON.generate({ "v" => "context", "commands" => [] })) }
-          io.gets && reply && io.puts(JSON.generate(reply))
-        end
-      end
-      servers << [server, thread]
-      live("stand-in", @repo, path, "2026-11-16T11:00:00Z")
+      router.chat(record("stand-in", @repo, "2026-11-16T11:00:00Z"), reply:)
     end
 
     it "offers the row to the chat in its checkout, exits 0 and says so" do
@@ -269,20 +349,29 @@ RSpec.describe Lain::CLI::Queue, :seam do
       expect(run("open", feature)).to eq([1, "", "already offered\n"])
     end
 
+    it "exits 1 pointing at the chat's own screen when the chat refused naming no field" do
+      stand_in(reply: { "outcome" => "refused" })
+
+      expect(run("open", feature)).to eq([1, "", "the chat could not offer the review; it says why on its screen\n"])
+    end
+
     it "exits 1 naming the field the chat refused" do
-      stand_in(reply: { "v" => "offered", "outcome" => "refused", "field" => "repo_root" })
+      stand_in(reply: { "outcome" => "refused", "field" => "repo_root" })
 
       expect(run("open", feature)).to eq([1, "", "the chat refused the request's repo_root\n"])
     end
 
-    it "exits 1 naming the chat that took the connection and never answered, which may still show it" do
-      stub_const("Lain::Review::Queue::Delivery::REPLY", 0.3)
-      chat(@repo)
-      stand_in
+    context "with a daemon that stops waiting on a chat's reply" do
+      let(:router) { QueueSpecSupport::Router.new(bound: 0.3) }
 
-      expect(run("open", feature)).to eq(
-        [1, "", "the chat stand-in has not answered the offer, and may still show it\nalso running there: chat\n"]
-      )
+      it "exits 1 naming the chat that was offered the row and never answered, which may still show it" do
+        chat(@repo)
+        stand_in
+
+        expect(run("open", feature)).to eq(
+          [1, "", "the chat stand-in has not answered the offer, and may still show it\nalso running there: chat\n"]
+        )
+      end
     end
 
     it "holds the review for the next cockpit when no chat runs in the checkout, and says so" do
@@ -296,7 +385,7 @@ RSpec.describe Lain::CLI::Queue, :seam do
       it "holds the review as if no chat ran, and says why on stderr" do
         expect(run("open", feature)).to eq(
           [0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n",
-           "cannot list the running chats: lain-daemon did not answer\n"]
+           "cannot offer the review through lain-daemon: lain-daemon did not answer\n"]
         )
       end
     end
@@ -579,7 +668,6 @@ RSpec.describe Lain::CLI::Queue, :seam do
     end
 
     context "with a clone of it under the configured roots" do
-      let(:sockets) { [] }
       let(:clone) { File.join(@roots, "api") }
 
       around do |example|
@@ -589,8 +677,6 @@ RSpec.describe Lain::CLI::Queue, :seam do
             with_env("XDG_RUNTIME_DIR" => home, "XDG_CONFIG_HOME" => home) { example.run }
           end
         end
-      ensure
-        sockets.each(&:stop)
       end
 
       before do
