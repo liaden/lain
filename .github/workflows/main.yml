@@ -159,7 +159,7 @@ jobs:
       # The cargo-deny hook is `language: system`; the runner image does not ship it.
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.21.0
       # gherkin-docs `require "lain"`s, needing the compiled extension that
       # the skipped `ruby-checks` hook used to build on its way past.
       - name: Compile the Rust extension
@@ -242,7 +242,7 @@ jobs:
           python-version: '3.x'
       - uses: taiki-e/install-action@v2
         with:
-          tool: cargo-deny
+          tool: cargo-deny@0.21.0
       - name: Run the app's hooks
         run: |
           for hook in remote-fmt remote-clippy remote-test remote-deny; do

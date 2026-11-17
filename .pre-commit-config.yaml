@@ -92,7 +92,7 @@ repos:
         name: cargo deny (lain-remote)
         entry: >-
           env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE
-          cargo deny --manifest-path apps/lain-remote/Cargo.toml check --config apps/lain-remote/deny.toml
+          cargo deny --manifest-path apps/lain-remote/Cargo.toml --config apps/lain-remote/deny.toml check
         language: system
         pass_filenames: false
         files: ^(apps/lain-remote/(Cargo\.(toml|lock)|deny\.toml)|deny\.toml)$
