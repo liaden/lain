@@ -42,6 +42,6 @@ The relay confines itself with Landlock, so a kernel without it fails the tests 
 
 - `src/client.rs` is the tested core: no dioxus in it. `src/main.rs` is the Dioxus shell and the screen state.
 - `src/ui/{agenda,item,settings}.rs` each keep their view state as plain functions and types with the tests; the components only draw it.
-- Deep links (`lain-remote://item/<id>`) are not wired and stay for the manual pass: Dioxus 0.7 has no hook for them on Android or Linux without platform code; iOS and macOS get `Event::Opened` through `use_wry_event_handler`.
+- `lain-remote://item/<id>` is parsed once, in `ui::agenda::link_id`, held by `Links` until the first agenda page is in and the app is paired, and fed from `Event::Opened` in `main.rs`. Android and Linux registration of the scheme (an intent-filter plus platform code) is not done and stays for the manual pass.
 - Reading and answering use separate connections, because a long poll in flight cannot be cancelled to send.
 - Comments explain why only. Commit messages never name plan cards.

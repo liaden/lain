@@ -449,6 +449,45 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn items_from_two_sessions_in_two_projects_reach_the_phone_grouped_and_openable() {
+    use crate::ui::agenda::{Opening, groups, open_link};
+
+    let Some(relay) = Relay::start() else { return };
+    let mut elsewhere = question("q2");
+    if let AgendaItem::Question { session, project, .. } = &mut elsewhere {
+      *session = "s2".to_string();
+      *project = "/other".to_string();
+    }
+    relay.publish(&adding(question("q1"))).await;
+    relay.publish(&adding(elsewhere)).await;
+    relay.publish(&settling("q1")).await;
+    relay.publish(&adding(question("q3"))).await;
+
+    let mut session = Session::connect(relay.phone, TOKEN).await.expect("connect");
+    session.next().await.expect("the first page");
+
+    let placed: Vec<_> = groups(session.items(), 1_700_000_100)
+      .into_iter()
+      .map(|group| (group.project, group.session, group.rows.len()))
+      .collect();
+    assert_eq!(
+      vec![
+        ("/work".to_string(), "s1".to_string(), 1),
+        ("/other".to_string(), "s2".to_string(), 1)
+      ],
+      placed
+    );
+    assert_eq!(
+      Some(Opening::Select("q2".to_string())),
+      open_link(session.items(), "lain-remote://item/q2")
+    );
+    assert_eq!(
+      Some(Opening::Settled("q1".to_string())),
+      open_link(session.items(), "lain-remote://item/q1")
+    );
+  }
+
+  #[tokio::test]
   async fn a_cursor_from_another_epoch_gets_a_snapshot_that_replaces_what_was_held() {
     let Some(relay) = Relay::start() else { return };
     relay.publish(&adding(question("q1"))).await;

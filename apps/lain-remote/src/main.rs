@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use client::Session;
 use dioxus::prelude::*;
 use lain_wire::{AgendaItem, Answer};
-use ui::agenda::Agenda;
+use ui::agenda::{Agenda, Links, Opening};
 use ui::item::{Item, outcome};
 use ui::settings::{Settings, SettingsForm, default_path};
 
@@ -62,6 +62,8 @@ fn App() -> Element {
   let mut items = use_signal(Vec::<AgendaItem>::new);
   let mut status = use_signal(String::new);
   let mut notice = use_signal(String::new);
+  let mut page_in = use_signal(|| false);
+  let mut links = use_signal(Links::default);
   let mut settings = use_signal(initial_settings);
   let mut screen = use_signal(|| if settings.peek().is_some() { Screen::Agenda } else { Screen::Settings });
 
@@ -69,17 +71,38 @@ fn App() -> Element {
   use_resource(move || async move {
     let Some(paired) = settings() else { return };
     let mut session = None;
+    page_in.set(false);
     loop {
       match read_agenda(&paired, &mut session).await {
         Ok(waiting) => {
           items.set(waiting);
+          page_in.set(true);
           status.set(String::new());
         }
         Err(message) => {
+          page_in.set(false);
           status.set(format!("reconnecting: {message}"));
           tokio::time::sleep(RETRY_AFTER).await;
         }
       }
+    }
+  });
+
+  dioxus::desktop::use_wry_event_handler(move |event, _| {
+    if let dioxus::desktop::tao::event::Event::Opened { urls } = event {
+      let urls: Vec<_> = urls.iter().map(AsRef::<str>::as_ref).collect();
+      links.write().hold(&urls);
+    }
+  });
+
+  use_effect(move || {
+    if !links.read().is_waiting() {
+      return;
+    }
+    let opening = links.write().ready(&items.read(), page_in(), settings.read().is_some());
+    if let Some(Opening::Select(id) | Opening::Settled(id)) = opening {
+      notice.set(String::new());
+      screen.set(Screen::Item(id));
     }
   });
 
