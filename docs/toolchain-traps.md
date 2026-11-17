@@ -561,6 +561,11 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-11-17: `Lain::Exec::Local a stop leaves no side effect from a String command stopped before
+    it got there` (red in a landing suite 2026-11-16; one of the 2 unnamed `Lain::Exec::Local` entries
+    above). A real race, not timing: a stop signalled the stage's process group, which `setsid` makes
+    only after the stage starts, so a stop in that window met no group and the command ran on. 3 of
+    100 runs under load left its file. A stage with no group yet is now signalled by pid: 0 of 100.
   - 2026-11-12: `Lain::Tool::Offload keeps a sibling fiber running while the work holds its thread` and
     `... while the work never gives up the lock between threads` (red 2026-10-18, 10-19, 10-21 and 10-31,
     and at tick gaps of 0.302 and 0.312 against a 0.3 bound). Both judged ticks against a wall-clock
@@ -1019,6 +1024,11 @@ Unproven; counting only the example's own thread would settle it.
   read` (STUCK at 30.5 s at load 19.2 on 16 cores); and 2 examples of `Lain::CLI::TmuxSurface
   against a real tmux server`, red together in one suite: `keeps a cleanly exiting window's pane
   out of the way` and `holds the corpse of a window whose command exited non-zero`.
+
+  Added 2026-11-16, from the review queue run's landing hooks. Red once in a landing suite, green
+  alone, and 3 of 3 runs of its file on the base commit: `Lain::Ext::Timeline#messages re-entering
+  Ruby frees the render state when the fiber is dropped inside Canonical.adopt` (leaked 1001401
+  bytes against its 1000000 limit, seed 30242).
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
