@@ -68,8 +68,8 @@ module Lain
       # it at all: over the agenda of this chat's parked calls, the project's
       # deferred gates and the chat's open questions.
       #
-      # @param config [Config] its `remote relay:` address, where nil leaves the phone surface off, and
-      #   its `remote ntfy:` topic URL a long-waiting item is announced on
+      # @param relay [String, nil] the `remote relay:` address, where nil leaves the phone surface off
+      # @param ntfy [String, nil] the `remote ntfy:` topic URL a long-waiting item is announced on
       # @param paths [Paths]
       # @param root [String] the project root
       # @param queue [Parked::Queue, nil] the chat's parked calls; nil when nobody answers the chat
@@ -77,12 +77,12 @@ module Lain
       # @param secrets [#to_a] the board's known secret values
       # @param journal [#<<] the session journal
       # @return [RemoteSurface, nil]
-      def self.for(config:, paths:, root:, queue:, replies:, secrets:, journal:)
-        return unless config.remote_relay && queue
+      def self.for(relay:, ntfy:, paths:, root:, queue:, replies:, secrets:, journal:)
+        return unless relay && queue
 
         agenda = Remote::Agenda.new(queue:, gates: Remote::Agenda::Gates.new(paths:, root:), replies:)
         new(transport: Core::Transport::Unix.new(socket(paths:, root:)), agenda:, secrets:, journal:,
-            ntfy: announcer(config.remote_ntfy))
+            ntfy: announcer(ntfy))
       end
 
       def self.announcer(url) = url ? Remote::Ntfy.new(url:) : Remote::Ntfy::Null::INSTANCE

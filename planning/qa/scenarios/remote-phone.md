@@ -27,8 +27,8 @@ WebKitGTK (`cargo build -p lain-remote`); §7 needs what its own Needs line says
 
 ## 0: Config refusals *(free — launch only)*
 
-Write each into `.lain/config.rb`, run `lain trust --yes`, and start `lain chat`. Each must refuse at load, naming
-`.lain/config.rb:LINE`, exit 1, no backtrace:
+Write each into the user's `config.rb` (`$XDG_CONFIG_HOME/lain/config.rb`), run `lain trust --user`, and start `lain chat`.
+Each must refuse at load, naming that file and `:LINE`, exit 1, no backtrace:
 
 ```ruby
 remote relay: "0.0.0.0:7820"        # listens on every address
@@ -42,6 +42,10 @@ remote nope: 1                      # unknown key
 Expect: `relay must be an IP address and a port, such as "100.64.0.1:7820"`, `relay listens only on loopback or this host's
 tailscale0 address, never on every address`, and `ntfy must be an http or https URL naming a topic`. With no `remote` line the
 phone surface is off and nothing in `lain up` changes.
+
+Then put `remote relay: "100.64.0.1:7820"` in a project's `.lain/config.rb`, run `lain trust --yes`, and start `lain chat`.
+Expect a refusal at load, exit 1, no backtrace, saying `remote belongs in the user's config.rb` and naming the user's
+`config.rb` path.
 
 ## 1: Pairing *(free)*
 
@@ -63,7 +67,7 @@ file, in the journal, or printed twice.
 
 ## 2: The relay window in `lain up` *(free)*
 
-Set `remote relay: "127.0.0.1:7820"` and run `lain up`. Expect a tmux window named `relay` running `lain-core relay`, a note
+Set `remote relay: "127.0.0.1:7820"` in the user's config.rb and run `lain up`. Expect a tmux window named `relay` running `lain-core relay`, a note
 `the phone relay runs in the 'relay' window; if it dies its log is <path>`, the socket directory at mode 0700 and, on a first start,
 an empty devices file. Then the failures, each a warning and a cockpit WITHOUT a relay, never a refused cockpit:
 
@@ -142,7 +146,7 @@ TS=$(tailscale ip -4)
 cargo build -p lain-remote
 ```
 
-Set `remote relay: "$TS:7820"` (the address itself, not `$TS`), run `lain remote pair qa-desktop`, and start `lain up`. Expect
+Set `remote relay: "$TS:7820"` (the address itself, not `$TS`) in the user's config.rb, run `lain remote pair qa-desktop`, and start `lain up`. Expect
 the `relay:` line of the pair to read `$TS:7820`, and `ss -ltn 'sport = :7820'` to show 1 listener, on `$TS`, and none on
 `127.0.0.1` or `0.0.0.0`.
 

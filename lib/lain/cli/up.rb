@@ -1167,9 +1167,10 @@ module Lain
         end
         NONE = Launch.new(command: nil, warnings: [].freeze, trace: nil)
 
-        # The project's own `remote relay:`, found the way its chat finds the project.
-        # A directory that names no project, or a config the chat will itself refuse,
-        # gets no relay; the chat is where that is said.
+        # The user's `remote relay:`, started for the project its chat finds the way the chat does.
+        # The relay is user-wide, but the chat's socket path is per project root, so a
+        # directory that names no project still gets no relay. A user config that is
+        # refused or untrusted skips it with the reason; the chat says the rest.
         #
         # @param cwd [String] where the cockpit's panes run
         # @param paths [Paths]
@@ -1181,7 +1182,7 @@ module Lain
           return new(address: nil, root: cwd, paths:, interfaces:, binary:) unless root
 
           begin
-            new(address: Config.load(root:, paths:).remote_relay, root:, paths:, interfaces:, binary:)
+            new(address: Config.remote(paths:)[:relay], root:, paths:, interfaces:, binary:)
           rescue Error => e
             new(address: nil, root:, paths:, interfaces:, binary:, skipped: e.message)
           end

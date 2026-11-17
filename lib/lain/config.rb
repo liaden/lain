@@ -37,8 +37,7 @@ module Lain
       built = built(root, paths:)
       new(epics: built.epics, approval: built.approval, isolation: built.isolation, env_pass: built.env_pass,
           todos: built.todos, approval_timeout: built.approval_timeout, approval_silence: built.approval_silence,
-          judge_timeout: built.judge_timeout, judge_memo: built.judge_memo, review: built.review, budget: built.budget,
-          remote_relay: built.remote_relay, remote_ntfy: built.remote_ntfy)
+          judge_timeout: built.judge_timeout, judge_memo: built.judge_memo, review: built.review, budget: built.budget)
     end
 
     # What a project adds to the path classifier's built-in tables, and the
@@ -128,6 +127,18 @@ module Lain
     # @raise [Refusal] as {.load}, for either file
     def self.middleware(root:, paths:) = user(paths).middleware + built(root, paths:).middleware
 
+    # The phone's approval surface: where the relay listens and the topic a waiting item is announced on.
+    # Only the user's config.rb may declare it, since one phone listener serves the whole machine.
+    #
+    # @param paths [Paths] where the user's config.rb lives
+    # @return [Hash{Symbol => String, nil}] `relay:` and `ntfy:`, each nil when not set
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] naming the user's file and line
+    def self.remote(paths:)
+      built = user(paths)
+      { relay: built.remote_relay, ntfy: built.remote_ntfy }
+    end
+
     # The keys the user's config.rb rebinds. Only that file may declare them.
     #
     # @param paths [Paths] where the user's config.rb lives
@@ -198,7 +209,8 @@ module Lain
       path = project_dir.config
       return Builder.new(path).built unless File.exist?(path)
 
-      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's", "project", vouched_by:)
+      judged(path, Project::Trust.for(project_dir:, paths:), Builder::VERBS, "this project's", "project",
+             user_config: paths.user_config, vouched_by:)
     end
 
     def self.user(paths)
@@ -210,23 +222,23 @@ module Lain
 
     # The digest is stamped after the memo, which is keyed on config.rb alone
     # while the trust covers every `.lain/*.rb`.
-    def self.judged(path, trust, verbs, whose, side, vouched_by: nil)
+    def self.judged(path, trust, verbs, whose, side, user_config: nil, vouched_by: nil)
       source = trust.sources[path]
       raise Project::Trust::Unreadable, Project::Trust.legible(format(NOT_A_FILE, path:, whose:)) if source.nil?
 
       trust.require!(vouched_by:)
-      outcome = evaluated(path, source, verbs)
+      outcome = evaluated(path, source, verbs, user_config)
       raise outcome if outcome.is_a?(Refusal)
 
       outcome.with(middleware: outcome.middleware.trusted_by(side, trust.digest))
     end
 
     # A refusal is memoised like a value, so a failing file runs once too.
-    def self.evaluated(path, source, verbs)
+    def self.evaluated(path, source, verbs, user_config)
       @lock.synchronize do
-        @built.fetch([path, source]) do
-          @built[[path, source]] = begin
-            Builder.evaluate(source, path:, verbs:)
+        @built.fetch([path, source, user_config]) do
+          @built[[path, source, user_config]] = begin
+            Builder.evaluate(source, path:, verbs:, user_config:)
           rescue Refusal => e
             e
           end
@@ -294,16 +306,10 @@ module Lain
     # @return [Budget::Table] how many iterations an ask may run, by skill and role
     attr_reader :budget
 
-    # @return [String, nil] the address the phone relay listens on, `ip:port`; nil leaves the phone surface off
-    attr_reader :remote_relay
-
-    # @return [String, nil] the ntfy topic URL a waiting item is announced on
-    attr_reader :remote_ntfy
-
     def initialize(epics:, approval: Answers.empty, isolation: Isolation.empty, env_pass: [], todos: Todos.empty,
                    approval_timeout: DEFAULT_APPROVAL_TIMEOUT, approval_silence: DEFAULT_APPROVAL_SILENCE,
                    judge_timeout: DEFAULT_JUDGE_TIMEOUT, judge_memo: DEFAULT_JUDGE_MEMO, review: Review.empty,
-                   budget: Budget::Table.new, remote_relay: nil, remote_ntfy: nil)
+                   budget: Budget::Table.new)
       @epics = epics
       @approval = Answers.coerce(approval)
       @isolation = Isolation.coerce(isolation)
@@ -315,8 +321,6 @@ module Lain
       @judge_memo = judge_memo
       @review = review
       @budget = budget
-      @remote_relay = remote_relay
-      @remote_ntfy = remote_ntfy
       freeze
     end
 
@@ -340,7 +344,7 @@ module Lain
 
     def state
       [epics, approval, isolation, env_pass, todos, approval_timeout, approval_silence, judge_timeout, judge_memo,
-       review, budget, remote_relay, remote_ntfy]
+       review, budget]
     end
 
     # The default `gates` table must stay EMPTY. {Epics::Gates.check!} reads

@@ -28,7 +28,7 @@ module Lain
     # wrote Ruby and a backtrace into this file points nowhere they can edit.
     class Builder
       VERBS = %i[epics approval isolation sensitivity shell search tests middleware env todos think review
-                 budget remote github].freeze
+                 budget github].freeze
 
       ENV_TABLE = "`env`"
       THINK_TABLE = "`think`"
@@ -51,7 +51,7 @@ module Lain
 
       # The user's config.rb runs in every project, so the tables that rule
       # one project stay in that project's file.
-      USER_VERBS = %i[middleware keys theme attention github].freeze
+      USER_VERBS = %i[middleware keys theme attention github remote].freeze
 
       # Records the calls a block makes, so the verb that owns the block can
       # validate them at the line each was written on.
@@ -86,11 +86,12 @@ module Lain
       # @param path [String] what backtraces and refusals name
       # @param verbs [Array<Symbol>] the tables this file may declare
       # @param skills [Array<String>, nil] the skill names a `budget` row may name; nil reads the project's catalog
+      # @param user_config [String, nil] the user's config.rb, named by a refusal of a verb that belongs there
       # @return [Built]
       # @raise [Refusal] naming the path and line of what the file got wrong,
       #   whether that is a refused value or Ruby itself failing
-      def self.evaluate(source, path:, verbs: VERBS, skills: nil)
-        builder = new(path, verbs, skills)
+      def self.evaluate(source, path:, verbs: VERBS, skills: nil, user_config: nil)
+        builder = new(path, verbs, skills, user_config)
         # A String read under LC_ALL=C is US-ASCII, and `load` would assume UTF-8 here.
         builder.instance_eval(source.dup.force_encoding(Encoding::UTF_8), path, 1)
         builder.built
@@ -120,10 +121,12 @@ module Lain
       # @param verbs [Array<Symbol>] the tables this file may declare
       # @param skills [Array<String>, nil] the skill names a `budget` row may name; the catalog is read
       #   only when a row names something else
-      def initialize(path, verbs = VERBS, skills = nil)
+      # @param user_config [String, nil] the user's config.rb, named by a refusal of a verb that belongs there
+      def initialize(path, verbs = VERBS, skills = nil, user_config = nil)
         @path = path
         @verbs = verbs
         @skills = skills
+        @user_config = user_config
         @tables = {}
         @approval_timeout = Config::DEFAULT_APPROVAL_TIMEOUT
         @approval_silence = Config::DEFAULT_APPROVAL_SILENCE
@@ -274,9 +277,11 @@ module Lain
       end
 
       def refuse_project_only(table, at)
-        owner = USER_VERBS.include?(table) ? "the user's config.rb" : "a project's #{ProjectDir.config}"
+        owner = USER_VERBS.include?(table) ? user_file : "a project's #{ProjectDir.config}"
         raise Refusal.new("#{table} belongs in #{owner}", path: at, key: table.to_s)
       end
+
+      def user_file = ["the user's config.rb", @user_config].compact.join(", ")
 
       def refuse_repeated_keys(keywords, at, label)
         twice = keywords.keys.map(&:to_s).tally.select { |_, count| count > 1 }.keys

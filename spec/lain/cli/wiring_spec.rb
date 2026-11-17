@@ -4000,14 +4000,23 @@ RSpec.describe Lain::CLI::Wiring do
         seen.sole
       end
 
-      it "hands the Repl a remote surface when remote relay is set" do
-        write_config(project_dir, "remote relay: \"127.0.0.1:7820\"\n")
+      def write_user_config(body)
+        user = Lain::Paths.new
+        FileUtils.mkdir_p(File.dirname(user.user_config))
+        File.write(user.user_config, body)
+        Lain::Project::Trust.for_user(paths: user).grant!
+      end
+
+      after { FileUtils.rm_f(Lain::Paths.new.user_config) }
+
+      it "hands the Repl a remote surface when the user's config sets remote relay" do
+        write_user_config("remote relay: \"127.0.0.1:7820\"\n")
 
         expect(remote_handed).to be_a(Lain::Approval::RemoteSurface)
       end
 
       it "hands the Repl a surface that announces on the configured ntfy topic" do
-        write_config(project_dir, "remote relay: \"127.0.0.1:7820\", ntfy: \"http://127.0.0.1:8090/lain-x7\"\n")
+        write_user_config("remote relay: \"127.0.0.1:7820\", ntfy: \"http://127.0.0.1:8090/lain-x7\"\n")
 
         expect(remote_handed.ntfy).to be_an_instance_of(Lain::Remote::Ntfy)
       end

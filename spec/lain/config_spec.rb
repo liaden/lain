@@ -95,91 +95,99 @@ RSpec.describe Lain::Config do
     end
   end
 
-  describe "the remote table" do
-    it "is unset without the verb, so no chat dials a relay" do
-      expect([described_class.empty.remote_relay, described_class.empty.remote_ntfy]).to eq([nil, nil])
-    end
-
-    it "reads the relay's address and the ntfy topic" do
-      Dir.mktmpdir do |root|
-        write_config(root, "remote relay: \"100.64.0.1:7820\", ntfy: \"http://100.101.102.103:8090/lain-x7\"\n")
-        config = described_class.load(root:, paths: Lain::Paths.new)
-
-        expect([config.remote_relay, config.remote_ntfy])
-          .to eq(["100.64.0.1:7820", "http://100.101.102.103:8090/lain-x7"])
+  describe ".remote" do
+    around do |example|
+      Dir.mktmpdir("lain-remote-config") do |tmp|
+        @tmp = tmp
+        example.run
       end
     end
 
-    it "refuses a relay that is not an IP address and a port, naming the line" do
-      Dir.mktmpdir do |root|
-        write_config(root, "\nremote relay: \"phone.local\"\n")
-
-        expect { described_class.load(root:, paths: Lain::Paths.new) }
-          .to raise_error(Lain::Config::Refusal, /config\.rb:2.*relay must be an IP address and a port/)
-      end
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
     end
 
-    it "refuses a relay port outside 1 to 65535" do
-      Dir.mktmpdir do |root|
-        write_config(root, "remote relay: \"100.64.0.1:70000\"\n")
-
-        expect do
-          described_class.load(root:,
-                               paths: Lain::Paths.new)
-        end.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
-      end
+    def write_user(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant!
     end
 
-    it "refuses a host name with a port, since the relay resolves no names" do
-      Dir.mktmpdir do |root|
-        write_config(root, "remote relay: \"phone.local:7820\"\n")
+    it "is unset without the user's file, so no chat dials a relay" do
+      expect(described_class.remote(paths:)).to eq({ relay: nil, ntfy: nil })
+    end
 
-        expect do
-          described_class.load(root:,
-                               paths: Lain::Paths.new)
-        end.to raise_error(Lain::Config::Refusal, /relay must be an IP address/)
+    it "reads the relay's address and the ntfy topic from the user's file" do
+      write_user("remote relay: \"100.64.0.1:7820\", ntfy: \"http://100.101.102.103:8090/lain-x7\"\n")
+
+      expect(described_class.remote(paths:))
+        .to eq({ relay: "100.64.0.1:7820", ntfy: "http://100.101.102.103:8090/lain-x7" })
+    end
+
+    it "refuses a relay that is not an IP address and a port, naming the user's file and line" do
+      write_user("\nremote relay: \"phone.local\"\n")
+
+      expect { described_class.remote(paths:) }
+        .to raise_error(Lain::Config::Refusal,
+                        /#{Regexp.escape(paths.user_config)}:2.*relay must be an IP address and a port/)
+    end
+
+    it "refuses a relay port outside 1 to 65535, and a host name with a port" do
+      refusals = ["100.64.0.1:70000", "phone.local:7820"].map do |relay|
+        write_user("remote relay: #{relay.inspect}\n")
+        described_class.remote(paths:)
+      rescue Lain::Config::Refusal => e
+        e.message
       end
+
+      expect(refusals).to all(include("relay must be an IP address"))
     end
 
     it "refuses an address that listens everywhere, naming where the relay may listen" do
       refusals = ["0.0.0.0:7820", "[::]:7820"].map do |relay|
-        Dir.mktmpdir do |root|
-          write_config(root, "remote relay: #{relay.inspect}\n")
-          described_class.load(root:, paths: Lain::Paths.new)
-        rescue Lain::Config::Refusal => e
-          e.message
-        end
+        write_user("remote relay: #{relay.inspect}\n")
+        described_class.remote(paths:)
+      rescue Lain::Config::Refusal => e
+        e.message
       end
 
       expect(refusals).to all(include("listens only on loopback or this host's tailscale0 address"))
     end
 
-    it "refuses an ntfy URL that names no topic" do
-      Dir.mktmpdir do |root|
-        write_config(root, "remote ntfy: \"http://100.101.102.103:8090/\"\n")
-
-        expect do
-          described_class.load(root:,
-                               paths: Lain::Paths.new)
-        end.to raise_error(Lain::Config::Refusal, /ntfy must be an http or https/)
+    it "refuses an ntfy URL that names no topic, and one that is not http or https" do
+      refusals = ["http://100.101.102.103:8090/", "ftp://host/topic"].map do |url|
+        write_user("remote ntfy: #{url.inspect}\n")
+        described_class.remote(paths:)
+      rescue Lain::Config::Refusal => e
+        e.message
       end
+
+      expect(refusals).to all(include("ntfy must be an http or https"))
     end
 
-    it "refuses an ntfy topic that is not an http or https URL" do
-      Dir.mktmpdir do |root|
-        write_config(root, "remote ntfy: \"ftp://host/topic\"\n")
+    it "names each caller's own user config when one project file is loaded under 2 Paths" do
+      root = File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) }
+      write_config(root, "remote relay: \"100.64.0.1:7820\"\n", paths:)
+      other = Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "other"),
+                                     "XDG_STATE_HOME" => File.join(@tmp, "state") })
 
-        expect { described_class.load(root:, paths: Lain::Paths.new) }
-          .to raise_error(Lain::Config::Refusal, /ntfy must be an http or https URL/)
+      named = [paths, other].map do |each|
+        described_class.load(root:, paths: each)
+      rescue Lain::Config::Refusal => e
+        e.message
       end
+
+      expect(named).to match([include(paths.user_config), include(other.user_config)])
     end
 
-    it "makes configs differing only in it unequal, with different hashes" do
-      epics = Lain::Config::Epics.new(home: :xdg)
-      plain = described_class.new(epics:)
-      other = described_class.new(epics:, remote_relay: "127.0.0.1:7820")
+    it "refuses the verb in a project's config.rb, naming the user's file" do
+      root = File.join(@tmp, "project").tap { |dir| FileUtils.mkdir_p(dir) }
+      write_config(root, "remote relay: \"100.64.0.1:7820\"\n", paths:)
 
-      expect([plain == other, plain.hash == other.hash]).to eq([false, false])
+      expect { described_class.load(root:, paths:) }
+        .to raise_error(Lain::Config::Refusal,
+                        /remote belongs in the user's config\.rb, #{Regexp.escape(paths.user_config)}/)
     end
   end
 

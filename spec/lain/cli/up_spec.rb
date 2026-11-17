@@ -4079,42 +4079,32 @@ RSpec.describe Lain::CLI::Up, "the phone relay window" do
     end
   end
 
-  describe "built for a project's own config" do
-    it "reads the address from .lain/config.rb" do
-      write_config(root, "remote relay: \"100.64.0.1:7820\"\n")
-
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths: Lain::Paths.new, interfaces:, binary:)
-
-      up_with(found).call
-      expect(relay_argv).to include("100.64.0.1:7820")
+  describe "built for the user's own config" do
+    def write_user_config(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant!
     end
 
-    it "says why when the config is refused, rather than starting no relay in silence" do
-      FileUtils.mkdir_p(File.join(root, ".lain"))
-      File.write(File.join(root, ".lain", "config.rb"), "remote relay: \"100.64.0.1:7820\"\n")
-
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths: Lain::Paths.new, interfaces:, binary:)
-
-      expect(found.call.warnings.sole).to start_with("remote relay skipped: ").and include("trust")
-    end
-
-    it "looks the project up under the injected paths, the ones its trust is read from" do
-      write_config(root, "remote relay: \"100.64.0.1:7820\"\n", paths:)
-      looked_under = []
-      allow(Lain::Project::Resolver).to receive(:new).and_wrap_original do |original, **kwargs|
-        looked_under << kwargs.fetch(:paths).state_home
-        original.call(**kwargs)
-      end
+    it "reads the address from the user's config.rb" do
+      write_user_config("remote relay: \"100.64.0.1:7820\"\n")
 
       found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
 
-      expect(looked_under).to eq([paths.state_home])
       up_with(found).call
       expect(relay_argv).to include("100.64.0.1:7820")
     end
 
-    it "starts no relay for a project that sets none" do
-      found = Lain::CLI::Up::Relay.for(cwd: root, paths: Lain::Paths.new, interfaces:, binary:)
+    it "says why when the user's relay is refused, rather than starting no relay in silence" do
+      write_user_config("remote relay: \"0.0.0.0:7820\"\n")
+
+      found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
+
+      expect(found.call.warnings.sole).to start_with("remote relay skipped: ").and include("tailscale0")
+    end
+
+    it "starts no relay when the user's file sets none" do
+      found = Lain::CLI::Up::Relay.for(cwd: root, paths:, interfaces:, binary:)
 
       up_with(found).call
 

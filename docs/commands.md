@@ -1404,8 +1404,8 @@ End the session. Same as a bare `quit`.
 
 ## Configuration (config.rb)
 
-`.lain/config.rb` is Ruby, evaluated once per launch, with 15 documented verbs: `epics`, `approval`,
-`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos`, `think`, `review`, `budget`, `remote` and `github`. Each verb may appear once, and every
+`.lain/config.rb` is Ruby, evaluated once per launch, with 14 documented verbs: `epics`, `approval`,
+`isolation`, `sensitivity`, `shell`, `search`, `tests`, `middleware`, `env`, `todos`, `think`, `review`, `budget` and `github`. Each verb may appear once, and every
 one is optional. Each is read by its own **strict** reader: an unknown key is refused by name,
 listing the keys that do exist, because a restricting table has to refuse a typo loudly rather than
 silently leave the restriction off.
@@ -1472,7 +1472,9 @@ tests preset: :rspec
   should still read; a glob that leaves the project is refused. `max_entries:` (20,000 by default)
   caps the files one walk lists and `max_bytes:` (200 MiB by default) the bytes it reads; both are
   positive integers, and a search that hits one says it was cut short.
-* `remote`: `relay:` and `ntfy:`, the phone's approval surface, off until `relay:` is set.
+* `remote`: `relay:` and `ntfy:`, the phone's approval surface, off until `relay:` is set. It is a verb of
+  the [user-level file](#middleware) only, since 1 machine has 1 phone listener: a project's
+  `.lain/config.rb` that says `remote` is refused, naming the user's config.rb.
   `relay:` is the `"ip:port"` the relay listens on for the phone, such as `"100.64.0.1:7820"`. It
   must be loopback or this host's `tailscale0` address; `0.0.0.0` and any other all-addresses
   spelling are refused. [`lain up`](#lain-up) runs the relay in its own `relay` tmux window of the
@@ -1567,7 +1569,7 @@ it to the chat and to every subagent it spawns. `qa-lain bench`, `lain consolida
 and `lain epic submit` read none, so a bench arm does not change with the home directory.
 
 **The user-level file.** `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`)
-accepts only the `middleware`, `keys`, `theme`, `attention` and `github` verbs and applies to every project. `keys approval_cycle:` names the
+accepts only the `middleware`, `keys`, `theme`, `attention`, `github` and `remote` verbs and applies to every project. `keys approval_cycle:` names the
 [approval cycle key](#cycling-approval-from-the-keyboard), is refused in a project's file, and accepts only
 `"S-Tab"` today: every `C-<letter>` is held by lain or by the line editor. It runs only after
 `lain trust --user`, which shows the file and records its exact bytes. Trust is consent to bytes

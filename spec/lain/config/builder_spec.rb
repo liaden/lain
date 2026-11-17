@@ -470,7 +470,7 @@ RSpec.describe Lain::Config::Builder do
     it "lists only the user's verbs as known" do
       expect { build_user("\nmiddlewear { }\n") }
         .to raise_error(Lain::Config::Refusal,
-                        /config\.rb:2: .*:middlewear; known verbs: middleware, keys, theme, attention, github\z/)
+                        /:middlewear; known verbs: middleware, keys, theme, attention, github, remote\z/)
     end
 
     it "builds an attention table" do
@@ -493,6 +493,23 @@ RSpec.describe Lain::Config::Builder do
     it "names the line of a key it refuses" do
       expect { build_user("\nkeys approval_cycle: \"Hyper-Q\"\n") }
         .to raise_error(Lain::Config::Refusal, /config\.rb:2: .*Hyper-Q/)
+    end
+  end
+
+  describe "the remote verb" do
+    let(:user_config) { "/home/me/.config/lain/config.rb" }
+
+    it "builds the relay and the ntfy topic from the user's file" do
+      built = build("remote relay: \"100.64.0.1:7820\", ntfy: \"https://ntfy.sh/x\"\n",
+                    verbs: described_class::USER_VERBS)
+
+      expect([built.remote_relay, built.remote_ntfy]).to eq(["100.64.0.1:7820", "https://ntfy.sh/x"])
+    end
+
+    it "tells a project's file where it moved, naming the user's config path" do
+      expect { build("\nremote relay: \"100.64.0.1:7820\"\n", user_config:) }
+        .to raise_error(Lain::Config::Refusal,
+                        /config\.rb:2: .*remote belongs in the user's config\.rb, #{Regexp.escape(user_config)}/)
     end
   end
 

@@ -955,8 +955,9 @@ module Lain
       end
 
       def remote_surface
-        Approval::RemoteSurface.for(config:, paths: @paths, root:, queue: approvals,
-                                    replies: @replies, secrets: @switchboard.secrets, journal: durable_journal)
+        Approval::RemoteSurface.for(**Config.remote(paths: @paths), paths: @paths, root:, queue: approvals,
+                                                                    replies: @replies, secrets: @switchboard.secrets,
+                                                                    journal: durable_journal)
       end
 
       # The same route compaction's own diagnostics take, so a fault lands on the

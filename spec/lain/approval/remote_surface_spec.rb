@@ -305,8 +305,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
   describe ".for" do
     def built(relay, ntfy = nil)
-      config = instance_double(Lain::Config, remote_relay: relay, remote_ntfy: ntfy)
-      described_class.for(config:, paths: Lain::Paths.new(env: { "HOME" => @dir }), root: @dir, queue:,
+      described_class.for(relay:, ntfy:, paths: Lain::Paths.new(env: { "HOME" => @dir }), root: @dir, queue:,
                           replies: RemoteSurfaceSpecSupport::NoReplies.new, secrets: [], journal:)
     end
 
