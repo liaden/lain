@@ -124,6 +124,99 @@ RSpec.describe Lain::Core::Client do
     end
   end
 
+  describe "pushed frames" do
+    def push(peer, method, params) = peer.write(MessagePack.pack([Lain::Core::Client::PUSH, method, params]))
+
+    def with_pushing_client(**options)
+      with_client do |transport, peer|
+        daemon = Async { answer_handshake(peer) }
+        client = described_class.start(transport:, **options)
+        requests = daemon.wait
+        begin
+          yield client, peer, requests
+        ensure
+          client.stop
+        end
+      end
+    end
+
+    it "delivers a push to the subscriber queue as method and params, once" do
+      pushes = Async::Queue.new
+      with_pushing_client(pushes:) do |_client, peer|
+        push(peer, "offer", [{ "id" => 1 }])
+        expect(pushes.dequeue).to eq(["offer", [{ "id" => 1 }]])
+        expect(pushes).to be_empty
+      end
+    end
+
+    it "resolves a pending call whether the push lands before or after its response" do
+      pushes = Async::Queue.new
+      with_pushing_client(pushes:) do |client, peer, requests|
+        daemon = Async do
+          2.times do |round|
+            _kind, msgid, = requests.read
+            push(peer, "before", [round]) if round.zero?
+            respond(peer, msgid, result: "reply #{round}")
+            push(peer, "after", [round]) if round == 1
+          end
+        end
+        expect([client.call("a"), client.call("b")]).to eq(["reply 0", "reply 1"])
+        daemon.wait
+        expect([pushes.dequeue, pushes.dequeue]).to eq([["before", [0]], ["after", [1]]])
+      end
+    end
+
+    it "drops a push with no subscriber and says so in 1 note" do
+      notes = StringIO.new
+      with_pushing_client(notes:) do |client, peer, requests|
+        push(peer, "offer", [1])
+        push(peer, "offer", [2])
+        daemon = Async do
+          _kind, msgid, = requests.read
+          respond(peer, msgid, result: "still served")
+        end
+        expect(client.call("ping")).to eq("still served")
+        daemon.wait
+        expect(notes.string.lines.size).to eq(1)
+        expect(notes.string).to match(/push.*offer.*no subscriber/i)
+      end
+    end
+
+    it "drops a malformed push instead of handing it to the subscriber" do
+      pushes = Async::Queue.new
+      with_pushing_client(pushes:) do |client, peer, requests|
+        [[2], [2, nil, nil], [2, 5, 7], [2, "a"], [2, "a", [1], "extra"], [2, "a", "notarray"]].each do |frame|
+          peer.write(MessagePack.pack(frame))
+        end
+        push(peer, "offer", [1])
+        expect(pushes.dequeue).to eq(["offer", [1]])
+        expect(pushes).to be_empty
+        daemon = Async do
+          _kind, msgid, = requests.read
+          respond(peer, msgid, result: "ok")
+        end
+        expect(client.call("ping")).to eq("ok")
+        daemon.wait
+      end
+    end
+
+    it "treats a closed queue as no subscriber and keeps resolving calls" do
+      pushes = Async::Queue.new
+      notes = StringIO.new
+      with_pushing_client(pushes:, notes:) do |client, peer, requests|
+        pushes.close
+        push(peer, "offer", [1])
+        daemon = Async do
+          _kind, msgid, = requests.read
+          respond(peer, msgid, result: "still served")
+        end
+        expect(client.call("ping")).to eq("still served")
+        daemon.wait
+        expect(notes.string.lines.size).to eq(1)
+      end
+    end
+  end
+
   # The one example with no double between client and daemon: it pins the
   # Ruby-to-Rust msgpack contract the wire exists to carry.
   it "speaks the real binary's wire: handshake, ping, and a refusal of a method it does not serve", :core do

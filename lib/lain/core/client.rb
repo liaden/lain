@@ -8,7 +8,7 @@ module Lain
     # The wire half of the exec boundary. ONE reader-loop fiber drains the
     # socket and resolves an msgid->{Promise} map, so N concurrent callers
     # interleave safely by construction. The daemon completes out of order BY
-    # CONTRACT (crates/lain-core/src/rpc.rs), and msgid demux is the client's
+    # CONTRACT (crates/lain-rpc/src/lib.rs), and msgid demux is the client's
     # side of that bargain. A {Transport} provisions the wire and describes its
     # own termination; this class owns bytes.
     class Client
@@ -49,6 +49,7 @@ module Lain
 
       REQUEST = 0
       RESPONSE = 1
+      PUSH = 2
       # msgpack-RPC msgids are u32 (the server rejects anything else); wrap
       # rather than grow into a bignum it would refuse.
       MSGID_LIMIT = 2**32
@@ -62,11 +63,18 @@ module Lain
       # an Async reactor -- the
       # reader fiber parents itself to the current task, and the caller owns
       # getting {#stop} called before that task ends.
-      def self.start(transport:, version: PROTOCOL_VERSION, handshake_budget: HANDSHAKE_BUDGET)
-        new(transport:, socket: transport.start, version:).handshake(budget: handshake_budget)
+      #
+      # `pushes` is an Async::Queue that receives `[method, params]` for each
+      # server push; the caller drains it, so subscriber code never runs on the
+      # reader fiber. The queue is unbounded and the subscriber must drain it (the
+      # server bounds its own side at 256 per connection). Without one, or once it
+      # is closed, pushes are dropped and `notes` hears of it once.
+      def self.start(transport:, version: PROTOCOL_VERSION, handshake_budget: HANDSHAKE_BUDGET, pushes: nil,
+                     notes: Sink::Null.new)
+        new(transport:, socket: transport.start, version:, pushes:, notes:).handshake(budget: handshake_budget)
       end
 
-      def initialize(transport:, socket:, version: PROTOCOL_VERSION)
+      def initialize(transport:, socket:, version: PROTOCOL_VERSION, pushes: nil, notes: Sink::Null.new)
         # Without a reactor the reader fiber has no parent to run under and
         # the first #call deadlocks obscurely; refuse in words instead.
         raise Error, "Core::Client must be built inside an Async reactor (Sync/Async block)" unless Async::Task.current?
@@ -74,6 +82,9 @@ module Lain
         @transport = transport
         @socket = socket
         @version = version
+        @pushes = pushes
+        @notes = notes
+        @dropped_noted = false
         @msgid = 0
         @pending = {}
         @stopping = false
@@ -214,12 +225,39 @@ module Lain
       end
 
       def deliver(frame)
-        kind, msgid, error, result = frame
-        # The server only sends responses; a frame of any other shape, or an
-        # msgid nobody is awaiting (an error reply echoing a junk id this
-        # client never sent), resolves nothing -- dropping it beats killing
-        # the reader that every OTHER call is parked on.
-        @pending.delete(msgid)&.resolve([error, result]) if kind == RESPONSE
+        kind, *fields = frame
+        case kind
+        when RESPONSE then respond(*fields.first(3))
+        when PUSH then push(*fields) if well_formed_push?(fields)
+        end
+      end
+
+      # An msgid nobody is awaiting (an error reply echoing a junk id this
+      # client never sent) resolves nothing -- dropping it beats killing the
+      # reader that every OTHER call is parked on.
+      def respond(msgid = nil, error = nil, result = nil)
+        @pending.delete(msgid)&.resolve([error, result])
+      end
+
+      # The server orders pushes among themselves but not against responses, so
+      # nothing here may assume a push precedes or follows any call's reply.
+      def push(method, params)
+        return note_dropped(method) unless @pushes
+
+        @pushes.enqueue([method, params])
+      rescue Async::Queue::ClosedError
+        note_dropped(method)
+      end
+
+      def well_formed_push?(fields)
+        fields.size == 2 && fields.first.is_a?(String) && fields.last.is_a?(Array)
+      end
+
+      def note_dropped(method)
+        return if @dropped_noted
+
+        @dropped_noted = true
+        @notes.puts("lain-core push #{method.inspect} dropped: no subscriber (further drops not noted)")
       end
 
       # Releasing the transport rather than merely observing matters for one
