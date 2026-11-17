@@ -284,7 +284,7 @@ module Lain
 
       def delivery
         ::Lain::Review::Queue::Delivery.new(
-          live_sessions: LiveSessions.new(paths: Paths.new), log: ::Lain::Review::Queue::Log.new(paths: Paths.new),
+          live_sessions: LiveSessions.new(paths: Paths.new),
           account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:),
           pending: ::Lain::Review::Queue::Pending.new(paths: Paths.new)
         )

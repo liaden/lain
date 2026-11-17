@@ -33,7 +33,8 @@ module StopAsk
                                   history_path: File.join(dir, "history"),
                                   state_path: File.join(dir, "state.json"))
     rail = Lain::Frontend::Intake.new(screen: tty)
-    socket = Lain::CLI::InputSocket.new(rail:, path:)
+    queue_log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+    socket = Lain::CLI::InputSocket.new(rail:, path:, log: queue_log)
     socket.bind
     chronicle = Lain::CLI::Chronicle.new(
       journal: Lain::Journal.new(io: File.open(session, "ab").tap { |io| io.sync = true }), journal_path: session

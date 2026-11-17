@@ -9,7 +9,7 @@ require "tmpdir"
 # in the filesystem and a byte stream over it, and a doubled socket would leave
 # the stale-path probe and the 0600 mode untested.
 RSpec.describe Lain::CLI::InputSocket do
-  subject(:socket) { described_class.new(rail:, path:, header:, commands: -> { %w[approve inbox] }) }
+  subject(:socket) { described_class.new(log:, rail:, path:, header:, commands: -> { %w[approve inbox] }) }
 
   let(:runtime) { Dir.mktmpdir("lain-input-socket") }
   let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }) }
@@ -17,6 +17,8 @@ RSpec.describe Lain::CLI::InputSocket do
   let(:rail) { Lain::Frontend::Intake.new }
   let(:header) { -> { hud } }
   let(:hud) { +"fleet:0 inbox:0" }
+  # Built up front: racing contenders construct sockets on threads of their own.
+  let!(:log) { Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(runtime, "state") })) }
 
   after do
     socket.stop
@@ -61,7 +63,7 @@ RSpec.describe Lain::CLI::InputSocket do
   end
 
   def contend(gate, outcomes)
-    contender = described_class.new(rail: Lain::Frontend::Intake.new, path:)
+    contender = described_class.new(log:, rail: Lain::Frontend::Intake.new, path:)
     gate.pop
     outcomes.push(contender.bind)
   rescue described_class::InUse
@@ -78,7 +80,7 @@ RSpec.describe Lain::CLI::InputSocket do
   # A second chat that tried for `candidate` and was sent away, so an example
   # can ask what it did with the lock and the path on its way out.
   def turned_away_at(candidate)
-    chat = described_class.new(rail: Lain::Frontend::Intake.new, path: candidate)
+    chat = described_class.new(log:, rail: Lain::Frontend::Intake.new, path: candidate)
     @turned_away = chat
     chat.bind
   end
@@ -140,7 +142,7 @@ RSpec.describe Lain::CLI::InputSocket do
 
     it "refuses a path another live chat is listening on, naming it" do
       socket.bind
-      second = described_class.new(rail: Lain::Frontend::Intake.new, path:)
+      second = described_class.new(log:, rail: Lain::Frontend::Intake.new, path:)
       expect { second.bind }.to raise_error(described_class::InUse, /#{Regexp.escape(path)}/)
     end
 
@@ -455,7 +457,7 @@ RSpec.describe Lain::CLI::InputSocket do
   # parks the publish thread, darkens every other pane, and, because the
   # goodbye is written on the chat's own exit path, stops the chat exiting.
   describe "a pane that is alive and has stopped reading" do
-    subject(:socket) { described_class.new(rail:, path:, header: -> { headers.last }, tick: 0.002) }
+    subject(:socket) { described_class.new(log:, rail:, path:, header: -> { headers.last }, tick: 0.002) }
 
     # Appended to rather than mutated in place: the publish thread reads this
     # while the example writes it, and a String rewritten under a reader is a
@@ -494,7 +496,7 @@ RSpec.describe Lain::CLI::InputSocket do
     it "is said out loud, so the flicker in the pane has an explanation" do
       said = []
       socket.stop
-      loud = described_class.new(rail:, path:, header: -> { headers.last }, tick: 0.002,
+      loud = described_class.new(log:, rail:, path:, header: -> { headers.last }, tick: 0.002,
                                  notice: ->(word) { said << word })
       loud.bind.start(nil)
       deaf = connect
@@ -518,7 +520,7 @@ RSpec.describe Lain::CLI::InputSocket do
   end
 
   describe "a frame past what one frame may be" do
-    subject(:socket) { described_class.new(rail:, path:, notice: ->(word) { said << word }) }
+    subject(:socket) { described_class.new(log:, rail:, path:, notice: ->(word) { said << word }) }
 
     let(:said) { [] }
 
@@ -538,16 +540,119 @@ RSpec.describe Lain::CLI::InputSocket do
   end
 
   describe "an offer frame from the review queue", :seam do
-    subject(:socket) { described_class.new(rail:, path:, notice: ->(word) { said << word }) }
+    subject(:socket) { described_class.new(log:, rail:, path:, notice: ->(word) { said << word }) }
 
     let(:said) { Thread::Queue.new }
     let(:url) { "https://github.com/fuze/api/pull/12" }
+    let(:row) { { "id" => "pr:fuze/api#12", "head_sha" => "c" * 40 } }
+    let(:queued) do
+      Lain::Review::Queue::Row.new(id: row["id"], rank: :direct, reason: "", request: nil, head_sha: "c" * 40)
+    end
 
     before { socket.bind.start(nil) }
 
+    def offer(client, request = { "kind" => "pr", "url" => url }, with: row)
+      send_frame(client, { "v" => "offer", "request" => request, "row" => with })
+    end
+
+    def answer(client, text)
+      prompt = next_frame(client, of: "prompt")
+      prompt = next_frame(client, of: "prompt") until prompt["kind"] == "human"
+      send_frame(client, { "v" => "line", "text" => text, "generation" => prompt["generation"] })
+      prompt
+    end
+
+    def opened_events
+      File.readlines(Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(runtime, "state") }).review_queue_log)
+          .reject { _1.strip.empty? }.map { JSON.parse(_1) }
+    end
+
+    def withdrawn = settles { rail.published.kind.nil? || nil }
+
+    it "marks the row seen, once, at the head offered, when the human presses Enter" do
+      client = connect
+      offer(client)
+      answer(client, "")
+
+      expect([settles { log.seen?(queued) || nil }, opened_events.map { _1.slice("kind", "row_id", "head_sha") }])
+        .to eq([true, [{ "kind" => "opened", "row_id" => row["id"], "head_sha" => "c" * 40 }]])
+    end
+
+    it "marks the row seen for an Enter that lands just as the chat stops" do
+      offer(connect)
+      generation = settles { rail.published.kind == :human ? rail.published.generation : nil }
+      rail << Lain::Frontend::Intake::Line.new(text: "", generation:)
+      socket.stop
+
+      expect(log.seen?(queued)).to be(true)
+    end
+
+    context "with the chat's answers to offers recorded" do
+      let(:rail) do
+        Class.new(SimpleDelegator) do
+          def answers = @answers ||= []
+
+          def offer(request, &decided) = super.tap { answers << _1 }
+        end.new(Lain::Frontend::Intake.new)
+      end
+
+      it "ends an offer still showing as the chat stops, rather than killing it" do
+        offer(connect)
+        settles { rail.published.kind == :human || nil }
+        socket.stop
+
+        expect(rail.answers).to eq([nil])
+      end
+    end
+
+    it "leaves the row unseen for an offer the chat stops before the human answers" do
+      offer(connect)
+      settles { rail.published.kind == :human || nil }
+      socket.stop
+
+      expect([log.seen?(queued), rail.held_lines]).to eq([false, []])
+    end
+
+    it "leaves the row unseen when the human drops the offer with x" do
+      client = connect
+      offer(client)
+      answer(client, "x")
+      withdrawn
+
+      expect(log.seen?(queued)).to be(false)
+    end
+
+    it "leaves the row unseen when the human drops the offer with Ctrl-D" do
+      client = connect
+      offer(client)
+      next_frame(client, of: "prompt")
+      send_frame(client, { "v" => "eof" })
+      withdrawn
+
+      expect(log.seen?(queued)).to be(false)
+    end
+
+    it "drops an offer whose row is malformed with 1 note naming the field, never its value" do
+      client = connect
+      offer(client, with: row.merge("head_sha" => "/mode bypass"))
+      note = said.pop(timeout: 5)
+      settles(within: 0.2) { nil }
+
+      expect([note, said.size, rail.published.kind]).to eq(
+        ["lain queue: an offer was dropped: queued review request refused: row.head_sha is not of its shape", 0, nil]
+      )
+    end
+
+    it "drops an offer that names no row, naming the field" do
+      send_frame(connect, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })
+
+      expect([said.pop(timeout: 5), rail.published.kind])
+        .to eq(["lain queue: an offer was dropped: queued review request refused: row is missing", nil])
+    end
+
     it "is put to the human, and Enter sends its rebuilt line on as if typed" do
       client = connect
-      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })
+      offer(client)
       frame = next_frame(client, of: "prompt")
       send_frame(client, { "v" => "line", "text" => "", "generation" => frame["generation"] })
 
@@ -557,7 +662,7 @@ RSpec.describe Lain::CLI::InputSocket do
 
     it "drops an offer that fails to load with 1 note naming the field, never its value" do
       client = connect
-      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => "#{url} --base \e[2Jx" } })
+      offer(client, { "kind" => "pr", "url" => "#{url} --base \e[2Jx" })
       note = said.pop(timeout: 5)
       settles(within: 0.2) { nil }
 
@@ -567,7 +672,7 @@ RSpec.describe Lain::CLI::InputSocket do
     end
 
     it "writes out the escapes in a refused field's name rather than sending them to the screen" do
-      send_frame(connect, { "v" => "offer", "request" => { "kind" => "pr", "url" => url, "x\e[2J" => "v" } })
+      offer(connect, { "kind" => "pr", "url" => url, "x\e[2J" => "v" })
 
       expect(said.pop(timeout: 5)).to eq(
         "lain queue: an offer was dropped: queued review request refused: x\\e[2J is not a field of a pr request"
@@ -578,7 +683,7 @@ RSpec.describe Lain::CLI::InputSocket do
       Dir.mktmpdir("lain-offer-clean") do |repo|
         root = File.realpath(repo)
         FileUtils.cp_r("#{SeedRepo.at("README" => "seed\n")}/.", root)
-        send_frame(connect, { "v" => "offer", "request" => { "kind" => "dirty", "repo_root" => root } })
+        offer(connect, { "kind" => "dirty", "repo_root" => root })
 
         expect([said.pop(timeout: 5), rail.published.kind]).to eq(
           ["lain queue: an offer was dropped: queued review request refused: repo_root has no uncommitted changes", nil]
@@ -588,7 +693,7 @@ RSpec.describe Lain::CLI::InputSocket do
 
     describe "the reply to the sender" do
       def offering(client, request)
-        send_frame(client, { "v" => "offer", "request" => request })
+        offer(client, request)
         next_frame(client, of: "offered")
       end
 
@@ -625,6 +730,14 @@ RSpec.describe Lain::CLI::InputSocket do
           .to eq({ "v" => "offered", "outcome" => "refused", "field" => "url" })
       end
 
+      it "is refused naming the field, never its value, for a malformed row" do
+        client = connect
+        offer(client, with: row.merge("id" => 7))
+
+        expect(next_frame(client,
+                          of: "offered")).to eq({ "v" => "offered", "outcome" => "refused", "field" => "row.id" })
+      end
+
       it "is refused naming the field for a request whose line cannot be rebuilt" do
         Dir.mktmpdir("lain-offer-clean") do |repo|
           root = File.realpath(repo)
@@ -638,7 +751,7 @@ RSpec.describe Lain::CLI::InputSocket do
 
     it "puts what was typed at the offer back in the pane as a draft, never sending it" do
       client = connect
-      send_frame(client, { "v" => "offer", "request" => { "kind" => "pr", "url" => url } })
+      offer(client)
       offered = next_frame(client, of: "prompt")
       send_frame(client, { "v" => "line", "text" => "maybe", "generation" => offered["generation"] })
       again = next_frame(client, of: "prompt") while again.nil? || again["generation"] <= offered["generation"]
@@ -651,7 +764,7 @@ RSpec.describe Lain::CLI::InputSocket do
   describe "with no pane connected" do
     it "composes no header, command list or layer set at all" do
       asked = []
-      quiet = described_class.new(rail:, path:, header: -> { asked.push(:header).last.to_s },
+      quiet = described_class.new(log:, rail:, path:, header: -> { asked.push(:header).last.to_s },
                                   layers: -> { asked.push(:layers) && [] }, tick: 0.002)
       quiet.bind.start(nil)
       publish(:you, "you> ")

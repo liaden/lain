@@ -23,7 +23,8 @@ module ApprovalCycleKey
     rail = Lain::Frontend::Intake.new(on_cycle: -> { board.cycle_approval(surface: Lain::CLI::Switchboard::KEY_SURFACE) })
     layers = shape == "vi" ? %w[vi] : []
     welcomed = -> { File.write(File.join(dir, "welcomed"), "").then { [] } }
-    socket = Lain::CLI::InputSocket.new(rail:, path:, layers: -> { layers }, commands: welcomed).bind
+    queue_log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+    socket = Lain::CLI::InputSocket.new(rail:, path:, layers: -> { layers }, commands: welcomed, log: queue_log).bind
     File.write(File.join(dir, "bound"), "")
     Sync do |task|
       socket.start(task)

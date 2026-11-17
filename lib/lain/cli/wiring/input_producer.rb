@@ -68,7 +68,8 @@ module Lain
         # to read, and the pane is the one surface that cannot report it.
         def input_socket(rail, tty)
           Lain::CLI::InputSocket.new(rail:, path: @human.socket_path, header: method(:hud_line), commands: @commands,
-                                     layers: method(:live_layers), notice: tty.method(:render_warning)).bind
+                                     layers: method(:live_layers), notice: tty.method(:render_warning),
+                                     log: Lain::Review::Queue::Log.new(paths: @paths)).bind
         end
 
         def live_layers

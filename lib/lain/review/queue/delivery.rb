@@ -6,9 +6,10 @@ module Lain
   module Review
     class Queue
       # Hands a row's review to the chat running in the row's checkout, over
-      # that chat's input socket, and marks the row seen only when the chat
-      # says it took the offer. A pull request with no local clone opens in
-      # the browser instead, and nothing is sent.
+      # that chat's input socket, with the row named beside it: that chat marks
+      # the row seen only when the human presses Enter at the offer. A pull
+      # request with no local clone opens in the browser instead, and nothing
+      # is sent.
       class Delivery
         # What became of a row. `chat` is the live record the offer went to,
         # `others` the other live chats in that checkout, `skipped` those whose
@@ -29,15 +30,13 @@ module Lain
         private_constant :REPLIES
 
         # @param live_sessions [LiveSessions] the chats running now
-        # @param log [Log] where a held row is marked seen
         # @param account [#environment] the GitHub account `gh` runs as
         # @param pending [Pending] keeps the review for a checkout with no chat
         # @param shell_out_factory [#call] builds the `gh` runner
         # @param greeting [Numeric] seconds a socket has to greet; its reply then has {REPLY}
-        def initialize(live_sessions:, log:, account:, pending:, shell_out_factory: Shell::Out.public_method(:new),
+        def initialize(live_sessions:, account:, pending:, shell_out_factory: Shell::Out.public_method(:new),
                        greeting: GREETING)
           @live_sessions = live_sessions
-          @log = log
           @account = account
           @shell_out_factory = shell_out_factory
           @greeting = greeting
@@ -52,14 +51,19 @@ module Lain
           return browsed(request) if request.repo_root.nil?
 
           chats = @live_sessions.in(request.repo_root).select(&:input_socket)
-          chat, at, io = chats.each_with_index.lazy.map { |live, index| [live, index, greeted(live)] }.find(&:last)
-          skipped = chats.take(at || chats.size)
-          return result(@pending.hold(request), skipped:) unless io
+          chat, io, skipped = first_greeting(chats)
+          return result(@pending.hold(request, Mark.of(row)), skipped:) unless io
 
-          offered(row, request, io).with(chat:, others: chats - skipped - [chat], skipped:)
+          offered(Mark.of(row), request, io).with(chat:, others: chats - skipped - [chat], skipped:)
         end
 
         private
+
+        # @return [Array] the chat that greeted, its socket, and the chats before it that did not
+        def first_greeting(chats)
+          chat, at, io = chats.each_with_index.lazy.map { |live, index| [live, index, greeted(live)] }.find(&:last)
+          [chat, io, chats.take(at || chats.size)]
+        end
 
         def result(outcome, chat: nil, others: [], skipped: [], field: nil)
           Result.new(outcome:, chat:, others:, skipped:, field:)
@@ -86,19 +90,16 @@ module Lain
           nil
         end
 
-        def offered(row, request, io)
-          io.write(CLI::InputSocket::Codec.dump({ "v" => "offer", "request" => request.to_h }))
+        def offered(mark, request, io)
+          io.write(CLI::InputSocket::Codec.dump({ "v" => "offer", "request" => request.to_h, "row" => mark.to_h }))
           reply = awaited(io, "offered", REPLY) || {}
           outcome = REPLIES.include?(reply["outcome"]) ? reply["outcome"].to_sym : :silent
-          seen(row) if outcome == :held
           result(outcome, field: reply["field"])
         rescue IOError, SystemCallError
           result(:silent)
         ensure
           io.close
         end
-
-        def seen(row) = @log.append(Log::Event.new(kind: :opened, at: nil, row_id: row.id, head_sha: row.head_sha))
 
         # The first frame of `kind` before the deadline; the chat's prompt
         # frames reach every client, this one included, and are passed over.

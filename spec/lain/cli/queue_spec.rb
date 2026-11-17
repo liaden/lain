@@ -64,7 +64,8 @@ RSpec.describe Lain::CLI::Queue, :seam do
   def chat(root, id: "chat", started_at: "2026-11-16T10:00:00Z")
     rail = Lain::Frontend::Intake.new
     path = Lain::CLI::InputSocket.path(cwd: root, name: id, paths: Lain::Paths.new)
-    sockets << Lain::CLI::InputSocket.new(rail:, path:).bind.start(nil)
+    log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new)
+    sockets << Lain::CLI::InputSocket.new(rail:, path:, log:).bind.start(nil)
     live(id, root, path, started_at)
     rail
   end
@@ -204,6 +205,36 @@ RSpec.describe Lain::CLI::Queue, :seam do
 
       expect(run("open", feature)).to eq([0, "offered #{feature} to chat\n", ""])
       expect(offered(rail)).to start_with("lain queue: /review refs/heads/feature")
+    end
+
+    def answered(rail, text)
+      prompt = wait_until(reason: "the offer drawn") { rail.published.kind == :human && rail.published }
+      rail << Lain::Frontend::Intake::Line.new(text:, generation: prompt.generation)
+    end
+
+    def opened_events
+      File.readlines(Lain::Paths.new.review_queue_log).reject { _1.strip.empty? }.map { JSON.parse(_1) }
+          .select { _1["kind"] == "opened" }.map { _1.values_at("row_id", "head_sha") }
+    end
+
+    it "marks the row seen when the human presses Enter at the offer, so the queue lists it no more" do
+      rail = chat(@repo)
+      run("open", feature)
+      answered(rail, "")
+      wait_until(reason: "the row marked seen") { !capture("local").first.include?(feature) }
+
+      expect(opened_events).to eq([[feature, git("rev-parse", "feature")]])
+    end
+
+    it "leaves the row listed when the human drops the offer with x" do
+      rail = chat(@repo)
+      run("open", feature)
+      answered(rail, "x")
+      wait_until(reason: "the offer withdrawn") { rail.published.kind.nil? }
+
+      expect([File.exist?(Lain::Paths.new.review_queue_log) ? opened_events : [], capture("local").first])
+        .to match([[], a_string_including(feature)])
+      expect(run("open", feature)).to eq([0, "offered #{feature} to chat\n", ""])
     end
 
     it "names the other chats running in the checkout" do

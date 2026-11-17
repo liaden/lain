@@ -9,7 +9,7 @@ require "tmpdir"
 # a sender learns is whatever the chat's own socket says back.
 RSpec.describe Lain::Review::Queue::Delivery, :seam do
   subject(:delivery) do
-    described_class.new(live_sessions: Lain::LiveSessions.new(paths:), log:, account:, pending:, shell_out_factory:,
+    described_class.new(live_sessions: Lain::LiveSessions.new(paths:), account:, pending:, shell_out_factory:,
                         greeting: 0.5)
   end
 
@@ -82,11 +82,16 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     Lain::Review::Queue::Row.new(id:, rank: :direct, reason: "direct", request:, head_sha: "c" * 40)
   end
 
+  def answered(rail, text)
+    prompt = wait_until(reason: "the offer drawn") { rail.published.kind == :human && rail.published }
+    rail << Lain::Frontend::Intake::Line.new(text:, generation: prompt.generation)
+  end
+
   # A live chat at `root`, listening on a real socket.
   def chat(root, id:, started_at: "2026-11-16T10:00:00Z", delay: 0)
     rail = recording.new(Lain::Frontend::Intake.new).tap { _1.delay = delay }
     path = Lain::CLI::InputSocket.path(cwd: root, name: id, paths:)
-    sockets << Lain::CLI::InputSocket.new(rail:, path:).bind.start(nil)
+    sockets << Lain::CLI::InputSocket.new(rail:, path:, log:).bind.start(nil)
     live(id, root, path, started_at)
     rail
   end
@@ -120,11 +125,26 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     let!(:api) { clone_at("fuze/api", "https://github.com/fuze/api.git") }
     let!(:rail) { chat(api, id: "api") }
 
-    it "gets 1 offer frame with the row's request, and the row is marked seen" do
+    it "gets 1 offer frame with the row's request, and the row is not marked seen while the human has not answered" do
       request = pull
       result = delivery.call(row(request))
 
-      expect([result.outcome, rail.offers, log.seen?(row(request))]).to eq([:held, [request.to_h], true])
+      expect([result.outcome, rail.offers, log.seen?(row(request))]).to eq([:held, [request.to_h], false])
+    end
+
+    it "has the row marked seen by the chat once the human presses Enter there" do
+      delivery.call(row(pull))
+      answered(rail, "")
+
+      expect(wait_until(reason: "the row marked seen") { log.seen?(row(pull)) }).to be(true)
+    end
+
+    it "leaves the row unseen once the human drops it with x" do
+      delivery.call(row(pull))
+      answered(rail, "x")
+      wait_until(reason: "the offer withdrawn") { rail.published.kind.nil? }
+
+      expect(log.seen?(row(pull))).to be(false)
     end
 
     it "is crowded while another offer waits there, and the row is not marked seen" do
@@ -134,11 +154,11 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
       expect([result.outcome, log.seen?(row(pull))]).to eq([:crowded, false])
     end
 
-    it "is a repeat when the same request is offered already, and stays seen from the first" do
+    it "is a repeat when the same request is offered already" do
       first = delivery.call(row(pull))
       again = delivery.call(row(pull))
 
-      expect([first.outcome, again.outcome, rail.offers.size, log.seen?(row(pull))]).to eq([:held, :repeat, 2, true])
+      expect([first.outcome, again.outcome, rail.offers.size]).to eq([:held, :repeat, 2])
     end
 
     it "is refused naming the field when the chat cannot rebuild the line, and the row is not marked seen" do
@@ -155,8 +175,11 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     other = chat(clone_at("fuze/web", "https://github.com/fuze/web.git"), id: "web")
     result = delivery.call(row(pull))
 
-    expect([result.outcome, other.offers, log.seen?(row(pull)), pending.take(api, notice: ->(_) {})&.to_h])
-      .to eq([:pending, [], false, { "kind" => "pr", "url" => url }])
+    held = pending.take(api, notice: ->(_) {})
+
+    expect([result.outcome, other.offers, log.seen?(row(pull)), held&.request&.to_h, held&.mark])
+      .to eq([:pending, [], false, { "kind" => "pr", "url" => url },
+              Lain::Review::Queue::Mark.new(id: "pr:fuze/api#12", head_sha: "c" * 40)])
   end
 
   context "when no chat runs in the checkout, inside herdr" do
@@ -186,7 +209,7 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     rail = chat(api, id: "api", delay: 1.5)
     result = delivery.call(row(pull))
 
-    expect([result.outcome, rail.offers.size, log.seen?(row(pull))]).to eq([:held, 1, true])
+    expect([result.outcome, rail.offers.size]).to eq([:held, 1])
   end
 
   it "holds a dirty tree whose snapshot outlasts the greeting's bound" do
@@ -202,7 +225,7 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     File.chmod(0o755, File.join(bin, "git"))
     result = with_env("PATH" => "#{bin}:#{ENV.fetch("PATH")}") { delivery.call(dirty) }
 
-    expect([result.outcome, rail.offers.size, log.seen?(dirty)]).to eq([:held, 1, true])
+    expect([result.outcome, rail.offers.size]).to eq([:held, 1])
   end
 
   it "passes over the chat's prompt frames to find its reply" do

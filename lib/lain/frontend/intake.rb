@@ -141,6 +141,12 @@ module Lain
       STILL_DRAWN = Object.new.freeze
       STEPPED_ASIDE = Object.new.freeze
 
+      # Sent through the queue a waiting offer reads, so every line typed before
+      # the offer ended is judged first; and the answer nobody gave the offer.
+      OFFER_ENDED = Object.new.freeze
+      class OfferEnded < StandardError
+      end
+
       # What an answer's reader sends the `you>` it takes the terminal from,
       # naming the drawing it meant: one that reaches a later prompt is stale.
       Preempt = Data.define(:generation)
@@ -150,7 +156,7 @@ module Lain
       Turn = Struct.new(:gate, :kind, :text, :waited, :published) do
         def answer? = ANSWERS.include?(kind)
       end
-      private_constant :Heard, :REDRAWN, :STILL_DRAWN, :STEPPED_ASIDE, :Preempt, :Turn
+      private_constant :Heard, :REDRAWN, :STILL_DRAWN, :STEPPED_ASIDE, :OFFER_ENDED, :OfferEnded, :Preempt, :Turn
 
       # @param screen [#render_held, #render_note, #render_human_note, #close_prompt, #queue_prompt, #drop_prompt]
       #   where the human is told a line was held and why its prompt refused it, or that it went to the agent as a
@@ -178,6 +184,7 @@ module Lain
         @generation = 0
         @sink = CLI::Signals::NULL
         @offered = nil
+        @offers_ended = false
       end
 
       # A producer's value. A signal is delivered on the producer's stack; a
@@ -352,24 +359,49 @@ module Lain
       # @param request [#review_line, #to_h] a {Review::Queue::Request}
       # @yieldparam outcome [Symbol] `:held`, `:crowded` or `:repeat`, given once the chat decides and before
       #   a held offer waits on the human, so a sender learns it without waiting for the answer
-      # @return [String, nil] the line sent on as if typed, or nil when dropped
+      # @return [Symbol, nil] `:taken` when Enter sent the line on as if typed, `:dropped` at `x` or Ctrl-D, and
+      #   nil when the offer was turned away or ended by {#end_offer} with no answer
       # @raise [Review::Queue::Request::Refused] when the line cannot be rebuilt, before anything is shown or yielded
       def offer(request, &decided)
         outcome = @lock.synchronize { admitted(request) }
+        return if outcome == :ended
         return turned_away(outcome, &decided) unless outcome == :held
 
         begin
           offered = Offer.new(request.review_line)
           yield :held if block_given?
           asked(offered)
+        rescue OfferEnded
+          nil
         ensure
           @lock.synchronize { @offered = nil }
         end
       end
 
+      # How long a stopping chat waits for its offers to end once told to. An
+      # ended offer leaves at once; one still building its line can never be
+      # shown after the end, so waiting longer buys nothing.
+      OFFERS_END = 2
+
+      # Ends the offer in front of the human, and refuses any later one, for a
+      # chat that is stopping. A line already typed is judged first, so an
+      # answer given just before the end still counts and an offer never
+      # answered says so: killing its reader could not tell the two apart.
+      #
+      # @return [nil]
+      def end_offer
+        @lock.synchronize do
+          @offers_ended = true
+          asking = @turns.find { |turn| turn.text.is_a?(Offer) }
+          (@turns.first.equal?(asking) ? @inbound : asking.gate).push(OFFER_ENDED) if asking
+        end
+        nil
+      end
+
       private
 
       def admitted(request)
+        return :ended if @offers_ended
         return @offered == request.to_h ? :repeat : :crowded if @offered
 
         @offered = request.to_h
@@ -387,8 +419,14 @@ module Lain
       def asked(offered)
         read(:human, offered) do |answer|
           redraft(offered.draft) unless offered.draft.empty?
-          offered.opened(answer) { |line| @lock.synchronize { @held << line } }
+          decided(offered, answer)
         end
+      end
+
+      def decided(offered, answer)
+        return if answer.equal?(OFFER_ENDED)
+
+        offered.opened(answer) { |line| @lock.synchronize { @held << line } } ? :taken : :dropped
       end
 
       def redraft(text) = @lock.synchronize { @producers.keys }.each { |producer| producer.keep(text) }
@@ -474,6 +512,7 @@ module Lain
       # again empty. One typed at a prompt that has since gone ended nothing that
       # is drawn now, and the drawing carries on.
       def judge(prompt, text, value)
+        return text.is_a?(Offer) ? Heard.new(text: OFFER_ENDED) : STILL_DRAWN if value.equal?(OFFER_ENDED)
         return Heard.new(text: nil) if value.is_a?(Eof)
         return value.generation == prompt.generation ? STEPPED_ASIDE : STILL_DRAWN if value.is_a?(Preempt)
         return Heard.new(text: value.text) if answers?(prompt, text, value)
@@ -527,7 +566,7 @@ module Lain
         turn.waited = true
         announced = ahead.any? { |waiting| about(waiting.text) == about(turn.text) }
         @screen.queue_prompt(turn.text) unless (turn.answer? && preempted?(ahead)) || announced
-        turn.gate.pop
+        raise OfferEnded if turn.gate.pop.equal?(OFFER_ENDED)
       end
 
       # What a prompt is ABOUT -- the parked call, for a `[y/N]` -- so two
@@ -538,6 +577,8 @@ module Lain
 
       # An answer goes ahead of every `you>` still waiting; anything else joins the end.
       def line_up(turn)
+        raise OfferEnded if @offers_ended && turn.text.is_a?(Offer)
+
         at = (turn.answer? && @turns.each_index.find { |i| i.positive? && @turns[i].kind == :you }) || @turns.size
         @turns.insert(at, turn).take(at)
       end

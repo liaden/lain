@@ -3769,7 +3769,8 @@ RSpec.describe Lain::CLI::Wiring do
       before do
         SeedRepo.git(project_dir, "init", "-q")
         checkouts = Lain::Review::Queue::Checkouts.new(roots: [])
-        pending.hold(Lain::Review::Queue::Request.load(fields, checkouts:))
+        pending.hold(Lain::Review::Queue::Request.load(fields, checkouts:),
+                     Lain::Review::Queue::Mark.new(id: "commit:#{project_dir}", head_sha: "b" * 40))
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
       end
 

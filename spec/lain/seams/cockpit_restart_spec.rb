@@ -28,7 +28,8 @@ RSpec.describe Lain::CLI::InputSocket, :seam do
 
   def chat
     rail = Lain::Frontend::Intake.new
-    socket = described_class.new(rail:, path:, header: -> { "" }, tick: 0.01).bind.start(nil)
+    queue_log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+    socket = described_class.new(rail:, path:, header: -> { "" }, tick: 0.01, log: queue_log).bind.start(nil)
     [socket, rail]
   end
 

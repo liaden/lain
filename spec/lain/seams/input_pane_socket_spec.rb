@@ -40,7 +40,9 @@ module InputPaneSocket
     header = lambda do
       File.exist?(hud) ? Lain::StatusFeed::Reading.new(JSON.parse(File.read(hud))).hud(now: Time.now) : ""
     end
-    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox research research-epic] }, header:, tick: 0.05)
+    queue_log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+    socket = Lain::CLI::InputSocket.new(rail:, path:, commands: -> { %w[approve inbox research research-epic] }, header:, tick: 0.05,
+                                        log: queue_log)
     begin
       socket.bind
     rescue Lain::CLI::InputSocket::InUse => e
@@ -501,7 +503,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
   # does. Left open: a peer gone before the chat greets it is dropped unread.
   def offer(url)
     UNIXSocket.new(cockpit.path).tap do |queue|
-      queue.write("#{JSON.generate({ "v" => "offer", "request" => { "kind" => "pr", "url" => url } })}\n")
+      row = { "id" => "pr:fuze/api#12", "head_sha" => "c" * 40 }
+      queue.write("#{JSON.generate({ "v" => "offer", "request" => { "kind" => "pr", "url" => url }, "row" => row })}\n")
     end
   end
 

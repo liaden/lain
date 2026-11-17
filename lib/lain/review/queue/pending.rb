@@ -9,8 +9,14 @@ module Lain
     class Queue
       # A review held for a checkout where no chat runs, until the next cockpit
       # there offers it. Any same-uid process can write the file, so it is read
-      # as a request on the wire is: through {Request.load}, never as a line.
+      # as an offer on the wire is: the request through {Request.load}, never
+      # as a line, and the row beside it through {Mark.load}.
       class Pending
+        # What a held file holds: the review, and the row it marks seen once taken.
+        Held = Data.define(:request, :mark) do
+          def to_h = { "request" => request.to_h, "row" => mark.to_h }
+        end
+
         COCKPIT = "lain up --nvim"
         STALE = 86_400
         LIMIT = 65_536
@@ -18,33 +24,38 @@ module Lain
         DROPPED = "lain queue: a held review was dropped: %<reason>s"
         UNREAD = "lain queue: a held review could not be read: %<reason>s"
         UNKEPT = "lain queue: a review could not be held again: %<reason>s"
+        FILE_FIELDS = %w[request row].freeze
         # The chat needs only the line, so a pull request's clone is not looked up.
         NO_CHECKOUTS = Checkouts.new(roots: [])
-        private_constant :STALE, :LIMIT, :FIELD_LIMIT, :DROPPED, :UNREAD, :UNKEPT, :NO_CHECKOUTS
+        private_constant :STALE, :LIMIT, :FIELD_LIMIT, :DROPPED, :UNREAD, :UNKEPT, :FILE_FIELDS, :NO_CHECKOUTS
 
         # @param paths [Paths]
         # @param env [Hash{String=>String}] read for HERDR_ENV
         # @param workspaces [#create] starts a cockpit inside herdr
         # @param clock [#call] now, for the age of a held file
-        def initialize(paths:, env: ENV, workspaces: Herdr::Workspaces.new(env:), clock: -> { Time.now })
+        # @param log [Log] where a held review the human takes marks its row seen
+        def initialize(paths:, env: ENV, workspaces: Herdr::Workspaces.new(env:), clock: -> { Time.now },
+                       log: Log.new(paths:))
           @paths = paths
           @env = env
           @workspaces = workspaces
           @clock = clock
+          @log = log
         end
 
         # Inside herdr a workspace is started only when none for the checkout is
         # open, since a cockpit there takes whatever file is held.
         #
         # @param request [Request] one with a local checkout
+        # @param mark [Mark] the row it marks seen once the human takes it
         # @return [Symbol] `:pending`, `:started`, or `:herdr_failed` (inside herdr, with no workspace
         #   started); each prefixed `replaced_` over a review a chat would still take, and `:pending` then
         #   reads `:replaced`
         # @raise [Lain::Error] in 1 line when the review cannot be written
-        def hold(request)
+        def hold(request, mark)
           root = request.repo_root
           replaced = held?(root)
-          File.rename(written(request), path_for(root))
+          File.rename(written(Held.new(request:, mark:)), path_for(root))
           outcome = herdr_outcome(root)
           return outcome unless replaced
 
@@ -58,7 +69,7 @@ module Lain
         #
         # @param root [String] the chat's project root
         # @param notice [#call] told once why a held file was dropped
-        # @return [Request, nil]
+        # @return [Held, nil]
         def take(root, notice:)
           claimed = claim(path_for(root)) or return
           loaded(claimed, root)
@@ -77,26 +88,30 @@ module Lain
         # @param rail [Frontend::Intake]
         # @param notice [#call]
         # @return [Offering] the producer, offering the review held for `root` once the chat first asks
-        def offering(producer, root:, rail:, notice:) = Offering.new(producer, pending: self, root:, rail:, notice:)
+        def offering(producer, root:, rail:, notice:)
+          Offering.new(producer, pending: self, log: @log, root:, rail:, notice:)
+        end
 
         # The chat's input producer, which also offers the held review at the
         # chat's first `you>`: by then the input socket is bound and the editor
-        # attached. A review taken but not answered when the chat stops is held
-        # again, unless a newer one was held meanwhile.
+        # attached. The human's Enter marks its row seen and `x` or Ctrl-D drops
+        # it; one never answered, or never shown, is held again unless a newer
+        # one was held meanwhile.
         class Offering < SimpleDelegator
           # A `you>` is drawn only once the frontend is up, and the Intake says
           # nothing to a reader that is not a producer.
           POLL = 0.05
-          SETTLE = 0.1
 
           # @param producer [#start]
           # @param pending [Pending]
+          # @param log [Log] where a taken review marks its row seen
           # @param root [String]
           # @param rail [Frontend::Intake]
           # @param notice [#call]
-          def initialize(producer, pending:, root:, rail:, notice:)
+          def initialize(producer, pending:, log:, root:, rail:, notice:)
             super(producer)
             @pending = pending
+            @log = log
             @root = root
             @rail = rail
             @notice = notice
@@ -110,51 +125,60 @@ module Lain
             self
           end
 
-          # The thread is given a moment before it is killed, so an answer
-          # already typed reaches it and is not taken for no answer at all.
+          # The offer is ended through the rail rather than by killing its
+          # thread, so an answer already typed is still the answer.
           #
           # @return [void]
           def stop(**)
             @started&.stop(**)
             @stopped = true
-            @thread&.join(SETTLE)
-            @thread&.kill&.join
-            @pending.keep(@request, notice: @notice) if @request
+            @rail.end_offer
+            abandon unless @thread.nil? || @thread.join(Frontend::Intake::OFFERS_END)
           end
 
           private
 
+          # Only an offer whose line is still being built outlives the bound,
+          # since an ended offer leaves at once; it was never shown, so it is held.
+          def abandon
+            @thread.kill.join
+            @pending.keep(@held, notice: @notice) if @held
+          end
+
           # A kill lands only inside the offer itself, so a review is never taken
-          # without being remembered, nor still remembered once the offer returned.
+          # without being remembered, nor still remembered once it was settled.
           def offer
-            first_you
+            sleep(POLL) until @stopped || @rail.published.kind == :you
             Thread.handle_interrupt(Object => :never) do
-              @request = @pending.take(@root, notice: @notice) unless @stopped
-              Thread.handle_interrupt(Object => :immediate) { offered(@request) } if @request
-              @request = nil
+              @held = @pending.take(@root, notice: @notice) unless @stopped
+              answered(@held) if @held
+              @held = nil
             end
           end
 
-          # A crowded offer is never shown, and the take already removed its file.
-          def offered(request)
-            @rail.offer(request) { |outcome| @pending.keep(request, notice: @notice) if outcome == :crowded }
+          # A turned-away offer is never shown, and the take already removed its file.
+          def answered(held)
+            turned = nil
+            answer = Thread.handle_interrupt(Object => :immediate) do
+              @rail.offer(held.request) { |outcome| turned = outcome }
+            end
+            case answer
+            when :taken then held.mark.seen(@log, notice: @notice)
+            when nil then @pending.keep(held, notice: @notice) unless turned == :repeat
+            end
           rescue Request::Refused => e
             @notice.call(format(DROPPED, reason: Utf8.escaped(e.message)))
-          end
-
-          def first_you
-            sleep(POLL) until @rail.published.kind == :you
           end
         end
 
         # Held only where nothing newer is.
         #
-        # @param request [Request]
+        # @param held [Held]
         # @param notice [#call] told why, when the review could not be written
         # @return [void]
-        def keep(request, notice:)
-          scratch = written(request)
-          File.link(scratch, path_for(request.repo_root))
+        def keep(held, notice:)
+          scratch = written(held)
+          File.link(scratch, path_for(held.request.repo_root))
         rescue Errno::EEXIST
           nil
         rescue SystemCallError => e
@@ -187,10 +211,10 @@ module Lain
 
         def path_for(root) = File.join(directory, "#{@paths.project_hash(root)}.json")
 
-        def written(request)
+        def written(held)
           FileUtils.mkdir_p(directory)
-          scratch = "#{path_for(request.repo_root)}.#{SecureRandom.hex(4)}.tmp"
-          File.open(scratch, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |io| io.write(JSON.generate(request.to_h)) }
+          scratch = "#{path_for(held.request.repo_root)}.#{SecureRandom.hex(4)}.tmp"
+          File.open(scratch, File::WRONLY | File::CREAT | File::EXCL, 0o600) { |io| io.write(JSON.generate(held.to_h)) }
           scratch
         end
 
@@ -218,11 +242,20 @@ module Lain
 
         def loaded(claimed, root)
           checked(File.lstat(claimed))
-          request = Request.load(parsed(claimed), checkouts: NO_CHECKOUTS)
+          file = fields(parsed(claimed))
+          mark = Mark.load(file["row"])
+          request = Request.load(file["request"], checkouts: NO_CHECKOUTS)
           held_at = request.to_h["repo_root"]
           raise Request::Refused.new("repo_root", "is not this checkout") if held_at && held_at != root
 
-          request
+          Held.new(request:, mark:)
+        end
+
+        def fields(file)
+          raise Request::Refused.new("file", "is not a map") unless file.is_a?(Hash)
+          return file if (file.keys - FILE_FIELDS).empty?
+
+          raise Request::Refused.new("file", "has a field other than #{FILE_FIELDS.join(" and ")}")
         end
 
         def checked(stat)

@@ -1416,22 +1416,62 @@ RSpec.describe Lain::Frontend::Intake do
         expect([drawn(:human).text, offered.join(0.2)]).to eq([asking, nil])
       end
 
-      it "sends the rebuilt line on as if typed when Enter is pressed, and says nothing of holding it" do
+      it "sends the rebuilt line on as if typed when Enter is pressed, says it was taken, and nothing of holding it" do
         offered = reading { rail.offer(request) }
         drawn(:human)
         rail << typed("")
 
-        expect([offered.value, you.value, screen.said]).to eq(["/review #{url}", "/review #{url}", []])
+        expect([offered.value, you.value, screen.said]).to eq([:taken, "/review #{url}", []])
       end
 
-      it "drops the offer when x is entered, and the chat goes back to you>" do
+      it "drops the offer when x is entered, says so, and the chat goes back to you>" do
         offered = reading { rail.offer(request) }
         drawn(:human)
         rail << typed("x")
         drawn(:you)
         rail << typed("hello")
 
-        expect([offered.value, you.value, rail.held_lines]).to eq([nil, "hello", []])
+        expect([offered.value, you.value, rail.held_lines]).to eq([:dropped, "hello", []])
+      end
+
+      it "drops the offer at Ctrl-D, as x does" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << described_class::Eof.new
+
+        expect([offered.value, drawn(:you).kind, you.alive?]).to eq([:dropped, :you, true])
+      end
+
+      it "answers nothing for an offer ended before the human answered, and sends nothing on" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail.end_offer
+
+        expect([offered.value, drawn(:you).kind, you.alive?]).to eq([nil, :you, true])
+      end
+
+      it "still says dropped for an x that arrived just before the offer was ended" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("x")
+        rail.end_offer
+
+        expect(offered.value).to eq(:dropped)
+      end
+
+      it "still says taken for an Enter that arrived just before the offer was ended" do
+        offered = reading { rail.offer(request) }
+        drawn(:human)
+        rail << typed("")
+        rail.end_offer
+
+        expect([offered.value, you.value]).to eq([:taken, "/review #{url}"])
+      end
+
+      it "draws nothing for an offer made once offers have ended" do
+        rail.end_offer
+
+        expect([rail.offer(request), rail.published.kind, screen.said]).to eq([nil, :you, []])
       end
 
       it "asks again at anything else, and says what answers it" do
@@ -1465,7 +1505,7 @@ RSpec.describe Lain::Frontend::Intake do
         rail << typed("")
 
         expect([offered.value, you.value, producer.kept, rail.held_lines])
-          .to eq(["/review #{url}", "/review #{url}", ["maybe"], []])
+          .to eq([:taken, "/review #{url}", ["maybe"], []])
       end
 
       it "puts the draft back before the you> behind the offer can return" do
@@ -1480,7 +1520,7 @@ RSpec.describe Lain::Frontend::Intake do
 
         expect(rail.published.kind).to be_nil
         let_go << true
-        expect([offered.value, you.value]).to eq(["/review #{url}"] * 2)
+        expect([offered.value, you.value]).to eq([:taken, "/review #{url}"])
       end
 
       it "shows and sends exactly 1 line for a request that rebuilds a new one each time" do
@@ -1488,7 +1528,8 @@ RSpec.describe Lain::Frontend::Intake do
         shown = drawn(:human).text
         rail << typed("")
 
-        expect([shown, offered.value]).to eq(["lain queue: /review a  (Enter opens, x drops)", "/review a"])
+        expect([shown, offered.value, you.value])
+          .to eq(["lain queue: /review a  (Enter opens, x drops)", :taken, "/review a"])
       end
 
       it "shows a non-ASCII branch as the bytes it sends", :seam do
@@ -1503,9 +1544,55 @@ RSpec.describe Lain::Frontend::Intake do
           shown = drawn(:human).text
           rail << typed("")
 
-          expect([shown, offered.value])
-            .to eq(["lain queue: /review refs/heads/f\\é  (Enter opens, x drops)", "/review refs/heads/f\\é"])
+          expect([shown, offered.value, you.value])
+            .to eq(["lain queue: /review refs/heads/f\\é  (Enter opens, x drops)", :taken, "/review refs/heads/f\\é"])
         end
+      end
+    end
+
+    context "when the chat ends offers" do
+      def held_open(line)
+        building = Thread::Queue.new
+        release = Thread::Queue.new
+        request = Object.new
+        request.define_singleton_method(:to_h) { { "line" => line } }
+        request.define_singleton_method(:review_line) { (building << true) && release.pop && line }
+        [request, building, release]
+      end
+
+      it "neither builds nor yields an offer made after offers ended" do
+        rail.end_offer
+        request = Object.new.tap { |asked| def asked.review_line = raise("built after offers ended") }
+        def request.to_h = { "line" => "never" }
+        outcomes = []
+
+        expect([rail.offer(request) { outcomes << _1 }, outcomes, rail.published.kind]).to eq([nil, [], nil])
+      end
+
+      it "never draws an offer whose line was still being built when offers ended" do
+        request, building, release = held_open("/review b")
+        offered = reading { rail.offer(request) }
+        building.pop
+        rail.end_offer
+        release << true
+
+        expect([offered.join(3)&.value, rail.published.kind]).to eq([nil, nil])
+      end
+
+      it "leaves the next prompt its own answer when offers end as a taken offer leaves the line" do
+        ending = rail
+        producer.define_singleton_method(:keep) { |_text| ending.end_offer }
+        offered = reading { rail.offer(request) }
+        first = drawn(:human)
+        rail << typed("draft words")
+        wait_until { rail.published.kind == :human && rail.published.generation > first.generation }
+        rail << typed("")
+        taken = offered.value
+        approval = reading { rail.read(:approval, "[y/N] ") }
+        drawn(:approval)
+        rail << typed("y")
+
+        expect([taken, approval.join(3)&.value]).to eq([:taken, "y"])
       end
     end
 
@@ -1591,6 +1678,17 @@ RSpec.describe Lain::Frontend::Intake do
           expect([rail.published, producer.discarded, screen.said]).to eq([waiting, false, [[:queued, asking]]])
           rail << typed("y")
           expect([asked.value, drawn(:human).text]).to eq(["y", asking])
+        end
+
+        it "answers nothing for an offer ended while it waits behind, leaving the waiting prompt drawn" do
+          producer.untouched = false
+          asked = reading { rail.read(kind, "[y/N] ") }
+          waiting = drawn(kind)
+          offered = reading { rail.offer(request) }
+          wait_until(reason: "the offer queued") { screen.said.include?([:queued, asking]) }
+          rail.end_offer
+
+          expect([offered.value, rail.published, asked.alive?]).to eq([nil, waiting, true])
         end
       end
     end
