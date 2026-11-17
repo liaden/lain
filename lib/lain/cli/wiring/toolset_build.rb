@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module Lain
   module CLI
     class Wiring

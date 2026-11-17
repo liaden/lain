@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module Lain
   class Arm
     # Runs N arms over a task suite and folds each ARM's runs into its own

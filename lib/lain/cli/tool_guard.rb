@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module Lain
   module CLI
     # The one builder of an agent's tool stack -- a chat's, each of its

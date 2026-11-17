@@ -1,8 +1,10 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module Lain
   module Approval
-    # The judge-first rung of `auto` approval: a model {Judge} decides the
+    # The judge-first rung of `auto` approval: a model `Judge` decides the
     # calls it can, and the rest go to the asking rung below it.
     #
     # Tier 0 comes first and asks no model. A call barred from automatic
@@ -13,7 +15,7 @@ module Lain
     # and one whose paths cannot be named never reaches the judge either.
     #
     # Whether the judge may weigh a call is decided once, before it is paid
-    # for ({Judgement}): past the facts lain computed ({Judge::Facts#bar}), a
+    # for (`Judgement`): past the facts lain computed (`Judge::Facts#bar`), a
     # planted or swapped file could run, so such a call goes to the asking
     # rung unasked.
     #
@@ -182,7 +184,7 @@ module Lain
         end
       end
 
-      # The facts the judge is told, followed by the call's {Disclosure} in the
+      # The facts the judge is told, followed by the call's `Disclosure` in the
       # words its parked row shows, so the judge and the human weigh one account.
       class Disclosed < SimpleDelegator
         HEADER = "disclosure (computed by lain, not by the model):"
@@ -212,7 +214,7 @@ module Lain
         def with(**changes) = changes.empty? ? self : self.class.new(digests: @digests, **to_h, **changes)
       end
 
-      # @param judge [#call] answers `:approve`, `:deny`, `:defer` or `:fault` ({Judge})
+      # @param judge [#call] answers `:approve`, `:deny`, `:defer` or `:fault` (`Judge`)
       # @param policy [Sensitivity::Policy] what decides whether a call's path may be judged
       # @param asking [#call] the rung a call goes to when the judge does not
       #   settle it: {Escalation::Surfaces}, or {Unattended}

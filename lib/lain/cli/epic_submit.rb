@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "async"
+require "delegate"
 
 module Lain
   module CLI

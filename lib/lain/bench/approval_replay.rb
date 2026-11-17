@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "delegate"
+
 module Lain
   module Bench
     # Re-decides the gated calls a session journaled, through the production approval stack, once
