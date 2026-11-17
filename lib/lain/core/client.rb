@@ -129,6 +129,14 @@ module Lain
         raise
       end
 
+      # Parks the calling fiber until the reader has stopped, whether the far
+      # end hung up, the bytes went bad, or {#stop} ran.
+      # @return [Died, Stopped] why the connection ended
+      def wait
+        @reader.wait
+        @died
+      end
+
       # The transport is released TWICE on this path, by design: here, and again
       # in {#perish} once the collapse EOFs the reader. {Transport} requires
       # idempotence for exactly that reason.

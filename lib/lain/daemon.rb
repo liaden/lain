@@ -20,8 +20,8 @@ module Lain
 
     UNBUILT = "lain-daemon is not built at %<binary>s; run `bundle exec rake daemon:build`"
     SWITCHED_OFF = "the daemon is off: #{SWITCH}=#{OFF}".freeze
-    PENDING = "the daemon at %<socket>s is from another launch and has %<runs>d live runs; " \
-              "it restarts once they end"
+    PENDING = "this chat uses the daemon another checkout started at %<socket>s, which has %<busy>s; " \
+              "it restarts on this checkout's build once %<those>s"
 
     # The daemon was spawned and never answered.
     class Unstarted < Error; end
@@ -29,31 +29,8 @@ module Lain
     # A daemon asked to stop that kept running.
     class Unstopped < Error; end
 
-    # What a session holds when no daemon is there to register with.
-    class Registration
-      # Takes every message a registration answers and does nothing.
-      class Null
-        # @return [nil]
-        def open(_task) = nil
-
-        # @return [nil]
-        def close = nil
-
-        # @return [nil]
-        def call(*) = nil
-
-        # @return [nil]
-        def on(*) = nil
-      end
-    end
-
-    Absent = Data.define(:reason)
-
     # No daemon to talk to, and why.
-    class Absent
-      # @return [Registration::Null]
-      def registration(...) = Registration::Null.new
-    end
+    Absent = Data.define(:reason)
 
     # @param paths [Paths]
     # @return [String] the socket every lain with this runtime dir shares
@@ -65,9 +42,11 @@ module Lain
     # @param launch [Launch, nil] how to start one, and what a running one must match; this
     #   checkout's {Launch.current} when nil, built only once the off switch is read
     # @param notes [#puts] told why there is no daemon, or that a restart waits on live runs
+    # @param pushes [Async::Queue, nil] where the client hands what the daemon pushes; see {Core::Client.start}
+    # @param replace [Boolean] false to take whatever daemon answers, starting one only when none does
     # @return [Core::Client, Absent]
     # @raise [Unstarted] when a spawned daemon exits or stays silent past the budget
-    def self.ensure(paths:, env: ENV, launch: nil, notes: Sink::Null.new)
+    def self.ensure(paths:, env: ENV, launch: nil, notes: Sink::Null.new, pushes: nil, replace: true)
       return absent(SWITCHED_OFF, notes) if env[SWITCH] == OFF
 
       launch ||= Launch.current(paths:, env:)
@@ -75,8 +54,8 @@ module Lain
 
       FileUtils.mkdir_p(paths.daemon_dir, mode: 0o700)
       FileLock.new(File.join(paths.daemon_dir, "start.lock"), label: "the daemon start").hold do
-        attached = attach(launch.socket)
-        attached && closing_on_error(attached) { kept?(attached, launch, notes) } ? attached : started(launch)
+        attached = attach(launch.socket, pushes)
+        attached && usable?(attached, launch, notes, replace) ? attached : started(launch, pushes)
       end
     end
 
@@ -97,8 +76,8 @@ module Lain
       Absent.new(reason:)
     end
 
-    def self.attach(socket)
-      Core::Client.start(transport: Core::Transport::Unix.new(socket))
+    def self.attach(socket, pushes = nil)
+      Core::Client.start(transport: Core::Transport::Unix.new(socket), pushes:)
     rescue Core::Transport::Unix::Unreachable
       nil
     end
@@ -110,15 +89,28 @@ module Lain
       raise
     end
 
-    # A daemon whose runs would die with it is kept until they end.
+    def self.usable?(client, launch, notes, replace)
+      !replace || closing_on_error(client) { kept?(client, launch, notes) }
+    end
+
+    # A daemon whose runs would die with it, or whose chats would have to
+    # register again, is kept until they end. Two checkouts sharing a runtime
+    # dir would otherwise replace each other's daemon on every start.
     def self.kept?(client, launch, notes)
       info = client.call("daemon.info")
       return true if info.fetch("launch_digest") == launch.digest
 
       runs = info.fetch("live_runs", 0)
-      notes.puts(format(PENDING, socket: launch.socket, runs:)) if runs.positive?
-      halt(client, launch.socket) if runs.zero?
-      runs.positive?
+      chats = client.call("session.list").size
+      busy = runs.positive? || chats.positive?
+      busy ? notes.puts(pending(launch.socket, chats:, runs:)) : halt(client, launch.socket)
+      busy
+    end
+
+    def self.pending(socket, chats:, runs:)
+      held = { "chat" => chats, "live run" => runs }.select { |_, count| count.positive? }
+      busy = held.map { |noun, count| "#{count} #{noun}#{"s" unless count == 1}" }.join(" and ")
+      format(PENDING, socket:, busy:, those: held.values.sum == 1 ? "that ends" : "those end")
     end
 
     def self.halt(client, socket)
@@ -140,10 +132,10 @@ module Lain
       false
     end
 
-    def self.started(launch)
+    def self.started(launch, pushes)
       waiter = Process.detach(spawned(launch))
       client = nil
-      WAIT.succeeded?(UNTOLD, deadline: START_BUDGET) { !waiter.alive? || (client = attach(launch.socket)) }
+      WAIT.succeeded?(UNTOLD, deadline: START_BUDGET) { !waiter.alive? || (client = attach(launch.socket, pushes)) }
       client || raise(Unstarted, unstarted(launch, waiter))
     end
 
@@ -166,7 +158,7 @@ module Lain
       "lain-daemon #{how}; its trace is #{launch.trace}"
     end
 
-    private_class_method :built?, :absent, :attach, :closing_on_error, :kept?, :halt, :running?, :started,
-                         :spawned, :unstarted
+    private_class_method :built?, :absent, :attach, :closing_on_error, :usable?, :kept?, :pending, :halt, :running?,
+                         :started, :spawned, :unstarted
   end
 end

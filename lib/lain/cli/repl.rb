@@ -40,6 +40,9 @@ module Lain
       #
       # `remote:` is the phone's surface ({Approval::RemoteSurface}), nil
       # unless `remote relay:` is set.
+      #
+      # `registration:` is the chat's place in the daemon's session list
+      # ({Daemon::Registration}), held for the conversation.
       def initialize(agent:, tty:, replies:, commands:, chronicle:, conductor:, approvals: nil, remote: nil,
                      supervisor: Lain::Supervisor::Null,
                      middleware: Lain::Middleware::Stack.new, secret_surface: nil,
@@ -47,7 +50,7 @@ module Lain
                      echo_input: false, notes: HumanNotes::Null,
                      mode_switch: Lain::Frontend::Neovim::ApprovalView::NoModeSwitch,
                      idle: IdleCompaction::Never, notices: Lain::AgentStates::Notices::Never,
-                     heard: Lain::Approval::Judge::Unheard)
+                     heard: Lain::Approval::Judge::Unheard, registration: ::Lain::Daemon::Registration::Null.new)
         @agent = agent
         @heard = heard
         @notes = notes
@@ -62,7 +65,7 @@ module Lain
         @attended = attended
         @echo_input = echo_input
         @mode_switch = mode_switch
-        name_seams(replies:, supervisor:, idle:, notices:, approvals:, secret_surface:, tty:, conductor:, remote:)
+        name_seams(supervisor:, idle:, notices:, registration:, approvals:, secret_surface:, tty:, conductor:, remote:)
       end
 
       # What this conversation was worth as a process exit status, for the one
@@ -101,7 +104,9 @@ module Lain
       # review between turns, and a docent child parks a call while the chat is
       # at rest. {ConversationScope} owns that lifetime, closed by the ensure on
       # every path out. The input producer lives for the conversation beside
-      # it, since every line of it is read through that one producer.
+      # it, since every line of it is read through that one producer. It opens
+      # once the screen is up, because the alternate screen wipes whatever its
+      # registration says about the daemon before then.
       #
       # `epic:` is what the editor's lain://status draws, resolved by {Wiring};
       # like `store:` and `session:` it reaches only the frontend built here.
@@ -120,9 +125,8 @@ module Lain
         @prompt = composed_prompt(frontend)
         pumping = Lain::Frontend::StdinPump::Idle
         Sync do |task|
-          @conversation.open(task)
           pumping = @input.start(task)
-          @tty.run { frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:) }
+          @tty.run { converse_on_screen(task, frontend, first_prompt) }
         ensure
           stop_input(pumping)
           @conversation.close
@@ -131,14 +135,20 @@ module Lain
 
       private
 
+      def converse_on_screen(task, frontend, first_prompt)
+        @conversation.open(task)
+        frontend ? frontend.run { converse(first_prompt:) } : converse(first_prompt:)
+      end
+
       # The conversation's lifetime, named by the object that owns it -- so
       # which fiber belongs to it, and who stops it, is read off a name rather
       # than off an ensure -- and the queue a human's line lifts the silence
       # rule's denials on.
-      def name_seams(replies:, supervisor:, idle:, notices:, **approval_seams)
+      def name_seams(supervisor:, idle:, notices:, registration:, **approval_seams)
         @lapses = approval_seams[:approvals] || HumanReplies::NoLapses
         @surfaces = ApprovalSurfaces.new(**approval_seams)
-        @conversation = ConversationScope.new(supervisor:, replies:, surfaces: @surfaces, idle:, notices:)
+        @conversation = ConversationScope.new(supervisor:, replies: @replies, surfaces: @surfaces, idle:, notices:,
+                                              registration:)
       end
 
       # The bridge over the agent's own override slot, sharing the nvim views'

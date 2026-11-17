@@ -2043,7 +2043,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "a refused --isolation" do
   end
 end
 
-RSpec.describe Lain::CLI::ChatLaunch, "the live record" do
+RSpec.describe Lain::CLI::ChatLaunch, "the daemon registration" do
   def launch(options, **factories) = described_class.new(options, **factories)
 
   around do |example|
@@ -2053,60 +2053,101 @@ RSpec.describe Lain::CLI::ChatLaunch, "the live record" do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => @dir }) }
-  let(:live_dir) { File.join(paths.state_home, "live") }
+  let(:state) { File.join(@dir, "state") }
   let(:seen) { [] }
+  let(:built) { [] }
 
-  def recording_wiring
+  def listed(paths, env)
+    client = Lain::Daemon.ensure(paths:, env:)
+    client.is_a?(Lain::Daemon::Absent) ? [] : client.call("session.list").tap { client.stop }
+  end
+
+  # Holds the registration it is handed open for the run, as the conversation does.
+  def recording_wiring(paths, env)
     instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0).tap do |wiring|
       allow(wiring).to receive(:run) do
-        seen.concat(Dir.glob(File.join(live_dir, "*.json")).map { JSON.parse(File.read(_1)) })
+        Sync do |task|
+          @registration.open(task)
+          seen.concat(listed(paths, env))
+        ensure
+          @registration.close
+        end
       end
     end
   end
 
-  def launch_chat(options)
-    wiring = recording_wiring
+  def launch_chat(options, paths:, env:)
+    wiring = recording_wiring(paths, env)
     project = throwaway_project(@dir)
-    factories = { wiring_factory: ->(**) { wiring }, project_factory: -> { project }, paths:,
+    factories = { wiring_factory: lambda { |registration:, **|
+                                    built << registration
+                                    (@registration = registration) && wiring
+                                  },
+                  project_factory: -> { project }, paths:, env:,
                   chronicle_factory: ->(**kw) { Lain::CLI::Chronicle.for(**kw, paths:) },
                   profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
                   gc_schedule_factory: ->(**) { instance_spy(Lain::CLI::GcSchedule) } }
     launch({ journal: true, nvim: false, windows: false }.merge(options), **factories).call { |_notice| nil }
   end
 
-  it "holds an attended socket chat's record while it runs and removes it at close" do
-    launch_chat({ input: "socket:chat" })
+  describe "with a daemon", :daemon do
+    let(:paths) { Lain::Paths.new(env: daemon_env.merge("XDG_STATE_HOME" => state)) }
 
-    expect(seen.size).to eq(1)
-    expect(seen.first).to include("pid" => Process.pid, "attended" => true, "root" => File.realpath(@dir),
-                                  "input_socket" => end_with("-chat.sock"))
-    expect(seen.first.fetch("journal")).to end_with("#{seen.first.fetch("session_id")}.ndjson")
-    expect(Dir.glob(File.join(live_dir, "*.json"))).to be_empty
+    def chat(options) = launch_chat(options, paths:, env: daemon_env)
+
+    it "lists an attended socket chat by its journal stem while it runs, and not once it closes" do
+      chat({ input: "socket:chat" })
+
+      expect(seen.size).to eq(1)
+      expect(seen.first).to include("pid" => Process.pid, "attended" => true, "root" => File.realpath(@dir),
+                                    "input_socket" => end_with("-chat.sock"))
+      expect(seen.first.fetch("journal")).to end_with("#{seen.first.fetch("session_id")}.ndjson")
+      expect(Sync { listed(paths, daemon_env) }).to be_empty
+    end
+
+    it "lists a headless chat unattended with no input socket" do
+      chat({ non_interactive: true, prompt: "x" })
+
+      expect(seen.first).to include("attended" => false, "input_socket" => nil)
+    end
+
+    it "names a --no-journal chat pid-<pid>-<start> with no journal" do
+      chat({ journal: false })
+
+      expect(seen.first).to include("session_id" => start_with("pid-#{Process.pid}-"), "journal" => nil)
+    end
+
+    it "hands the daemon start the chat's own notes, so a pending restart reaches its screen" do
+      allow(Lain::Daemon).to receive(:ensure).and_call_original
+
+      chat({ journal: false })
+
+      expect(Lain::Daemon).to have_received(:ensure)
+        .with(hash_including(notes: an_instance_of(Lain::Herdr::HeldNotes), replace: true))
+    end
+
+    it "writes no file under the state home's live directory" do
+      chat({ input: "socket:chat" })
+
+      expect(Dir.exist?(File.join(state, "live"))).to be(false)
+    end
+
+    it "registers nothing in the pre-flight" do
+      allow(described_class).to receive(:preflight?).and_return(true)
+
+      chat({ input: "socket:chat" })
+
+      expect(built).to be_empty
+      expect(Sync { listed(paths, daemon_env) }).to be_empty
+    end
   end
 
-  it "marks a headless chat unattended with no input socket" do
-    launch_chat({ non_interactive: true, prompt: "x" })
+  it "runs the chat with no daemon, and lists nothing" do
+    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "XDG_RUNTIME_DIR" => @dir })
 
-    expect(seen.first).to include("attended" => false, "input_socket" => nil)
-  end
+    launch_chat({ journal: false }, paths:, env: ENV)
 
-  it "names a --no-journal chat pid-<pid>-<start> with no journal" do
-    launch_chat({ journal: false })
-
-    expect(seen.first).to include("session_id" => start_with("pid-#{Process.pid}-"), "journal" => nil)
-  end
-
-  it "writes nothing in the pre-flight, though the same flags launched for real do" do
-    launch_chat({ input: "socket:chat" })
-    expect(seen).not_to be_empty
-    seen.clear
-    FileUtils.rm_rf(live_dir)
-    allow(described_class).to receive(:preflight?).and_return(true)
-
-    launch_chat({ input: "socket:chat" })
-
+    expect(built.size).to eq(1)
     expect(seen).to be_empty
-    expect(Dir.exist?(live_dir)).to be(false)
   end
 end

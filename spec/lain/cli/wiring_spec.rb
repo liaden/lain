@@ -4065,6 +4065,25 @@ RSpec.describe Lain::CLI::Wiring do
       end
     end
 
+    it "hands the Repl the daemon registration the launch built, which the conversation opens", :seam do
+      registration = instance_spy(Lain::Daemon::Registration)
+      seen = []
+      allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+        seen << kwargs[:registration]
+        original.call(**kwargs)
+      end
+
+      Dir.mktmpdir do |dir|
+        wiring = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, stdin: StringIO.new("quit\n"),
+                            tty_factory: tty_factory(dir), conductor_opener:, registration:)
+        wiring.run(backend:, resumed: nil, nvim: nil)
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(seen).to eq([registration])
+      expect(registration).to have_received(:open)
+    end
+
     it "hands the chat's StdinPump the approval key the user's config names", :seam do
       allow(Lain::Config).to receive(:keys)
         .and_return(Lain::Config::Keys.from({ "approval_cycle" => "s-tab" }, path: nil))

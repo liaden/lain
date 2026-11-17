@@ -1,97 +1,91 @@
 # frozen_string_literal: true
 
-require "json"
-require "tmpdir"
+require "async"
 
 RSpec.describe Lain::LiveSessions do
-  around do |example|
-    Dir.mktmpdir("lain-live") do |dir|
-      @dir = File.realpath(dir)
-      example.run
-    end
-  end
-
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
-  let(:sessions) { described_class.new(paths:) }
+  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => "/run/user/7" }) }
   let(:writer) { Lain::Liveness::Writer.current }
 
-  def record(id: "20261116T100000-1", root: "/work/api", attended: true, started_at: "2026-11-16T10:00:00Z", **over)
+  def record(id: "20261116T100000-1", root: "/work/api", attended: true, started_at: "2026-11-16T10:00:00Z")
     described_class::Record.new(session_id: id, pid: writer.pid, start: writer.start, host: writer.host, root:,
                                 cwd: root, input_socket: attended ? "/run/lain/input.sock" : nil,
-                                journal: "/state/#{id}.ndjson", attended:, started_at:, **over)
+                                journal: "/state/#{id}.ndjson", attended:, started_at:)
   end
 
-  def live_file(id) = File.join(paths.state_home, "live", "#{id}.json")
-
-  describe "#enter" do
-    it "writes the record as live/<session id>.json and leaves no temp file" do
-      sessions.enter(record)
-
-      expect(JSON.parse(File.read(live_file("20261116T100000-1")))).to include(
-        "session_id" => "20261116T100000-1", "pid" => writer.pid, "root" => "/work/api", "attended" => true,
-        "input_socket" => "/run/lain/input.sock", "journal" => "/state/20261116T100000-1.ndjson",
-        "started_at" => "2026-11-16T10:00:00Z"
-      )
-      expect(Dir.children(File.dirname(live_file("x")))).to eq(["20261116T100000-1.json"])
-    end
-
-    it "writes the record readable by its owner alone" do
-      sessions.enter(record)
-
-      expect(File.stat(live_file("20261116T100000-1")).mode & 0o777).to eq(0o600)
-    end
-
-    it "returns a handle whose leave removes the file, and leaving twice is harmless" do
-      handle = sessions.enter(record)
-
-      handle.leave
-      handle.leave
-
-      expect(File.exist?(live_file("20261116T100000-1"))).to be(false)
-    end
+  def over(*records)
+    @client = SessionListing.new(records)
+    described_class.new(paths:, daemon: -> { @client })
   end
 
   describe "#each" do
-    it "yields live records newest started_at first" do
-      sessions.enter(record(id: "a", started_at: "2026-11-16T09:00:00Z"))
-      sessions.enter(record(id: "b", started_at: "2026-11-16T11:00:00Z"))
+    it "yields what the daemon lists, newest started_at first" do
+      sessions = over(record(id: "a", started_at: "2026-11-16T09:00:00Z"),
+                      record(id: "b", started_at: "2026-11-16T11:00:00Z"))
 
       expect(sessions.map(&:session_id)).to eq(%w[b a])
+      expect(@client.asked).to eq(["session.list"])
     end
 
-    it "skips a same-host record whose pid is dead and does not delete it" do
-      sessions.enter(record(id: "crashed", start: "1"))
+    it "yields every field the daemon sends" do
+      expect(over(record).first).to eq(record)
+    end
+
+    it "hangs up the connection it listed over" do
+      over(record).to_a
+
+      expect(@client).to be_stopped
+    end
+
+    it "yields nothing, and says why once, when the daemon cannot be reached" do
+      notes = StringIO.new
+      sessions = described_class.new(paths:, notes:, daemon: -> { raise Lain::Daemon::Unstarted, "did not answer" })
 
       expect(sessions.to_a).to be_empty
-      expect(File.exist?(live_file("crashed"))).to be(true)
+      expect(notes.string.lines).to eq(["cannot list the running chats: did not answer\n"])
     end
 
-    it "skips a record from another host and leaves its file" do
-      sessions.enter(record(id: "elsewhere", host: "another-host.invalid", start: "1"))
+    it "yields nothing, and hangs up, when the daemon refuses the listing" do
+      refusing = SessionListing.new
+      allow(refusing).to receive(:call).and_raise(Lain::Core::Client::Refused, "only the daemon's own user")
+      notes = StringIO.new
 
-      expect(sessions.to_a).to be_empty
-      expect(File.exist?(live_file("elsewhere"))).to be(true)
+      expect(described_class.new(paths:, notes:, daemon: -> { refusing }).to_a).to be_empty
+      expect(refusing).to be_stopped
+      expect(notes.string).to include("only the daemon's own user")
     end
 
-    it "skips a file it cannot parse" do
-      FileUtils.mkdir_p(File.dirname(live_file("x")))
-      File.write(live_file("torn"), "{")
+    it "yields nothing when there is no daemon" do
+      sessions = described_class.new(paths:, daemon: -> { Lain::Daemon::Absent.new(reason: "the daemon is off") })
 
-      expect(sessions.to_a).to be_empty
-    end
-
-    it "yields nothing before the directory exists" do
       expect(sessions.to_a).to be_empty
     end
   end
 
   describe "#in" do
     it "returns the attended records of one checkout root only" do
-      sessions.enter(record(id: "mine"))
-      sessions.enter(record(id: "headless", attended: false))
-      sessions.enter(record(id: "other", root: "/work/web"))
+      sessions = over(record(id: "mine"), record(id: "headless", attended: false),
+                      record(id: "other", root: "/work/web"))
 
       expect(sessions.in("/work/api").map(&:session_id)).to eq(%w[mine])
+    end
+  end
+
+  describe "against the real daemon", :daemon do
+    it "lists a chat while its registration holds, and not once its connection ends" do
+      sessions = described_class.new(paths: daemon_paths)
+      registration = Lain::Daemon::Registration.new(
+        record:, notes: StringIO.new,
+        daemon: lambda { |pushes:, replace:|
+          Lain::Daemon.ensure(paths: daemon_paths, env: daemon_env, pushes:, replace:)
+        }
+      )
+
+      Sync do |task|
+        registration.open(task)
+        expect(sessions.to_a).to eq([record])
+        registration.close
+        pumped_until(task, reason: "the session dropped") { sessions.none? }
+      end
     end
   end
 end

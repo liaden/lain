@@ -1552,6 +1552,49 @@ RSpec.describe Lain::CLI::Repl do
       expect(spawned.none?(&:running?)).to be(true)
     end
 
+    it "opens the daemon registration it was given for the conversation and closes it after" do
+      registration = instance_spy(Lain::Daemon::Registration)
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+
+      Dir.mktmpdir do |dir|
+        tty = tty_for(dir)
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        replies.bind_editor(rail)
+        replies.bind_changeset_review(review)
+        repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                                   chronicle: Lain::CLI::Chronicle::Null.new, conductor:, registration:)
+        Timeout.timeout(10) { repl.run(forks: no_forks, nvim: nil, store: nil, session: nil) }
+      end
+
+      expect(registration).to have_received(:open).with(an_instance_of(Async::Task)).ordered
+      expect(registration).to have_received(:close).ordered
+    end
+
+    it "opens the registration once the screen is up, so what it says is drawn where the human sees it" do
+      screen = StringIO.new
+      allow(conductor).to receive(:read_prompt).and_return(nil)
+
+      Dir.mktmpdir do |dir|
+        tty = Lain::Frontend::TTY.new(channel: Lain::Channel.new, output: screen, input: StringIO.new,
+                                      history_path: File.join(dir, "history"), alternate_screen: true)
+        registration = instance_spy(Lain::Daemon::Registration)
+        allow(registration).to receive(:open) { tty.render_warning("the review queue cannot find this chat") }
+        replies = Lain::CLI::HumanReplies.new(tty:, conductor:, questions: Async::Queue.new,
+                                              ask_human: instance_double(Lain::Tools::AskHuman::Directory))
+        replies.bind_editor(rail)
+        replies.bind_changeset_review(review)
+        repl = described_class.new(agent:, tty:, replies: AttachedReplies.new(replies), commands:, supervisor:,
+                                   chronicle: Lain::CLI::Chronicle::Null.new, conductor:, registration:)
+        Timeout.timeout(10) { repl.run(forks: no_forks, nvim: nil, store: nil, session: nil) }
+      end
+
+      drawn = screen.string
+      expect(drawn.scan("the review queue cannot find this chat").size).to eq(1)
+      expect(drawn.index("the review queue cannot find this chat"))
+        .to be_between(drawn.index(Lain::Frontend::TTY::ALTERNATE_SCREEN_ON), drawn.rindex(Lain::Frontend::TTY::ALTERNATE_SCREEN_OFF))
+    end
+
     it "hands the epic docs reader to the frontend it attaches" do
       docs = Object.new
       allow(Lain::Frontend::Neovim).to receive(:new).and_return(nil)

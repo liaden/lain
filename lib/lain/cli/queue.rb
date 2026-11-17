@@ -279,12 +279,12 @@ module Lain
          *("did not answer: #{result.skipped.map { session(_1) }.join(", ")}" if result.skipped.any?)]
       end
 
-      # A live record is a file any same-uid process can write.
+      # A listed session's fields are whatever its chat registered.
       def session(record) = ::Lain::Review::Queue::Request.plain(record.session_id)
 
       def delivery
         ::Lain::Review::Queue::Delivery.new(
-          live_sessions: LiveSessions.new(paths: Paths.new),
+          live_sessions: LiveSessions.new(paths: Paths.new, notes:),
           account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:),
           pending: ::Lain::Review::Queue::Pending.new(paths: Paths.new)
         )

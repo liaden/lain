@@ -35,7 +35,6 @@ RSpec.describe Lain::Daemon do
         expect(absent).to be_a(Lain::Daemon::Absent)
         expect(absent.reason).to include("rake daemon:build")
         expect(notes.string).to include("rake daemon:build")
-        expect(absent.registration).to be_a(Lain::Daemon::Registration::Null)
       end
     end
   end
@@ -105,7 +104,9 @@ RSpec.describe Lain::Daemon do
         FileUtils.mkdir_p(File.dirname(described_class.socket(paths: @paths)), mode: 0o700)
         @stand_in = Process.spawn("sh", "-c", 'trap "" TERM; exec sleep 60')
         @live_runs = 1
+        @sessions = []
         @refuse_info = false
+        @push_on_info = false
         @hangups = Thread::Queue.new
         @server = UNIXServer.new(described_class.socket(paths: @paths))
         @serving = Thread.new { loop { answer(@server.accept) } }
@@ -122,6 +123,8 @@ RSpec.describe Lain::Daemon do
       Thread.new do
         MessagePack::Unpacker.new(connection).each do |_kind, msgid, method, _params|
           connection.write(MessagePack.pack([Lain::Core::Client::RESPONSE, msgid, *reply(method)]))
+          push = @push_on_info && method == "daemon.info"
+          connection.write(MessagePack.pack([Lain::Core::Client::PUSH, "offer", [method]])) if push
         end
         @hangups << :hangup
       rescue IOError, SystemCallError
@@ -133,7 +136,8 @@ RSpec.describe Lain::Daemon do
       return ["refused", nil] if method == "daemon.info" && @refuse_info
 
       [nil, { "ping" => { "version" => Lain::Core::Client::PROTOCOL_VERSION, "pid" => @stand_in },
-              "daemon.info" => { "launch_digest" => "another", "live_runs" => @live_runs } }.fetch(method)]
+              "daemon.info" => { "launch_digest" => "another", "live_runs" => @live_runs },
+              "session.list" => @sessions }.fetch(method)]
     end
 
     it "hangs up on it when its answer about its launch is refused" do
@@ -157,6 +161,73 @@ RSpec.describe Lain::Daemon do
       expect(pid).to eq(@stand_in)
       expect(alive?(@stand_in)).to be(true)
       expect(notes.string.lines.grep(/restart/).size).to eq(1)
+    end
+
+    it "keeps it while a chat is registered there, and says once that a restart is pending" do
+      @live_runs = 0
+      @sessions = [{ "session_id" => "elsewhere" }]
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+      notes = StringIO.new
+
+      pid = Sync do
+        client = described_class.ensure(paths: @paths, launch:, notes:, env: {})
+        ping_pid(client).tap { client.stop }
+      end
+
+      expect(pid).to eq(@stand_in)
+      expect(notes.string.lines.grep(/restart/).size).to eq(1)
+    end
+
+    def pending_note
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+      notes = StringIO.new
+      Sync { described_class.ensure(paths: @paths, launch:, notes:, env: {}).stop }
+      notes.string
+    end
+
+    it "says in the singular that this chat uses another checkout's daemon until its 1 chat ends" do
+      @live_runs = 0
+      @sessions = [{ "session_id" => "elsewhere" }]
+
+      expect(pending_note).to eq(
+        "this chat uses the daemon another checkout started at #{described_class.socket(paths: @paths)}, " \
+        "which has 1 chat; it restarts on this checkout's build once that ends\n"
+      )
+    end
+
+    it "counts several chats and runs in the plural" do
+      @live_runs = 3
+      @sessions = [{ "session_id" => "a" }, { "session_id" => "b" }]
+
+      expect(pending_note).to eq(
+        "this chat uses the daemon another checkout started at #{described_class.socket(paths: @paths)}, " \
+        "which has 2 chats and 3 live runs; it restarts on this checkout's build once those end\n"
+      )
+    end
+
+    it "attaches to an idle one without replacing it when told not to replace" do
+      @live_runs = 0
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+
+      pid = Sync do
+        client = described_class.ensure(paths: @paths, launch:, replace: false, env: {})
+        ping_pid(client).tap { client.stop }
+      end
+
+      expect(pid).to eq(@stand_in)
+    end
+
+    it "hands what it pushes to the queue the caller gave" do
+      @push_on_info = true
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+      pushes = Async::Queue.new
+
+      pushed = Sync do
+        client = described_class.ensure(paths: @paths, launch:, pushes:, env: {})
+        pushes.dequeue.tap { client.stop }
+      end
+
+      expect(pushed).to eq(["offer", ["daemon.info"]])
     end
 
     it "refuses in words when an idle one ignores the stop" do
@@ -270,6 +341,16 @@ RSpec.describe Lain::Daemon do
       expect(waiter.join(5)).not_to be_nil
       expect(pid).not_to eq(stale)
       expect(info.fetch("launch_digest")).to eq(daemon_launch.digest)
+    end
+
+    it "hands the daemon it starts the queue the caller gave for pushes" do
+      pushes = Async::Queue.new
+      allow(Lain::Core::Client).to receive(:start).and_call_original
+
+      Sync { described_class.ensure(paths: daemon_paths, env: daemon_env, pushes:).stop }
+
+      expect(Lain::Core::Client).to have_received(:start).with(hash_including(pushes:)).at_least(:once)
+      expect(Lain::Core::Client).not_to have_received(:start).with(hash_including(pushes: nil))
     end
 
     it "puts its socket in the example's own runtime dir" do

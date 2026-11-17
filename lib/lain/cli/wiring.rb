@@ -249,14 +249,18 @@ module Lain
       #   typed flags over a resumed session's recorded arms
       # @param agent_states [AgentStates::Tracker, nil] the chat's tracker when a tee feeds it; its
       #   notices then replace the notifier's own immediate sequence and feed entry
+      # @param registration [Daemon::Registration, Daemon::Registration::Null] the chat's place in the
+      #   daemon's session list, held open by the conversation
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
       def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
                      project: Project::Resolver.default_project, herdr: HerdrBinding::Null.new,
                      conductor_opener: Lain::CLI::Conductor.public_method(:open), agent_states: nil,
-                     stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options))
+                     stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options),
+                     registration: ::Lain::Daemon::Registration::Null.new)
         @options = options
+        @registration = registration
         @agent_states = agent_states
         @secret_oracle = SecretOracle.new(options)
         @arms = arms
@@ -951,7 +955,8 @@ module Lain
                  commands: @command_surface.commands, remote: remote_surface,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: attended? && !human.socket_name.nil?, notes:, mode_switch: @switchboard.mode_switch,
-                 idle: idle_compaction(agent:, backend:), notices: attention.notices, heard:)
+                 idle: idle_compaction(agent:, backend:), notices: attention.notices, heard:,
+                 registration: @registration)
       end
 
       def remote_surface

@@ -145,6 +145,53 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     end
   end
 
+  describe "the daemon registration" do
+    let(:order) { [] }
+    let(:registration) do
+      instance_spy(Lain::Daemon::Registration).tap do |registration|
+        allow(registration).to receive(:open) { order << :registered }
+        allow(registration).to receive(:close) { order << :unregistered }
+      end
+    end
+
+    def scope_with(registration)
+      allow(supervisor).to receive(:run) { order << :fleet }
+      allow(supervisor).to receive(:stop) { order << :farewell }
+      described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing), registration:)
+    end
+
+    it "opens it on the conversation's task before the fleet can start a child, and closes it" do
+      Sync do |task|
+        scope_with(registration).open(task).close
+
+        expect(registration).to have_received(:open).with(task)
+      end
+
+      expect(order.first(2)).to eq(%i[registered fleet])
+      expect(order).to include(:unregistered)
+    end
+
+    it "closes it even when a surface's stop raises" do
+      refusing = Class.new { def stop = raise("this surface will not stop") }.new
+      allow(supervisor).to receive(:stop)
+
+      Sync do |task|
+        scope = described_class.new(supervisor:, replies: replies.new(->(_inner) { [refusing] }),
+                                    surfaces: approvals.new(nothing), registration:)
+        scope.open(task)
+        expect { scope.close }.to raise_error("this surface will not stop")
+      end
+
+      expect(registration).to have_received(:close)
+    end
+
+    it "holds a Null one by default" do
+      scope = described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing))
+
+      Sync { |task| expect { scope.open(task).close }.not_to raise_error }
+    end
+  end
+
   # The unattended shape: no queue was wired, so the approval seam answers nil
   # rather than an empty set, and there is nothing of it to stop.
   it "survives an approval seam that answers nil" do

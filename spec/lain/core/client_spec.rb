@@ -124,6 +124,40 @@ RSpec.describe Lain::Core::Client do
     end
   end
 
+  describe "#wait" do
+    it "parks while the connection lives and calls go on being answered" do
+      with_handshaken_client do |client, peer, requests|
+        waiting = Async { client.wait }
+        daemon = Async do
+          _kind, msgid, = requests.read
+          respond(peer, msgid, result: "served")
+        end
+        expect(client.call("ping")).to eq("served")
+        daemon.wait
+
+        expect(waiting).to be_running
+      end
+    end
+
+    it "returns the Died that says why once the far end hangs up" do
+      with_handshaken_client(termination: "peer vanished") do |client, peer|
+        waiting = Async { client.wait }
+        peer.close
+
+        expect(waiting.wait).to be_a(Lain::Core::Died).and(having_attributes(message: /peer vanished/))
+      end
+    end
+
+    it "returns Stopped once the client is stopped" do
+      with_handshaken_client do |client|
+        waiting = Async { client.wait }
+        client.stop
+
+        expect(waiting.wait).to be_a(Lain::Core::Client::Stopped)
+      end
+    end
+  end
+
   describe "pushed frames" do
     def push(peer, method, params) = peer.write(MessagePack.pack([Lain::Core::Client::PUSH, method, params]))
 

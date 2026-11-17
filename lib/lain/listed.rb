@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/core_ext/enumerable"
+
 module Lain
   # A comma-separated flag or variable read as a list. One definition so a
   # stray comma drops the same way at every site rather than becoming an

@@ -9,9 +9,13 @@ require "tmpdir"
 # a sender learns is whatever the chat's own socket says back.
 RSpec.describe Lain::Review::Queue::Delivery, :seam do
   subject(:delivery) do
-    described_class.new(live_sessions: Lain::LiveSessions.new(paths:), account:, pending:, shell_out_factory:,
-                        greeting: 0.5)
+    described_class.new(live_sessions: Lain::LiveSessions.new(paths:, daemon: -> { listing }), account:, pending:,
+                        shell_out_factory:, greeting: 0.5)
   end
+
+  # Serves session.list as the daemon does, from the records `live` adds.
+  let(:live_records) { [] }
+  let(:listing) { SessionListing.new(live_records) }
 
   let(:herdr_env) { {} }
   let(:started) { [] }
@@ -97,10 +101,9 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
   end
 
   def live(id, root, path, started_at)
-    Lain::LiveSessions.new(paths:).enter(
-      Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start, host: writer.host, root:,
-                                     cwd: root, input_socket: path, journal: nil, attended: true, started_at:)
-    )
+    live_records << Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start,
+                                                   host: writer.host, root:, cwd: root, input_socket: path,
+                                                   journal: nil, attended: true, started_at:)
   end
 
   # A listener that accepts and then says only what it is given, if anything:

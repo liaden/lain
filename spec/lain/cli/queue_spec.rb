@@ -9,6 +9,19 @@ require "socket"
 RSpec.describe Lain::CLI::Queue, :seam do
   let(:old) { { "GIT_AUTHOR_DATE" => "2020-01-01T00:00:00Z", "GIT_COMMITTER_DATE" => "2020-01-01T00:00:00Z" } }
 
+  # Serves session.list as the daemon does, from the records `live` adds.
+  let(:live_records) { [] }
+  let(:listing) { SessionListing.new(live_records) }
+  let(:daemon_source) { -> { listing } }
+
+  # Thor builds the command object from argv, so no constructor keyword reaches
+  # the LiveSessions it lists chats through; the stand-in goes in at `new`.
+  before do
+    allow(Lain::LiveSessions).to receive(:new).and_wrap_original do |original, **keywords|
+      original.call(**keywords, daemon: daemon_source)
+    end
+  end
+
   around do |example|
     Dir.mktmpdir("lain-cli-queue") do |dir|
       @repo = File.realpath(dir)
@@ -72,11 +85,9 @@ RSpec.describe Lain::CLI::Queue, :seam do
 
   def live(id, root, path, started_at = "2026-11-16T10:00:00Z")
     writer = Lain::Liveness::Writer.current
-    Lain::LiveSessions.new(paths: Lain::Paths.new).enter(
-      Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start, host: writer.host, root:,
-                                     cwd: root, input_socket: path, journal: nil, attended: true,
-                                     started_at:)
-    )
+    live_records << Lain::LiveSessions::Record.new(session_id: id, pid: writer.pid, start: writer.start,
+                                                   host: writer.host, root:, cwd: root, input_socket: path,
+                                                   journal: nil, attended: true, started_at:)
   end
 
   def offered(rail) = wait_until(reason: "the offer drawn") { rail.published.kind == :human && rail.published.text }
@@ -277,6 +288,17 @@ RSpec.describe Lain::CLI::Queue, :seam do
     it "holds the review for the next cockpit when no chat runs in the checkout, and says so" do
       expect(run("open", feature))
         .to eq([0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n", ""])
+    end
+
+    context "when the daemon cannot be reached" do
+      let(:daemon_source) { -> { raise Lain::Daemon::Unstarted, "lain-daemon did not answer" } }
+
+      it "holds the review as if no chat ran, and says why on stderr" do
+        expect(run("open", feature)).to eq(
+          [0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n",
+           "cannot list the running chats: lain-daemon did not answer\n"]
+        )
+      end
     end
 
     it "says it replaced a review already held for the checkout" do

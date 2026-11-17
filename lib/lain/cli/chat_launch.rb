@@ -52,9 +52,9 @@ module Lain
       #   spawner
       # @param middleware_reader [#call] reads the configured middleware for a
       #   `root:` under `paths:`; called once per launch, ahead of the record
-      # @param paths [Paths] names the state home the live record is filed under
+      # @param paths [Paths] names the runtime dir the daemon the chat registers with listens in
       # @param env [#[]] the environment, read for $TMUX by
-      #   {#refuse_windows_outside_tmux!}
+      #   {#refuse_windows_outside_tmux!} and for the daemon's off switch
       # @option options [Boolean] :journal whether the run records one
       # @option options [Boolean] :btw whether asides join the record
       # @option options [Boolean] :nvim whether the editor views open
@@ -89,7 +89,6 @@ module Lain
         @status_feed_factory = status_feed_factory
         @gc_schedule_factory = gc_schedule_factory
         @middleware_reader = middleware_reader
-        @live_sessions = LiveSessions.new(paths:)
         @paths = paths
         @env = env
       end
@@ -114,7 +113,6 @@ module Lain
         resumed = resumed_run(backend)
         schedule_gc
         open_chronicle
-        enter_live_session
         converse(backend:, resumed:, &notice)
       rescue StandardError => e
         note_crash(e)
@@ -344,7 +342,6 @@ module Lain
 
       def close_session
         @herdr_reporter&.release
-        @live_handle&.leave
         close_record
         # Last-resort release of a held capped-overflow notice: the closers
         # land in the RAW journal, not the tee, so a failure path may never
@@ -365,15 +362,20 @@ module Lain
         raise unless @crash
       end
 
-      # Before `converse` because the wiring writes the header and then blocks
-      # for the whole chat, so nothing of this object runs once it has.
-      def enter_live_session
+      # Built here and opened by the conversation, inside the chat's reactor,
+      # which is the only place a daemon can be reached from. Its notes and the
+      # daemon start's share the chat's warning line.
+      def registration
+        ::Lain::Daemon::Registration.new(record: live_record, notes: herdr_notes, daemon: lambda { |pushes:, replace:|
+          ::Lain::Daemon.ensure(paths: @paths, env: @env, pushes:, replace:, notes: herdr_notes)
+        })
+      end
+
+      def live_record
         writer = Liveness::Writer.current
-        @live_handle = @live_sessions.enter(
-          LiveSessions::Record.new(session_id:, pid: writer.pid, start: writer.start, host: writer.host,
-                                   root: project.root, cwd: project.cwd, input_socket:, journal: chronicle.journal_path,
-                                   attended: attended?, started_at: Time.now.utc.iso8601(6))
-        )
+        LiveSessions::Record.new(session_id:, pid: writer.pid, start: writer.start, host: writer.host,
+                                 root: project.root, cwd: project.cwd, input_socket:, journal: chronicle.journal_path,
+                                 attended: attended?, started_at: Time.now.utc.iso8601(6))
       end
 
       def attended? = !@options[:non_interactive]
@@ -563,7 +565,7 @@ module Lain
       def converse(backend:, resumed:, &notice)
         @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:,
                                        agent_states: teed_agent_states,
-                                       herdr: herdr_binding)
+                                       herdr: herdr_binding, registration:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

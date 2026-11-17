@@ -45,8 +45,10 @@ module Lain
         #   under --non-interactive, where no queue was wired
         # @param idle [#spawn] {IdleCompaction}, or its Never for the turn schedule
         # @param notices [#spawn] {AgentStates::Notices}, or its Never for a chat with no tracker
+        # @param registration [Daemon::Registration, Daemon::Registration::Null] the chat's place in the daemon's list
         def initialize(supervisor:, replies:, surfaces:, idle: IdleCompaction::Never,
-                       notices: AgentStates::Notices::Never)
+                       notices: AgentStates::Notices::Never, registration: ::Lain::Daemon::Registration::Null.new)
+          @registration = registration
           @idle = idle
           @notices = notices
           @supervisor = supervisor
@@ -56,11 +58,14 @@ module Lain
         end
 
         # Filled a half at a time, so a raise from the second half leaves the
-        # first's fibers where {#close} can stop them.
+        # first's fibers where {#close} can stop them. Registered first: the
+        # daemon checks a process's parent chain when it registers, so it
+        # refuses a child of this chat only once the chat is registered.
         #
         # @param task [Async::Task] the repl's own Sync, never an ask's
         # @return [self]
         def open(task)
+          @registration.open(task)
           @supervisor.run(task)
           attention = Attention.new
           @surfaces.push(*@replies.session_surfaces(task))
@@ -79,6 +84,7 @@ module Lain
           @surfaces.each(&:stop)
         ensure
           @surfaces = []
+          @registration.close
           @supervisor.stop
         end
       end
