@@ -17,9 +17,12 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tokio::net::{TcpListener, TcpStream, UnixListener};
 
-use crate::rpc::{self, Accept, Handler, RpcError, Session};
 use agenda::{Agenda, REPLY_BUDGET, Refusal};
 use devices::{Admitted, DevicesError, DevicesFile, Paired, Roster, Watcher};
+use lain_rpc::{Accept, Conn, Handler, RpcError, Session};
+
+/// The version a ping to either of the relay's listeners reports.
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// How often the relay checks its devices file for a pair or a revoke.
 pub(crate) const RELOAD_TICK: Duration = Duration::from_secs(1);
@@ -262,8 +265,8 @@ pub(crate) async fn serve(
         agenda: Agenda::default(),
     });
     let reread = reread(watcher, Arc::clone(&relay));
-    let lain = rpc::serve(lain, Lain(Arc::clone(&relay)));
-    let phone = rpc::serve(Tailnet(phone), Phone(relay));
+    let lain = lain_rpc::serve(lain, Lain(Arc::clone(&relay)), VERSION);
+    let phone = lain_rpc::serve(Tailnet(phone), Phone(relay), VERSION);
     tokio::select! {
         never = reread => match never {},
         never = lain => match never {},
@@ -331,9 +334,15 @@ impl Handler for Lain {
 struct Phone(Arc<Relay>);
 
 /// A phone connection's device, closed when it is revoked.
-impl Session for Option<Admitted> {
+struct Device(Option<Admitted>);
+
+impl Session for Device {
+    fn opened(_: &Conn) -> Self {
+        Self(None)
+    }
+
     async fn closed(&self) {
-        match self {
+        match &self.0 {
             Some(admitted) => admitted.revoked().await,
             None => std::future::pending().await,
         }
@@ -341,13 +350,17 @@ impl Session for Option<Admitted> {
 }
 
 impl Handler for Phone {
-    type Session = Option<Admitted>;
+    type Session = Device;
 
     fn requires_hello(&self) -> bool {
         true
     }
 
-    async fn hello(&self, params: Vec<Value>) -> Result<(Value, Self::Session), RpcError> {
+    async fn hello(
+        &self,
+        _: &Conn,
+        params: Vec<Value>,
+    ) -> Result<(Value, Self::Session), RpcError> {
         let hello = decoded::<Hello>(params, "hello takes [Hello]")?;
         let admitted = self.0.admit(&hello)?;
         let agenda = &self.0.agenda;
@@ -356,7 +369,7 @@ impl Handler for Phone {
             head: agenda.head(),
             epoch: agenda.epoch(),
         })?;
-        Ok((welcome, Some(admitted)))
+        Ok((welcome, Device(Some(admitted))))
     }
 
     async fn call(
@@ -366,7 +379,7 @@ impl Handler for Phone {
         params: Vec<Value>,
     ) -> Result<Value, RpcError> {
         let agenda = &self.0.agenda;
-        let Some(device) = session else {
+        let Some(device) = &session.0 else {
             return Err(RpcError::HelloRequired);
         };
         match method {
@@ -392,16 +405,55 @@ impl Handler for Phone {
     }
 }
 
+/// `value` formatted, cut to 64 characters, so an id a phone chose cannot make a refusal huge.
+fn clip(value: &impl std::fmt::Display) -> String {
+    struct Bounded(String, usize);
+
+    impl std::fmt::Write for Bounded {
+        fn write_str(&mut self, text: &str) -> std::fmt::Result {
+            for character in text.chars() {
+                if self.1 == 64 {
+                    self.0.push_str("...");
+                    return Err(std::fmt::Error);
+                }
+                self.0.push(character);
+                self.1 += 1;
+            }
+            Ok(())
+        }
+    }
+
+    let mut bounded = Bounded(String::new(), 0);
+    let _cut_short = std::fmt::write(&mut bounded, format_args!("{value}"));
+    bounded.0
+}
+
+fn refused_with(code: &'static str, message: impl Into<String>) -> RpcError {
+    RpcError::Refused {
+        code,
+        message: message.into(),
+    }
+}
+
+fn bad_params(shape: &str) -> RpcError {
+    refused_with("bad_params", shape)
+}
+
 fn refused(refusal: Refusal) -> RpcError {
     match refusal {
-        Refusal::AlreadySettled(id) => RpcError::AlreadySettled(id),
-        Refusal::NotOpen(id) => RpcError::NotOpen(id),
-        Refusal::TooLarge { what, bytes } => RpcError::TooLarge {
-            what,
-            bytes,
-            budget: REPLY_BUDGET,
-        },
-        Refusal::Unencodable => RpcError::BadParams("the relay could not encode it"),
+        Refusal::AlreadySettled(id) => refused_with(
+            "already_settled",
+            format!("agenda item {:?} is already settled", clip(&id)),
+        ),
+        Refusal::NotOpen(id) => refused_with(
+            "not_open",
+            format!("agenda item {:?} is not open", clip(&id)),
+        ),
+        Refusal::TooLarge { what, bytes } => refused_with(
+            "too_large",
+            format!("{what} {bytes} bytes, over the relay's reply budget of {REPLY_BUDGET}"),
+        ),
+        Refusal::Unencodable => bad_params("the relay could not encode it"),
     }
 }
 
@@ -410,32 +462,34 @@ impl Relay {
     /// which tells it nothing about the token.
     fn admit(&self, hello: &Hello) -> Result<Admitted, RpcError> {
         if hello.wire_version != WIRE_VERSION {
-            return Err(RpcError::WireVersion {
-                peer: hello.wire_version,
-                ours: WIRE_VERSION,
-            });
+            return Err(refused_with(
+                "wire_version",
+                format!(
+                    "wire version {} is not served; this relay speaks {WIRE_VERSION}",
+                    hello.wire_version
+                ),
+            ));
         }
-        self.paired.admit(&hello.token).ok_or(RpcError::BadToken)
+        self.paired
+            .admit(&hello.token)
+            .ok_or_else(|| refused_with("bad_token", "the hello was refused"))
     }
 }
 
 /// The first param as a wire message. Only the decoded value travels on, so
 /// a key or a shape the wire types do not name never reaches the other side.
 fn decoded<T: DeserializeOwned>(params: Vec<Value>, shape: &'static str) -> Result<T, RpcError> {
-    let raw = params
-        .into_iter()
-        .next()
-        .ok_or(RpcError::BadParams(shape))?;
+    let raw = params.into_iter().next().ok_or_else(|| bad_params(shape))?;
     let mut bytes = Vec::new();
-    rmpv::encode::write_value(&mut bytes, &raw).map_err(|_| RpcError::BadParams(shape))?;
-    lain_wire::decode(&bytes).map_err(|_| RpcError::BadParams(shape))
+    rmpv::encode::write_value(&mut bytes, &raw).map_err(|_| bad_params(shape))?;
+    lain_wire::decode(&bytes).map_err(|_| bad_params(shape))
 }
 
 /// A wire message as the msgpack value a handler answers with.
 fn reply<T: Serialize>(message: &T) -> Result<Value, RpcError> {
-    const UNENCODABLE: RpcError = RpcError::BadParams("the relay could not encode its reply");
-    let bytes = lain_wire::encode(message).map_err(|_| UNENCODABLE)?;
-    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|_| UNENCODABLE)
+    let unencodable = || bad_params("the relay could not encode its reply");
+    let bytes = lain_wire::encode(message).map_err(|_| unencodable())?;
+    rmpv::decode::read_value(&mut bytes.as_slice()).map_err(|_| unencodable())
 }
 
 #[cfg(test)]
@@ -444,7 +498,8 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use futures_util::{SinkExt, StreamExt};
+    use lain_rpc::Wire;
+    use lain_rpc::support::TestClient;
     use lain_wire::{
         AgendaItem, AgendaPage, Answer, AnswersPage, Cursor, Delta, Hello, Verdict, WIRE_VERSION,
         Welcome,
@@ -452,14 +507,12 @@ mod tests {
     use rmpv::Value;
     use tokio::io::AsyncReadExt;
     use tokio::net::{TcpListener, TcpStream, UnixListener, UnixStream};
-    use tokio_util::codec::Framed;
 
     use super::agenda::{LONG_POLL, MAX_TAIL, REPLY_BUDGET};
     use super::devices::tests::{devices_file, line, rewrite};
     use super::devices::{DevicesFile, Watcher};
     use super::{Config, RELOAD_TICK, StartError};
-    use crate::rpc::Codec;
-    use crate::rpc::support::{request, response_parts};
+    use lain_rpc::support::{request, response_parts};
 
     const TOKEN: &str = "a-paired-phone-token";
     const PHONE: &str = "phone";
@@ -477,14 +530,14 @@ mod tests {
     const PROMPTLY: Duration = Duration::from_secs(1);
 
     struct Peer<C> {
-        framed: Framed<C, Codec>,
+        framed: TestClient<C>,
         next_msgid: u32,
     }
 
-    impl<C: crate::rpc::Wire> Peer<C> {
+    impl<C: Wire> Peer<C> {
         fn over(stream: C) -> Self {
             Self {
-                framed: Framed::new(stream, Codec::default()),
+                framed: TestClient::over(stream),
                 next_msgid: 1,
             }
         }
@@ -492,16 +545,15 @@ mod tests {
         async fn send(&mut self, method: &str, params: Vec<Value>) -> u32 {
             let msgid = self.next_msgid;
             self.next_msgid += 1;
-            self.framed
-                .send(request(msgid, method, params))
-                .await
-                .expect("send a request");
+            self.framed.send(request(msgid, method, params)).await;
             msgid
         }
 
         /// The next reply within `wait`, or None when nothing came.
         async fn reply_within(&mut self, wait: Duration) -> Option<(u32, Value, Value)> {
-            let frame = tokio::time::timeout(wait, self.framed.next()).await.ok()?;
+            let frame = tokio::time::timeout(wait, self.framed.next_frame())
+                .await
+                .ok()?;
             Some(response_parts(
                 frame
                     .expect("a reply, not a close")
@@ -1234,6 +1286,32 @@ mod tests {
         relay.hello_as("a-new-watch-token").await;
         let (error, _) = phone.peer.call("ping", vec![]).await;
         assert_eq!(Value::Nil, error, "a pair closed a device it did not name");
+    }
+
+    async fn ping_version<C: Wire>(peer: &mut Peer<C>) -> Option<Value> {
+        let (error, result) = peer.call("ping", vec![]).await;
+        assert_eq!(Value::Nil, error);
+        result
+            .as_map()?
+            .iter()
+            .find(|(key, _)| key.as_str() == Some("version"))
+            .map(|(_, version)| version.clone())
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn both_listeners_ping_with_this_binarys_version() {
+        let relay = Relay::start().await;
+        let ours = Some(Value::from(env!("CARGO_PKG_VERSION")));
+        assert_eq!(
+            ours,
+            ping_version(&mut relay.lain().await).await,
+            "lain side"
+        );
+        assert_eq!(
+            ours,
+            ping_version(&mut relay.phone().await.peer).await,
+            "phone side"
+        );
     }
 
     #[tokio::test(start_paused = true)]

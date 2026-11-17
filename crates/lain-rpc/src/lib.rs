@@ -22,6 +22,9 @@
 //! client we serve never sends one, and a silent no-reply path would be a
 //! second contract to maintain for nobody.
 
+#![forbid(unsafe_code)]
+#![deny(clippy::print_stdout, clippy::print_stderr, missing_docs)]
+
 use std::convert::Infallible;
 use std::future::Future;
 use std::io;
@@ -37,6 +40,9 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 use tokio::task::JoinSet;
 use tokio_util::codec::{Decoder, Encoder, Framed};
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod support;
 
 /// Incremental msgpack decode with a frame ceiling. msgpack is
 /// self-delimiting, so there is no framing to invent: a [`Scan`] walks the
@@ -270,7 +276,7 @@ const ACCEPT_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis
 /// bounds are otherwise repeated at every signature below; nothing about the
 /// protocol cares which address family delivered the bytes. `Send + 'static`
 /// is what lets one connection become an independent task.
-pub(crate) trait Wire: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
+pub trait Wire: AsyncRead + AsyncWrite + Send + Unpin + 'static {}
 
 impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Wire for T {}
 
@@ -296,10 +302,17 @@ impl<T: AsyncRead + AsyncWrite + Send + Unpin + 'static> Wire for T {}
 /// every listener here is `Sync`, but a listener with interior mutability is
 /// rejected at its impl with a `future cannot be sent between threads` error
 /// that names neither this bound nor the `&self` capture that needs it.
-pub(crate) trait Accept {
+pub trait Accept {
+    /// The byte stream one accepted connection speaks over.
     type Connection: Wire;
 
+    /// The next connection, waiting for one.
     fn accept(&self) -> impl Future<Output = io::Result<Self::Connection>> + Send;
+
+    /// Who is on the other end. Only a Unix socket can say; anything else is unknown.
+    fn peer(_connection: &Self::Connection) -> Peer {
+        Peer::default()
+    }
 }
 
 impl Accept for UnixListener {
@@ -312,27 +325,69 @@ impl Accept for UnixListener {
             .await
             .map(|(stream, _address)| stream)
     }
+
+    fn peer(connection: &UnixStream) -> Peer {
+        match connection.peer_cred() {
+            Ok(credentials) => Peer {
+                uid: Some(credentials.uid()),
+                pid: credentials.pid().and_then(|pid| u32::try_from(pid).ok()),
+            },
+            Err(error) => {
+                tracing::warn!(%error, "could not read a peer's credentials");
+                Peer::default()
+            }
+        }
+    }
 }
+
+/// Who connected: a Unix socket's credentials, or nothing for any other transport.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Peer {
+    /// The peer's user id.
+    pub uid: Option<u32>,
+    /// The peer's process id. A kernel that does not report one leaves it unknown.
+    pub pid: Option<u32>,
+}
+
+/// What a handler is told about the connection a session belongs to.
+#[derive(Clone, Debug)]
+pub struct Conn {
+    /// The process on the other end.
+    pub peer: Peer,
+    /// The way to send this connection frames the server chose to originate.
+    pub push: Push,
+}
+
+/// A connection's outbound channel for frames that answer no request. Its field is private so
+/// only the server can attach the connection's sender.
+#[derive(Clone, Debug)]
+pub struct Push(());
 
 /// What one connection carries from its start, or from its hello, to every
 /// call it makes: who the peer is, and when the server must close it.
-pub(crate) trait Session: Send + Sync + 'static {
+pub trait Session: Send + Sync + 'static {
+    /// The session of a connection that needs no hello, or of a default hello.
+    fn opened(conn: &Conn) -> Self;
+
     /// Resolves when the server should close the connection, dropping what is in flight.
     fn closed(&self) -> impl Future<Output = ()> + Send {
         std::future::pending()
     }
 }
 
-impl Session for () {}
+impl Session for () {
+    fn opened(_: &Conn) -> Self {}
+}
 
 /// What a server answers beyond `ping`, which the server answers itself so
-/// every handler reports lain-core's own version (the Ruby client pins it).
+/// every handler reports the version the binary gave `serve`, which the Ruby
+/// client pins.
 ///
 /// `-> impl Future + Send` for the reason [`Accept`] gives: each call runs in
 /// a spawned task.
-pub(crate) trait Handler: Send + Sync + 'static {
-    /// A connection that needs no hello starts with the default session.
-    type Session: Session + Default;
+pub trait Handler: Send + Sync + 'static {
+    /// What a connection keeps between its calls.
+    type Session: Session;
 
     /// When true, a connection's first request must be a `hello` this
     /// handler answers without an error, within the auth deadline.
@@ -341,35 +396,26 @@ pub(crate) trait Handler: Send + Sync + 'static {
     }
 
     /// The answer to an admitting hello and the session the connection keeps.
-    /// By default the default session, with `hello` answered by [`Handler::call`].
+    /// By default the opened session, with `hello` answered by [`Handler::call`].
     fn hello(
         &self,
+        conn: &Conn,
         params: Vec<Value>,
     ) -> impl Future<Output = Result<(Value, Self::Session), RpcError>> + Send {
         async move {
-            let session = Self::Session::default();
+            let session = Self::Session::opened(conn);
             let result = self.call(&session, "hello", params).await?;
             Ok((result, session))
         }
     }
 
+    /// One request on an admitted connection.
     fn call(
         &self,
         session: &Self::Session,
         method: &str,
         params: Vec<Value>,
     ) -> impl Future<Output = Result<Value, RpcError>> + Send;
-}
-
-/// The Ruby wire seed: `ping` and nothing else.
-pub(crate) struct Core;
-
-impl Handler for Core {
-    type Session = ();
-
-    async fn call(&self, _: &(), method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
-        Err(RpcError::UnknownMethod(method.to_string()))
-    }
 }
 
 /// The most connections served at once: Ruby holds 1, each paired phone 1.
@@ -384,13 +430,23 @@ const AUTH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 ///
 /// Generic, not `dyn`: one monomorphized loop per listener type, so the seam
 /// costs no allocation on the per-connection path.
-pub(crate) async fn serve(listener: impl Accept, handler: impl Handler) -> Infallible {
+pub async fn serve<A: Accept, H: Handler>(
+    listener: A,
+    handler: H,
+    version: &'static str,
+) -> Infallible {
     let handler = Arc::new(handler);
     let slots = Arc::new(Semaphore::new(MAX_CONNECTIONS));
     let lobby = Arc::new(Lobby::default());
     loop {
         match listener.accept().await {
-            Ok(stream) => admit(stream, &handler, &slots, &lobby),
+            Ok(stream) => {
+                let conn = Conn {
+                    peer: A::peer(&stream),
+                    push: Push(()),
+                };
+                admit(stream, conn, &handler, version, &slots, &lobby);
+            }
             Err(error) => {
                 tracing::warn!(%error, "accept failed; still listening");
                 tokio::time::sleep(ACCEPT_RETRY_DELAY).await;
@@ -405,7 +461,9 @@ pub(crate) async fn serve(listener: impl Accept, handler: impl Handler) -> Infal
 /// fill the cap ahead of a real one.
 fn admit<C: Wire, H: Handler>(
     stream: C,
+    conn: Conn,
     handler: &Arc<H>,
+    version: &'static str,
     slots: &Arc<Semaphore>,
     lobby: &Arc<Lobby>,
 ) {
@@ -413,7 +471,9 @@ fn admit<C: Wire, H: Handler>(
         let seat = lobby.seat();
         tokio::spawn(greet_then_serve(
             stream,
+            conn,
             Arc::clone(handler),
+            version,
             Arc::clone(slots),
             seat,
         ));
@@ -422,8 +482,14 @@ fn admit<C: Wire, H: Handler>(
     match Arc::clone(slots).try_acquire_owned() {
         Ok(slot) => {
             let framed = Framed::new(stream, Codec::default());
-            let session = H::Session::default();
-            tokio::spawn(serve_connection(framed, Arc::clone(handler), session, slot));
+            let session = H::Session::opened(&conn);
+            tokio::spawn(serve_connection(
+                framed,
+                Arc::clone(handler),
+                version,
+                session,
+                slot,
+            ));
         }
         Err(_full) => {
             tracing::warn!(MAX_CONNECTIONS, "at the connection cap; closing a new one");
@@ -494,14 +560,16 @@ impl Drop for Seat {
 /// until its hello is admitted, then a cap slot and the full ceiling.
 async fn greet_then_serve<C: Wire, H: Handler>(
     stream: C,
+    conn: Conn,
     handler: Arc<H>,
+    version: &'static str,
     slots: Arc<Semaphore>,
     mut seat: Seat,
 ) {
     let mut framed = Framed::new(stream, Codec::default());
     framed.codec_mut().ceiling = HELLO_FRAME;
     let admitted = tokio::select! {
-        greeted = tokio::time::timeout(AUTH_DEADLINE, greet(&mut framed, &*handler, &slots)) => {
+        greeted = tokio::time::timeout(AUTH_DEADLINE, greet(&mut framed, &conn, &*handler, &slots)) => {
             greeted.unwrap_or_else(|_elapsed| {
                 tracing::warn!("no hello answered before the auth deadline; closing connection");
                 None
@@ -517,7 +585,7 @@ async fn greet_then_serve<C: Wire, H: Handler>(
         return;
     };
     framed.codec_mut().ceiling = MAX_FRAME;
-    serve_connection(framed, handler, session, slot).await;
+    serve_connection(framed, handler, version, session, slot).await;
 }
 
 type Sink<C> = SplitSink<Framed<C, Codec>, Value>;
@@ -545,6 +613,7 @@ enum Ending {
 async fn serve_connection<C: Wire, H: Handler>(
     framed: Framed<C, Codec>,
     handler: Arc<H>,
+    version: &'static str,
     session: H::Session,
     _slot: OwnedSemaphorePermit,
 ) {
@@ -554,7 +623,7 @@ async fn serve_connection<C: Wire, H: Handler>(
     let writer = tokio::spawn(write_responses(sink, inbox));
     let mut requests = JoinSet::new();
     let ending = tokio::select! {
-        ending = read_requests(&mut inbound, &responses, &handler, &session, &mut requests) => ending,
+        ending = read_requests(&mut inbound, &responses, &handler, version, &session, &mut requests) => ending,
         () = session.closed() => Ending::Closed,
     };
     requests.shutdown().await;
@@ -573,6 +642,7 @@ async fn serve_connection<C: Wire, H: Handler>(
 /// the cap is refused before any of its side effects run.
 async fn greet<C: Wire, H: Handler>(
     framed: &mut Framed<C, Codec>,
+    conn: &Conn,
     handler: &H,
     slots: &Arc<Semaphore>,
 ) -> Option<(OwnedSemaphorePermit, H::Session)> {
@@ -583,7 +653,7 @@ async fn greet<C: Wire, H: Handler>(
         Ok(request) if request.method == "hello" => {
             let msgid = request.msgid;
             match Arc::clone(slots).try_acquire_owned() {
-                Ok(slot) => match handler.hello(request.params).await {
+                Ok(slot) => match handler.hello(conn, request.params).await {
                     Ok((result, session)) => (ok_response(msgid, result), Some((slot, session))),
                     Err(error) => (error_response(msgid, error), None),
                 },
@@ -613,6 +683,7 @@ async fn read_requests<C: Wire, H: Handler>(
     inbound: &mut Stream<C>,
     responses: &mpsc::Sender<Outgoing>,
     handler: &Arc<H>,
+    version: &'static str,
     session: &Arc<H::Session>,
     requests: &mut JoinSet<()>,
 ) -> Ending {
@@ -627,6 +698,7 @@ async fn read_requests<C: Wire, H: Handler>(
                 let task = respond_to(
                     frame,
                     Arc::clone(handler),
+                    version,
                     Arc::clone(session),
                     responses.clone(),
                     slot,
@@ -651,12 +723,13 @@ async fn write_responses<C: Wire>(mut sink: Sink<C>, mut inbox: mpsc::Receiver<O
 async fn respond_to<H: Handler>(
     frame: Value,
     handler: Arc<H>,
+    version: &'static str,
     session: Arc<H::Session>,
     responses: mpsc::Sender<Outgoing>,
     slot: OwnedSemaphorePermit,
 ) {
     let response = match Request::parse(frame) {
-        Ok(request) => request.dispatch(&*handler, &session).await,
+        Ok(request) => request.dispatch(&*handler, version, &session).await,
         Err((echo_id, error)) => error_reply(echo_id, &error),
     };
     let _ = responses.send((response, slot)).await;
@@ -703,9 +776,14 @@ impl Request {
         })
     }
 
-    async fn dispatch<H: Handler>(self, handler: &H, session: &H::Session) -> Value {
+    async fn dispatch<H: Handler>(
+        self,
+        handler: &H,
+        version: &'static str,
+        session: &H::Session,
+    ) -> Value {
         if self.method == "ping" {
-            return ok_response(self.msgid, ping_result());
+            return ok_response(self.msgid, ping_result(version));
         }
         match handler.call(session, &self.method, self.params).await {
             Ok(result) => ok_response(self.msgid, result),
@@ -773,289 +851,53 @@ fn error_reply(id: Value, message: impl std::fmt::Display) -> Value {
     ])
 }
 
-fn ping_result() -> Value {
+fn ping_result(version: &str) -> Value {
     Value::Map(vec![
-        (
-            Value::from("version"),
-            Value::from(env!("CARGO_PKG_VERSION")),
-        ),
+        (Value::from("version"), Value::from(version)),
         (Value::from("pid"), Value::from(std::process::id())),
     ])
 }
 
+/// What a handler or the framing answers a request with instead of a result;
+/// its text is the error slot a client reads.
 #[derive(Debug, Error)]
-pub(crate) enum RpcError {
+pub enum RpcError {
+    /// The frame was not an array.
     #[error("request is not an array")]
     NotArray,
+    /// The frame had the wrong number of elements.
     #[error("request has {0} elements, expected 4")]
     Arity(usize),
+    /// The frame's type slot was not 0.
     #[error("request type must be 0, got {}", clip(.0))]
     Kind(Value),
+    /// The msgid was not a 32-bit unsigned integer.
     #[error("request msgid must be a 32-bit unsigned integer, got {}", clip(.0))]
     Msgid(Value),
+    /// The method slot was not a string.
     #[error("request method must be a string")]
     MethodNotString,
+    /// The params slot was not an array.
     #[error("request params must be an array")]
     ParamsNotArray,
+    /// No such method.
     #[error("unknown method {:?}", clip(.0))]
     UnknownMethod(String),
+    /// A call came before the connection's hello.
     #[error("the first request must be hello")]
     HelloRequired,
+    /// The server had no room for another connection.
     #[error("the server is at its connection cap")]
     AtCapacity,
-    #[error("the hello was refused")]
-    BadToken,
-    #[error("wire version {peer} is not served; this relay speaks {ours}")]
-    WireVersion { peer: u32, ours: u32 },
-    #[error("agenda item {:?} is already settled", clip(.0))]
-    AlreadySettled(String),
-    #[error("agenda item {:?} is not open", clip(.0))]
-    NotOpen(String),
-    #[error("{what} {bytes} bytes, over the relay's reply budget of {budget}")]
-    TooLarge {
-        what: &'static str,
-        bytes: usize,
-        budget: usize,
+    /// A handler's own refusal. The code names the reason for the handler's logs and tests;
+    /// the client reads only the message.
+    #[error("{message}")]
+    Refused {
+        /// A stable name for the reason.
+        code: &'static str,
+        /// The text the client sees.
+        message: String,
     },
-    #[error("{0}")]
-    BadParams(&'static str),
-}
-
-#[cfg(test)]
-pub(crate) mod support {
-    use std::io;
-    use std::net::SocketAddr;
-    use std::path::{Path, PathBuf};
-    use std::sync::Arc;
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::time::Duration;
-
-    use futures_util::{SinkExt, StreamExt};
-    use rmpv::Value;
-    use tokio::net::{TcpListener, TcpStream, UnixStream};
-    use tokio_util::codec::Framed;
-
-    use super::{Accept, Codec, Core, Handler, RpcError, Wire};
-
-    /// Long enough for a loaded CI box; a red-phase server that never answers
-    /// fails here rather than hanging the suite.
-    pub(crate) const RESPONSE_WAIT: Duration = Duration::from_secs(5);
-
-    /// The shipped [`Core`] plus a slow method that does nothing else, so the
-    /// out-of-order completion contract stays provable with only `ping` in
-    /// production. Malformed params sleep for zero: the tests never need that error.
-    struct SlowCore;
-
-    impl Handler for SlowCore {
-        type Session = ();
-
-        async fn call(&self, _: &(), method: &str, params: Vec<Value>) -> Result<Value, RpcError> {
-            if method == "sleep" {
-                let millis = params.first().and_then(Value::as_u64).unwrap_or(0);
-                tokio::time::sleep(Duration::from_millis(millis)).await;
-                Ok(Value::Nil)
-            } else {
-                Core.call(&(), method, params).await
-            }
-        }
-    }
-
-    /// Every starter below hands its listener to the SAME `serve`; that is the
-    /// claim the seam makes, so the harness must not fork per transport.
-    fn spawn_server<L: Accept + Send + 'static>(listener: L) {
-        tokio::spawn(async move { match super::serve(listener, SlowCore).await {} });
-    }
-
-    fn bind_in_tempdir() -> (tempfile::TempDir, PathBuf, tokio::net::UnixListener) {
-        let dir = tempfile::tempdir().expect("tempdir for the test socket");
-        let path = dir.path().join("core.sock");
-        let listener = tokio::net::UnixListener::bind(&path).expect("bind the test socket");
-        (dir, path, listener)
-    }
-
-    /// A server on a tempdir socket. The `TempDir` guard must outlive the
-    /// test, or the socket path vanishes underneath the server.
-    pub(crate) async fn start_server() -> (tempfile::TempDir, PathBuf) {
-        let (dir, path, listener) = bind_in_tempdir();
-        spawn_server(listener);
-        (dir, path)
-    }
-
-    pub(crate) async fn start_server_with(handler: impl Handler) -> (tempfile::TempDir, PathBuf) {
-        let (dir, path, listener) = bind_in_tempdir();
-        tokio::spawn(async move { match super::serve(listener, handler).await {} });
-        (dir, path)
-    }
-
-    /// A listener of an unrelated concrete type, wired into the same serve
-    /// loop: the compile-level proof that [`Accept`] is a seam and not a
-    /// rename. TCP is the cheapest witness available -- tokio's `net` feature
-    /// is already on, so it costs no dependency.
-    pub(crate) async fn start_tcp_server() -> SocketAddr {
-        let listener = TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .expect("bind the test tcp listener");
-        let address = listener.local_addr().expect("the bound address");
-        spawn_server(listener);
-        address
-    }
-
-    impl Accept for TcpListener {
-        type Connection = TcpStream;
-
-        async fn accept(&self) -> io::Result<TcpStream> {
-            TcpListener::accept(self)
-                .await
-                .map(|(stream, _address)| stream)
-        }
-    }
-
-    /// Fails its first accept, then delegates. The accept-error arm is a
-    /// behavioural invariant (log, pause, never crash) with no natural trigger
-    /// -- EMFILE cannot be arranged in-process -- so the seam supplies one.
-    struct FlakyOnce<L> {
-        inner: L,
-        errored: Arc<AtomicBool>,
-    }
-
-    impl<L: Accept + Sync> Accept for FlakyOnce<L> {
-        type Connection = L::Connection;
-
-        async fn accept(&self) -> io::Result<Self::Connection> {
-            // The swap flips the flag on the error branch and nowhere else, so
-            // a test reading it knows the error arm ran -- not merely that
-            // `accept` was called.
-            if self.errored.swap(true, Ordering::SeqCst) {
-                self.inner.accept().await
-            } else {
-                Err(io::Error::other("synthetic accept failure"))
-            }
-        }
-    }
-
-    /// The flag reads true once the synthetic failure has fired.
-    pub(crate) async fn start_flaky_server() -> (tempfile::TempDir, PathBuf, Arc<AtomicBool>) {
-        let dir = tempfile::tempdir().expect("tempdir for the test socket");
-        let path = dir.path().join("core.sock");
-        let inner = tokio::net::UnixListener::bind(&path).expect("bind the test socket");
-        let errored = Arc::new(AtomicBool::new(false));
-        spawn_server(FlakyOnce {
-            inner,
-            errored: Arc::clone(&errored),
-        });
-        (dir, path, errored)
-    }
-
-    pub(crate) struct TestClient<C> {
-        framed: Framed<C, Codec>,
-    }
-
-    impl TestClient<UnixStream> {
-        pub(crate) async fn connect(path: &Path) -> Self {
-            let stream = UnixStream::connect(path)
-                .await
-                .expect("connect to the server");
-            Self {
-                framed: Framed::new(stream, Codec::default()),
-            }
-        }
-    }
-
-    impl TestClient<TcpStream> {
-        pub(crate) async fn connect_tcp(address: SocketAddr) -> Self {
-            let stream = TcpStream::connect(address)
-                .await
-                .expect("connect to the tcp server");
-            Self {
-                framed: Framed::new(stream, Codec::default()),
-            }
-        }
-    }
-
-    impl<C: Wire> TestClient<C> {
-        pub(crate) async fn send(&mut self, frame: Value) {
-            self.framed.send(frame).await.expect("send a frame");
-        }
-
-        /// Bytes the codec would refuse to build: wire-level probes.
-        pub(crate) async fn send_raw(&mut self, bytes: &[u8]) {
-            use tokio::io::AsyncWriteExt;
-            self.framed
-                .get_mut()
-                .write_all(bytes)
-                .await
-                .expect("send raw bytes");
-        }
-
-        pub(crate) fn into_inner(self) -> C {
-            self.framed.into_inner()
-        }
-
-        pub(crate) async fn recv(&mut self) -> Value {
-            tokio::time::timeout(RESPONSE_WAIT, self.framed.next())
-                .await
-                .expect("timed out waiting for a response")
-                .expect("connection closed without a response")
-                .expect("decode a response frame")
-        }
-
-        /// Lockstep request/response for tests that need determinism; the
-        /// out-of-order test drives `send`/`recv` by hand instead.
-        pub(crate) async fn call(
-            &mut self,
-            msgid: u32,
-            method: &str,
-            params: Vec<Value>,
-        ) -> (u32, Value, Value) {
-            self.send(request(msgid, method, params)).await;
-            response_parts(self.recv().await)
-        }
-    }
-
-    pub(crate) fn request(msgid: u32, method: &str, params: Vec<Value>) -> Value {
-        Value::Array(vec![
-            Value::from(0),
-            Value::from(msgid),
-            Value::from(method),
-            Value::Array(params),
-        ])
-    }
-
-    /// `[1, id, error, result]` -> `(id, error, result)` with the id slot
-    /// untouched -- error replies to junk-msgid frames echo the junk verbatim.
-    pub(crate) fn raw_response_parts(response: Value) -> (Value, Value, Value) {
-        let Value::Array(mut parts) = response else {
-            panic!("response is not an array: {response:?}")
-        };
-        assert_eq!(4, parts.len(), "response arity");
-        assert_eq!(Value::from(1), parts[0], "response type");
-        let result = parts.pop().expect("result element");
-        let error = parts.pop().expect("error element");
-        let id = parts.pop().expect("id element");
-        (id, error, result)
-    }
-
-    /// `[1, msgid, error, result]` -> `(msgid, error, result)`, asserting the
-    /// envelope shape and a u32 msgid.
-    pub(crate) fn response_parts(response: Value) -> (u32, Value, Value) {
-        let (id, error, result) = raw_response_parts(response);
-        let msgid = id
-            .as_u64()
-            .and_then(|id| u32::try_from(id).ok())
-            .expect("msgid");
-        (msgid, error, result)
-    }
-
-    pub(crate) fn field(result: &Value, name: &str) -> Value {
-        result
-            .as_map()
-            .expect("result is a map")
-            .iter()
-            .find(|(key, _)| key.as_str() == Some(name))
-            .unwrap_or_else(|| panic!("missing field {name} in {result:?}"))
-            .1
-            .clone()
-    }
 }
 
 #[cfg(test)]
@@ -1071,12 +913,12 @@ mod tests {
     use tokio_util::codec::Decoder;
 
     use super::support::{
-        RESPONSE_WAIT, TestClient, field, raw_response_parts, request, response_parts,
+        RESPONSE_WAIT, TestClient, VERSION, field, raw_response_parts, request, response_parts,
         start_flaky_server, start_server, start_server_with, start_tcp_server,
     };
     use super::{
-        ACCEPT_RETRY_DELAY, Codec, Handler, MAX_CONNECTIONS, RESPONSE_BUFFER, RpcError, Session,
-        Wire,
+        ACCEPT_RETRY_DELAY, Codec, Conn, Handler, MAX_CONNECTIONS, Peer, RESPONSE_BUFFER, RpcError,
+        Session, Wire,
     };
 
     /// The whole protocol surface a transport has to carry, as one value: a
@@ -1228,10 +1070,7 @@ mod tests {
 
         let (_, error, result) = client.call(1, "ping", vec![]).await;
         assert!(error.is_nil(), "unexpected ping error: {error:?}");
-        assert_eq!(
-            Value::from(env!("CARGO_PKG_VERSION")),
-            field(&result, "version")
-        );
+        assert_eq!(Value::from(VERSION), field(&result, "version"));
 
         let params = vec![Value::from(7), Value::from("seven")];
         let (msgid, error, result) = client.call(2, "echo", params.clone()).await;
@@ -1280,6 +1119,10 @@ mod tests {
     }
 
     impl Session for Option<Badge> {
+        fn opened(_: &Conn) -> Self {
+            None
+        }
+
         async fn closed(&self) {
             match self {
                 Some(badge) => {
@@ -1298,11 +1141,18 @@ mod tests {
             true
         }
 
-        async fn hello(&self, params: Vec<Value>) -> Result<(Value, Self::Session), RpcError> {
+        async fn hello(
+            &self,
+            _: &Conn,
+            params: Vec<Value>,
+        ) -> Result<(Value, Self::Session), RpcError> {
             let name = params
                 .first()
                 .and_then(Value::as_str)
-                .ok_or(RpcError::BadToken)?
+                .ok_or(RpcError::Refused {
+                    code: "bad_token",
+                    message: "the hello was refused".to_string(),
+                })?
                 .to_string();
             let mut live = self.0.lock().expect("the live map");
             let sender = live
@@ -1697,10 +1547,7 @@ mod tests {
         let (_dir, path) = start_server().await;
         let mut client = TestClient::connect(&path).await;
         assert_eq!(
-            (
-                Value::from(env!("CARGO_PKG_VERSION")),
-                Value::from("unknown method \"exec\"")
-            ),
+            (Value::from(VERSION), Value::from("unknown method \"exec\"")),
             ping_and_refusal(&mut client).await
         );
     }
@@ -1776,10 +1623,7 @@ mod tests {
         let (msgid, error, result) = client.call(1, "ping", vec![]).await;
         assert_eq!(1, msgid);
         assert!(error.is_nil(), "unexpected error: {error:?}");
-        assert_eq!(
-            Value::from(env!("CARGO_PKG_VERSION")),
-            field(&result, "version")
-        );
+        assert_eq!(Value::from(VERSION), field(&result, "version"));
         // The server runs in-process for tests, so its pid is ours.
         assert_eq!(Value::from(std::process::id()), field(&result, "pid"));
     }
@@ -1796,10 +1640,7 @@ mod tests {
         assert!(first_error.is_nil(), "unexpected error: {first_error:?}");
         assert!(second_error.is_nil(), "unexpected error: {second_error:?}");
         assert_eq!(2, first_msgid, "the ping answers first");
-        assert_eq!(
-            Value::from(env!("CARGO_PKG_VERSION")),
-            field(&first_result, "version")
-        );
+        assert_eq!(Value::from(VERSION), field(&first_result, "version"));
         assert_eq!(1, second_msgid, "the sleep answers second, msgid intact");
         assert!(second_result.is_nil());
         // Without this a sleep that ignored its duration could still lose the race to ping.
@@ -1962,5 +1803,135 @@ mod tests {
         let (msgid, error, _) = third.call(1, "ping", vec![]).await;
         assert_eq!(1, msgid);
         assert!(error.is_nil());
+    }
+
+    /// Answers each call with the peer its session saw open, as `[uid, pid]`
+    /// (nil for an unknown half), and its hello with the peer the hello saw.
+    struct Introspect {
+        hello: bool,
+    }
+
+    impl Session for Peer {
+        fn opened(conn: &Conn) -> Self {
+            conn.peer
+        }
+    }
+
+    fn peer_value(peer: Peer) -> Value {
+        Value::Array(vec![
+            peer.uid.map_or(Value::Nil, Value::from),
+            peer.pid.map_or(Value::Nil, Value::from),
+        ])
+    }
+
+    impl Handler for Introspect {
+        type Session = Peer;
+
+        fn requires_hello(&self) -> bool {
+            self.hello
+        }
+
+        async fn hello(
+            &self,
+            conn: &Conn,
+            _params: Vec<Value>,
+        ) -> Result<(Value, Self::Session), RpcError> {
+            Ok((peer_value(conn.peer), Peer::opened(conn)))
+        }
+
+        async fn call(
+            &self,
+            session: &Self::Session,
+            _method: &str,
+            _params: Vec<Value>,
+        ) -> Result<Value, RpcError> {
+            Ok(peer_value(*session))
+        }
+    }
+
+    fn socket_owner(path: &std::path::Path) -> u32 {
+        std::os::unix::fs::MetadataExt::uid(
+            &std::fs::metadata(path).expect("the socket's metadata"),
+        )
+    }
+
+    #[tokio::test]
+    async fn a_session_sees_the_uid_and_pid_of_its_unix_peer() {
+        let (_dir, path) = start_server_with(Introspect { hello: false }).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, result) = client.call(1, "who", vec![]).await;
+        assert_eq!(Value::Nil, error);
+        // The server runs in-process, so the peer connecting to it is this process.
+        let expected = peer_value(Peer {
+            uid: Some(socket_owner(&path)),
+            pid: Some(std::process::id()),
+        });
+        assert_eq!(expected, result);
+    }
+
+    #[tokio::test]
+    async fn a_hello_sees_the_peer_that_sent_it() {
+        let (_dir, path) = start_server_with(Introspect { hello: true }).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, welcome) = client.call(1, "hello", vec![]).await;
+        assert_eq!(Value::Nil, error);
+        let expected = peer_value(Peer {
+            uid: Some(socket_owner(&path)),
+            pid: Some(std::process::id()),
+        });
+        assert_eq!(expected, welcome);
+    }
+
+    #[tokio::test]
+    async fn a_tcp_peer_has_no_uid_or_pid() {
+        let address = crate::support::start_tcp_server_with(Introspect { hello: false }).await;
+        let mut client = TestClient::connect_tcp(address).await;
+        let (_, error, result) = client.call(1, "who", vec![]).await;
+        assert_eq!(Value::Nil, error);
+        assert_eq!(peer_value(Peer::default()), result);
+    }
+
+    #[tokio::test]
+    async fn a_wrapped_listener_still_reports_its_peer() {
+        let (_dir, path, _errored) =
+            crate::support::start_flaky_server_with(Introspect { hello: false }).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, result) = client.call(1, "who", vec![]).await;
+        assert_eq!(Value::Nil, error);
+        let expected = peer_value(Peer {
+            uid: Some(socket_owner(&path)),
+            pid: Some(std::process::id()),
+        });
+        assert_eq!(expected, result);
+    }
+
+    /// Refuses every method with its own code and text.
+    struct Refuser;
+
+    impl Handler for Refuser {
+        type Session = ();
+
+        async fn call(
+            &self,
+            _: &(),
+            _method: &str,
+            _params: Vec<Value>,
+        ) -> Result<Value, RpcError> {
+            Err(RpcError::Refused {
+                code: "nope",
+                message: "this handler refuses".to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn a_refusal_reaches_the_client_as_its_message() {
+        let (_dir, path) = start_server_with(Refuser).await;
+        let mut client = TestClient::connect(&path).await;
+        let (_, error, result) = client.call(1, "anything", vec![]).await;
+        assert_eq!(
+            (Value::from("this handler refuses"), Value::Nil),
+            (error, result)
+        );
     }
 }

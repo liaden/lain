@@ -15,9 +15,11 @@
 #![deny(clippy::print_stdout, clippy::print_stderr)]
 
 mod relay;
-mod rpc;
 
 use std::process::ExitCode;
+
+use lain_rpc::{Handler, RpcError};
+use rmpv::Value;
 
 /// Bad invocation or an unopenable tracing path. There is no usage text on
 /// purpose: this binary may never touch stdout/stderr, so a bad invocation is
@@ -43,6 +45,17 @@ fn main() -> ExitCode {
     serve_unix(&socket_path)
 }
 
+/// The Ruby wire seed: `ping` and nothing else.
+struct Core;
+
+impl Handler for Core {
+    type Session = ();
+
+    async fn call(&self, _: &(), method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
+        Err(RpcError::UnknownMethod(method.to_string()))
+    }
+}
+
 fn init_tracing(path: &str) -> std::io::Result<()> {
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -61,7 +74,7 @@ async fn serve_unix(socket_path: &str) -> ExitCode {
         Ok(listener) => {
             tracing::info!(socket_path, pid = std::process::id(), "lain-core listening");
             tokio::select! {
-                never = rpc::serve(listener, rpc::Core) => match never {},
+                never = lain_rpc::serve(listener, Core, env!("CARGO_PKG_VERSION")) => match never {},
                 code = shutdown_signal() => code,
             }
         }

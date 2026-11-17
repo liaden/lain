@@ -1,0 +1,30 @@
+[package]
+name = "lain-rpc"
+version = "0.1.0"
+edition = "2024"
+authors = ["Joel Johnson <johnson.joel.b@gmail.com>"]
+license = "MIT"
+publish = false
+
+[features]
+# The in-process server and client the tests of this crate and of its users drive; never a production dependency.
+test-support = ["dep:tempfile", "tokio/io-util"]
+
+[dependencies]
+# Out-of-process by the placement rule: an async runtime never runs inside a magnus FFI call (ext/lain/CLAUDE.md).
+tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync"] }
+# `codec::{Decoder, Encoder}` + `Framed`: msgpack is self-delimiting, so the Decoder walks each
+# value's headers until the buffer holds a whole frame, then decodes it once.
+tokio-util = { version = "0.7", features = ["codec"] }
+# `Framed::split`, so one task reads frames while another writes responses.
+futures-util = { version = "0.3", default-features = false, features = ["std", "sink"] }
+rmpv = "1.3"
+bytes = "1.12"
+# Diagnostics go to the subscriber the binary installs; this crate never prints.
+tracing = "0.1"
+thiserror = "2"
+tempfile = { version = "3", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
+tokio = { version = "1.53", features = ["io-util", "test-util"] }
