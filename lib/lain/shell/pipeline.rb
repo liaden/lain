@@ -571,12 +571,20 @@ module Lain
           false
         end
 
+        # The group does not exist until `setsid` has run, so a stage stopped
+        # before that is signalled by pid; a TERM sent then stays pending and
+        # takes effect on exec.
         def signal(threads, name)
-          threads.each do |thread|
-            Process.kill(name, -thread.pid)
-          rescue Errno::ESRCH, Errno::EPERM
-            nil # already empty, or no longer ours to signal
-          end
+          threads.each { |thread| kill(name, -thread.pid) || kill(name, thread.pid) }
+        end
+
+        def kill(name, target)
+          Process.kill(name, target)
+          true
+        rescue Errno::EPERM
+          true # no longer ours to signal
+        rescue Errno::ESRCH
+          false
         end
 
         # The LAST stage's status, because `pipefail` is off in an unadorned

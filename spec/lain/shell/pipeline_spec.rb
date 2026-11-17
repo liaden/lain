@@ -814,6 +814,50 @@ RSpec.describe Lain::Shell::Pipeline do
       expect(group_gone?(groups.first)).to be(true)
     end
 
+    def wait_until_gone(pid, within: 5)
+      deadline = monotonic + within
+      sleep 0.05 while monotonic < deadline && alive?(pid)
+    end
+
+    def alive?(pid)
+      Process.kill(0, pid)
+      true
+    rescue Errno::ESRCH
+      false
+    end
+
+    # The group does not exist until /usr/bin/setsid has run, so a signal to the
+    # group alone misses a stage stopped before that.
+    it "stops a stage that has not yet made its session" do
+      Dir.mktmpdir do |dir|
+        slow = File.join(dir, "slow-setsid")
+        File.write(slow, "#!/bin/sh\nsleep 0.4\nexec /usr/bin/setsid \"$@\"\n")
+        File.chmod(0o755, slow)
+
+        marker = File.join(dir, "z.txt")
+        runner = described_class.new(grace: 0.1, setsid: slow)
+
+        stages = groups_of_stopped([["sh", "-c", "sleep 0.5 && touch #{marker}"]], runner:, after: 0.15)
+        wait_until_gone(stages.first)
+
+        expect(File).not_to exist(marker)
+      end
+    end
+
+    it "delivers a stop's TERM once to a stage already in its own group" do
+      Dir.mktmpdir do |dir|
+        log = File.join(dir, "terms")
+        script = File.join(dir, "counting")
+        File.write(script, "#!/bin/sh\ntrap 'echo t >> #{log}' TERM\nwhile :; do sleep 0.05; done\n")
+        File.chmod(0o755, script)
+
+        stages = groups_of_stopped([[script]], runner: described_class.new(grace: 0.3), after: 0.5)
+        wait_until_gone(stages.first)
+
+        expect(File.readlines(log).size).to eq(1)
+      end
+    end
+
     it "still kills the group when a second stop lands during the grace wait" do
       Dir.mktmpdir do |dir|
         script = stubborn(dir, "stubborn", "exec sleep 8")
