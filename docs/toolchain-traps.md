@@ -1030,6 +1030,13 @@ Unproven; counting only the example's own thread would settle it.
   Ruby frees the render state when the fiber is dropped inside Canonical.adopt` (leaked 1001401
   bytes against its 1000000 limit, seed 30242).
 
+  Added 2026-11-17, from the lain-daemon run's landing hooks, at load1 23.5 and 33.7 on 16 cores.
+  `lain-rpc tests::an_overflow_warns_once_for_its_connection` (left 1, right 0) was red once, green
+  alone and 3 of 3 on the base commit. `Lain::ProjectDir one locator for every governed path is the
+  only place lib/ composes a governed path` hit the 30 s spec watchdog twice (12.5 s and 11.3 s of
+  CPU): it parses every `lib/` file in 1 example, green alone and 3 of 3 on base. It repeated, so it
+  is a fix card in that run, not a flake to budget a retry for.
+
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
   by adding 88 lines above it.
