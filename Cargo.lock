@@ -563,6 +563,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lain-daemon"
+version = "0.1.0"
+dependencies = [
+ "lain-rpc",
+ "rmpv",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lain-fence"
 version = "0.1.0"
 dependencies = [

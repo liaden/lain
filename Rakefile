@@ -94,6 +94,16 @@ namespace :core do
   end
 end
 
+# The lain-daemon release binary `Lain::Daemon::Launch` runs. The git sha is stamped in here
+# because the binary reports it as its build id and has no .git to ask at run time.
+namespace :daemon do
+  desc "Compile the lain-daemon release binary"
+  task :build do
+    sha = `git rev-parse --short=12 HEAD 2>/dev/null`.strip
+    sh(sha.empty? ? {} : { "LAIN_GIT_SHA" => sha }, "cargo build -p lain-daemon --release")
+  end
+end
+
 # Re-derives the canonical vectors in ext/lain/corpus from Canonical, on the manifest's seed unless CORPUS_SEED
 # names another; the other 4 files are frozen and carried through. CORPUS_SHA is required, because a default would
 # rewrite the manifest's sha, the stated provenance of the 4 carried files.

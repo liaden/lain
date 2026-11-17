@@ -76,4 +76,30 @@ RSpec.describe "Rakefile", :seam do
       expect([commands, said]).to match([[], /lain-fence is Linux-only.*degraded/])
     end
   end
+
+  describe "the daemon:build task" do
+    def build_with_git(sha)
+      built = nil
+      allow(RbSys::ExtensionTask).to receive(:new)
+      allow(TOPLEVEL_BINDING.receiver).to receive(:`).with(/git rev-parse/).and_return(sha)
+      allow(TOPLEVEL_BINDING.receiver).to receive(:sh) { |*args| built = args }
+      Rake.with_application(Rake::Application.new) do
+        load File.join(root, "Rakefile")
+        Rake::Task["daemon:build"].invoke
+      end
+      built
+    end
+
+    it "builds the release lain-daemon, stamping the git sha it reports as its build id" do
+      env, command = build_with_git("0123456789ab\n")
+
+      expect([command, env]).to eq(["cargo build -p lain-daemon --release", { "LAIN_GIT_SHA" => "0123456789ab" }])
+    end
+
+    it "stamps nothing outside a git checkout, so the binary reports unknown" do
+      env, command = build_with_git("")
+
+      expect([command, env]).to eq(["cargo build -p lain-daemon --release", {}])
+    end
+  end
 end
