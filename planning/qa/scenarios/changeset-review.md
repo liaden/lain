@@ -5,7 +5,7 @@
 **What it exercises:** `qa-lain review <branch>`, `Review::Source::LocalBranch`, `Review::Changeset`,
 `Delta`/`Hunk`, all three `Review::Partition` strategies, `Review::Bounds`' three ceilings,
 `Review::Verdict::Policy` (strict vs `--permissive`), the `/review` command at `you>`, and
-`/review-submit`'s refusal when there is nowhere to post.
+`/review-submit`'s refusal when there is nowhere to post, and `/review --since` and `--critique` (§10).
 
 **The question it answers:** does a review of an actual diff tell the truth? `cockpit-surfaces.md`
 §4 and §4b drive the review *rails* — the sidebar, the marks, the note anchors, the verdict — but
@@ -302,7 +302,7 @@ of a flag it reads (F121). *Driven 2026-09-14* (a headless chat parses the line 
 an editor), for both `/review feature --base --permissive` and a bare trailing `/review feature
 --base`:
 
-    error: --base takes a ref -- /review <pull-request|branch> [--base <ref>] [--scope cumulative|commits|by_directory] [--permissive] -- open a changeset review in the attached editor
+    error: --base takes a ref -- /review <pull-request|branch> [--base <ref>] [--since <sha>] [--scope cumulative|commits|by_directory] [--permissive] [--critique[=FOCUS]] -- open a changeset review in the attached editor; /review close lets the open round go without a verdict (a branch named close is refs/heads/close); --critique runs /critique over the opened round, and takes the rest of the line as its options and focus
 
 ## 6 — `/critique` over the held review
 
@@ -454,3 +454,60 @@ on 3 rows, `:LainNote note ok` on one, `:LainNoteDone`, and `:LainReviewVerdict 
 must refuse, naming the unreviewed remainder (§5), and `/review feature --base main --permissive` must accept. The open itself, from `/review` to the sidebar drawn,
 should read as instant; record its wall beside the headless one. A 30-file open that takes several seconds in the
 cockpit while the headless one took 2 is the finding.
+
+## 10: `/review --since` and `--critique`
+
+Both are flags of `/review` (`Command::Review`), so both need the cockpit for the open itself; their refusals before the open
+do not. Use §0's subject. Written from the code at `f6504763`; nothing here has been driven.
+
+**`--since` is for pull requests.** On a branch it is refused before any ref is resolved:
+
+```
+you> /review feature --since 0123abc
+```
+
+Expect `--since is for pull requests, and "feature" is a branch: name the commit to review from with --base <ref> instead.` and no
+round. `/review feature --since` (nothing after it) refuses `--since takes a commit -- <usage>`. `/review close --since 0123abc`
+refuses `/review close takes nothing after it`. A value that is not 4 to 40 hex characters
+(`--since zzzz`) is refused `--since "zzzz" is not a commit sha` once the target is known to be a pull request.
+
+**The pull request half is live only** (it calls the forge; use a throwaway pull request in a personal repository, never a
+work one). With a pull request that has 3 commits `c1 c2 c3`:
+
+- `/review <url> --since <c1>`: the sidebar holds only the files `c2` and `c3` changed, and the headline's range starts at `c1`.
+- `--since` as an abbreviation that a branch name also matches is refused `since commit <x> is unknown or ambiguous in this
+  repository: name a commit sha that no branch or other commit shares a prefix with`.
+- Force-push the branch so `c1` is gone from its history, then repeat: the whole pull request is shown and the banner says
+  `since commit <12 hex> is not an ancestor of the pull request head <12 hex> (force-pushed?), so the whole pull request is shown`.
+- Post the round with `/review-submit`: comments are placed against the whole pull request, so a comment on a line the whole
+  pull request does not change goes into the review's body, not inline.
+
+**`--critique` is written bare or as `--critique=FOCUS`, and takes the end of the line.**
+
+```
+you> /review feature --base <the $BASE branch> --critique=critics=1 check the totals for off-by-one
+```
+
+Expect the headline (`reviewing branch feature at cumulative scope: ...`) and, under it, the findings of `/critique` over the
+round just opened: `critique of <base>..<head> in <n> chunk(s), each read by the diff_critic role`. This spends local model calls.
+The round stays open and holds no critique notes: `:LainNoteDone` has nothing to hand back that the critique wrote, and a
+`/review-submit` posts no model text. (The plan ruled that critique stays a report and never becomes a note.)
+
+Then the refusals, each with its own ordering:
+
+| line | expect |
+|---|---|
+| `/review feature --critique focus` | `--critique is not a flag /review can read -- <usage>`: the space form is refused, no round |
+| `/review feature --base $BASE --critique=critics=1 critics=2` | `/critique refused before spawning anything: critics= was given twice`, **before the round opens**: no `changeset_opened`, the editor bound to nothing |
+| `/review feature --base $BASE --critique=critics=0` | the headline, then `the critique did not run: /critique refused before spawning anything: critics must be a whole number from 1 to 5, got 0`; **the review stays open** |
+| `/review feature --base $BASE --critique=model=nonesuch` | the headline, then `the critique did not run: <the unserved-model refusal>`; the review stays open |
+| `/review close --critique` | `/review close takes nothing after it` |
+| `/review feature --critique` in a headless chat | the no-editor refusal, nothing spent |
+
+The ordering is the property: a refusal that can be known up front leaves **no** round behind; one only the run can find leaves
+the round open with the reason under the headline. A critique that ran **before** the review opened, or an open review lost to a
+refusal that came late, is the finding. Also check what a focus does to the line: the focus runs to the end, so
+`--critique=critics=1 --base main` takes `--base main` as focus text, not as a flag.
+
+**From the queue.** An offer built by `lain queue open ... --critique FOCUS` shows the line `/review <url> --critique=FOCUS`
+and runs this same path on Enter (`review-queue.md` §4 and §11).

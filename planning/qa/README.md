@@ -194,6 +194,14 @@ code at HEAD and none has been driven yet, so the first round that runs one corr
 | [`herdr.md`](scenarios/herdr.md) | Inside herdr, does lain report its state and resume command only to a pane it can prove is its own, leave Claude Code's panes untouched, set `lain_parked` on `/park`, open `/fork` and `--windows` as herdr tabs once `lain herdr link` is done, and report each watched child from its tab? | a stub herdr, then an isolated real herdr session; the user's own herdr only by read-only `agent get` |
 | [`remote-phone.md`](scenarios/remote-phone.md) | Can a human answer a parked call, a question or a deferred gate from a paired phone with the desk's authority, masked as the desk masks, while a revoked device, a dead relay, a bad socket directory and a slow ntfy topic cost nothing but the phone? Config refusals, `lain remote pair` and `revoke`, the `relay` window of `lain up`, ntfy's one notice per item and its reminder after a restart. The `apps/lain-remote` desktop app reaching the relay over the tailnet address only, and an emulated Android device as a second tailnet node. | cheap; 3 short local asks; a built `lain-core`, a stand-in ntfy topic; `tailscaled` up for §6, `dx`, the Android SDK and Waydroid or KVM for §7 |
 
+**Added 2026-11-16**: the review queue, the offer, the HUD count and the configured GitHub account. Written from the code at HEAD and not yet driven:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`review-queue.md`](scenarios/review-queue.md) | Does `lain queue` list what waits for review with no model call, does a row reach 1 chat in its own checkout as an offer that runs nothing until Enter (accepted, dropped, held for the next cockpit, refused when forged), does the poll write the count every HUD shows, and does every `gh` lain runs act as the configured account with its token masked in bash? Real fzf in a pty; a stand-in `gh`, herdr and `notify-feed`. | cheap; 2 short local asks; the live half needs a throwaway personal pull request |
+
+[`changeset-review.md`](scenarios/changeset-review.md) gained §10, `/review --since` and `--critique`.
+
 ## Automated by `spec/e2e`
 
 Since 2026-10-03, `spec/e2e/` runs this checkout's real `exe/lain` (a plain chat, and a `lain up` cockpit with tmux and nvim) against a stand-in for ollama that replays recorded turns, or plays scripted ones, in `rake pspec` and the commit hook. Each section it drives carries an **Automated by** line naming the spec and its examples, and a **Still needs a human** half. That line is the list: this table only says where to look. A full round skips the automated half and always drives the human half; a round the user scopes to a named scenario or section drives it whole.
