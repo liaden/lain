@@ -2231,8 +2231,23 @@ mod tests {
         );
     }
 
-    /// Counts warnings on the thread it is the default for.
-    struct Warnings(Arc<AtomicUsize>);
+    thread_local! {
+        static WARNINGS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    }
+
+    /// Counts warnings per thread. It is installed process-wide because a
+    /// scoped default leaves the callsite interest cache to whichever test
+    /// thread rebuilt it last, and a rebuild from a thread with no default
+    /// caches the warning as never wanted.
+    struct Warnings;
+
+    fn count_warnings_per_thread() {
+        static INSTALLED: std::sync::Once = std::sync::Once::new();
+        INSTALLED.call_once(|| {
+            tracing::subscriber::set_global_default(Warnings)
+                .expect("no other global tracing subscriber in this test binary");
+        });
+    }
 
     impl tracing::Subscriber for Warnings {
         fn enabled(&self, _: &tracing::Metadata<'_>) -> bool {
@@ -2249,7 +2264,7 @@ mod tests {
 
         fn event(&self, event: &tracing::Event<'_>) {
             if *event.metadata().level() == tracing::Level::WARN {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                WARNINGS.with(|count| count.set(count.get() + 1));
             }
         }
 
@@ -2260,8 +2275,7 @@ mod tests {
 
     #[tokio::test]
     async fn an_overflow_warns_once_for_its_connection() {
-        let warnings = Arc::new(AtomicUsize::new(0));
-        let _default = tracing::subscriber::set_default(Warnings(Arc::clone(&warnings)));
+        count_warnings_per_thread();
         let (_dir, path) = start_server_with(Switchboard::default()).await;
         let mut slow = TestClient::connect(&path).await;
 
@@ -2272,7 +2286,7 @@ mod tests {
             .await
             .expect("the slow connection was closed")
             .expect("read until the close");
-        assert_eq!(1, warnings.load(Ordering::SeqCst));
+        assert_eq!(1, WARNINGS.with(std::cell::Cell::get));
     }
 
     /// A raw stream's frames until the server closes it.
