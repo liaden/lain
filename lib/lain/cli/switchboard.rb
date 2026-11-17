@@ -119,7 +119,8 @@ module Lain
       #   the judge approves runs under; the toolset's to say, since the arm alone does not build the sandbox
       # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] the judge's approvals this session, which every
       #   judged rung settles an exact repeat by; none by default
-      # @param containment [Confine::Sandbox::Containment] whether the toolset's bash can run a call that reads
+      # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+      #   whether the toolset's bash can run a call that reads
       #   secrets contained, which the queue's rows say and a plain approval needs; unstated by default
       # @option options [Boolean] :non_interactive no human is at this
       #   session's terminal
@@ -250,7 +251,8 @@ module Lain
       # @param stops [Tripwire::Stops, Tripwire::Stops::None] as on {.for}; no one by default
       # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] as on {.for}; none by default
       # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] as on {.for}; none by default
-      # @param containment [Confine::Sandbox::Containment] as on {.for}; unstated by default
+      # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+      #   as on {.for}; unstated by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,

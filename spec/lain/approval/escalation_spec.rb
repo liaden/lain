@@ -627,6 +627,27 @@ RSpec.describe Lain::Approval::Escalation do
         expect(rulings.map { _1["reason"] }.join).not_to include("human")
       end
 
+      it "reads nothing of a containment the box has yet to answer until a call needs it" do
+        read = 0
+        deferred = Lain::Confine::Sandbox::Containment::Deferred.new { (read += 1) && unable }
+        ladders = [described_class.new([described_class::Bypass.new], journal:, containment: deferred),
+                   described_class.bypass(tools: Lain::Toolset.new([]), journal:, containment: deferred)]
+
+        expect(read).to eq(0)
+        expect(ladders.first.rule(effect, context).told).to include("the box lacks bwrap")
+        expect(read).to eq(1)
+      end
+
+      it "asks the box nothing for an allowed call that reads no secret" do
+        read = 0
+        deferred = Lain::Confine::Sandbox::Containment::Deferred.new { (read += 1) && unable }
+        plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
+
+        ruling = described_class.new([described_class::Bypass.new], journal:, containment: deferred).rule(effect, plain)
+
+        expect([ruling.verdict, read]).to eq([:allow, 0])
+      end
+
       it "still runs a call that reads no secret" do
         plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
         unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)

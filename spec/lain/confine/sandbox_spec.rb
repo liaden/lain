@@ -176,6 +176,30 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(able.containment).to have_attributes(confines?: true, able?: true)
     end
 
+    it "asks the box nothing until the containment is read, since a launch should not pay for the probe" do
+      asked = []
+      recording = lambda do |argv|
+        asked << argv
+        netted.call(argv)
+      end
+      netting = Lain::Confine::Probe.new(fence:, journal:, runner: recording, ptrace_scope: -> { "0" })
+      containment = described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: netting, fence:,
+                                        journal:).containment
+
+      expect(asked).to be_empty
+      expect(containment).to have_attributes(confines?: true, able?: true)
+      expect(asked).to include(include("--unshare-net"))
+    end
+
+    it "answers every message a containment does, as the containment the box gave" do
+      able = Lain::Confine::Sandbox::Containment::ABLE
+      deferred = Lain::Confine::Sandbox::Containment::Deferred.new { able }
+      answered = described_class::Containment.public_instance_methods - Object.public_instance_methods
+
+      expect(answered.reject { deferred.respond_to?(_1) }).to be_empty
+      expect([deferred == able, deferred.to_h, deferred.with(grants: true).grants]).to eq([true, able.to_h, true])
+    end
+
     it "cannot contain a call, saying why, when the box gives no private network" do
       expect(sandbox.containment).to have_attributes(confines?: true, able?: false,
                                                      because: a_string_including("private network"))

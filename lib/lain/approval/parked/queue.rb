@@ -573,7 +573,8 @@ module Lain
         # @param file_facts [FileFacts::Live, FileFacts::Recorded] where a denied path lands, from
         #   {Sensitivity::Policy#file_facts}
         # @param silence [Silence::Hold, Silence::Deny] what an unanswered window settles as
-        # @param containment [Confine::Sandbox::Containment] whether the session can run a call that reads secrets
+        # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+        #   whether the session can run a call that reads secrets
         #   contained, which a plain approval of one does; unstated, the row says nothing of it
         # @param verdict [Shell::Verdict] the session's one shell verdict, which decides whether bash runs a call
         #   as argv, so whether a build tool's ports could be granted
@@ -708,7 +709,8 @@ module Lain
         # @return [FileFacts::Live, FileFacts::Recorded] what a remembered denial's landing is read off
         attr_reader :file_facts
 
-        # @return [Confine::Sandbox::Containment] what a plain approval of a call that reads secrets does
+        # @return [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+        #   what a plain approval of a call that reads secrets does
         attr_reader :containment
 
         private

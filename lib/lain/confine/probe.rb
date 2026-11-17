@@ -22,6 +22,7 @@ module Lain
         @journal = journal
         @runner = runner
         @ptrace_scope = ptrace_scope
+        @private_net_lock = Mutex.new
       end
 
       # @return [Integer] the Landlock ABI the fence reported, 0 when none
@@ -73,12 +74,16 @@ module Lain
       # A fence built before the flag rejects it and exits 125. Its status names the key whenever the build knows
       # the flag, false outside a private network, so the key's presence is the answer. bwrap must make the
       # namespace too, or every workspace call would abort.
+      # Locked because a contained approval and the first workspace profile can ask at once, and a second
+      # answer would spawn bwrap again and journal a second record.
       def private_net?
-        return @private_net unless @private_net.nil?
+        @private_net_lock.synchronize do
+          return @private_net unless @private_net.nil?
 
-        reason = private_net_gap
-        degrade(:private_net, reason) if reason
-        @private_net = reason.nil?
+          reason = private_net_gap
+          degrade(:private_net, reason) if reason
+          @private_net = reason.nil?
+        end
       end
 
       def private_net_gap

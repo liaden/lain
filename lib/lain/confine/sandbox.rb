@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "active_support"
+require "active_support/core_ext/module/delegation"
 require "tmpdir"
 
 module Lain
@@ -57,6 +59,9 @@ module Lain
         # @return [Boolean] whether it can
         def able? = state == :able
 
+        # @return [Boolean] whether the session chose to confine nothing
+        def off? = state == :off
+
         # @return [String, nil] why the call does not run contained, for the row; nil when it does or nothing
         #   was stated, since {#choice} then says it
         def note
@@ -78,6 +83,31 @@ module Lain
         ABLE = new(state: :able)
         OFF = off(CONFINEMENT_OFF)
         NONE = new(state: :unstated)
+
+        # A containment the box answers when first read. Asking whether it gives a private network spawns
+        # bwrap, about 3 ms, which a chat launch should not pay before any call reads secrets. Off is the
+        # session's choice, never the box's answer, so {#off?} needs no answer.
+        class Deferred
+          delegate :state, :because, :grants, :ports, :over, :confines?, :able?, :note, :choice, :to_h, :with,
+                   :members, :deconstruct, :deconstruct_keys, :==, :eql?, :hash, to: :resolved
+
+          # @yieldreturn [Containment] able or unable, asked for once
+          def initialize(&answer)
+            @answer = answer
+            @mutex = Mutex.new
+          end
+
+          # @return [false]
+          def off? = false
+
+          private
+
+          def resolved = @resolved || @mutex.synchronize { @resolved ||= answered }
+
+          def answered
+            @answer.call.tap { raise ArgumentError, "the box answered off, which only a session chooses" if _1.off? }
+          end
+        end
 
         private
 
@@ -138,15 +168,9 @@ module Lain
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
       end
 
-      # @return [Containment] whether this box can run a call contained, with no network beyond a build tool's ports
-      def containment
-        lacking = self.class.lacking(@probe)
-        return Containment.unable(reason_for(lacking)) if lacking.any?
-
-        return Containment.unable(NO_PRIVATE_NET) unless @probe.supports?(:private_net)
-
-        Containment.able(grants: @profiling[:workspace])
-      end
+      # @return [Containment::Deferred] whether this box can run a call contained, with no network beyond a build
+      #   tool's ports
+      def containment = Containment::Deferred.new { contained_here }
 
       # Starts the mask classification of a sandbox that was built.
       #
@@ -157,6 +181,15 @@ module Lain
       end
 
       private
+
+      def contained_here
+        lacking = self.class.lacking(@probe)
+        return Containment.unable(reason_for(lacking)) if lacking.any?
+
+        return Containment.unable(NO_PRIVATE_NET) unless @probe.supports?(:private_net)
+
+        Containment.able(grants: @profiling[:workspace])
+      end
 
       def unsandboxed(inner, requirer, lacking)
         self.class.degraded(inner, journal: @notes, requirer:, because: reason_for(lacking))

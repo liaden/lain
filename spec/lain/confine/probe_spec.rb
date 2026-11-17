@@ -206,6 +206,24 @@ RSpec.describe Lain::Confine::Probe do
       expect(journal.first.provider).to include("/x/lain-fence cannot give a call a private network")
     end
 
+    it "asks bwrap for a network namespace once, and journals once, when two readers ask at the same moment" do
+      answers["lain-fence"] = ['{"abi":9,"private_net":false,"reap":true,"rights":{},"skipped":[]}', true]
+      spawned = Queue.new
+      slow = lambda do |argv|
+        return runner.call(argv) unless argv.include?("--unshare-net")
+
+        spawned << argv
+        sleep 0.05
+        ["bwrap: No permissions to create new namespace", false]
+      end
+      subject = described_class.new(fence: "/x/lain-fence", runner: slow, ptrace_scope: scope, journal:)
+      subject.fence_gap
+
+      answers = Array.new(8) { Thread.new { subject.supports?(:private_net) } }.map(&:value)
+
+      expect([answers.uniq, spawned.size, journal.map(&:capability)]).to eq([[false], 1, [:private_net]])
+    end
+
     it "exposes the ABI the fence reported" do
       expect(probe.abi).to eq(9)
     end

@@ -102,7 +102,7 @@ module Lain
         # Data class.
 
         # Abstention is a MEMBER here rather than the absence of a Ruling, which
-        # is where this file departs from {Rule}: a rule abstains by answering
+        # is where this file departs from `Rule`: a rule abstains by answering
         # nothing, a rung abstains as a REPORT, because the ladder journals what
         # each rung said and "said nothing" is something a reader needs to see.
         VERDICTS = %i[allow deny abstain].freeze
@@ -144,7 +144,7 @@ module Lain
         # own sentence rather than replacing that sentence, and off {#record}
         # because the queue's `approval_decision` already journals it.
         #
-        # `rule` names the {Rule} behind a ruling the rules rung made, so two
+        # `rule` names the `Rule` behind a ruling the rules rung made, so two
         # allows from one rung can be told apart; nil for any other rung. Off
         # {#record} too: {Escalation#record} adds it only when present.
         #
@@ -261,7 +261,8 @@ module Lain
       # @param rungs [Enumerable<#call, #name>] consulted in order
       # @param journal [#<<, #record] where every ruling lands as evidence; {Faults} still calls `record`
       # @param label [String] the name a policy flip journals this ladder under
-      # @param containment [Confine::Sandbox::Containment] whether the session can run a call that reads secrets
+      # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+      #   whether the session can run a call that reads secrets
       #   contained; unstated leaves the sandbox to refuse one it cannot
       # @param asking [#call] where an automatic allow the session cannot contain goes: the human's queue
       #   where one is attended, else {Uncontained}, which refuses it
@@ -386,12 +387,11 @@ module Lain
       end
 
       def containable?(ruling)
-        @containment.state != :off && ruling.allow? && ruling.rung != Surfaces::NAME &&
-          ruling.rule != ComposedTerm.rule_name
+        ruling.allow? && ruling.rung != Surfaces::NAME && ruling.rule != ComposedTerm.rule_name && !@containment.off?
       end
 
       # A rung's own ladder that decided nothing, cleanly, abstained, as a
-      # nested ladder does inside {Ladder}.
+      # nested ladder does inside `Ladder`.
       def undecided(outcome, name)
         return outcome if outcome.decided? || outcome.faulted?
 
@@ -491,7 +491,7 @@ module Lain
         NO_SUBJECT = "no rule could be shown this call"
         BROKEN = "the rung could not build a subject to judge"
 
-        # One {Rule} as a {Ladder} rung: its decision, its raw inner outcome
+        # One `Rule` as a `Ladder` rung: its decision, its raw inner outcome
         # when it owns a ladder, or an abstention whose reason is its `why_not`.
         class Consulted
           attr_reader :name
@@ -942,17 +942,18 @@ module Lain
         NAME = "uncontained"
         TOLD = "not run: it reads secrets and lain cannot run it contained on this box (%<because>s)"
 
-        # @param containment [Confine::Sandbox::Containment] the session's, which says why it cannot contain
+        # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+        #   the session's, which says why it cannot contain
         def initialize(containment)
-          @because = containment.because
+          @containment = containment
           freeze
         end
 
         def name = NAME
 
         def call(_effect, _context)
-          Ruling.deny(rung: NAME, because: "#{UNCONTAINED}: #{@because}", final: true,
-                      told: format(TOLD, because: @because))
+          because = @containment.because
+          Ruling.deny(rung: NAME, because: "#{UNCONTAINED}: #{because}", final: true, told: format(TOLD, because:))
         end
       end
 

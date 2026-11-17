@@ -378,6 +378,7 @@ module Lain
         #
         # @return [Hash{Symbol=>Object}] `masks:`, an {Approval::Judgement::Masking} or
         #   {Approval::Judgement::Unmasked}, and `containment:`, a {Confine::Sandbox::Containment}
+        #   or its {Confine::Sandbox::Containment::Deferred}
         def board_inputs
           { masks: @arms.workspace? && wrapped? ? Approval::Judgement::Masking.new(@masks) : Approval::Judgement::Unmasked,
             containment: }

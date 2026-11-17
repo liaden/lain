@@ -78,6 +78,27 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         expect(board_for(root, home).approvals.containment).to be(Lain::Confine::Sandbox::Containment::NONE)
       end
     end
+
+    it "asks the box nothing about a private network while the board is built, attended or not" do
+      Dir.mktmpdir("board-containment") do |dir|
+        base = File.realpath(dir)
+        root, home = %w[repo home].map { File.join(base, _1).tap { |made| FileUtils.mkdir_p(made) } }
+        asked = []
+        runner = lambda do |argv|
+          asked << argv
+          [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true]
+        end
+        probe = Lain::Confine::Probe.new(fence: "/srv/lain-fence", journal:, runner:, ptrace_scope: -> { "0" })
+        sandbox = Lain::Confine::Sandbox.new(root:, home:, probe:, fence: "/srv/lain-fence", journal:,
+                                             masks: Lain::Confine::MaskList.new(root:, policy: -> { :the_policy }))
+
+        [{}, { non_interactive: true }].product(%i[ask auto bypass]).each do |options, approval|
+          board_for(root, home, options: options.merge(approval:), containment: sandbox.containment)
+        end
+
+        expect(asked.flatten).not_to include("--unshare-net")
+      end
+    end
   end
 
   def bash_of(command, **rest)

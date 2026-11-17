@@ -61,7 +61,8 @@ module Lain
         # @param stops [Lain::Tripwire::Stops, Lain::Tripwire::Stops::None] who the tripwire stopped
         # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] the workspace sandbox a call
         #   the judge approves runs under, as {ToolsetBuild#board_inputs} answers; none by default
-        # @param containment [Confine::Sandbox::Containment] whether bash can run a call that reads secrets
+        # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
+        #   whether bash can run a call that reads secrets
         #   contained, as {ToolsetBuild#board_inputs} answers; unstated by default
         # @option options [Boolean] :non_interactive no human is at this
         #   session's terminal -- read by {Switchboard.for}, never here
