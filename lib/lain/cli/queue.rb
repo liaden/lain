@@ -85,11 +85,12 @@ module Lain
         def initialize(reads)
           @reads = reads
           @seen = {}
+          @requests = {}
         end
 
         # @param query [String]
         # @return [Array<Forge::Gh::ReviewRequest>]
-        def review_requests(query:) = remember(@reads.review_requests(query:))
+        def review_requests(query:) = @requests[query] ||= remember(@reads.review_requests(query:))
 
         # @param query [String]
         # @param notes [#puts]
@@ -223,9 +224,20 @@ module Lain
       def open_row(id, critique:) = invoke(:open, [id], critique:)
 
       def row_for(id)
-        sources = id.start_with?("pr:") ? [pull_requests] : [plan_runs, local_changes]
-        row = sources.flat_map(&:call).find { |candidate| ::Lain::Review::Queue::Request.plain(candidate.id) == ::Lain::Review::Queue::Request.plain(id) }
+        row = id.start_with?("pr:") ? pull_row(id) : find_row([plan_runs, local_changes], id)
         row || raise(::Thor::Error, "no queue row #{::Lain::Review::Queue::Request.plain(id)}")
+      end
+
+      # A listed row may be one only the wider read finds.
+      def pull_row(id)
+        find_row([pull_requests(scope: :mine, matches: false)], id) ||
+          find_row([pull_requests(scope: :all, matches: true)], id)
+      end
+
+      def find_row(sources, id)
+        sources.flat_map(&:call).find do |candidate|
+          ::Lain::Review::Queue::Request.plain(candidate.id) == ::Lain::Review::Queue::Request.plain(id)
+        end
       end
 
       def critiqued(row, critique)
@@ -290,25 +302,21 @@ module Lain
 
       def local_sources = [local_changes]
 
-      def prs_sources = [pull_requests]
+      def prs_sources = [pull_requests(scope: options[:all] ? :all : :mine, matches: options[:matches])]
 
       def plan_runs = ::Lain::Review::Queue::PlanRuns.new(checkout:, notes:)
 
       def local_changes = ::Lain::Review::Queue::LocalChanges.new(repo_root: Dir.pwd, notes:)
 
-      def pull_requests = pull_source.last
+      def pull_requests(scope:, matches:)
+        ::Lain::Review::Queue::PullRequests.new(reads: pulls, config: github_config, checkouts: pull_checkouts, scope:,
+                                                matches:, notes:)
+      end
 
-      def pulls = pull_source.first
-
-      def pull_source
-        @pull_source ||= begin
-          config = github_config
-          account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
-          pulls = Pulls.new(Forge::Gh::Reads.new(cwd: Dir.pwd, account:))
-          scope = options[:all] ? :all : :mine
-          [pulls,
-           ::Lain::Review::Queue::PullRequests.new(reads: pulls, config:, checkouts: pull_checkouts, scope:,
-                                                   matches: options[:matches], notes:)]
+      def pulls
+        @pulls ||= begin
+          account = Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:)
+          Pulls.new(Forge::Gh::Reads.new(cwd: Dir.pwd, account:))
         end
       end
 

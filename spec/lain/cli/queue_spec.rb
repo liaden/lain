@@ -388,10 +388,12 @@ RSpec.describe Lain::CLI::Queue, :seam do
                     "search" => { "issueCount" => 1, "nodes" => [node] } } }
     end
 
+    let(:gh_script) { "#!/bin/sh\nexec cat #{File.join(bin, "answer.json")}\n" }
+
     around do |example|
       FileUtils.mkdir_p(bin)
       File.write(File.join(bin, "answer.json"), JSON.generate(answer))
-      File.write(File.join(bin, "gh"), "#!/bin/sh\nexec cat #{File.join(bin, "answer.json")}\n")
+      File.write(File.join(bin, "gh"), gh_script)
       File.chmod(0o755, File.join(bin, "gh"))
       saved = ENV.fetch("PATH")
       ENV["PATH"] = "#{bin}:#{saved}"
@@ -586,6 +588,83 @@ RSpec.describe Lain::CLI::Queue, :seam do
       expect(out).to include("reason: direct, no local checkout", "range: https://github.com/acme/api/pull/12",
                              "title: Fix the thing red", "author: ali", "requested: 2026-11-11T10:30:00Z")
       expect(out).not_to match(/[\e\a]/)
+    end
+
+    describe "finding a row whatever scope listed it" do
+      let(:calls) { File.join(bin, "calls.txt") }
+      let(:empty) do
+        { "data" => { "viewer" => { "login" => "me", "organizations" => { "nodes" => [] } },
+                      "search" => { "issueCount" => 0, "nodes" => [] } } }
+      end
+      let(:requested_file) { "answer.json" }
+      let(:gh_script) do
+        <<~SH
+          #!/bin/sh
+          echo "$*" >> #{calls}
+          case "$*" in
+            *review-requested*) exec cat #{File.join(bin, requested_file)} ;;
+            *) exec cat #{File.join(bin, "answer.json")} ;;
+          esac
+        SH
+      end
+
+      around do |example|
+        File.write(File.join(bin, "empty.json"), JSON.generate(empty))
+        Dir.mktmpdir("lain-cli-queue-find") do |home|
+          with_env("XDG_RUNTIME_DIR" => home, "XDG_CONFIG_HOME" => home) do
+            paths = Lain::Paths.new
+            FileUtils.mkdir_p(File.dirname(paths.user_config))
+            File.write(paths.user_config, "github orgs: [\"acme\"], keywords: [\"thing\"]\n")
+            Lain::Project::Trust.for_user(paths:).grant!
+            example.run
+          end
+        end
+      end
+
+      def gh_calls = File.exist?(calls) ? File.read(calls).scan(/^api graphql/).size : 0
+
+      context "with a request asked only of my team" do
+        let(:answer) do
+          super().tap do |body|
+            body["data"]["viewer"]["organizations"]["nodes"] =
+              [{ "login" => "acme", "member" => { "nodes" => [{ "slug" => "core" }] }, "admin" => { "nodes" => [] } }]
+            body["data"]["search"]["nodes"].first["reviewRequests"]["nodes"] =
+              [{ "asCodeOwner" => false, "requestedReviewer" => { "__typename" => "Team", "slug" => "core",
+                                                                  "organization" => { "login" => "acme" } } }]
+          end
+        end
+
+        it "opens it like a direct one" do
+          expect(run("open", "pr:acme/api#12")).to eq(
+            [0, "no local checkout of pr:acme/api#12; opened it in the browser\n", ""]
+          )
+        end
+      end
+
+      context "with a pull request only a keyword picks out" do
+        let(:requested_file) { "empty.json" }
+
+        it "shows its detail" do
+          expect(capture("show", "pr:acme/api#12").first)
+            .to include("reason: keyword: thing", "title: Fix the thing red")
+        end
+      end
+
+      it "makes 1 read for a direct row" do
+        capture("show", "pr:acme/api#12")
+
+        expect(gh_calls).to eq(1)
+      end
+
+      it "reads the requests once and searches once per configured org on a miss" do
+        expect { capture("show", "pr:acme/api#99") }.to raise_error(Thor::Error)
+
+        expect(gh_calls).to eq(2)
+      end
+
+      it "still says no queue row for an id nothing lists" do
+        expect { capture("show", "pr:acme/api#99") }.to raise_error(Thor::Error, %r{no queue row pr:acme/api#99})
+      end
     end
   end
 
