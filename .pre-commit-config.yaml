@@ -22,6 +22,12 @@ repos:
       - id: trailing-whitespace
         exclude: '\.(patch|msgpack)$|^spec/fixtures/toml-test/'
 
+  # language: golang, so pre-commit fetches its own Go where none is installed.
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+
   - repo: local
     hooks:
       - id: shellcheck
