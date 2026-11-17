@@ -14,6 +14,7 @@ path = "src/main.rs"
 # Out-of-process by the placement rule: an async runtime never runs inside a magnus FFI call (ext/lain/CLAUDE.md).
 tokio = { version = "1.53", features = ["macros", "rt-multi-thread", "net", "time", "sync", "signal"] }
 lain-rpc = { path = "../lain-rpc", version = "0.1.0" }
+lain-wire = { path = "../lain-wire", version = "0.1.0" }
 rmpv = "1.3"
 # Diagnostics go to the trace file, never a terminal.
 tracing = "0.1"

@@ -225,6 +225,33 @@ pub struct AnswersPage {
     pub answers: Vec<Answer>,
 }
 
+/// A chat's `session.register` to the daemon: who it is and where it runs.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Register {
+    /// The chat's journal stem.
+    pub session_id: String,
+    /// The chat's process, which must be the process on the other end of the connection.
+    pub pid: u32,
+    /// The host the chat runs on.
+    pub host: String,
+    /// The project root.
+    pub root: String,
+    /// The chat's working directory.
+    pub cwd: String,
+    /// The chat's input socket; absent for a headless chat.
+    #[serde(default)]
+    pub input_socket: Option<String>,
+    /// The chat's journal; absent for a `--no-journal` chat.
+    #[serde(default)]
+    pub journal: Option<String>,
+    /// Whether a human is at the chat's terminal.
+    pub attended: bool,
+    /// When the chat started, as the chat writes it.
+    pub started_at: String,
+}
+
 /// Encodes a message with named struct fields.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     rmp_serde::to_vec_named(value)
@@ -567,6 +594,55 @@ mod tests {
         assert_eq!(bytes[0], 0xde);
         let hello: Hello = decode(&bytes).expect("decode");
         assert_eq!(hello.wire_version, WIRE_VERSION);
+    }
+
+    fn register() -> Register {
+        Register {
+            session_id: s("2026-11-17T10-00-00-abc"),
+            pid: 4242,
+            host: s("rainbow"),
+            root: s("/work"),
+            cwd: s("/work/lib"),
+            input_socket: Some(s("/run/lain/input.sock")),
+            journal: Some(s("/work/.lain/sessions/abc.ndjson")),
+            attended: true,
+            started_at: s("2026-11-17T10:00:00Z"),
+        }
+    }
+
+    #[test]
+    fn register_round_trips() {
+        let register = register();
+        let bytes = encode(&register).expect("encode");
+        assert_eq!(decode::<Register>(&bytes).expect("decode"), register);
+    }
+
+    #[test]
+    fn a_register_without_its_optional_paths_decodes_them_as_none() {
+        #[derive(Serialize)]
+        struct Headless {
+            session_id: String,
+            pid: u32,
+            host: String,
+            root: String,
+            cwd: String,
+            attended: bool,
+            started_at: String,
+        }
+        let bytes = encode(&Headless {
+            session_id: s("2026-11-17T10-00-00-abc"),
+            pid: 4242,
+            host: s("rainbow"),
+            root: s("/work"),
+            cwd: s("/work/lib"),
+            attended: false,
+            started_at: s("2026-11-17T10:00:00Z"),
+        })
+        .expect("encode");
+        let register: Register = decode(&bytes).expect("decode");
+        assert_eq!(None, register.input_socket);
+        assert_eq!(None, register.journal);
+        assert!(!register.attended);
     }
 
     #[test]

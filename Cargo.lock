@@ -567,6 +567,7 @@ name = "lain-daemon"
 version = "0.1.0"
 dependencies = [
  "lain-rpc",
+ "lain-wire",
  "rmpv",
  "tempfile",
  "tokio",

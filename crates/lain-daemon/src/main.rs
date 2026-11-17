@@ -6,13 +6,19 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::print_stdout, clippy::print_stderr, missing_docs)]
 
+mod registry;
+
 use std::io;
-use std::os::unix::fs::FileTypeExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::{Arc, OnceLock};
 
-use lain_rpc::{Handler, RpcError};
+use lain_rpc::{Conn, Handler, Peer, RpcError, Session};
+use lain_wire::Register;
 use rmpv::Value;
+
+use registry::{Registration, Registry};
 
 /// Bad invocation or an unopenable trace path. There is no usage text on purpose: this binary
 /// may never touch stdout/stderr, so a bad invocation is an exit code, not a message.
@@ -70,15 +76,45 @@ fn main() -> ExitCode {
     serve_unix(args)
 }
 
-/// What the daemon answers beyond `ping`, which `lain_rpc::serve` answers itself.
+/// What the daemon answers beyond `ping`, which `lain_rpc::serve` answers itself. No local
+/// method answers an approval or a question: answers come only from the phone or the chat itself.
 struct Daemon {
     launch_digest: String,
+    registry: Arc<Registry>,
+    owner_uid: u32,
+}
+
+/// One local connection: who is on the other end, and the session it registered, if any.
+struct Caller {
+    peer: Peer,
+    registration: OnceLock<Registration>,
+}
+
+impl Session for Caller {
+    fn opened(conn: &Conn) -> Self {
+        Self {
+            peer: conn.peer,
+            registration: OnceLock::new(),
+        }
+    }
 }
 
 impl Handler for Daemon {
-    type Session = ();
+    type Session = Caller;
 
-    async fn call(&self, _: &(), method: &str, _params: Vec<Value>) -> Result<Value, RpcError> {
+    async fn call(
+        &self,
+        caller: &Caller,
+        method: &str,
+        params: Vec<Value>,
+    ) -> Result<Value, RpcError> {
+        if caller.peer.uid != Some(self.owner_uid) {
+            tracing::warn!(code = "other_user", peer = ?caller.peer, method, "refused a call");
+            return Err(RpcError::Refused {
+                code: "other_user",
+                message: "only the daemon's own user may call it".to_string(),
+            });
+        }
         match method {
             "daemon.info" => Ok(Value::Map(vec![
                 (Value::from("build_id"), Value::from(build_id())),
@@ -87,9 +123,62 @@ impl Handler for Daemon {
                     Value::from(self.launch_digest.as_str()),
                 ),
             ])),
+            "session.register" => self.register(caller, params).await.inspect_err(|error| {
+                if let RpcError::Refused { code, message } = error {
+                    tracing::warn!(code, peer = ?caller.peer, ?message, "refused a session.register");
+                }
+            }),
+            "session.list" => Ok(Value::Array(
+                self.registry
+                    .list()
+                    .iter()
+                    .map(registry::Record::to_value)
+                    .collect(),
+            )),
             other => Err(RpcError::UnknownMethod(other.to_string())),
         }
     }
+}
+
+impl Daemon {
+    async fn register(&self, caller: &Caller, params: Vec<Value>) -> Result<Value, RpcError> {
+        if caller.registration.get().is_some() {
+            return Err(already_registered());
+        }
+        let register = decoded_register(params)?;
+        let registry = Arc::clone(&self.registry);
+        let peer = caller.peer;
+        // The process table may be read through `ps`, which blocks.
+        let registration = tokio::task::spawn_blocking(move || registry.register(peer, register))
+            .await
+            .map_err(|error| RpcError::Refused {
+                code: "internal",
+                message: format!("registration failed: {error}"),
+            })??;
+        caller
+            .registration
+            .set(registration)
+            .map_err(|_raced| already_registered())?;
+        Ok(Value::Nil)
+    }
+}
+
+fn already_registered() -> RpcError {
+    RpcError::Refused {
+        code: "registered",
+        message: "this connection already registered a session".to_string(),
+    }
+}
+
+fn decoded_register(params: Vec<Value>) -> Result<Register, RpcError> {
+    let malformed = || RpcError::Refused {
+        code: "bad_params",
+        message: "session.register takes [Register]".to_string(),
+    };
+    let [param] = <[Value; 1]>::try_from(params).map_err(|_| malformed())?;
+    let mut bytes = Vec::new();
+    rmpv::encode::write_value(&mut bytes, &param).map_err(|_| malformed())?;
+    lain_wire::decode(&bytes).map_err(|_| malformed())
 }
 
 fn init_tracing(path: &Path) -> io::Result<()> {
@@ -126,9 +215,10 @@ fn clear_stale_socket(path: &Path) -> io::Result<()> {
 #[tokio::main]
 async fn serve_unix(args: Args) -> ExitCode {
     let bound = clear_stale_socket(&args.socket)
-        .and_then(|()| tokio::net::UnixListener::bind(&args.socket));
-    let listener = match bound {
-        Ok(listener) => listener,
+        .and_then(|()| tokio::net::UnixListener::bind(&args.socket))
+        .and_then(|listener| Ok((listener, owner_of(&args.socket)?)));
+    let (listener, owner_uid) = match bound {
+        Ok(bound) => bound,
         Err(error) => {
             tracing::error!(%error, socket = %args.socket.display(), "could not bind the socket");
             return ExitCode::from(BIND_ERROR);
@@ -137,6 +227,8 @@ async fn serve_unix(args: Args) -> ExitCode {
     tracing::info!(socket = %args.socket.display(), pid = std::process::id(), "lain-daemon listening");
     let handler = Daemon {
         launch_digest: args.launch_digest,
+        registry: Registry::new(registry::ProcTable),
+        owner_uid,
     };
     let code = tokio::select! {
         never = lain_rpc::serve(listener, handler, env!("CARGO_PKG_VERSION")) => match never {},
@@ -146,6 +238,11 @@ async fn serve_unix(args: Args) -> ExitCode {
         tracing::warn!(%error, "could not remove the socket");
     }
     code
+}
+
+/// The socket the daemon just bound is owned by its effective uid, read without `unsafe` `geteuid`.
+fn owner_of(socket: &Path) -> io::Result<u32> {
+    std::fs::metadata(socket).map(|metadata| metadata.uid())
 }
 
 /// SIGTERM/SIGINT land here so shutdown goes THROUGH the runtime: returning unwinds
@@ -176,6 +273,48 @@ async fn wait_for(kind: tokio::signal::unix::SignalKind) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const OWNER: u32 = 1000;
+
+    fn caller(uid: Option<u32>) -> Caller {
+        Caller {
+            peer: Peer {
+                uid,
+                pid: Some(std::process::id()),
+            },
+            registration: OnceLock::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn a_peer_of_another_user_or_of_no_known_user_is_refused_every_method() {
+        let daemon = Daemon {
+            launch_digest: "abc".to_string(),
+            registry: Registry::new(registry::ProcTable),
+            owner_uid: OWNER,
+        };
+        for uid in [Some(0), Some(OWNER + 1), None] {
+            for method in [
+                "daemon.info",
+                "session.list",
+                "session.register",
+                "answer.send",
+            ] {
+                match daemon.call(&caller(uid), method, vec![]).await {
+                    Err(RpcError::Refused {
+                        code: "other_user", ..
+                    }) => {}
+                    other => panic!("uid {uid:?} {method}: {other:?}"),
+                }
+            }
+        }
+        assert!(
+            daemon
+                .call(&caller(Some(OWNER)), "daemon.info", vec![])
+                .await
+                .is_ok()
+        );
+    }
 
     #[test]
     fn an_empty_or_missing_sha_reads_unknown() {
