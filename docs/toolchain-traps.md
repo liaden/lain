@@ -561,6 +561,15 @@ Unproven; counting only the example's own thread would settle it.
 
   **Retired, with the fix that ended each.** Keep a retired name here so a later red under it reads
   as a regression, not as a known flake.
+  - 2026-11-17: `lain-rpc tests::an_overflow_warns_once_for_its_connection` (left 1, right 0; red in 2
+    landing hooks of the lain-daemon run). A real race: the test counted warnings with a scoped
+    `set_default` subscriber, and tracing caches each callsite's interest process-wide, so another
+    test thread could cache the shared warn callsite as never enabled. 28 of 80 runs under 8 CPU hogs.
+    The test module now installs 1 global subscriber and counts per thread: 0 of 100.
+  - 2026-11-17: `Lain::ProjectDir one locator for every governed path is the only place lib/ composes
+    a governed path` (the 30 s watchdog, twice, at load1 23.5 and 33.7). Its cost was 2 tree walks and
+    re-walked subtrees, not the parse. The scan now indexes once and runs 1 example per lib group:
+    8.1 s in 1 example became 5.1 s for the file, worst example 0.7 s, with the same findings.
   - 2026-11-17: `Lain::Exec::Local a stop leaves no side effect from a String command stopped before
     it got there` (red in a landing suite 2026-11-16; one of the 2 unnamed `Lain::Exec::Local` entries
     above). A real race, not timing: a stop signalled the stage's process group, which `setsid` makes
@@ -1030,12 +1039,11 @@ Unproven; counting only the example's own thread would settle it.
   Ruby frees the render state when the fiber is dropped inside Canonical.adopt` (leaked 1001401
   bytes against its 1000000 limit, seed 30242).
 
-  Added 2026-11-17, from the lain-daemon run's landing hooks, at load1 23.5 and 33.7 on 16 cores.
-  `lain-rpc tests::an_overflow_warns_once_for_its_connection` (left 1, right 0) was red once, green
-  alone and 3 of 3 on the base commit. `Lain::ProjectDir one locator for every governed path is the
-  only place lib/ composes a governed path` hit the 30 s spec watchdog twice (12.5 s and 11.3 s of
-  CPU): it parses every `lib/` file in 1 example, green alone and 3 of 3 on base. It repeated, so it
-  is a fix card in that run, not a flake to budget a retry for.
+  Added 2026-11-17, from the lain-daemon run: `Lain::Approval::RemoteSurface through the built
+  daemon's relay takes back what it published when it stops, so the phone stops showing it` timed
+  out in the phone's wait for the item to open (20 s, `Async::TimeoutError` in `Phone#until_open`)
+  in a landing hook at load1 1.2, after a reviewer saw it red 2 times in about 22 runs. It repeated,
+  so it is a fix card in that run (F3), not a flake to budget a retry for.
 
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
