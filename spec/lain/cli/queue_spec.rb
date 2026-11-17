@@ -243,8 +243,55 @@ RSpec.describe Lain::CLI::Queue, :seam do
       )
     end
 
-    it "exits 1 when no chat runs in the checkout" do
-      expect(run("open", feature)).to eq([1, "", "no lain chat is running in #{@repo}\n"])
+    it "holds the review for the next cockpit when no chat runs in the checkout, and says so" do
+      expect(run("open", feature))
+        .to eq([0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n", ""])
+    end
+
+    it "says it replaced a review already held for the checkout" do
+      run("open", "branch:#{@repo}:other")
+
+      expect(run("open", feature))
+        .to eq([0, "replaced the review held for #{@repo}; it opens with the next lain up --nvim there\n", ""])
+    end
+
+    # A herdr stand-in: `answer` is what `workspace create` prints.
+    def herdr(answer)
+      bin = File.join(ENV.fetch("XDG_STATE_HOME"), "herdr")
+      File.write(bin, "#!/bin/sh\ncase \"$1 $2\" in \"workspace create\") echo '#{answer}';; esac\n")
+      File.chmod(0o755, bin)
+      { "HERDR_ENV" => "1", "HERDR_BIN_PATH" => bin }
+    end
+
+    it "starts a cockpit in a herdr workspace when no chat runs there, inside herdr" do
+      started = with_env(herdr('{"result":{"root_pane":{"pane_id":"w9:p1"}}}')) { run("open", feature) }
+
+      expect(started)
+        .to eq([0, "no lain chat is running in #{@repo}; started lain up --nvim there in a herdr workspace\n", ""])
+    end
+
+    it "says it replaced a held review and started a cockpit for it, inside herdr" do
+      run("open", "branch:#{@repo}:other")
+      started = with_env(herdr('{"result":{"root_pane":{"pane_id":"w9:p1"}}}')) { run("open", feature) }
+
+      expect(started).to eq([0, "replaced the review held for #{@repo}; started lain up --nvim there in a herdr " \
+                                "workspace\n", ""])
+    end
+
+    it "exits 1 in 1 line when a file stands where held reviews go" do
+      FileUtils.mkdir_p(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "queue"))
+      File.write(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "queue", "pending"), "")
+
+      status, out, err = run("open", feature)
+
+      expect([status, out, err.lines.size, err]).to match([1, "", 1, /\Alain cannot hold the review in /])
+    end
+
+    it "keeps the review held, and says herdr started nothing, when herdr fails" do
+      failed = with_env(herdr("")) { run("open", feature) }
+
+      expect(failed).to eq([0, "no lain chat is running in #{@repo}; herdr did not start a workspace, so the review " \
+                               "opens with the next lain up --nvim there\n", ""])
     end
 
     it "refuses a critique for a row that is not a pull request" do

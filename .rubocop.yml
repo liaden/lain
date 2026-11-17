@@ -396,6 +396,14 @@ ThreadSafety/ClassInstanceVariable:
 # asking thread takes asks in the order their requests finished arriving, and #stop
 # closes the listener, then kills and joins every thread it started.
 #
+# The thirteenth is Review::Queue::Pending::Offering, one thread per attended `--nvim`
+# chat. It waits for the chat's first `you>`, so the input socket is bound and the editor
+# attached, then offers a review `lain queue open` held for the checkout. Intake#offer
+# blocks until the human answers, and the chat must not wait on it. It touches only the
+# Intake and the held file. The producer's #stop, which the Repl calls as the chat ends,
+# gives it 0.1 s to finish an answer already typed, then kills and joins it, and holds
+# again a review it took that the human never answered.
+#
 # Specs spawn threads to TEST concurrency -- channel_spec's drop-oldest races are the
 # subject, not an accident -- so spec/ is excluded wholesale.
 ThreadSafety/NewThread:
@@ -412,6 +420,7 @@ ThreadSafety/NewThread:
     - "lib/lain/frontend/tty/indicator.rb"
     - "lib/lain/gateway/server.rb"
     - "lib/lain/provider/http/streaming/faraday_handlers.rb"
+    - "lib/lain/review/queue/pending.rb"
     - "lib/lain/sensitivity/history_literals.rb"
     - "lib/lain/tool/offload.rb"
     - "spec/**/*"

@@ -405,27 +405,6 @@ RSpec.describe Lain::CLI::Wiring do
                                                                                   root: backend_root)
   end
 
-  # The fleet tree is read through lain://status and lain watch; the pane's
-  # header is the HUD line alone, so a child starting or ending never changes
-  # its row count.
-  describe "the input pane's header" do
-    let(:running) do
-      Array.new(3) do |index|
-        { "spawn" => "blake3:c#{index}", "role" => "dev", "task" => "port the parser", "state" => "running",
-          "turns" => 1, "depth" => 0, "started" => "2026-09-20T12:00:00Z" }
-      end
-    end
-
-    it "is 1 line holding the HUD and the fleet count, naming no child, while children run" do
-      state = { "fleet" => %w[a b c], "fleet_tree" => running, "inbox_count" => 0 }
-      header = new_wiring(options: { grace: 5 }, chronicle:, status_feed: instance_double(Lain::StatusFeed, state:))
-               .send(:hud_line)
-
-      expect(header.lines.size).to eq(1)
-      expect(header).to include("fleet:3").and(satisfy { |line| !line.include?("dev") })
-    end
-  end
-
   describe "the bench arms" do
     let(:arm_options) { { grace: 5, confine: "reader", judge_facts: "facts", tripwire: "observe" } }
     let(:armed) { new_wiring(options: arm_options, chronicle:, status_feed:) }
@@ -3775,6 +3754,128 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       expect(transcripts).to eq([true, false])
+    end
+
+    # `lain queue open` holds a review when no chat runs in its checkout; the
+    # next cockpit there is the one that offers it.
+    describe "a review held for this checkout", :seam do
+      let(:state) { File.realpath(Dir.mktmpdir("lain-wiring-pending")) }
+      # Apart from the state, since a socket's path has a short limit.
+      let(:run_dir) { Dir.mktmpdir }
+      let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "XDG_RUNTIME_DIR" => run_dir, "HOME" => state }) }
+      let(:pending) { Lain::Review::Queue::Pending.new(paths:, env: {}) }
+      let(:fields) { { "kind" => "range", "base" => "a" * 40, "head" => "b" * 40, "repo_root" => project_dir } }
+
+      before do
+        SeedRepo.git(project_dir, "init", "-q")
+        checkouts = Lain::Review::Queue::Checkouts.new(roots: [])
+        pending.hold(Lain::Review::Queue::Request.load(fields, checkouts:))
+        allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
+      end
+
+      after { FileUtils.rm_rf([state, run_dir]) }
+
+      def held = Dir.glob(File.join(paths.state_home, "queue", "pending", "*"))
+
+      def answer_from_a_pane(path)
+        client = Enumerator.produce { connect_to(path) }.lazy.grep(UNIXSocket).first
+        frames = Enumerator.produce { JSON.parse(client.gets) }
+        offer = frames.find { |frame| frame["kind"] == "human" }
+        typed(client, "x", offer)
+        typed(client, "quit", frames.find { |frame| frame["kind"] == "you" })
+        client.read
+        offer["text"]
+      ensure
+        client&.close
+      end
+
+      def typed(client, text, prompt)
+        client.write("#{JSON.generate({ "v" => "line", "text" => text, "generation" => prompt["generation"] })}\n")
+        client.flush
+      end
+
+      def chat(options, stdin: StringIO.new)
+        new_wiring(options: { grace: 5 }.merge(options), chronicle:, status_feed:, paths:, stdin:,
+                   tty_factory: tty_factory(state), conductor_opener:)
+      end
+
+      it "is offered for 1 keypress when an attended chat with an editor starts, and is then gone" do
+        path = Lain::CLI::InputSocket.path(name: "wiring-pending", paths:, cwd: project_dir)
+        wiring = chat({ input: "socket:wiring-pending", nvim: File.join(state, "nvim.sock") })
+        pane = Thread.new { answer_from_a_pane(path) }
+
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+
+        expect([pane.value, held])
+          .to eq(["lain queue: /review #{"b" * 40} --base #{"a" * 40}  (Enter opens, x drops)", []])
+      end
+
+      it "stays held when the input socket cannot bind" do
+        path = Lain::CLI::InputSocket.path(name: "wiring-pending", paths:, cwd: project_dir)
+        FileUtils.mkdir_p(File.dirname(path))
+        other = UNIXServer.new(path)
+        wiring = chat({ input: "socket:wiring-pending", nvim: File.join(state, "nvim.sock") })
+
+        expect { Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) } }
+          .to raise_error(Lain::CLI::InputSocket::InUse)
+        expect(held.size).to eq(1)
+      ensure
+        other&.close
+      end
+
+      it "is held again when the chat ends before the human answers" do
+        path = Lain::CLI::InputSocket.path(name: "wiring-pending", paths:, cwd: project_dir)
+        wiring = chat({ input: "socket:wiring-pending", nvim: File.join(state, "nvim.sock") })
+        pane = Thread.new { stop_at_the_offer(path) }
+
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+        pane.join
+
+        expect(held.size).to eq(1)
+      end
+
+      def stop_at_the_offer(path)
+        client = Enumerator.produce { connect_to(path) }.lazy.grep(UNIXSocket).first
+        Enumerator.produce { JSON.parse(client.gets) }.find { |frame| frame["kind"] == "human" }
+        client.write("#{JSON.generate({ "v" => "signal", "name" => "sigterm" })}\n")
+        client.flush
+        client.read
+      ensure
+        client&.close
+      end
+
+      it "stays held when a chat with no editor starts, however long it sits at you>" do
+        path = Lain::CLI::InputSocket.path(name: "wiring-pending", paths:, cwd: project_dir)
+        wiring = chat({ input: "socket:wiring-pending" })
+        pane = Thread.new { quit_after_a_while(path) }
+
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+        pane.join
+
+        expect(held.size).to eq(1)
+      end
+
+      def quit_after_a_while(path)
+        client = Enumerator.produce { connect_to(path) }.lazy.grep(UNIXSocket).first
+        you = Enumerator.produce { JSON.parse(client.gets) }.find { |frame| frame["kind"] == "you" }
+        sleep(0.3)
+        typed(client, "quit", you)
+        client.read
+      ensure
+        client&.close
+      end
+
+      it "stays held when a chat nobody attends starts, even with an editor" do
+        wiring = chat({ non_interactive: true, prompt: "hello", nvim: File.join(state, "nvim.sock") })
+
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+
+        expect(held.size).to eq(1)
+      end
     end
 
     describe "the terminal's completion sources", :seam do

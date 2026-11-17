@@ -9,9 +9,20 @@ require "tmpdir"
 # a sender learns is whatever the chat's own socket says back.
 RSpec.describe Lain::Review::Queue::Delivery, :seam do
   subject(:delivery) do
-    described_class.new(live_sessions: Lain::LiveSessions.new(paths:), log:, account:, shell_out_factory:,
+    described_class.new(live_sessions: Lain::LiveSessions.new(paths:), log:, account:, pending:, shell_out_factory:,
                         greeting: 0.5)
   end
+
+  let(:herdr_env) { {} }
+  let(:started) { [] }
+  let(:workspaces) do
+    Struct.new(:started) do
+      def create(**call) = (started << call) && "w9:p1"
+
+      def include?(_label) = false
+    end.new(started)
+  end
+  let(:pending) { Lain::Review::Queue::Pending.new(paths:, env: herdr_env, workspaces:) }
 
   let(:paths) do
     Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run") })
@@ -139,12 +150,25 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
     end
   end
 
-  it "never sends a row to a chat in another repository's checkout" do
-    clone_at("fuze/api", "https://github.com/fuze/api.git")
+  it "never sends a row to a chat in another repository's checkout, and holds it for its own" do
+    api = clone_at("fuze/api", "https://github.com/fuze/api.git")
     other = chat(clone_at("fuze/web", "https://github.com/fuze/web.git"), id: "web")
     result = delivery.call(row(pull))
 
-    expect([result.outcome, other.offers, log.seen?(row(pull))]).to eq([:no_chat, [], false])
+    expect([result.outcome, other.offers, log.seen?(row(pull)), pending.take(api, notice: ->(_) {})&.to_h])
+      .to eq([:pending, [], false, { "kind" => "pr", "url" => url }])
+  end
+
+  context "when no chat runs in the checkout, inside herdr" do
+    let(:herdr_env) { { "HERDR_ENV" => "1" } }
+
+    it "holds the review and starts a cockpit there" do
+      api = clone_at("fuze/api", "https://github.com/fuze/api.git")
+      result = delivery.call(row(pull))
+
+      expect([result.outcome, started.map { _1[:cwd] }, pending.take(api, notice: ->(_) {}).nil?])
+        .to eq([:started, [api], false])
+    end
   end
 
   it "offers to the newest of 2 chats in 1 checkout and names the other" do

@@ -60,6 +60,16 @@ RSpec.describe Lain::Herdr::Workspaces do
     end
   end
 
+  describe "#include?" do
+    it "says whether a workspace carries the label" do
+      expect([workspaces.include?("reviews"), workspaces.include?("absent")]).to eq([true, false])
+    end
+
+    it "says no without herdr" do
+      expect(described_class.new(env: { "PATH" => "" }, shell_out_factory: factory).include?("reviews")).to be(false)
+    end
+  end
+
   describe "#notify" do
     it "shows a notification" do
       workspaces.notify(title: "3 reviews", body: "2 new")
@@ -75,21 +85,29 @@ RSpec.describe Lain::Herdr::Workspaces do
   end
 
   describe "#create" do
-    it "opens a workspace at cwd and runs the command in its root pane" do
+    it "opens a labelled, focused workspace at cwd and runs the command in its root pane" do
       answers[%w[workspace create]] = ['{"result":{"root_pane":{"pane_id":"w9:p1"}}}', 0]
 
-      workspaces.create(cwd: "/work/repo", command: "lain up --nvim")
+      started = workspaces.create(cwd: "/work/repo", command: "lain up --nvim", label: "review repo")
 
-      expect(argvs).to eq([["/opt/herdr", "workspace", "create", "--cwd", "/work/repo"],
-                           ["/opt/herdr", "pane", "run", "w9:p1", "lain up --nvim"]])
+      created = ["/opt/herdr", "workspace", "create", "--cwd", "/work/repo", "--label", "review repo", "--focus"]
+
+      expect([started, argvs]).to eq(["w9:p1", [created, ["/opt/herdr", "pane", "run", "w9:p1", "lain up --nvim"]]])
     end
 
-    it "runs nothing further when the workspace was not created" do
+    it "runs nothing further, and says so, when the workspace was not created" do
       answers[%w[workspace create]] = ["", 1]
 
-      workspaces.create(cwd: "/work/repo", command: "x")
+      started = workspaces.create(cwd: "/work/repo", command: "x", label: "y")
 
-      expect(argvs.size).to eq(1)
+      expect([started, argvs.size]).to eq([nil, 1])
+    end
+
+    it "says the command did not start when the pane would not run it" do
+      answers[%w[workspace create]] = ['{"result":{"root_pane":{"pane_id":"w9:p1"}}}', 0]
+      answers[%w[pane run]] = ["", 1]
+
+      expect(workspaces.create(cwd: "/work/repo", command: "x", label: "y")).to be_nil
     end
   end
 
@@ -105,7 +123,7 @@ RSpec.describe Lain::Herdr::Workspaces do
       it "makes #create run nothing further for #{body}" do
         answers[%w[workspace create]] = [body, 0]
 
-        expect { workspaces.create(cwd: "/work/repo", command: "x") }.not_to raise_error
+        expect { workspaces.create(cwd: "/work/repo", command: "x", label: "y") }.not_to raise_error
         expect(argvs.size).to eq(1)
       end
     end

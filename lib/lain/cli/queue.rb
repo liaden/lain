@@ -124,7 +124,17 @@ module Lain
       PICKABLE = %w[here local prs].freeze
       TURNED_AWAY = { crowded: "the chat is showing another offer; try again when it is answered",
                       repeat: "already offered" }.freeze
-      private_constant :EXE, :PICKABLE, :TURNED_AWAY
+      HELD = {
+        pending: "no lain chat is running in %<root>s; the review opens with the next lain up --nvim there",
+        started: "no lain chat is running in %<root>s; started lain up --nvim there in a herdr workspace",
+        herdr_failed: "no lain chat is running in %<root>s; herdr did not start a workspace, so the review opens " \
+                      "with the next lain up --nvim there",
+        replaced: "replaced the review held for %<root>s; it opens with the next lain up --nvim there",
+        replaced_started: "replaced the review held for %<root>s; started lain up --nvim there in a herdr workspace",
+        replaced_herdr_failed: "replaced the review held for %<root>s; herdr did not start a workspace, so it opens " \
+                               "with the next lain up --nvim there"
+      }.freeze
+      private_constant :EXE, :PICKABLE, :TURNED_AWAY, :HELD
 
       def self.exit_on_failure? = true
 
@@ -234,21 +244,23 @@ module Lain
         case result.outcome
         when :held then lines(["offered #{::Lain::Review::Queue::Request.plain(row.id)} to #{session(result.chat)}",
                                *also(result)])
+        when *HELD.keys then lines([held(result, row), *also(result)])
         when :browsed
           lines(["no local checkout of #{::Lain::Review::Queue::Request.plain(row.id)}; opened it in the browser" \
                  "#{", so --critique was not used" if critique}"])
-        else raise ::Thor::Error, [refusal(result, row), *also(result)].join("\n")
+        else raise ::Thor::Error, [refusal(result), *also(result)].join("\n")
         end
       end
 
-      def refusal(result, row)
+      def refusal(result)
         case result.outcome
-        when :no_chat then "no lain chat is running in #{row.request.repo_root}"
         when :refused then "the chat refused the request's #{::Lain::Review::Queue::Request.plain(result.field)}"
         when :silent then "the chat #{session(result.chat)} has not answered the offer, and may still show it"
         else TURNED_AWAY.fetch(result.outcome)
         end
       end
+
+      def held(result, row) = format(HELD.fetch(result.outcome), root: row.request.repo_root)
 
       def also(result)
         [*("also running there: #{result.others.map { session(_1) }.join(", ")}" if result.others.any?),
@@ -261,7 +273,8 @@ module Lain
       def delivery
         ::Lain::Review::Queue::Delivery.new(
           live_sessions: LiveSessions.new(paths: Paths.new), log: ::Lain::Review::Queue::Log.new(paths: Paths.new),
-          account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:)
+          account: Forge::Gh::Account.for(github_config, shell_out_factory: Shell::Out.public_method(:new), notes:),
+          pending: ::Lain::Review::Queue::Pending.new(paths: Paths.new)
         )
       end
 

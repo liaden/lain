@@ -16,8 +16,8 @@ module Lain
         #
         # `outcome` is the chat's own answer (`:held`, `:crowded`, `:repeat`,
         # `:refused`), or `:silent` when a chat that greeted gave none, which
-        # an older chat with no reply does; `:no_chat` and `:browsed` are this
-        # side's.
+        # an older chat with no reply does. This side's own are `:browsed`, and
+        # for a checkout with no chat whatever {Pending#hold} answers.
         Result = Data.define(:outcome, :chat, :others, :skipped, :field)
 
         REPLIES = %w[held crowded repeat refused].freeze
@@ -31,15 +31,17 @@ module Lain
         # @param live_sessions [LiveSessions] the chats running now
         # @param log [Log] where a held row is marked seen
         # @param account [#environment] the GitHub account `gh` runs as
+        # @param pending [Pending] keeps the review for a checkout with no chat
         # @param shell_out_factory [#call] builds the `gh` runner
         # @param greeting [Numeric] seconds a socket has to greet; its reply then has {REPLY}
-        def initialize(live_sessions:, log:, account:, shell_out_factory: Shell::Out.public_method(:new),
+        def initialize(live_sessions:, log:, account:, pending:, shell_out_factory: Shell::Out.public_method(:new),
                        greeting: GREETING)
           @live_sessions = live_sessions
           @log = log
           @account = account
           @shell_out_factory = shell_out_factory
           @greeting = greeting
+          @pending = pending
         end
 
         # @param row [Row]
@@ -52,7 +54,7 @@ module Lain
           chats = @live_sessions.in(request.repo_root).select(&:input_socket)
           chat, at, io = chats.each_with_index.lazy.map { |live, index| [live, index, greeted(live)] }.find(&:last)
           skipped = chats.take(at || chats.size)
-          return result(:no_chat, skipped:) unless io
+          return result(@pending.hold(request), skipped:) unless io
 
           offered(row, request, io).with(chat:, others: chats - skipped - [chat], skipped:)
         end

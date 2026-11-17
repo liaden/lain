@@ -30,15 +30,23 @@ module Lain
         run("workspace", "report-metadata", id, "--source", SOURCE, "--token", "#{name}=#{value}")
       end
 
+      # @param label [String]
+      # @return [Boolean] whether a workspace carries the label; false without herdr
+      def include?(label) = !workspace_id(label).nil?
+
       # @return [void]
       def notify(title:, body:) = run("notification", "show", title, "--body", body)
 
+      # Focused, because the human who asked for it is waiting on what it runs.
+      #
       # @param cwd [String]
       # @param command [String] typed into the new workspace's root pane
-      # @return [void]
-      def create(cwd:, command:)
-        pane = answer("workspace", "create", "--cwd", cwd).dig("result", "root_pane", "pane_id")
-        run("pane", "run", pane, command) if pane
+      # @param label [String] the name the sidebar shows
+      # @return [String, nil] the root pane now running the command, nil when it was not started
+      def create(cwd:, command:, label:)
+        pane = answer("workspace", "create", "--cwd", cwd, "--label", label, "--focus")
+               .dig("result", "root_pane", "pane_id")
+        pane if pane && run("pane", "run", pane, command)
       end
 
       private

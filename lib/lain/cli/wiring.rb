@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/module/delegation"
+require "delegate"
 
 module Lain
   module CLI
@@ -418,46 +419,19 @@ module Lain
         def render_warning(line) = @open ? __getobj__.render_warning(line) : @lines << line
       end
 
-      def cycle_key = Lain::Config.keys(paths: @paths).approval_cycle
-
       def approval_key = -> { @switchboard.cycle_approval(surface: Switchboard::KEY_SURFACE) }
 
-      # Nobody types into a chat run under --non-interactive, so nothing reads.
-      # An attended chat reads its own stdin unless `--input socket:<name>` puts
-      # the human in another pane, in which case this process reads no stdin at
-      # all and every line arrives over the socket.
       def input_for(rail, tty)
-        return Lain::Frontend::StdinPump::Idle unless attended?
-        unless human.socket_name
-          return Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes:,
-                                               cycle_key:)
-        end
-
-        input_socket(rail, tty)
+        InputProducer.new(human:, attended: attended?, cockpit: options[:nvim] ? true : false, stdin: @stdin, notes:,
+                          paths: @paths, pending: Lain::Review::Queue::Pending.new(paths: @paths), root:,
+                          status_feed: @status_feed, switchboard: @switchboard, commands: method(:command_names))
+                     .call(rail, tty)
       end
 
       def human
         @human ||= HumanInput.new(input: options[:input], attended: attended?, stdin: @stdin, paths: @paths,
                                   cwd: project.cwd)
       end
-
-      # Bound BEFORE the conversation starts, so a second chat on one socket is
-      # refused while the first is still the only one reading the human.
-      # `notice:` is the chat's own screen: a pane dropped for falling behind,
-      # or a line refused for its size, is something the human has to be able
-      # to read, and the pane is the one surface that cannot report it.
-      def input_socket(rail, tty)
-        Lain::CLI::InputSocket.new(rail:, path: human.socket_path, header: method(:hud_line),
-                                   commands: method(:command_names), layers: method(:live_layers),
-                                   notice: tty.method(:render_warning)).bind
-      end
-
-      # What the input pane draws above its prompt: the one HUD line every
-      # surface shows, composed from the same published struct the tmux bar and
-      # the editor's lualine read, so no surface carries a second derivation.
-      # The fleet tree is not drawn here: a row appearing would reprint the
-      # whole header under the cursor.
-      def hud_line = Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now)
 
       # Lazily: the command surface is assembled after the producer is built,
       # and a pane asks only once it has connected. A skill is typed as a command,
@@ -467,11 +441,6 @@ module Lain
       def command_names
         bound = @command_surface&.commands
         [*bound&.registry&.map { |command| command.name.to_s }, *@skill_catalog&.names&.map(&:to_s)]
-      end
-
-      def live_layers
-        in_force = @switchboard.mode_switch.layers
-        Lain::Frontend::InputPane::LAYERS.select { |layer| in_force.include?(layer) }
       end
 
       def editor_seams(nvim, agent, session)
