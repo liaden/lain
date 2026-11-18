@@ -969,6 +969,34 @@ Check: the sweep for the 3 files, run with `nice` and only while no suite holds 
 **Stop and report if:**
 - The sweep's counts for any of the 3 files differ from `mutants-baseline.txt`. The gate would then fail in CI; report it, and do not edit the baseline.
 
+### F1: Stop the workspace-profile rspec seam reading STUCK on a loaded box          [risk: medium]
+
+Added mid-run under the repeat-flake rule: the example went red in 2 S14 landing hooks this run, and `docs/devs/toolchain-traps.md:268-289` already lists it, "fixed 2026-11-10".
+
+**Depends on:** none
+**Files:**
+- `spec/support/watchdog.rb` (`Starvation#starved?` and how it reads CPU), `spec/support/watchdog_spec.rb` or wherever the Starvation specs live.
+- `spec/lain/seams/workspace_profile_spec.rb` only if the defect is in the example.
+- `docs/devs/toolchain-traps.md`: move the entry to retired, or record what changed.
+
+**Evidence:** `spec/lain/seams/workspace_profile_spec.rb` "passes one spec file with the example count an unconfined run reports" (`budget: 60, starvable:`) raised STUCK at 60.8s (13.1s CPU, load1 28.3 on 16 cores) and 60.9s (13.0s CPU, load1 23.8). `starved?` needs a CPU share under `CPU_SHARE_FLOOR` (0.2) and load over `cores * LOAD_FACTOR` (24) or a memory stall. Both runs sat at a share of 0.21, and the 2nd at a load just under 24, so the starvable excuse never applied. The CPU clock is `CLOCK_PROCESS_CPUTIME_ID` of the whole worker process. The example's work runs in a nested `bundle exec rspec` child, so the share measures the wrong process. Hook logs: the scratchpad's `land-S14/hook-1.keep.log:973`, `hook-2.keep.log:673`.
+
+**Task:** find the defect, then fix it. The leading hypothesis is that the share should count the work the example waits on, not the worker's own threads. Show with a unit spec on `Starvation` that the 2 recorded readings classify as STARVED after the fix and stay STUCK before it. Keep a true hang (0 CPU in the child, quiet box) STUCK.
+
+**Stop and report if:** the only fix you find is a looser threshold (a lower floor, a higher load factor, a bigger budget). That goes to the user as a decision.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a starved nested run reads STARVED
+  Given a watch whose example waits on a child process using 13s CPU over 61s wall at load 28 on 16 cores
+  Then the reading is starved and a starvable example ends pending
+
+Scenario: a real hang still raises
+  Given a watch whose example and its children use no CPU on a box at load 2
+  Then the reading is not starved and the example raises STUCK
+```
+
 ## Integration checks
 
 After the last card lands:
@@ -1066,3 +1094,8 @@ Paths that need user approval: none.
 - 17:38: S11 landed 79196856
 - 17:38: S11 landed 79196856 (attempt 4; hook passed, ruby-checks green).
 - 17:39: S12 started, S13 started (cut from 79196856).
+- 17:43: S12 handed back (2 cops, real tree 0 offenses at 2781 files, same as the old specs). Review started (low).
+- 17:44: S12 APPROVE-WITH-FIXES: the valid_encoding? guard hid a binary-string offense; &. (csend) git spawns were unchecked. Both mechanical; sent back. The worktree-only 'already initialized constant' warning was confirmed absent on main.
+- 17:48: S12 landed a96c4cb7
+- 17:48: S12 landed a96c4cb7 (attempt 1).
+- 17:51: F1 added for the repeat flake (workspace_profile rspec seam STUCK at a 0.21 CPU share). S13 rebased onto a96c4cb7 by the main session (shared-file conflict with S12, both sides kept); review started (medium).
