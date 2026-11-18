@@ -589,6 +589,26 @@ Runs take a per-repository lock, so a second concurrent `gc` does nothing and sa
 stamp under `$XDG_STATE_HOME/lain/gc/` is older than 24 hours, logging beside it. The stamp is
 renewed only after a spawn succeeds, and two simultaneous launches start one run between them.
 
+### lain daemon
+
+The per-user daemon that holds chat registrations, the phone relay and supervised runs.
+
+```bash
+lain daemon status            # pid, uptime, build, relay state, sessions and runs
+lain daemon runs              # the runs it supervises, with status and log
+lain daemon ensure            # start it, or replace one this checkout's build has outdated
+lain daemon restart [--force] # refuses while a run is live, naming it, unless --force
+lain daemon stop RUN          # TERM the run's process group, KILL after its shutdown grace
+lain daemon run epic SLUG     # start a headless epic run in the current project
+lain daemon run chores        # start a headless chores run in the current project
+```
+
+A run's root is the current project, and the run outlives the terminal that started it. A run
+answers its approvals from the phone (`--human remote`). With no built daemon binary, each command
+exits 1 naming `rake daemon:build`. `status` and `runs` never start a daemon: with none running they
+print "no daemon is running" and exit 0, while `stop RUN` exits 1 saying the same. `restart --force`
+lists the live runs it leaves going, since the new daemon cannot list them.
+
 ### lain herdr
 
 Link, unlink or list lain's herdr plugin. No flags.

@@ -1,0 +1,206 @@
+# frozen_string_literal: true
+
+require "tmpdir"
+require "fileutils"
+
+RSpec.describe Lain::CLI::DaemonCommand do
+  def start(*words)
+    printed = +""
+    out = StringIO.new(printed)
+    saved = $stdout
+    $stdout = out
+    described_class.start(words, debug: true)
+    printed
+  ensure
+    $stdout = saved
+  end
+
+  it "exits 1 on failure" do
+    expect(described_class.exit_on_failure?).to be(true)
+  end
+
+  describe "with no daemon binary" do
+    around do |example|
+      Dir.mktmpdir("daemon-command-unbuilt") do |dir|
+        with_env("LAIN_DAEMON" => nil, "CARGO_TARGET_DIR" => dir) { example.run }
+      end
+    end
+
+    [%w[status], %w[runs], %w[ensure], %w[restart], %w[stop run-1], %w[run chores],
+     %w[run epic research-x]].each do |argv|
+      it "refuses `lain daemon #{argv.join(" ")}`, naming rake daemon:build" do
+        expect { start(*argv) }.to raise_error(Thor::Error, /rake daemon:build/)
+      end
+    end
+  end
+
+  describe "against the real daemon", :daemon do
+    around do |example|
+      Dir.mktmpdir("daemon-command-state") do |state|
+        Dir.mktmpdir("daemon-command-root") do |root|
+          @root = File.realpath(root)
+          FileUtils.mkdir_p(File.join(@root, ".git"))
+          @state = state
+          @lain = File.join(state, "fake-lain")
+          File.write(@lain, "trap('TERM') { exit }\nsleep\n")
+          with_env("XDG_RUNTIME_DIR" => daemon_env.fetch("XDG_RUNTIME_DIR"), "XDG_STATE_HOME" => state) { example.run }
+        end
+      end
+    end
+
+    before do
+      project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :git)
+      allow(Lain::Project::Resolver).to receive(:default_project).and_return(project)
+      allow(Lain::Daemon::Launch).to receive(:current).and_wrap_original do |original, **keywords|
+        original.call(**keywords).with(lain: @lain)
+      end
+    end
+
+    def lines(*words) = start(*words).lines(chomp: true)
+
+    def run_id = lines("run", "epic", "research-x").first[/\A\S+/]
+
+    after do
+      daemon = Sync { LainDaemon.pid_at(Lain::Paths.new) }
+      Sync do
+        client = Lain::Daemon.attached(paths: Lain::Paths.new, env: ENV)
+        client&.call("run.list")&.select { _1["status"].nil? }&.each { client.call("run.stop", [{ "id" => _1["id"] }]) }
+        client&.stop
+      end
+      (stragglers - [daemon]).each { |pid| kill(pid) }
+    end
+
+    def kill(pid)
+      Process.kill("KILL", pid)
+    rescue Errno::ESRCH
+      nil
+    end
+
+    # A forced restart leaves a run the new daemon cannot list, so it is found by its stand-in's path.
+    # The daemon's own argv names that path too, so the caller leaves it out for the reap.
+    def stragglers
+      IO.popen(["ps", "-eo", "pid=,args="], &:read).lines.select { _1.include?(@state) }.map(&:to_i)
+    end
+
+    it "starts a daemon with ensure, and says its pid" do
+      expect(start("ensure")).to match(/daemon pid \d+/)
+    end
+
+    it "says no daemon is running for status and runs, and starts none" do
+      expect([start("status"), start("runs")]).to eq(["no daemon is running\n"] * 2)
+      expect(LainDaemon.pid_at(Lain::Paths.new)).to be_nil
+    end
+
+    it "refuses to stop a run when no daemon is running, and starts none" do
+      expect { start("stop", "run-1") }.to raise_error(Thor::Error, /no daemon is running/)
+      expect(LainDaemon.pid_at(Lain::Paths.new)).to be_nil
+    end
+
+    it "shows the pid, uptime, build and relay of the daemon" do
+      start("ensure")
+      report = start("status")
+
+      expect(report).to match(/^pid: \d+$/)
+      expect(report).to match(/^uptime: \S+$/)
+      expect(report).to match(/^build: \S+ \S+$/)
+      expect(report).to match(/^relay: off$/)
+    end
+
+    it "keeps a run going after the command that started it has returned, and lists it" do
+      id = run_id
+
+      expect(lines("runs")).to include(a_string_matching(/\A#{id}\s+epic research-x\s+running\b/))
+    end
+
+    it "lists each registered session and each run in status" do
+      id = run_id
+      Sync do
+        client = Lain::Daemon.ensure(paths: Lain::Paths.new)
+        client.call("session.register", [{ "session_id" => "stem-1", "pid" => Process.pid, "host" => "h",
+                                           "root" => @root, "cwd" => @root, "attended" => true,
+                                           "started_at" => "2026-11-18T00:00:00Z" }])
+        report = start("status")
+        client.stop
+
+        expect(report).to match(/^session stem-1 pid #{Process.pid} #{Regexp.escape(@root)}$/)
+        expect(report).to match(/^run #{id}\s+epic research-x\s+running\b/)
+      end
+    end
+
+    it "stops a run by its id" do
+      id = run_id
+
+      start("stop", id)
+
+      expect(lines("runs")).to include(a_string_matching(/\A#{id}\s+epic research-x\s+exited\b/))
+    end
+
+    it "refuses to restart while a run is live, naming it, and leaves the daemon be" do
+      id = run_id
+      before = start("status")[/^pid: \d+/]
+
+      expect { start("restart") }.to raise_error(Thor::Error, /#{id}.*--force/m)
+      expect(start("status")[/^pid: \d+/]).to eq(before)
+    end
+
+    it "restarts with --force even over a live run" do
+      run_id
+      before = start("status")[/^pid: (\d+)/, 1]
+
+      start("restart", "--force")
+
+      expect(start("status")[/^pid: (\d+)/, 1]).not_to eq(before)
+    end
+
+    it "restarts an idle daemon without being asked to force" do
+      start("ensure")
+      before = start("status")[/^pid: (\d+)/, 1]
+
+      start("restart")
+
+      expect(start("status")[/^pid: (\d+)/, 1]).not_to eq(before)
+    end
+
+    it "says plainly there are no runs when the daemon has none" do
+      start("ensure")
+
+      expect(start("runs")).to eq("no runs\n")
+    end
+
+    it "points at `lain daemon runs` after starting a run" do
+      expect(start("run", "chores")).to match(/\A\S+ .*lain daemon runs/)
+    end
+
+    it "restarts without --force when the only run has exited" do
+      id = run_id
+      start("stop", id)
+
+      expect { start("restart") }.not_to raise_error
+    end
+
+    it "says which runs keep going unlisted when --force restarts over them" do
+      id = run_id
+      pid = lines("runs").first[/pid (\d+)/, 1]
+
+      expect(start("restart", "--force")).to match(/1 run keeps going unlisted:\n\s+#{id}\s+pid #{pid}\n/)
+    end
+
+    it "shows the daemon's note that a restart waits on a live run" do
+      run_id
+      @lain = File.join(File.dirname(@lain), "another-lain")
+      File.write(@lain, "sleep\n")
+
+      expect(start("ensure")).to include("live run")
+    end
+
+    it "starts a chores run for the current project" do
+      expect(lines("run", "chores").first).to match(/\A\S+ /)
+      expect(lines("runs")).to include(a_string_matching(/chores\s+(?:running|exited)/))
+    end
+
+    it "refuses an epic with no slug, and a kind it does not run" do
+      expect { start("run", "epic") }.to raise_error(Thor::Error, /SLUG/)
+      expect { start("run", "review-poll") }.to raise_error(Thor::Error, /epic|chores/)
+    end
+  end
+end

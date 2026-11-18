@@ -229,6 +229,9 @@ class LainCLI < Thor
   desc "herdr SUBCOMMAND", "Link lain's plugin into herdr"
   subcommand "herdr", Lain::CLI::HerdrLink
 
+  desc "daemon SUBCOMMAND", "The per-user daemon: status, runs, ensure, restart, stop, run"
+  subcommand "daemon", Lain::CLI::DaemonCommand
+
   desc "queue SUBCOMMAND", "What to review next: plan runs, local changes and pull requests"
   subcommand "queue", Lain::CLI::Queue
 

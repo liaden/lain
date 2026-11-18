@@ -722,7 +722,8 @@ RSpec.describe LainCLI do
       "todos status" => %w[todos status --nope],
       "up" => %w[up /tmp --nope],
       "export" => %w[export x --nope],
-      "queue here" => %w[queue here --nope]
+      "queue here" => %w[queue here --nope],
+      "daemon status" => %w[daemon status --nope]
     }.each do |command, argv|
       it "refuses an unknown switch on `lain #{command}`, naming it" do
         expect { described_class.start(argv, debug: true) }

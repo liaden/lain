@@ -61,6 +61,22 @@ module Lain
       end
     end
 
+    # Never starts a daemon, for the callers that only read one.
+    # Must run inside an Async reactor.
+    # @param paths [Paths]
+    # @param env [Hash] where the off switch and the launch are read
+    # @param launch [Launch, nil] this checkout's {Launch.current} when nil
+    # @return [Core::Client, nil] nil when no daemon answers
+    # @raise [Error] when the daemon is off or its binary is not built
+    def self.attached(paths:, env: ENV, launch: nil)
+      raise Error, SWITCHED_OFF if env[SWITCH] == OFF
+
+      launch ||= Launch.current(paths:, env:)
+      raise Error, format(UNBUILT, binary: launch.binary) unless built?(launch)
+
+      attach(launch.socket)
+    end
+
     # Must run inside an Async reactor.
     # @param paths [Paths]
     # @return [nil]

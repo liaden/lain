@@ -84,6 +84,26 @@ RSpec.describe Lain::Daemon do
     end
   end
 
+  describe ".attached" do
+    it "refuses, naming rake daemon:build, when the binary is not built" do
+      Dir.mktmpdir("attached-unbuilt") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        env = { "CARGO_TARGET_DIR" => dir }
+
+        expect { Sync { described_class.attached(paths:, env:) } }.to raise_error(Lain::Error, /rake daemon:build/)
+      end
+    end
+
+    it "refuses when the off switch is set, before it reads the binary" do
+      Dir.mktmpdir("attached-off") do |dir|
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+
+        expect { Sync { described_class.attached(paths:, env: { "LAIN_DAEMON" => "off" }) } }
+          .to raise_error(Lain::Error, /off/)
+      end
+    end
+  end
+
   describe "in an example that does not opt in" do
     it "answers Absent without making the runtime dir" do
       Dir.mktmpdir("off-daemon") do |dir|
@@ -376,6 +396,16 @@ RSpec.describe Lain::Daemon do
 
       expect(Lain::Core::Client).to have_received(:start).with(hash_including(pushes:)).at_least(:once)
       expect(Lain::Core::Client).not_to have_received(:start).with(hash_including(pushes: nil))
+    end
+
+    it "attaches to a running daemon, and answers nil, starting none, when there is none" do
+      expect(Sync { described_class.attached(paths: daemon_paths, env: daemon_env) }).to be_nil
+      expect(LainDaemon.pid_at(daemon_paths)).to be_nil
+
+      Sync { described_class.ensure(paths: daemon_paths, env: daemon_env).stop }
+      client = Sync { described_class.attached(paths: daemon_paths, env: daemon_env).tap(&:stop) }
+
+      expect(client).to be_a(Lain::Core::Client)
     end
 
     it "puts its socket in the example's own runtime dir" do
