@@ -433,6 +433,8 @@ ThreadSafety/DirChdir:
   Exclude:
     - "spec/**/*"
     - "exe/lain"
+    # A forked single-threaded child changes its own cwd.
+    - "lib/lain/daemon/spawner.rb"
 
 # --- Doubles: the four ducks that cannot be verified -----------------------
 #

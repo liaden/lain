@@ -41,7 +41,10 @@ module OutputDiscipline
   # relative to `lib/`.
   #
   #   "lain/some_file.rb" => "why this file is allowed to write to the terminal"
-  ALLOWLIST = {}.freeze
+  ALLOWLIST = {
+    "lain/daemon/spawner.rb" =>
+      "a forked run points its own fds 1 and 2 at its log before lain starts; the spawner owns no terminal"
+  }.freeze
 
   # A single detected violation, with enough context to fix it.
   Violation = Struct.new(:path, :line, :snippet) do
@@ -133,6 +136,11 @@ RSpec.describe "output discipline" do
         "Route output through a Lain::Sink, or add a justified entry to " \
         "OutputDiscipline::ALLOWLIST."
     }
+  end
+
+  # An entry is a place the rule is broken on purpose, so a new one is a deliberate edit here too.
+  it "allows only the forked run's own log in lib/lain/daemon/spawner.rb" do
+    expect(OutputDiscipline::ALLOWLIST.keys).to eq(["lain/daemon/spawner.rb"])
   end
 
   it "does not flag receiver calls, comments, or string literals (self-test)" do

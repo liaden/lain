@@ -7,7 +7,8 @@ module Lain
     # `lain daemon status|runs|ensure|restart|stop|run|herdr-sync`. The read verbs only attach,
     # because a status that starts a daemon leaves one behind that nobody asked for;
     # `ensure`, `restart` and `run` are the verbs that start one. `herdr-sync` is the daemon's own
-    # call, made as runs start, end, park and unpark.
+    # call, made as runs start, end, park and unpark, and so is the hidden `spawner`, which neither
+    # starts nor attaches one.
     class DaemonCommand < ::Thor
       include Exe::Boundary
 
@@ -114,6 +115,12 @@ module Lain
             ""
           end
         end
+      end
+
+      desc "spawner", "Fork headless runs from this warmed process, as the daemon asks on stdin", hide: true
+      def spawner
+        # LainCLI is exe/lain's, the only entry this hidden command is reached through.
+        ::Lain::Daemon::Spawner.on_stdin(starter: ->(argv) { ::LainCLI.start(argv) }).call
       end
 
       desc "stop RUN", "End a run: TERM its process group, KILL after its shutdown grace"

@@ -409,11 +409,6 @@ class LainCLI < Thor
   class ChatPreflightFork
     Answer = Data.define(:stdout, :stderr, :exitstatus)
 
-    # Every exception a spawned Ruby prints before exiting 1. SystemExit carries chat's own
-    # status, and a SignalException ends the child as it would end a spawned one. An
-    # Exception subclass defined outside core is not caught: it exits 1 with no message.
-    CRASHES = [StandardError, ScriptError, NoMemoryError, SecurityError, SystemStackError].freeze
-
     # @return [Hash] the keywords Up takes; empty where fork is missing, so Up spawns instead
     def self.wiring
       return {} unless Process.respond_to?(:fork)
@@ -458,23 +453,12 @@ class LainCLI < Thor
       nil
     end
 
-    # Leaves by `exit!` whatever happens, so no at_exit hook of the parent runs
-    # here and the fork never returns into the parent's code. Interrupts are
-    # let in again because the fork happened while the parent deferred them,
-    # and a TERM must still stop a hung check. A signal ends it by that signal,
-    # so the parent reads a killed check rather than a refusal.
+    # Interrupts are let in again because the fork happened while the parent
+    # deferred them, and a TERM must still stop a hung check.
     def child(args, **pane)
-      status = 1
-      begin
+      Lain::ForkedExit.new(out: $stdout, err: $stderr).call do
         stand_in_pane(**pane)
-        status = Thread.handle_interrupt(Object => :immediate) { chat_status(args) }
-      rescue SignalException => e
-        signalled = e.signo
-      ensure
-        $stdout.flush
-        $stderr.flush
-        die_by(signalled) if signalled
-        exit!(status)
+        Thread.handle_interrupt(Object => :immediate) { @starter.call(args) }
       end
     end
 
@@ -486,24 +470,6 @@ class LainCLI < Thor
       Dir.chdir(cwd)
       ENV.update(environment)
       Lain::Config.forget!
-    end
-
-    # SYSTEM_DEFAULT, the kernel's action; Ruby's own "DEFAULT" for TERM raises again.
-    def die_by(signo)
-      Signal.trap(signo, "SYSTEM_DEFAULT")
-      Process.kill(signo, Process.pid)
-    rescue ArgumentError
-      nil
-    end
-
-    def chat_status(args)
-      @starter.call(args)
-      0
-    rescue SystemExit => e
-      e.status
-    rescue *CRASHES => e
-      $stderr.write(e.full_message(highlight: false))
-      1
     end
   end
 
