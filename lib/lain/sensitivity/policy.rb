@@ -48,7 +48,7 @@ module Lain
     # {#gates?} is the one {Middleware::Gate} asks, so a `read_file` on
     # `.env` reaches a human although `read_file` declares itself tier 1. The
     # whole three-place boundary, and the measured detector behind it, is in
-    # ARCHITECTURE.md's "The secret boundary".
+    # docs/devs/architecture.md's "The secret boundary".
     #
     # The gate already turns on {Tool#requires_approval?}, which is the TIER
     # axis: whether the model controls the command string. This is the second
@@ -88,7 +88,7 @@ module Lain
       # tool name => the input field that names a path for that tool, and the
       # whole of what this class knows about tools. Pinned by a spec that fails
       # BY NAME when a new path-taking tool ships, with no allowlist to land in;
-      # see ARCHITECTURE.md's "The secret boundary" for why a `path`-shaped
+      # see docs/devs/architecture.md's "The secret boundary" for why a `path`-shaped
       # field sniffed off any input was rejected.
       PATH_FIELDS = {
         "read_file" => "path",

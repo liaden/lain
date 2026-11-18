@@ -15,7 +15,7 @@ module Lain
       #
       # == The base is a CONSTANT, and that is the incremental property
       #
-      # {Marks} refuses to cross a base change before it consults a single key,
+      # {Review::Marks} refuses to cross a base change before it consults a single key,
       # so a base derived from anything that moves -- a commit, a timestamp, the
       # tree's own digest -- would discard every mark on every re-survey. The
       # head is the opposite question and moves with the content, the mirror of a
@@ -24,7 +24,7 @@ module Lain
       #
       # Opening reads every file ONCE and parses none of them; the honest price
       # of that trade, and how many times a fully worked corpus reads each file,
-      # are in `docs/review.md` under "The corpus source". The file ceiling is
+      # are in `docs/devs/review.md` under "The corpus source". The file ceiling is
       # checked in {#initialize} from the walk alone, so an oversized corpus is
       # refused without reading a byte -- structural rather than remembered.
       # == Every line carries its `+`, blank lines included
@@ -34,7 +34,7 @@ module Lain
       # have, and materialise anchors against a base that holds nothing.
       # `old_start`/`old_count` are fixed at `0,0` and {UnitHunk} marks every line.
       #
-      # Two more arguments live in `docs/review.md` under "The corpus source":
+      # Two more arguments live in `docs/devs/review.md` under "The corpus source":
       # why every path is named from ONE root and that root is the READER's cwd
       # (`named_from:`, lexical and never resolved, and what it costs the
       # address), and why all four collaborators are injected.
