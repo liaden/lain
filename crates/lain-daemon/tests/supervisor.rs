@@ -21,6 +21,11 @@ const PARKER: &str = "a_run_helper_parks_a_call_then_settles_it";
 
 /// A stand-in for ruby: it records what it was run with, then does what `PROBE_MODE` says.
 const FAKE_RUBY: &str = r#"#!/bin/sh
+if [ "$2" = daemon ] && [ "$3" = spawner ]; then
+  echo $$ >> "$PROBE/spawners"
+  [ -n "$SPAWNER_EXE" ] && exec "$SPAWNER_EXE" --exact "$SPAWNER_NAME" --nocapture --test-threads 1
+  exit 0
+fi
 if [ "$2" = daemon ]; then echo "$@" >> "$PROBE/syncs"; exit 0; fi
 printf '%s\0' "$@" > "$PROBE/argv.tmp" && mv "$PROBE/argv.tmp" "$PROBE/argv"
 env > "$PROBE/env"
@@ -110,6 +115,17 @@ async fn daemon_with(mode: &str, env: &[(&str, &str)]) -> Daemon {
     spawned(mode, env, false, &[]).await
 }
 
+/// As [`daemon_with_relay`], with [`SPAWNER`] standing in for `lain daemon spawner`.
+async fn forking(mode: &str, env: &[(&str, &str)]) -> Daemon {
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut env = env.to_vec();
+    env.extend([
+        ("SPAWNER_EXE", exe.to_str().expect("utf-8")),
+        ("SPAWNER_NAME", SPAWNER),
+    ]);
+    spawned(mode, &env, true, &[]).await
+}
+
 /// As [`daemon_with`], with the review poll on a timer, whose first tick is at once.
 async fn daemon_polling(mode: &str, env: &[(&str, &str)]) -> Daemon {
     spawned(mode, env, false, &["--poll-every", "300"]).await
@@ -146,6 +162,8 @@ async fn spawned(mode: &str, env: &[(&str, &str)], relay: bool, extra: &[&str]) 
         .env("PROBE", &probe)
         .env("PROBE_MODE", mode)
         .env("HELPER_SOCKET", dir.path().join("daemon.sock"))
+        .env("SPAWN_RUBY", &ruby)
+        .env("SPAWN_LAIN", dir.path().join("exe-lain"))
         .env("DAEMON_LAUNCH_DIGEST", "abc")
         .envs(env.iter().copied())
         .stdin(Stdio::null())
@@ -1218,4 +1236,424 @@ async fn a_session_outside_every_run_parks_without_blocking_a_live_run() {
     );
     std::fs::write(daemon.probe().join("release"), "").expect("release the run");
     daemon.ended(&field(&run, "id")).await;
+}
+
+/// The stand-in spawner the fake ruby runs for `daemon spawner` when a test asks for one.
+const SPAWNER: &str = "a_spawner_helper_runs_each_request_in_its_own_group";
+
+/// The lines of a probe file, none when it is not there yet.
+fn lines_of(path: &Path) -> Vec<String> {
+    std::fs::read_to_string(path)
+        .unwrap_or_default()
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+fn pid_of(run: &Value) -> u32 {
+    u32::try_from(field(run, "pid").as_u64().expect("a pid")).expect("a pid")
+}
+
+impl Daemon {
+    /// The pid of the `nth` spawner this daemon started, counting from 1, once it has.
+    async fn spawner(&self, nth: usize) -> u32 {
+        let file = self.probe().join("spawners");
+        let deadline = tokio::time::Instant::now() + WAIT;
+        loop {
+            if let Some(pid) = lines_of(&file).get(nth - 1) {
+                return pid.parse().expect("a pid");
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "spawner {nth} never started; the daemon's trace: {}",
+                trace_of(self)
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    /// Boots the spawner the way a daemon does, with a first run, which starts by exec and is
+    /// stopped at once, its probe notes cleared; the pid of the spawner it started.
+    async fn warmed(&mut self) -> u32 {
+        let project = self.project();
+        let (error, first) = self.start(bare("chores", &project)).await;
+        assert_eq!(Value::Nil, error);
+        self.stop(&first).await;
+        assert!(self.forked().is_empty(), "the first run was forked");
+        for noted in ["argv", "env", "cwd", "grandchild", "registered"] {
+            let _ = std::fs::remove_file(self.probe().join(noted));
+        }
+        self.spawner(1).await
+    }
+
+    /// The runs the stand-in spawner forked, by pid.
+    fn forked(&self) -> Vec<u32> {
+        lines_of(&self.probe().join("forked"))
+            .iter()
+            .map(|pid| pid.parse().expect("a pid"))
+            .collect()
+    }
+
+    async fn stop(&mut self, run: &Value) -> Value {
+        let (error, stopped) = self
+            .request("run.stop", vec![map(&[("id", field(run, "id"))])])
+            .await;
+        assert_eq!(Value::Nil, error);
+        stopped
+    }
+
+    async fn registered(&mut self, count: usize) {
+        let deadline = tokio::time::Instant::now() + WAIT;
+        while self.sessions().await.len() < count {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "{count} sessions never registered"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+}
+
+fn kill(pid: u32) {
+    nix::sys::signal::kill(
+        nix::unistd::Pid::from_raw(i32::try_from(pid).expect("a pid")),
+        nix::sys::signal::Signal::SIGKILL,
+    )
+    .expect("kill");
+}
+
+/// Answers each request line by running `SPAWN_RUBY SPAWN_LAIN <argv>` as the request says, in a
+/// group of its own as a real fork's setsid would be, and reports its pid and then its exit. A
+/// `stale` file in the probe dir makes it answer the next request stale, once, and then only
+/// report its runs' exits until none is left. At an end of file it leaves, as the real one does.
+#[test]
+fn a_spawner_helper_runs_each_request_in_its_own_group() {
+    use std::io::BufRead;
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::OpenOptionsExt;
+    use std::os::unix::process::{CommandExt, ExitStatusExt};
+
+    let (Ok(probe), Some(ruby), Some(lain)) = (
+        std::env::var("PROBE"),
+        std::env::var_os("SPAWN_RUBY"),
+        std::env::var_os("SPAWN_LAIN"),
+    ) else {
+        return;
+    };
+    let probe = PathBuf::from(probe);
+    #[cfg(target_os = "linux")]
+    {
+        let fds: Vec<String> = std::fs::read_dir("/proc/self/fd")
+            .expect("read /proc/self/fd")
+            .filter_map(|entry| {
+                let entry = entry.ok()?;
+                let target = std::fs::read_link(entry.path()).ok()?;
+                Some(format!(
+                    "{} {}",
+                    entry.file_name().to_str()?,
+                    target.display()
+                ))
+            })
+            .collect();
+        std::fs::write(probe.join("spawner-fds"), fds.join("\n")).expect("note the fds");
+    }
+    let socket = std::os::unix::net::UnixStream::from(
+        std::io::stdin()
+            .as_fd()
+            .try_clone_to_owned()
+            .expect("the socket on fd 0"),
+    );
+    let writer = std::sync::Arc::new(std::sync::Mutex::new(
+        socket.try_clone().expect("the socket"),
+    ));
+    let answer = move |line: serde_json::Value| {
+        writer
+            .lock()
+            .expect("the socket")
+            .write_all(format!("{line}\n").as_bytes())
+            .expect("answer");
+    };
+    let mut runs = Vec::new();
+    let mut stale = false;
+    for line in std::io::BufReader::new(socket).lines() {
+        let Ok(line) = line else { break };
+        if std::fs::remove_file(probe.join("stale")).is_ok() {
+            answer(serde_json::json!({ "stale": true }));
+            stale = true;
+            break;
+        }
+        let request: serde_json::Value = serde_json::from_str(&line).expect("a JSON request");
+        let text = |name: &str| request[name].as_str().expect("a string").to_string();
+        let log = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .mode(0o600)
+            .open(text("log"))
+            .expect("the run's log");
+        let argv: Vec<String> = request["argv"]
+            .as_array()
+            .expect("argv")
+            .iter()
+            .map(|word| word.as_str().expect("a word").to_string())
+            .collect();
+        let env = request["env"].as_object().expect("env").clone();
+        let mut child = std::process::Command::new(&ruby)
+            .arg(&lain)
+            .args(argv)
+            .env_clear()
+            .envs(
+                env.iter()
+                    .map(|(name, value)| (name, value.as_str().expect("a value"))),
+            )
+            .current_dir(text("cwd"))
+            .stdin(Stdio::null())
+            .stdout(log.try_clone().expect("the log"))
+            .stderr(log)
+            .process_group(0)
+            .spawn()
+            .expect("run it");
+        let pid = child.id();
+        let mut forked = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .open(probe.join("forked"))
+            .expect("the forked list");
+        writeln!(forked, "{pid}").expect("note it");
+        answer(serde_json::json!({ "pid": pid }));
+        let answer = answer.clone();
+        runs.push(std::thread::spawn(move || {
+            let status = child.wait().expect("wait");
+            let code = status
+                .code()
+                .or_else(|| status.signal().map(|signal| 128 + signal))
+                .expect("a status");
+            answer(serde_json::json!({ "pid": pid, "status": code }));
+        }));
+    }
+    if stale {
+        for run in runs {
+            run.join().expect("the run's waiter");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_run_started_while_the_spawner_is_up_is_forked_and_its_session_blocks_it() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut daemon = forking(
+        "register",
+        &[
+            ("HELPER_EXE", exe.to_str().expect("utf-8")),
+            ("HELPER_NAME", PARKER),
+        ],
+    )
+    .await;
+    let spawner = daemon.warmed().await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    let pid = pid_of(&run);
+    assert_eq!(vec![pid], daemon.forked(), "the run was not forked");
+    assert_eq!(pid, pgid_of(pid), "the run leads its own group");
+    assert_ne!(pgid_of(spawner), pid);
+
+    appeared(&daemon.probe().join("registered")).await;
+    let id = field(&run, "id");
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+    std::fs::write(daemon.probe().join("settle"), "").expect("settle it");
+    blocked(&mut daemon, &id, false).await;
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&id).await;
+}
+
+#[tokio::test]
+async fn a_forked_runs_exit_status_reaches_run_list_through_the_spawner() {
+    let mut daemon = forking("exit3", &[]).await;
+    daemon.warmed().await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+
+    let row = daemon.ended(&field(&run, "id")).await;
+    assert_eq!(
+        vec![pid_of(&run)],
+        daemon.forked(),
+        "the run was not forked"
+    );
+    assert_eq!(Value::from(3), field(&row, "status"));
+    assert_eq!(Value::from(0), field(&daemon.info().await, "live_runs"));
+}
+
+#[tokio::test]
+async fn when_the_spawner_dies_the_next_run_starts_by_exec_and_a_new_spawner_starts() {
+    let mut daemon = forking("exit3", &[]).await;
+    let first = daemon.warmed().await;
+    kill(first);
+    let project = daemon.project();
+
+    let (error, by_exec) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    let row = daemon.ended(&field(&by_exec, "id")).await;
+    assert_eq!(Value::from(3), field(&row, "status"));
+    assert!(daemon.forked().is_empty(), "a dead spawner forked a run");
+
+    let second = daemon.spawner(2).await;
+    assert_ne!(first, second);
+    let (error, forked) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&forked, "id")).await;
+    assert_eq!(vec![pid_of(&forked)], daemon.forked());
+}
+
+#[tokio::test]
+async fn stopping_a_forked_run_stops_its_group_and_leaves_the_spawner_serving() {
+    let mut daemon = forking("group", &[]).await;
+    let spawner = daemon.warmed().await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    let grandchild: u32 = appeared(&daemon.probe().join("grandchild"))
+        .await
+        .trim()
+        .parse()
+        .expect("a pid");
+    std::fs::remove_file(daemon.probe().join("grandchild")).expect("clear the probe");
+
+    let stopped = daemon.stop(&run).await;
+    assert_eq!(Value::from(128 + 15), field(&stopped, "status"));
+    let deadline = tokio::time::Instant::now() + WAIT;
+    while alive(grandchild) {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the group outlived its stop"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    assert!(alive(spawner), "the stop reached the spawner");
+    let (error, next) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    assert_eq!(vec![pid_of(&run), pid_of(&next)], daemon.forked());
+    assert_eq!(1, lines_of(&daemon.probe().join("spawners")).len());
+    appeared(&daemon.probe().join("grandchild")).await;
+    daemon.stop(&next).await;
+}
+
+#[tokio::test]
+async fn a_stale_spawner_is_replaced_for_the_request_and_still_reports_its_own_runs() {
+    let mut daemon = forking("group", &[]).await;
+    let first = daemon.warmed().await;
+    let project = daemon.project();
+    let (error, before) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    appeared(&daemon.probe().join("grandchild")).await;
+
+    std::fs::write(daemon.probe().join("stale"), "").expect("lain's files changed");
+    let (error, after) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    assert_ne!(first, daemon.spawner(2).await);
+    assert_eq!(vec![pid_of(&before), pid_of(&after)], daemon.forked());
+
+    for run in [&before, &after] {
+        let stopped = daemon.stop(run).await;
+        assert_eq!(
+            Value::from(128 + 15),
+            field(&stopped, "status"),
+            "{stopped}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_run_whose_spawner_died_lists_live_until_its_process_is_gone() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut daemon = forking(
+        "register",
+        &[
+            ("HELPER_EXE", exe.to_str().expect("utf-8")),
+            ("HELPER_NAME", HELPER),
+        ],
+    )
+    .await;
+    let spawner = daemon.warmed().await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    daemon.registered(1).await;
+
+    kill(spawner);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    while tokio::time::Instant::now() < deadline {
+        assert_eq!(Value::from(1), field(&daemon.info().await, "live_runs"));
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    let row = daemon.ended(&field(&run, "id")).await;
+    assert_eq!(
+        Value::from(-1),
+        field(&row, "status"),
+        "an exit no parent reported reads as unknown"
+    );
+}
+
+/// The fds this process holds that a child would inherit: a test run under `flock` hands its
+/// lock down, and a daemon started from here passes such an fd on, which Ruby's start does not.
+#[cfg(target_os = "linux")]
+fn inherited_fds() -> Vec<u32> {
+    const CLOSE_ON_EXEC: u32 = 0o2_000_000;
+    std::fs::read_dir("/proc/self/fdinfo")
+        .expect("read fdinfo")
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let fd: u32 = entry.file_name().to_str()?.parse().ok()?;
+            let info = std::fs::read_to_string(entry.path()).ok()?;
+            let flags = info.lines().find_map(|line| line.strip_prefix("flags:"))?;
+            let flags = u32::from_str_radix(flags.trim(), 8).ok()?;
+            (fd > 2 && flags & CLOSE_ON_EXEC == 0).then_some(fd)
+        })
+        .collect()
+}
+
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn the_spawner_holds_only_its_socket_and_log_and_never_the_provider_key() {
+    let inherited = inherited_fds();
+    let mut daemon = forking("exit3", &[("ANTHROPIC_API_KEY", "sk-test")]).await;
+    let spawner = daemon.warmed().await;
+    let fds = appeared(&daemon.probe().join("spawner-fds")).await;
+    let log = daemon.dir.path().join("state").join("spawner.log");
+    let mut own = Vec::new();
+    for line in fds.lines() {
+        let (fd, target) = line.split_once(' ').expect("fd and target");
+        let fd: u32 = fd.parse().expect("an fd");
+        match fd {
+            0 => assert!(target.starts_with("socket:"), "fd 0 is {target}"),
+            1 | 2 => assert_eq!(log.to_str().expect("utf-8"), target, "fd {fd}"),
+            _ if target.ends_with("/fd") || inherited.contains(&fd) => {}
+            _ => own.push(line.to_string()),
+        }
+    }
+    assert!(own.is_empty(), "the spawner holds {own:?}");
+    assert_eq!(
+        0o600,
+        mode_of(&log),
+        "the spawner's log is the owner's alone"
+    );
+
+    let environment = std::fs::read(format!("/proc/{spawner}/environ")).expect("read environ");
+    assert!(
+        !String::from_utf8_lossy(&environment).contains("ANTHROPIC_API_KEY"),
+        "the spawner holds the provider key"
+    );
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    let env = appeared(&daemon.probe().join("env")).await;
+    assert!(
+        env.lines().any(|line| line == "ANTHROPIC_API_KEY=sk-test"),
+        "the forked run lacks the provider key"
+    );
 }

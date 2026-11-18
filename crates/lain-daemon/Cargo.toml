@@ -31,6 +31,8 @@ ureq = { version = "3", default-features = false, features = ["rustls-no-provide
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 rustls-native-certs = "0.8"
 serde = { version = "1", features = ["derive"] }
+# The spawner's requests and replies are JSON lines.
+serde_json = "1"
 # The relay's token check: the guess's digest against each paired device's, in constant time, so
 # its timing tells a peer neither which device nor how much of a guess matched.
 subtle = "2.6"

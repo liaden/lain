@@ -11,6 +11,7 @@ mod ntfy;
 mod periodic;
 mod registry;
 mod relay;
+mod spawner;
 mod supervisor;
 
 use std::io;
@@ -335,7 +336,7 @@ impl Handler for Daemon {
             )),
             "offer.send" => self.offer(params).await,
             "offer.reply" => self.offer_reply(caller, params),
-            "run.start" => self.run_start(params).inspect_err(|error| {
+            "run.start" => self.run_start(params).await.inspect_err(|error| {
                 if let RpcError::Refused { code, .. } = error {
                     tracing::warn!(code, peer = ?caller.peer, "refused a run.start");
                 }
@@ -463,7 +464,7 @@ impl Daemon {
 
 impl Daemon {
     /// A request naming anything the kind does not take learns which name it was.
-    fn run_start(&self, params: Vec<Value>) -> Result<Value, RpcError> {
+    async fn run_start(&self, params: Vec<Value>) -> Result<Value, RpcError> {
         let usage = "run.start takes [{kind, root, args}]";
         let [param] = <[Value; 1]>::try_from(params).map_err(|_| RpcError::Refused {
             code: "bad_params",
@@ -479,7 +480,7 @@ impl Daemon {
                 code: "bad_params",
                 message: format!("{usage}: {}", clipped(&error.to_string())),
             })?;
-        self.runs.start(start).map(|run| run.to_value())
+        self.runs.start(start).await.map(|run| run.to_value())
     }
 }
 

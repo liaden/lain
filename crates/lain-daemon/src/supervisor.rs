@@ -23,6 +23,7 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 
 use crate::registry::{ProcTable, Procs};
+use crate::spawner::{Spawned, Spawner};
 
 /// How long a stopped run's group has between TERM and KILL: past the chat's own 60 s shutdown
 /// grace (`CLI::Shutdown::GRACE_DEFAULT`), so a KILL never cuts the cleanup it is doing.
@@ -34,6 +35,14 @@ const SYNC_EVERY: Duration = Duration::from_secs(1);
 
 /// A herdr-sync that has not ended by then is killed: a hung one would hold every later sync back.
 const SYNC_BOUND: Duration = Duration::from_secs(30);
+
+/// How long a start waits on the spawner's answer: a warmed fork answers in milliseconds and a
+/// boot in about a second, so a spawner silent past this is wedged and the run starts by exec.
+pub(crate) const SPAWN_BOUND: Duration = Duration::from_secs(10);
+
+/// How often a run whose spawner went before reporting it is checked for, since nothing reports
+/// its exit once its parent is gone.
+const ORPHAN_POLL: Duration = Duration::from_secs(1);
 
 /// How far up a session's parents the daemon looks for the run that started it.
 const MAX_ANCESTORS: usize = 64;
@@ -242,6 +251,9 @@ pub(crate) struct Supervisor {
     next: AtomicU64,
     /// `None` for a daemon that runs nothing, which has nothing to show.
     sync: Option<Arc<Coalescer>>,
+    /// The warmed spawner runs are forked from; a run starts by exec while there is none up. The
+    /// first caller's run starts it, so a daemon that never runs anything never boots one.
+    spawner: Mutex<Option<Arc<Spawner>>>,
 }
 
 impl Supervisor {
@@ -255,6 +267,7 @@ impl Supervisor {
             runs: Mutex::new(Vec::new()),
             next: AtomicU64::new(1),
             sync,
+            spawner: Mutex::new(None),
         })
     }
 
@@ -312,19 +325,116 @@ impl Supervisor {
         self.runs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// A caller's request. Must run inside the runtime, which reaps the run.
-    pub(crate) fn start(self: &Arc<Self>, request: RunStart) -> Result<Run, RpcError> {
+    /// A caller's request, forked from the spawner when one is up and started by exec when not.
+    /// Must run inside the runtime, which reaps the run.
+    pub(crate) async fn start(self: &Arc<Self>, request: RunStart) -> Result<Run, RpcError> {
         self.settings()?;
-        self.launch(RunKind::from_request(
-            &request.kind,
-            &request.args,
-            &request.root,
-        )?)
+        let kind = RunKind::from_request(&request.kind, &request.args, &request.root)?;
+        // Its own task, so a caller that hangs up mid-fork cannot drop a forked run unlisted.
+        let supervisor = Arc::clone(self);
+        tokio::spawn(async move { supervisor.launch(kind).await })
+            .await
+            .unwrap_or_else(|error| {
+                Err(refused(
+                    "spawn_failed",
+                    format!("the start failed: {error}"),
+                ))
+            })
     }
 
-    /// The daemon's own timer's run, which a caller's request cannot name.
+    async fn launch(self: &Arc<Self>, kind: RunKind) -> Result<Run, RpcError> {
+        let (id, log, output) = self.open_run_log()?;
+        let forked = match self.request_line(&kind, &log) {
+            Some(line) => self.fork(&line).await,
+            None => None,
+        };
+        let (pid, process) = match forked {
+            Some(forked) => forked,
+            None => self.exec(&kind, output)?,
+        };
+        Ok(self.supervise(id, kind, pid, log, process))
+    }
+
+    /// The daemon's own timer's run, which a caller's request cannot name. Always by exec: it
+    /// runs once in minutes, and the timer has no caller to wait on a spawner.
     pub(crate) fn start_review_poll(self: &Arc<Self>) -> Result<Run, RpcError> {
-        self.launch(RunKind::ReviewPoll)
+        let kind = RunKind::ReviewPoll;
+        let (id, log, output) = self.open_run_log()?;
+        let (pid, process) = self.exec(&kind, output)?;
+        Ok(self.supervise(id, kind, pid, log, process))
+    }
+
+    fn spawner(&self) -> Option<Arc<Spawner>> {
+        self.spawner
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// Replaces `failed`, the spawner the caller saw fail, unless another start already has: 2
+    /// starts that saw the same one fail boot 1 spawner between them. The one it replaces keeps
+    /// reading its own end until its runs are reported.
+    fn restart_spawner(&self, failed: Option<&Arc<Spawner>>) {
+        let mut current = self.spawner.lock().unwrap_or_else(PoisonError::into_inner);
+        let same = match (current.as_ref(), failed) {
+            (Some(current), Some(failed)) => Arc::ptr_eq(current, failed),
+            (None, None) => true,
+            _ => false,
+        };
+        if same {
+            *current = self.settings.as_ref().and_then(start_spawner);
+        }
+    }
+
+    /// `None` when the run must start by exec. A stale spawner is replaced and the request
+    /// retried once on the new one; a dead one is replaced for the next run.
+    async fn fork(&self, line: &[u8]) -> Option<(u32, Process)> {
+        for _ in 0..2 {
+            let current = self.spawner();
+            let Some(spawner) = current.as_ref().filter(|spawner| spawner.is_open()) else {
+                self.restart_spawner(current.as_ref());
+                return None;
+            };
+            match spawner.spawn(line, SPAWN_BOUND).await {
+                Spawned::Forked { pid, exit } => return Some((pid, Process::Forked(exit))),
+                Spawned::Stale => self.restart_spawner(Some(spawner)),
+                Spawned::Refused(error) => {
+                    tracing::warn!(error = %clip(&error), "the spawner refused a run");
+                    return None;
+                }
+                Spawned::Gone => {
+                    self.restart_spawner(Some(spawner));
+                    return None;
+                }
+            }
+        }
+        None
+    }
+
+    /// The JSON line the spawner reads; `None` for a run whose argv, env or paths are not UTF-8,
+    /// which JSON cannot carry.
+    fn request_line(&self, kind: &RunKind, log: &Path) -> Option<Vec<u8>> {
+        let settings = self.settings.as_ref()?;
+        let argv = kind
+            .argv()
+            .iter()
+            .map(|word| word.to_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()?;
+        let env = settings
+            .env
+            .iter()
+            .map(|(name, value)| Some((name.to_str()?.to_string(), value.to_str()?.into())))
+            .collect::<Option<serde_json::Map<_, _>>>()?;
+        let cwd = kind.root().unwrap_or(&settings.runs).to_str()?;
+        let mut line = serde_json::to_vec(&serde_json::json!({
+            "argv": argv,
+            "env": env,
+            "cwd": cwd,
+            "log": log.to_str()?,
+        }))
+        .ok()?;
+        line.push(b'\n');
+        Some(line)
     }
 
     /// Whether a review poll is still running.
@@ -344,8 +454,7 @@ impl Supervisor {
         })
     }
 
-    /// A run with no project starts in the runs directory, which the log's open creates.
-    fn launch(self: &Arc<Self>, kind: RunKind) -> Result<Run, RpcError> {
+    fn open_run_log(&self) -> Result<(String, PathBuf, File), RpcError> {
         let settings = self.settings()?;
         let id = self.next_id();
         let log = settings.runs.join(format!("{id}.log"));
@@ -355,13 +464,16 @@ impl Supervisor {
                 format!("could not open {}: {error}", log.display()),
             )
         })?;
-        let errors = output.try_clone().map_err(|error| {
-            refused(
-                "no_log",
-                format!("could not open {}: {error}", log.display()),
-            )
-        })?;
-        let mut child = tokio::process::Command::new(&settings.ruby)
+        Ok((id, log, output))
+    }
+
+    /// A run with no project starts in the runs directory, which the log's open creates.
+    fn exec(&self, kind: &RunKind, output: File) -> Result<(u32, Process), RpcError> {
+        let settings = self.settings()?;
+        let errors = output
+            .try_clone()
+            .map_err(|error| refused("no_log", format!("could not open the run's log: {error}")))?;
+        let child = tokio::process::Command::new(&settings.ruby)
             .arg(&settings.lain)
             .args(kind.argv())
             .current_dir(kind.root().unwrap_or(&settings.runs))
@@ -378,6 +490,17 @@ impl Supervisor {
         let pid = child
             .id()
             .ok_or_else(|| refused("spawn_failed", "the run exited unseen".to_string()))?;
+        Ok((pid, Process::Child(child)))
+    }
+
+    fn supervise(
+        self: &Arc<Self>,
+        id: String,
+        kind: RunKind,
+        pid: u32,
+        log: PathBuf,
+        mut process: Process,
+    ) -> Run {
         let (report, exited) = watch::channel(None);
         let (stops, mut stop_asked) = mpsc::unbounded_channel();
         let run = Run {
@@ -399,32 +522,26 @@ impl Supervisor {
         if run.kind.shown() {
             self.sync();
         }
-        tracing::info!(id, pid, kind = run.kind.name(), root = ?run.kind.root(), "started a run");
+        tracing::info!(id, pid, kind = run.kind.name(), root = ?run.kind.root(), forked = process.is_forked(), "started a run");
         let supervisor = Arc::clone(self);
         tokio::spawn(async move {
-            // Before `wait` reaps the child, so the zombie is still readable; `ps` may block.
+            // An exec'd child is read before `wait` reaps it, so its zombie is still readable; a forked
+            // run that has already ended and been reaped by the spawner reads as None. `ps` may block.
             let start = tokio::task::spawn_blocking(move || {
                 ProcTable.process(pid).map(|process| process.start)
             })
             .await
             .ok()
             .flatten();
-            supervisor.started(&id, start);
-            let status = tokio::select! {
-                status = child.wait() => status,
-                Some(()) = stop_asked.recv() => stopped(&mut child, pid).await,
-            };
-            let code = match status {
-                Ok(status) => code_of(status),
-                Err(error) => {
-                    tracing::error!(%error, id, "could not wait for a run");
-                    -1
-                }
+            supervisor.started(&id, start.clone());
+            let code = tokio::select! {
+                code = process.wait(pid, start.as_deref()) => code,
+                Some(()) = stop_asked.recv() => stopped(&mut process, pid, start.as_deref()).await,
             };
             supervisor.ended(&id, code);
             report.send_replace(Some(code));
         });
-        Ok(run)
+        run
     }
 
     fn next_id(&self) -> String {
@@ -664,16 +781,88 @@ async fn herdr_sync(settings: Settings, bound: Duration) {
     }
 }
 
-/// Called only by the task that owns `child`, before it has reaped it.
-async fn stopped(child: &mut tokio::process::Child, pid: u32) -> std::io::Result<ExitStatus> {
-    signal_group(pid, Signal::SIGTERM);
-    match tokio::time::timeout(GRACE, child.wait()).await {
-        Ok(status) => status,
-        Err(_) => {
-            signal_group(pid, Signal::SIGKILL);
-            child.wait().await
+/// A run's process: the daemon's own child, or one the spawner forked and reports on.
+enum Process {
+    Child(tokio::process::Child),
+    Forked(watch::Receiver<Option<i32>>),
+}
+
+impl Process {
+    fn is_forked(&self) -> bool {
+        matches!(self, Self::Forked(_))
+    }
+
+    /// Whether its exit is still unknown, so its group is still its own to signal.
+    fn running(&self) -> bool {
+        match self {
+            Self::Child(_) => true,
+            Self::Forked(exit) => exit.borrow().is_none(),
         }
     }
+
+    /// Its status; -1 when it cannot be known, as for a forked run whose spawner went first.
+    async fn wait(&mut self, pid: u32, start: Option<&str>) -> i32 {
+        match self {
+            Self::Child(child) => match child.wait().await {
+                Ok(status) => code_of(status),
+                Err(error) => {
+                    tracing::error!(%error, pid, "could not wait for a run");
+                    -1
+                }
+            },
+            Self::Forked(exit) => {
+                if let Ok(code) = exit.wait_for(Option::is_some).await {
+                    return code.unwrap_or(-1);
+                }
+                tracing::warn!(pid, "the spawner went before the run it forked ended");
+                // A start never read means the run was gone when it was looked for, or `ps` failed
+                // (macOS), and its pid alone could name a later process forever.
+                let Some(start) = start else {
+                    return -1;
+                };
+                while still(pid, start).await {
+                    tokio::time::sleep(ORPHAN_POLL).await;
+                }
+                -1
+            }
+        }
+    }
+}
+
+/// Whether `pid` is still the process that had `start`.
+async fn still(pid: u32, start: &str) -> bool {
+    let start = start.to_string();
+    tokio::task::spawn_blocking(move || {
+        ProcTable
+            .process(pid)
+            .is_some_and(|process| process.start == start)
+    })
+    .await
+    .unwrap_or(false)
+}
+
+/// Called only by the task that owns `process`. A child is not reaped before this returns, so
+/// its group is its own; a forked run's group is signalled only while its exit is unreported.
+async fn stopped(process: &mut Process, pid: u32, start: Option<&str>) -> i32 {
+    if process.running() {
+        signal_group(pid, Signal::SIGTERM);
+    }
+    match tokio::time::timeout(GRACE, process.wait(pid, start)).await {
+        Ok(code) => code,
+        Err(_) => {
+            if process.running() {
+                signal_group(pid, Signal::SIGKILL);
+            }
+            process.wait(pid, start).await
+        }
+    }
+}
+
+/// `None`, with a trace line, when it cannot start: runs then start by exec.
+fn start_spawner(settings: &Settings) -> Option<Arc<Spawner>> {
+    Spawner::start(settings, crate::PROVIDER_KEY_VAR)
+        .inspect_err(|error| tracing::warn!(%error, "could not start the spawner"))
+        .ok()
 }
 
 fn signal_group(pid: u32, signal: Signal) {
@@ -828,6 +1017,7 @@ while :; do wait; done
                 root: project.to_str().expect("utf-8").to_string(),
                 args: Default::default(),
             })
+            .await
             .expect("started");
         let mut group = KillOnDrop(Some(run.pid));
         let grandchild: u32 = appeared(&probe.join("grandchild"))
@@ -1039,6 +1229,7 @@ while :; do wait; done
                     root: project.to_str().expect("utf-8").to_string(),
                     args: Default::default(),
                 })
+                .await
                 .expect("started");
             for _ in 0..500 {
                 if supervisor.runs().iter().all(|entry| entry.start.is_some()) {
@@ -1117,6 +1308,275 @@ while :; do wait; done
 
         assert!(!live.blocked());
         drop(session);
+    }
+
+    /// A spawner that takes a request and never answers it; a run started any other way notes its pid.
+    const DEAF: &str = "#!/bin/sh\nif [ \"$3\" = spawner ]; then echo $$ > \"$PROBE/spawner\"; head -n 1 > \"$PROBE/asked\"; exec sleep 60; fi\n[ \"$2\" = daemon ] && exit 0\necho $$ > \"$PROBE/run\"\n";
+
+    #[tokio::test(start_paused = true)]
+    async fn a_spawner_that_does_not_answer_in_time_is_dropped_and_the_run_starts_by_exec() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join(".git")).expect("project");
+        let probe = dir.path().join("probe");
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), DEAF)));
+        let chores = || lain_wire::RunStart {
+            kind: "chores".to_string(),
+            root: project.to_str().expect("utf-8").to_string(),
+            args: Default::default(),
+        };
+        let first = supervisor.start(chores()).await.expect("started");
+        assert_eq!(
+            first.pid,
+            appeared(&probe.join("run"))
+                .trim()
+                .parse::<u32>()
+                .expect("pid"),
+            "the first run did not start by exec"
+        );
+        std::fs::remove_file(probe.join("run")).expect("clear the probe");
+        let spawner: u32 = appeared(&probe.join("spawner"))
+            .trim()
+            .parse()
+            .expect("pid");
+
+        let starting = tokio::spawn({
+            let supervisor = Arc::clone(&supervisor);
+            let request = chores();
+            async move { supervisor.start(request).await }
+        });
+        settle().await;
+        assert!(appeared(&probe.join("asked")).contains("argv"));
+        assert!(
+            !starting.is_finished(),
+            "the start did not wait for the spawner"
+        );
+
+        tokio::time::advance(SPAWN_BOUND).await;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !starting.is_finished() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the start never gave up"
+            );
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let run = starting.await.expect("joined").expect("started");
+        let ran: u32 = appeared(&probe.join("run")).trim().parse().expect("pid");
+        assert_eq!(run.pid, ran, "the run did not start by exec");
+        assert!(reaped(spawner), "the deaf spawner was left running");
+    }
+
+    /// A project, a supervisor running `script` for ruby, and the probe dir the script writes to.
+    fn spawning(script: &str) -> (tempfile::TempDir, Arc<Supervisor>, PathBuf, RunStart) {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let project = dir.path().join("project");
+        std::fs::create_dir_all(project.join(".git")).expect("project");
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), script)));
+        let probe = dir.path().join("probe");
+        let chores = RunStart {
+            kind: "chores".to_string(),
+            root: project.to_str().expect("utf-8").to_string(),
+            args: Default::default(),
+        };
+        (dir, supervisor, probe, chores)
+    }
+
+    fn pid_in(path: &Path) -> u32 {
+        appeared(path).trim().parse().expect("a pid")
+    }
+
+    /// Forks a run in a session of its own when it reads a request, and answers with its pid only
+    /// once `go` exists in the probe dir. A run started by exec notes its pid in `execd`.
+    const SLOW_ANSWER: &str = r#"#!/bin/sh
+if [ "$3" = spawner ]; then
+  echo $$ > "$PROBE/spawner"
+  IFS= read -r line
+  setsid sleep 25 & late=$!
+  echo $late > "$PROBE/late"
+  while [ ! -e "$PROBE/go" ]; do sleep 0.02; done
+  echo "{\"pid\":$late}" >&0
+  exec sleep 25
+fi
+[ "$2" = daemon ] && exit 0
+echo $$ >> "$PROBE/execd"
+exec sleep 25
+"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_start_dropped_while_the_spawner_forks_still_lists_its_run() {
+        let (_dir, supervisor, probe, chores) = spawning(SLOW_ANSWER);
+        let first = supervisor.start(chores.clone()).await.expect("first");
+        let _first = KillOnDrop(Some(first.pid));
+        pid_in(&probe.join("spawner"));
+
+        let mut start = Box::pin(supervisor.start(chores));
+        let late = loop {
+            tokio::select! {
+                biased;
+                _ = &mut start => panic!("the spawner answered before it was let"),
+                () = tokio::time::sleep(Duration::from_millis(10)) => {}
+            }
+            if let Ok(late) = std::fs::read_to_string(probe.join("late"))
+                && let Ok(late) = late.trim().parse::<u32>()
+            {
+                break late;
+            }
+        };
+        drop(start);
+        let _late = KillOnDrop(Some(late));
+        std::fs::write(probe.join("go"), "").expect("let the spawner answer");
+
+        for _ in 0..500 {
+            if supervisor.list().iter().any(|run| run.pid == late) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the fork of a dropped start was never listed");
+    }
+
+    /// As [`SLOW_ANSWER`], but the answer comes from a process in a session of its own, so it
+    /// still arrives after the spawner is killed. A background job's stdin is /dev/null, so it
+    /// writes to the socket through fd 3.
+    const LATE_ANSWER: &str = r#"#!/bin/sh
+if [ "$3" = spawner ]; then
+  echo $$ > "$PROBE/spawner"
+  exec 3<&0
+  IFS= read -r line
+  setsid sleep 25 & late=$!
+  echo $late > "$PROBE/late"
+  setsid sh -c 'while [ ! -e "$PROBE/go" ]; do sleep 0.02; done; echo "{\"pid\":$0}"' "$late" >&3 &
+  exec sleep 25
+fi
+[ "$2" = daemon ] && exit 0
+echo $$ >> "$PROBE/execd"
+exec sleep 25
+"#;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_fork_answered_after_the_start_gave_up_is_killed_and_only_the_exec_run_lists() {
+        let (_dir, supervisor, probe, chores) = spawning(LATE_ANSWER);
+        let first = supervisor.start(chores.clone()).await.expect("first");
+        let _first = KillOnDrop(Some(first.pid));
+        pid_in(&probe.join("spawner"));
+
+        let starting = tokio::spawn({
+            let supervisor = Arc::clone(&supervisor);
+            async move { supervisor.start(chores).await }
+        });
+        settle().await;
+        let late = pid_in(&probe.join("late"));
+        let _late = KillOnDrop(Some(late));
+        tokio::time::advance(SPAWN_BOUND).await;
+        for _ in 0..500 {
+            if starting.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let run = starting.await.expect("joined").expect("started");
+        let _run = KillOnDrop(Some(run.pid));
+
+        std::fs::write(probe.join("go"), "").expect("let the late answer through");
+        for _ in 0..500 {
+            if !alive(late) {
+                break;
+            }
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(!alive(late), "the fork its start gave up on still runs");
+        let listed: Vec<u32> = supervisor.list().iter().map(|run| run.pid).collect();
+        assert_eq!(vec![first.pid, run.pid], listed);
+    }
+
+    /// The first spawner answers its first request stale and then reads nothing more, as a real
+    /// one does; every later spawner forks each request in a session of its own.
+    const STALE_FIRST: &str = r#"#!/bin/sh
+if [ "$3" = spawner ]; then
+  n=$(ls "$PROBE" | grep -c '^spawner\.')
+  echo $$ > "$PROBE/spawner.$n"
+  if [ "$n" = 0 ]; then IFS= read -r line; echo '{"stale":true}' >&0; exec sleep 25; fi
+  while IFS= read -r line; do
+    setsid sleep 25 & echo $! >> "$PROBE/forked"; echo "{\"pid\":$!}" >&0
+  done
+  exit 0
+fi
+[ "$2" = daemon ] && exit 0
+echo $$ >> "$PROBE/execd"
+exec sleep 25
+"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn two_starts_at_a_stale_spawner_both_fork_from_1_fresh_spawner() {
+        let (_dir, supervisor, probe, chores) = spawning(STALE_FIRST);
+        let first = supervisor.start(chores.clone()).await.expect("first");
+        let _first = KillOnDrop(Some(first.pid));
+        let stale = pid_in(&probe.join("spawner.0"));
+        let _stale = KillOnDrop(Some(stale));
+
+        let (a, b) = tokio::join!(
+            supervisor.start(chores.clone()),
+            supervisor.start(chores.clone())
+        );
+        let (a, b) = (a.expect("a"), b.expect("b"));
+        let _runs = (KillOnDrop(Some(a.pid)), KillOnDrop(Some(b.pid)));
+
+        let mut forked: Vec<u32> = std::fs::read_to_string(probe.join("forked"))
+            .unwrap_or_default()
+            .lines()
+            .map(|pid| pid.parse().expect("a pid"))
+            .collect();
+        forked.sort_unstable();
+        let mut started = vec![a.pid, b.pid];
+        started.sort_unstable();
+        assert_eq!(started, forked, "a start fell back to exec");
+        let fresh = pid_in(&probe.join("spawner.1"));
+        let _fresh = KillOnDrop(Some(fresh));
+        assert!(!probe.join("spawner.2").exists(), "a third spawner booted");
+        assert!(alive(fresh), "the fresh spawner was torn down");
+    }
+
+    #[tokio::test]
+    async fn starts_that_saw_the_same_spawner_fail_boot_1_spawner_between_them() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = "#!/bin/sh\n[ \"$3\" = spawner ] && exec sleep 25\nexit 0\n";
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), script)));
+        supervisor.restart_spawner(None);
+        let failed = supervisor.spawner().expect("a spawner");
+
+        supervisor.restart_spawner(Some(&failed));
+        let fresh = supervisor.spawner().expect("a fresh spawner");
+        supervisor.restart_spawner(Some(&failed));
+
+        assert!(!Arc::ptr_eq(&failed, &fresh), "the failed spawner was kept");
+        let current = supervisor.spawner().expect("a spawner");
+        assert!(
+            Arc::ptr_eq(&fresh, &current),
+            "a second start booted another spawner"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_forked_run_whose_start_was_never_read_ends_when_its_spawner_goes() {
+        let (spawner, exit) = watch::channel(None);
+        drop(spawner);
+        let mut process = Process::Forked(exit);
+
+        let code = tokio::time::timeout(
+            Duration::from_secs(3600),
+            process.wait(std::process::id(), None),
+        )
+        .await;
+
+        assert_eq!(
+            Some(-1),
+            code.ok(),
+            "a live pid of unknown start kept it listed"
+        );
     }
 
     #[tokio::test]

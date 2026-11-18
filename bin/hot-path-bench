@@ -17,7 +17,9 @@ require "tmpdir"
 #   --check    exit 1 unless each ceilinged row is at or under its ceiling in 2 of the last 3 logs
 #   (none)     print the latest log beside the ceilings
 #
-# spawn_exec is `run.start` to the exit of a run that boots lain, not to a chat's registration.
+# spawn_exec and spawn_fork are `run.start` to the exit of a run that boots lain, not to a chat's
+# registration; spawn_fork's run is forked from the daemon's warmed spawner. spawn_fork_private_mb
+# (Linux) is the memory a forked run holds that it does not share, read as its `help` ends.
 #
 # Not a spec: a record takes minutes, and a time asserted in a spec is a flake.
 #
@@ -69,8 +71,45 @@ module HotPathBench
   SPAWN_REPS = 11
   SPAWN_POLL = 0.002
   SPAWN_DEADLINE = 30
-  # Stands in for exe/lain and sends it `help`: a real chores run would do work this row must not time.
-  SPAWN_STAND_IN = "ARGV.replace(%<argv>s)\nload %<exe>s\n"
+  # Stands in for exe/lain and sends it `help`: a real chores run would do work these rows must not
+  # time. As `daemon spawner` it runs the row's own spawner instead.
+  SPAWN_STAND_IN = <<~RUBY
+    if ARGV == ["daemon", "spawner"]
+      %<spawner>s
+    end
+    ARGV.replace(["help"])
+    load %<exe>s
+  RUBY
+  # A spawner that refuses every request, so every run starts by exec. It stays up, so no rep boots
+  # another Ruby, as a daemon whose spawner exited would on each start.
+  REFUSING_SPAWNER = <<~'RUBY'
+    require "socket"
+    socket = UNIXSocket.for_fd(0)
+    socket.write("{\"error\":\"this row runs by exec\"}\n") while socket.gets
+    exit
+  RUBY
+  # The real spawner, forking `help` where the daemon asks for a chores run. Its name is not exe/lain's,
+  # so loading exe/lain defines LainCLI without starting it.
+  HELP_SPAWNER = <<~'RUBY'
+    $PROGRAM_NAME = "spawner"
+    load %<exe>s
+    Lain::Daemon::Spawner.on_stdin(starter: lambda { |_argv|
+      LainCLI.start(["help"])
+      rollup = "/proc/self/smaps_rollup"
+      if File.exist?(rollup)
+        private_kb = File.read(rollup).scan(/^Private_(?:Clean|Dirty):\s+(\d+)/).sum { _1.first.to_i }
+        File.write(File.join(%<dir>s, "private", Process.pid.to_s), private_kb.to_s)
+      end
+    }).call
+    exit
+  RUBY
+
+  # A spawn row: what stands in for `daemon spawner`, how many runs precede the timed ones, and whether
+  # its runs fork. The daemon boots its spawner at its first run, which starts by exec, so the fork row's
+  # first fork is its second warm-up, the one that waits out the spawner's own boot.
+  Spawn = Data.define(:name, :spawner, :warmups, :forks)
+  SPAWNS = [Spawn.new(name: "spawn_exec", spawner: REFUSING_SPAWNER, warmups: 1, forks: false),
+            Spawn.new(name: "spawn_fork", spawner: HELP_SPAWNER, warmups: 2, forks: true)].freeze
 
   HotPaths = Lain::Bench::HotPaths
 
@@ -82,7 +121,7 @@ module HotPathBench
 
   def measure
     hot_paths = HotPaths.new
-    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths), spawn_exec_row(hot_paths)].map(&:to_h))
+    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths), *spawn_rows(hot_paths)].map(&:to_h))
   end
 
   # A backtracking shape stalls every read and write it guards on a long unbroken line; Ruby cannot
@@ -113,20 +152,22 @@ module HotPathBench
      "Authorization: Bearer #{a} ", "Authorization: Bearer x" * (SCAN_SIZE / 25), "a:" * (SCAN_SIZE / 2)]
   end
 
-  # spawn_exec times `run.start` up to the exit of a run that boots lain (exec, ruby boot, `require "lain"`,
-  # Thor's parse, `help`). It is not registration. A forked-parent row must time the same endpoint to compare.
-  def spawn_exec_row(hot_paths)
+  # Each spawn row times `run.start` up to the exit of a run that boots lain (ruby boot or fork, `require
+  # "lain"`, Thor's parse, `help`). It is not registration. Both rows time the same endpoint, so they compare.
+  def spawn_rows(hot_paths) = SPAWNS.flat_map { spawn_row(hot_paths, _1) }
+
+  def spawn_row(hot_paths, spawn)
     Dir.mktmpdir("spawn") do |dir|
       env = spawn_env(dir)
-      launch = spawn_launch(dir, env)
-      return spawn_skipped unless File.executable?(launch.binary)
+      launch = spawn_launch(dir, env, spawn.spawner)
+      return [spawn_skipped(spawn.name)] unless File.executable?(launch.binary)
 
-      Sync { measured_spawns(hot_paths, launch, Lain::Paths.new(env:), env, dir) }
+      Sync { measured_spawns(hot_paths, spawn, launch, env, dir) }
     end
   end
 
-  def spawn_skipped
-    HotPaths::Row.new(name: "spawn_exec", median_ms: nil, spread_ms: nil, reps: 0, skipped: "lain-daemon is not built")
+  def spawn_skipped(name)
+    HotPaths::Row.new(name:, median_ms: nil, spread_ms: nil, reps: 0, skipped: "lain-daemon is not built")
   end
 
   def spawn_env(dir)
@@ -135,24 +176,41 @@ module HotPathBench
                                      "XDG_CACHE_HOME" => File.join(dir, "cache"), "HOME" => dir)
   end
 
-  def spawn_launch(dir, env)
+  def spawn_launch(dir, env, spawner)
     stand_in = File.join(dir, "stand-in", "lain")
-    FileUtils.mkdir_p(File.dirname(stand_in))
-    exe = REPO_ROOT.join("exe/lain").to_s
-    File.write(stand_in, format(SPAWN_STAND_IN, argv: ["help"].inspect, exe: exe.inspect))
+    FileUtils.mkdir_p([File.dirname(stand_in), File.join(dir, "private")])
+    exe = REPO_ROOT.join("exe/lain").to_s.inspect
+    File.write(stand_in, format(SPAWN_STAND_IN, spawner: format(spawner, exe:, dir: dir.inspect), exe:))
     Lain::Daemon::Launch.current(paths: Lain::Paths.new(env:), env:).with(lain: stand_in)
   end
 
-  def measured_spawns(hot_paths, launch, paths, env, dir)
+  def measured_spawns(hot_paths, spawn, launch, env, dir)
+    paths = Lain::Paths.new(env:)
     client = Lain::Daemon.ensure(paths:, env:, launch:)
     root = File.join(dir, "project")
     FileUtils.mkdir_p(File.join(root, ".git"))
     # The child's HOME and cache are fresh, so the first run would pay a bootsnap compile a real run does not.
-    ran(client, root)
-    hot_paths.measure(SPAWN_REPS, name: "spawn_exec") { ran(client, root) }
+    spawn.warmups.times { ran(client, root) }
+    FileUtils.rm_f(Dir.glob(File.join(dir, "private", "*")))
+    [hot_paths.measure(SPAWN_REPS, name: spawn.name) { ran(client, root) }, *private_row(spawn, dir)]
   ensure
     client&.stop
     Lain::Daemon.stop(paths:)
+  end
+
+  # Only forked runs write theirs, and only where /proc has it; there, a rep that wrote none started by
+  # exec, and the fork row would be timing exec.
+  def private_row(spawn, dir)
+    return [] unless spawn.forks && File.exist?("/proc/self/smaps_rollup")
+
+    samples = Dir.glob(File.join(dir, "private", "*")).map { File.read(_1).to_f / 1024 }
+    unless samples.size == SPAWN_REPS
+      raise "#{spawn.name}: #{SPAWN_REPS - samples.size} of #{SPAWN_REPS} reps did not fork"
+    end
+
+    stats = HotPaths::Stats
+    [HotPaths::Row.new(name: "#{spawn.name}_private_mb", median_ms: stats.quantile(samples, 0.5),
+                       spread_ms: stats.iqr(samples), reps: samples.size, skipped: nil)]
   end
 
   def ran(client, root)
@@ -160,7 +218,7 @@ module HotPathBench
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SPAWN_DEADLINE
     until client.call("run.list").find { _1["id"] == id }.fetch("status")
       if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
-        raise "spawn_exec: run #{id} had not ended in #{SPAWN_DEADLINE}s"
+        raise "spawn: run #{id} had not ended in #{SPAWN_DEADLINE}s"
       end
 
       sleep(SPAWN_POLL)
