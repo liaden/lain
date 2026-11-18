@@ -116,7 +116,12 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     it "spawns nothing by default" do
       scope = described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing))
 
-      Sync { |task| expect { scope.open(task).close }.not_to raise_error }
+      Sync do |task|
+        expect(scope.open(task)).to be(scope)
+        scope.close
+      end
+
+      expect(supervisor).to have_received(:stop)
     end
   end
 
@@ -141,7 +146,12 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     it "spawns nothing by default" do
       scope = described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing))
 
-      Sync { |task| expect { scope.open(task).close }.not_to raise_error }
+      Sync do |task|
+        expect(scope.open(task)).to be(scope)
+        scope.close
+      end
+
+      expect(supervisor).to have_received(:stop)
     end
   end
 
@@ -188,7 +198,12 @@ RSpec.describe Lain::CLI::Repl::ConversationScope do
     it "holds a Null one by default" do
       scope = described_class.new(supervisor:, replies: replies.new(nothing), surfaces: approvals.new(nothing))
 
-      Sync { |task| expect { scope.open(task).close }.not_to raise_error }
+      Sync do |task|
+        expect(scope.open(task)).to be(scope)
+        scope.close
+      end
+
+      expect(supervisor).to have_received(:stop)
     end
   end
 

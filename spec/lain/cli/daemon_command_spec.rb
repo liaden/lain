@@ -245,8 +245,12 @@ RSpec.describe Lain::CLI::DaemonCommand do
     it "restarts without --force when the only run has exited" do
       id = run_id
       start("stop", id)
+      before = start("status")[/^pid: (\d+)/, 1]
 
-      expect { start("restart") }.not_to raise_error
+      restarted = start("restart")[/daemon restarted, pid (\d+)/, 1]
+
+      expect(restarted).to eq(start("status")[/^pid: (\d+)/, 1])
+      expect(restarted).not_to eq(before)
     end
 
     it "says which runs keep going unlisted when --force restarts over them" do
