@@ -923,9 +923,9 @@ Scenario: refused without containment (ruling 2026-11-16)
   Given the sandbox can't confine (fence missing, or macOS)
   Then the chat refuses to start, naming the missing containment and the threat it closes
 
-Scenario: no unconfined bash under --human remote
-  When an approved bash call would run under the traced or none profile
-  Then it is denied, naming --human remote
+Scenario: a phone-approved bash call runs traced, as at the terminal (user ruling 2026-11-17)
+  When you approve a bash call from the phone
+  Then it runs under the traced profile, and a traced call no human approved, or any call under the none profile, is denied naming --human remote
 
 Scenario: the confined profile can't reach the phone path
   Then a confined bash call can't write state_home/remote/devices, and can't connect to the relay's loopback port
@@ -1450,7 +1450,7 @@ Carried notes, departures and rulings from the run so far (folded from the coord
 - 13:03 D13 landed 41f8b82f. Worktree removed.
 - 13:03 D12 fourth review (fresh panel, opus) spawned. Nothing else ready: D14, D26, D17 all wait on D12.
 
-Carried notes and rulings after the 54bafabe checkpoint:
+Carried notes and rulings after the 86230e96 checkpoint:
 
 - D12 (review 5): the launch digest left argv for `DAEMON_LAUNCH_DIGEST`; the reviewer recovered a test topic from the argv digest in 12 guesses.
 - D12 (review 5, ruling): TLS roots from the system store, not webpki-roots; the per-crate licence exception left deny.toml with it. A test-only `server.key` is committed under `crates/lain-daemon/src/test_tls/`; its CA key is deleted.
@@ -1462,12 +1462,40 @@ Carried notes and rulings after the 54bafabe checkpoint:
 - Environment: F3's landing 3 failed with 64 examples when a game started mid-suite (load 97, memory stalled 95%). The quiet check only runs at the start of a landing.
 - Process: the fifth D12 reviewer ran `pkill -f` and killed 4 stale wait shells of finished agents. Review briefs now forbid `pkill -f` and `pgrep -f`.
 
-Run log after the 54bafabe checkpoint:
+Run log after the 86230e96 checkpoint:
 
-- 13:04 F1 and F2 started, cut at 54bafabe.
-- 13:16 F2 landed 58a04dbc. 13:37 F1 landed 4c6dd02a (landing 1 red on the remote_surface take-back example, a repeat, so F3).
-- 13:38 docs commit 98dc35e5. F3 started.
+- 13:04 F1 and F2 started, cut at 86230e96.
+- 13:16 F2 landed 31458e95. 13:37 F1 landed 55b19974 (landing 1 red on the remote_surface take-back example, a repeat, so F3).
+- 13:38 docs commit aa0ad14a. F3 started.
 - 13:43 to 16:48 D12 reviews 4 to 8 (fresh panel each, opus); review 8 approved with 6 NITs, closed.
-- 14:28 to 16:53 F3 landing: 1 refused on subject length, 2 red on the digest substring example, 3 red on a starved box, 4 landed 1ba2fa90.
-- 17:05 D12 landed 19bf9b36.
+- 14:28 to 16:53 F3 landing: 1 refused on subject length, 2 red on the digest substring example, 3 red on a starved box, 4 landed 0aede1be.
+- 17:05 D12 landed 2830b98c.
 - Checkpoint after D12: no agents in flight. Ready next: D14 and D26.
+
+Carried notes and rulings after the cc8f51a0 checkpoint:
+
+- History: the 2 earlier checkpoint commits named card ids in their messages. They were reworded on 2026-11-17 (unpushed, same trees), so every sha from 86230e96 onward changed; this log uses the new shas. Commit messages never name cards.
+- D14: lain-core is retired. The :core tier runs against lain-daemon; CI's darwin check covers lain-wire and lain-fence only, because ring needs the macOS SDK.
+- D26: `Human` replaces `attended?`. `human:` is a required keyword on `Switchboard.for`, `BoardBuild.for`, `Askers.new`, `Wiring` and `ToolsetBuild`; a default that re-reads the flag was ruled fail-open. `Switchboard.new` keeps its boolean `attended:`.
+- D17 (user ruling 2026-11-17): a bash call approved from the phone runs traced, exactly like a terminal approval. This replaces the scenario "no unconfined bash under --human remote". Still refused under remote: a traced call no human approved, the :none profile, and any confined call when the sandbox layer is missing at call time.
+- D17: the card's Files missed repl.rb (the only ApprovalSurfaces builder), wiring/toolset_build.rb (the only Sandbox builder) and exec/sandboxed.rb (the refusal rescue); widened by ruling. Relay and containment refusals run in ChatLaunch before the record opens; the launch needs both the daemon's running relay and a `remote relay:` in the chat's own config.
+- Process: the commit hook's `yard-lint --staged` caught a Tags/OptionTags offense that by-path runs missed; the land script now runs it before committing. A landing hook killed by the harness under memory pressure left the user's unstaged edits only in the pre-commit stash; restored with git apply. Landings now run in the foreground.
+
+Follow-ups with no card yet:
+- ask_human under --human remote still starts the terminal AnswerLoop, which prints to a headless terminal (fix in repl/conversation_scope.rb or human_replies.rb).
+- A relay that dies mid-run leaves parked calls holding with no surface (fails closed). Decide whether such a run should end.
+- A tripwire rule refusing writes to state_home/remote/ and connections to the relay port, even from a traced call (closes the prompt-injection path the phone-traced ruling opens).
+- The :grant profile can reach ports 80 and 443; refuse a relay configured on a granted port.
+- 1 end-to-end example of a phone approval running traced (proven in 2 halves today).
+- Rename the `human:` keyword at IntakeBuild.rail and InputProducer.new to `human_input:`.
+- bin/spec-census --check reads 214 > 184 and 62 > 49; compare against the run's base at close-out.
+
+Run log after the cc8f51a0 checkpoint:
+
+- 17:07 D14 and D26 cut at cc8f51a0. Both stopped once before code on over-wide grep criteria in their briefs; D26 narrowed, D14 widened.
+- 17:28 D14 landed eb02b757.
+- 17:29 to 18:15 D26: widened to board_build.rb; review 1 asked for changes (required `human:`, 3 unpinned readers); review 2 approved.
+- 18:20 D26 landing 1 red on yard-lint (suite green); 18:24 landing 2 killed by the harness under memory pressure; 18:29 landing 3 landed 995d3425.
+- 18:30 to 20:00 D17: stopped on scope, widened; user ruling on phone-approved bash; review 1 asked for changes (reach controls, remote wiring, rename, local relay check); review 2 approved.
+- 20:05 D17 landed 2f21480c.
+- Checkpoint after D17: no agents in flight. Ready next: D16.
