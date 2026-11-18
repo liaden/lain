@@ -227,3 +227,19 @@ repos:
         entry: bin/lint-price-freshness
         language: script
         pass_filenames: false
+
+      # lib/ shells out through Lain::Shell::Out alone. Text, not an AST, because a
+      # stale comment or a require claims the gem is still a dependency as much as
+      # a constant does.
+      - id: no-mixlib
+        name: lib/ names mixlib nowhere
+        language: pygrep
+        entry: '(?i)mixlib'
+        files: '^lib/'
+        exclude: '\.so$'
+
+      - id: no-spec-under-fixtures
+        name: no collectible spec under spec/fixtures
+        language: fail
+        entry: 'a spec planted under spec/fixtures/ would run as part of the suite'
+        files: '^spec/fixtures/.*_(spec|test)\.rb$'

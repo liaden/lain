@@ -28,8 +28,8 @@ require "pathname"
 # So the two whole-tree scans moved here, where a listing goes to stdout and
 # the caller decides whether to redirect it. What STAYED a spec is everything
 # that can go red: the scanners' own behaviour
-# (`spec/lain/spec_census_spec.rb`) and the one real tree guard that lived
-# alongside them (`spec/fixture_discipline_spec.rb`).
+# (`spec/lain/spec_census_spec.rb`). The one real tree guard that lived
+# alongside them is now the `no-spec-under-fixtures` pre-commit hook.
 #
 # Pure stdlib plus Prism, like `bin/comment-census` and for the same reason: it
 # reads source as TEXT and never needs the gem, Bundler, or the compiled
