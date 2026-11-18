@@ -45,3 +45,13 @@ references/repos/
 # /critique panel output. Scratch by convention -- a review worth keeping gets
 # filed into planning/reviews/ under its own dated name instead.
 /.critique-*.md
+
+# Leaks from runs at the root, and local tool state that the global git ignore hides on
+# this box but not on a fresh clone.
+/not/
+/.local/
+/sock-*/
+/*.bak
+/*.err
+/.ruby-lsp/
+/nyotes-approvals.log

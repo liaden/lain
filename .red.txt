@@ -1,3 +1,0 @@
-lib/lain/middleware/tripwire_stop.rb:108:      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
-lib/lain/middleware/sensitivity.rb:83:      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
-lib/lain/middleware/remembered_denials.rb:121:      def requester_of(context) = Telemetry::Escalation.requester_of(context, @requester)
