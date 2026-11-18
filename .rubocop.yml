@@ -603,3 +603,18 @@ Lain/TerminalOutput:
     # A forked run points its own fds 1 and 2 at its log before lain starts; the
     # spawner owns no terminal.
     - "lib/lain/daemon/spawner.rb"
+
+# A git spawn in a spec passes SeedRepo::SCRUB: a commit hook in a linked worktree
+# exports GIT_DIR, which a fixture's bare git would otherwise inherit.
+Lain/GitFixtureScrub:
+  Include:
+    - "spec/**/*.rb"
+
+# A spec naming an anthropic SDK constant requires the gem itself, because it loads lazily.
+Lain/SdkRequire:
+  Include:
+    - "spec/**/*_spec.rb"
+  Exclude:
+    # Its heredoc fixtures name the SDK on purpose, and requiring the 33.6MB gem here
+    # would load it in every worker that runs this file.
+    - "spec/rubocop/cops/lain/sdk_require_spec.rb"

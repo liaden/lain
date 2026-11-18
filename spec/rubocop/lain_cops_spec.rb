@@ -12,7 +12,9 @@ module LainCops
   # Each entry is a place a rule is broken on purpose, so a new one edits this file
   # as well as .rubocop.yml and shows up in review twice.
   EXEMPTIONS = {
-    "Lain/TerminalOutput" => ["lib/lain/frontend/**/*", "lib/lain/daemon/spawner.rb"]
+    "Lain/TerminalOutput" => ["lib/lain/frontend/**/*", "lib/lain/daemon/spawner.rb"],
+    "Lain/GitFixtureScrub" => [],
+    "Lain/SdkRequire" => ["spec/rubocop/cops/lain/sdk_require_spec.rb"]
   }.freeze
 
   # An inline directive naming a Lain cop, the whole department, or every cop.
@@ -60,5 +62,13 @@ RSpec.describe "the Lain cops" do
     escapes = LainCops.git("grep", "-n", "-E", LainCops::INLINE_ESCAPE, "--", *LainCops::RUBY_PATHS)
 
     expect(escapes).to be_empty, "Add the file to .rubocop.yml's Exclude with its reason instead:\n#{escapes}"
+  end
+
+  # spec/rubocop is left out: the SdkRequire spec names the SDK on purpose.
+  it "has at least 1 spec file naming an SDK constant, or Lain/SdkRequire has no subject" do
+    sdk = "Anthropic::(Errors|Client|BedrockMantleClient|Resources|Models|Internal)"
+    named = LainCops.git("grep", "-l", "-E", sdk, "--", "spec", ":!spec/rubocop")
+
+    expect(named).not_to be_empty
   end
 end
