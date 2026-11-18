@@ -1,6 +1,7 @@
 # Repo scaffolding cleanup
 
-status: draft
+status: in-progress
+base: cb517990c75dcbae6fe9852eb3d28126951c73b2
 commit-mode: orchestrator-commits
 language: ruby (cards S5, S6, S16 are bash and YAML)
 panel: Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson
@@ -981,3 +982,19 @@ After the last card lands:
 7. **Manual, on the Mac (you):** `limactl validate lima/lain.yaml` if S16 could not run it, then `limactl start lima/lain.yaml`. Inside the VM, check that `$CARGO_TARGET_DIR/release/lain-fence --status` reports a Landlock ABI, and that a `lain` chat's bash call reports no `CapabilityDegraded` in the journal. Then update `planning/specs/lain-macos-bringup.md` with 1 line pointing at the Lima route.
 
 ## Execution log
+
+Base: `main` at `cb517990c75dcbae6fe9852eb3d28126951c73b2`. Started 14:59, 2026-11-18. Precondition held: `git status --short docs .pre-commit-config.yaml CLAUDE.md lain.gemspec` printed nothing. Grounding re-checked: 10 commits since `943103f1`, all from the docs session; the line numbers the cards cite in `docs/devs/spec-suite-performance.md`, `CLAUDE.md:179` and `lain.gemspec:94` still hold.
+
+Start state: 84 worktrees (main plus 83 under `tmp/worktrees/`); `git worktree list`, `git branch --list` and `git status --porcelain` are saved in the run's scratchpad. Pre-staged user work, unstaged for the run: `.gitmodules`, `references/repos/cliffcompaction`, `references/repos/pi`. Re-stage at close-out with `git add -f .gitmodules references/repos/cliffcompaction references/repos/pi` (the 2 repos sit under the ignored `references/repos/`).
+
+Worktrees: `tmp/worktrees/S<n>` on `card/S<n>`, as the plan names them. No `card/S*` branch existed, and S2's skip rule covers them.
+
+Hooks: a commit runs pre-commit-hooks (shebangs, merge conflict, yaml, end-of-file, trailing whitespace), actionlint, lychee and vale on doc paths, shellcheck, the cargo hooks on Rust, `ruby-checks` (`bundle exec rake compile daemon:build check`, which is `rake pspec` plus rubocop, about 2 to 3 minutes) on any Ruby or Rust file, `daemon-tier` on daemon paths, yard-lint on staged Ruby, gherkin-docs on `planning/specs/`, lint-price-freshness, and lint-commit-msg at commit-msg. The suite cannot run beside another; the passing hook prints nothing, so the example count comes from `tmp/parallel_runtime_rspec.log` and the hook log. Test runner pattern for the wait: `parallel_rspec|rspec|cargo test|cargo mutants`.
+
+Agent checks, on their own paths: `bundle exec rubocop <files>`, `bundle exec yard-lint <files>`, `pre-commit run <hook-id> --files <files>` for shellcheck, actionlint, check-yaml, end-of-file-fixer, trailing-whitespace, lychee and vale.
+
+Ratchet specs: `spec/*_discipline_spec.rb`, `spec/lain_spec.rb`, `spec/zeitwerk_spec.rb`, `spec/repo_as_fixture_spec.rb`, `spec/endpoint_env_isolation_spec.rb`, `spec/isolated_home_spec.rb`, `spec/lib_null_defaults_spec.rb`, `spec/docs_naming_spec.rb`, `spec/lain/comment_census_spec.rb`, `spec/lain/test_layout/guard_spec.rb` (new spec files must pass its layout rules).
+
+Build outputs a fresh worktree needs, copied at the cut: `lib/lain/lain.so`, `target/release/lain-fence`, `target/release/lain-daemon`, `tmp/parallel_runtime_rspec.log`.
+
+Paths that need user approval: none.
