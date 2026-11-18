@@ -1,0 +1,133 @@
+# The default rules plus a narrow allowlist for the redactor's own fake credentials.
+# Cassettes under spec/fixtures/vcr_cassettes/ and most of planning/ are scanned on purpose:
+# they hold recorded or pasted real output, so no entry below names either.
+# A new entry names a value or one file, never a directory above it.
+# This hook scans staged changes only, so it finds nothing under CI's pre-commit --all-files
+# run, and history is not rescanned; `gitleaks dir .` is the whole-tree check.
+title = "lain"
+
+[extend]
+useDefault = true
+
+# A fragment of each fake value the redactor specs and pasted redactor scenarios plant. A
+# fragment skips the vendor prefix, so this file does not match the rule it silences. A real
+# credential differs from every fragment here, so it is still reported.
+[[allowlists]]
+description = "fake values planted by redactor specs and pasted in redactor scenarios under planning/"
+stopwords = [
+  '''-0123456789ab''',
+  '''456789abcdef''',
+  '''6Fz9qL2vX8mN4pR7tY1wK3sD''',
+  '''9f0b9fca089cc2c6396a4ccf''',
+  '''A1b2C3d4E5f6G7h8I9j0K1l2''',
+  '''ABCDEFGHABCDEFGH''',
+  '''Ab9xQ7zK2mN4pR8sT1vW3yZ6''',
+  '''BlbnNzaC1rZXktdjEAAAAABG''',
+  '''IEowIBAAKCAQEA0oPnQKvKz9''',
+  '''IIBVgIBADANBgkqhkiG9w0BA''',
+  '''JDREVGR0hJSktMTU5PUFFSU1''',
+  '''KEY=sk-live-9tKq2mR7xT4w''',
+  '''Lm2Vb7rT4wKp''',
+  '''Q2mZ4vX7pL0aB3nR6yT9uW1c''',
+  '''Q9xT7mW2pL8nR5cY1bH6dF4g''',
+  '''QZ7R2M4X9TBL3KWE''',
+  '''Z7QW3RT5YU8IOP2L''',
+  '''ZK1mQ8vR3xT5wL9nB2jH7yD4''',
+  '''Zq8xV2nL4tR7yW1kP9mB3cJ6''',
+  '''aB3dE5fG7hJ9kL1mN3pQ5rS7''',
+  '''aB3dE5gH7jK9mN1pQ3sT5vX7''',
+  '''abc123lowentropy''',
+  '''bnNzaC1rZXktdjEQ''',
+  '''er2-correct-horse-batter''',
+]
+
+# Matches a plain word, so it is allowed only in the file that has it.
+[[allowlists]]
+description = "false positive: a prompt scheme name, not a credential"
+condition = "AND"
+paths = ['''^lib/lain/review/docent\.rb$''']
+regexes = ['''^docent\-brief\-v1$''']
+
+# A key body shorter than a slice, so it is allowed only in the files that plant it.
+[[allowlists]]
+description = "fake key body too short to slice"
+condition = "AND"
+paths = [
+  '''^planning/qa/scenarios/secret\-boundary\.md$''',
+]
+regexes = ['''nMIIBOgIBAAJBAK''']
+
+# Short value, so it is allowed only in the files that plant it.
+[[allowlists]]
+description = "fake credential value too short to slice"
+condition = "AND"
+paths = [
+  '''^planning/specs/qa\-round\-26\-fixes\.md$''',
+  '''^spec/lain/credential_patterns_spec\.rb$''',
+  '''^spec/lain/middleware/refuse_secret_writes_spec\.rb$''',
+]
+regexes = ['''^abc123def456$''']
+
+# Matches a plain word, so it is allowed only in the file that has it.
+[[allowlists]]
+description = "false positive: private-key rule matching prose between fake key markers"
+condition = "AND"
+paths = [
+  '''^spec/lain/review/critique/documents_spec\.rb$''',
+]
+regexes = ['''documents''']
+
+# Short value, so it is allowed only in the files that plant it.
+[[allowlists]]
+description = "fake credential value too short to slice"
+condition = "AND"
+paths = [
+  '''^spec/lain/sensitivity/policy_spec\.rb$''',
+]
+regexes = ['''^sk_live_51H8xQ2$''']
+
+# Matches a plain word, so it is allowed only in the file that has it.
+[[allowlists]]
+description = "false positive: private-key rule matching prose between fake key markers"
+condition = "AND"
+paths = [
+  '''^spec/lain/sensitivity/text_mask_spec\.rb$''',
+]
+regexes = ['''described''']
+
+# Short value, so it is allowed only in the files that plant it.
+[[allowlists]]
+description = "fake credential value too short to slice"
+condition = "AND"
+paths = [
+  '''^spec/lain/shell/named_spec\.rb$''',
+]
+regexes = ['''^me:pw$''']
+
+# Each file holds a whole corpus of fake credentials the redactor is scored against, so one
+# fragment per value would restate the corpus.
+[[allowlists]]
+description = "redactor scoring corpora and their generator"
+paths = [
+  '''^ext/lain/corpus/regions\.ndjson$''',
+  '''^spec/fixtures/sensitivity/digest_corpus\.yml$''',
+  '''^spec/fixtures/sensitivity/hinted_corpus\.yml$''',
+  # Builds its tokens at runtime from random bytes, so no value can be listed.
+  '''^spec/conformance/corpus_generator\.rb$''',
+]
+
+# A real key, but a throwaway one for the daemon's test TLS server, so it cannot be listed by value.
+[[allowlists]]
+description = "test TLS server private key checked in for the daemon tests"
+paths = ['''^crates/lain-daemon/src/test_tls/server\.key$''']
+
+# The default rules only know vendor-shaped keys, so a plain hex bearer value in a recorded
+# header would pass. Placeholders such as <ANTHROPIC_API_KEY> and VCR's filtered values start
+# with a character outside the class, so they do not match.
+[[rules]]
+id = "cassette-auth-header-value"
+description = "credential value in a recorded Authorization or x-api-key header"
+path = '''^spec/fixtures/vcr_cassettes/'''
+regex = '''(?i)(?:authorization|x-api-key)["']?:\s*(?:-\s*)?["']?(?:bearer\s+)?([A-Za-z0-9_.=-]{20,})'''
+secretGroup = 1
+entropy = 3.0

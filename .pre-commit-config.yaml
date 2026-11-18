@@ -34,6 +34,13 @@ repos:
     hooks:
       - id: actionlint
 
+  # Allowlist and its reasons live in .gitleaks.toml: the redactor's own fake tokens
+  # by value, and runtime token generators by file.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+
   # Relative links and heading anchors in the living docs (lychee.toml: offline, so
   # no commit waits on a network). The inputs are named here and not passed by
   # pre-commit: a renamed heading breaks links in files the commit did not touch.
