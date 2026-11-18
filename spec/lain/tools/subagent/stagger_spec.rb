@@ -133,8 +133,8 @@ RSpec.describe Lain::Tools::Subagent::Stagger do
     # yield and nobody has called `.wait` on it YET -- regardless of whether
     # `.wait` later re-raises and a caller handles it cleanly (reproduced
     # 100% against the bare gem, no Lain involved, in
-    # tmp/c3-probes/probe_bare_async_stderr_leak.rb). `spec/output_discipline
-    # _spec.rb`'s AST scan cannot see this: the `warn` call lives inside the
+    # tmp/c3-probes/probe_bare_async_stderr_leak.rb). The `Lain/TerminalOutput`
+    # cop cannot see this: the `warn` call lives inside the
     # gem, not in lib/. Those bytes go to fd 2, so they never reach the
     # Journal -- it writes through its own descriptor, opened on the session
     # file (see the fd examples in `spec/lain/journal_spec.rb`). What they

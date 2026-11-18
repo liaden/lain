@@ -5,7 +5,7 @@ require "pathname"
 # Review fix 3: "nothing else in lib may construct these records" is
 # stated three times across scribe.rb and records.rb, and it is true today --
 # but nothing kept it true. Mechanical enforcement, in the shape
-# spec/output_discipline_spec.rb and spec/lain/event_spec.rb's "no Turn
+# the Lain/TerminalOutput cop and spec/lain/event_spec.rb's "no Turn
 # constant remains" already use for their own closed invariants: scan the
 # source rather than trust a comment to stay accurate as the codebase grows.
 #

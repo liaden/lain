@@ -16,6 +16,11 @@ plugins:
   - rubocop-thread_safety
   - rubocop-yard
 
+# The house cops, Lain/*. Each one is a rule about this codebase that a spec used to
+# enforce by parsing the tree.
+require:
+  - ./.rubocop/lain
+
 AllCops:
   TargetRubyVersion: 3.2
   NewCops: enable
@@ -34,6 +39,13 @@ AllCops:
   Exclude:
     - "spike/**/*"
     - "planning/**/*.rb"
+  # RuboCop skips hidden directories unless a pattern names one, and the house cops
+  # live in .rubocop/. Merged, so the default Include list stays.
+  inherit_mode:
+    merge:
+      - Include
+  Include:
+    - ".rubocop/**/*.rb"
 
 # Our docstrings read `@param name [Type] description`, so the name comes BEFORE the
 # type. AutoCorrect is off deliberately: the cop's fix for an undocumented argument
@@ -277,7 +289,7 @@ RSpec/LeakyLocalVariable:
 # cop means a missing collaborator; counting `expect` calls in a spec is not that.
 # `@ivar`-over-`let` (InstanceVariable) is a 341-site house style, not a defect, and
 # describing a PROPERTY by string rather than a class (DescribeClass) is exactly what
-# output_discipline_spec.rb and its kin are for.
+# spec/rubocop/lain_cops_spec.rb and the discipline specs are for.
 RSpec/ExampleLength:
   Enabled: false
 RSpec/MultipleExpectations:
@@ -577,3 +589,17 @@ RSpec/RemoveConst:
 Rake/Desc:
   Exclude:
     - "Rakefile"
+
+# --- House cops -------------------------------------------------------------
+
+# Only the frontend may write to the terminal; everything else writes to an injected
+# Lain::Sink or a Lain::Channel. spec/rubocop/lain_cops_spec.rb pins this Exclude list,
+# so a new exemption edits both files.
+Lain/TerminalOutput:
+  Include:
+    - "lib/**/*.rb"
+  Exclude:
+    - "lib/lain/frontend/**/*"
+    # A forked run points its own fds 1 and 2 at its log before lain starts; the
+    # spawner owns no terminal.
+    - "lib/lain/daemon/spawner.rb"

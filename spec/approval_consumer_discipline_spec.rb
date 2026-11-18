@@ -4,7 +4,7 @@ require "ripper"
 require "pathname"
 
 # Mechanical enforcement of the one-consumer rule, and deliberately the same
-# shape {DesktopDiscipline} and {OutputDiscipline} are.
+# shape {DesktopDiscipline} is.
 #
 # {Lain::Approval::Parked::Queue}'s arrival queue delivers each parked call to exactly
 # ONE `#dequeue` caller -- `Async::Queue` delegates to a `Thread::Queue`, so a

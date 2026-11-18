@@ -7,7 +7,7 @@ require "pathname"
 # ONCE in lib/, in run_clock.rb, as {Lain::RunClock::MONOTONIC}'s body. Every
 # other timing seam takes that constant as its `clock:` default.
 #
-# Ripper, not grep, for the reason {OutputDiscipline} gives: `CLOCK_MONOTONIC`
+# Ripper, not grep: `CLOCK_MONOTONIC`
 # appears in prose (tty.rb's `@param clock` doc explains that `clock:` is
 # monotonic while `wall_clock:` is not) and a text scan would count the
 # sentence. Only a real constant REFERENCE counts.

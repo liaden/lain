@@ -23,8 +23,7 @@ require "pathname"
 # Neither file needs an exemption for it: the recipe named in one place names
 # only `state_home`, and a rebuild elsewhere names a second ingredient.
 #
-# Ripper, not a text match, for the reason `spec/output_discipline_spec.rb`
-# parses too. A grep catches ONE spelling: it misses the same join with the tail
+# Ripper, not a text match. A grep catches ONE spelling: it misses the same join with the tail
 # pre-joined, `"#{Dir.pwd}/.lain/state.json"`, `Dir.pwd + "/.lain"`, a
 # recomposition through `ProjectDir::STATE_FILE`, and even a line-wrapped copy of
 # the identical expression -- while flagging the words in a COMMENT, which the
@@ -90,7 +89,7 @@ module ProjectDirDiscipline
   BINDABLE = %i[@ident @const @ivar].freeze
 
   # The locator itself, which does not recompose these paths -- it IS the
-  # composition. Relative to `lib/`, like {OutputDiscipline}'s allowlist.
+  # composition. Relative to `lib/`, the root the scan walks and names files from.
   EXEMPT = ["lain/project_dir.rb"].freeze
 
   # The expression forms that BUILD a path. A subtree rooted at one of these

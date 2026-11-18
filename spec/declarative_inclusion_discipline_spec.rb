@@ -5,8 +5,8 @@
 # true while nothing regrows a bare ActiveModel inclusion validator around a
 # non-scalar, so a whole-tree sweep is what keeps the claim honest instead of
 # merely true on the day it was measured. It sits at spec/*_discipline_spec.rb
-# with its siblings (output_discipline_spec.rb, tool_bounds_discipline_spec.rb)
-# for their reason: the subject is every Carrier subclass lib/ ships, not one
+# with its siblings (tool_bounds_discipline_spec.rb among them) for their
+# reason: the subject is every Carrier subclass lib/ ships, not one
 # of them, and a gate nobody finds gets duplicated or disabled.
 #
 # Named classes under `Lain::` only, tool_bounds_discipline_spec.rb's reason:

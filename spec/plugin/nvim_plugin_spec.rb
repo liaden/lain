@@ -529,7 +529,7 @@ RSpec.describe "lain nvim plugin", :nvim do
     end
 
     # The card's discipline clause, pinned mechanically the way
-    # output_discipline_spec.rb pins stdout: the plugin may READ buffer names,
+    # the Lain/TerminalOutput cop pins stdout: the plugin may READ buffer names,
     # never create or write buffers, and never speak RPC -- that all belongs
     # to the injected runtime.
     it "ships no buffer logic and no RPC handling" do

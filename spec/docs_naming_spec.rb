@@ -11,7 +11,7 @@ require "pathname"
 # `Timeline` and told a Rust porter to keep `Ractor.shareable?(turn)` true for a
 # class that is not there, more than a year of commits after the cut. Prose
 # drift is silent by construction, which is why it is worth a spec and why
-# `spec/output_discipline_spec.rb` and `spec/lain/cli/chat_flags_spec.rb` exist
+# the `Lain/TerminalOutput` cop and `spec/lain/cli/chat_flags_spec.rb` exist
 # in the same shape: the rule is enforced on the artifact, not restated in a
 # paragraph nobody re-reads.
 #

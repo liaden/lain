@@ -16,9 +16,9 @@ require "pathname"
 # green. A grep for a constant cannot do it -- `provider/admission.rb` mentions
 # `Provider::Ollama.new` in a comment, and a comment is not a construction.
 #
-# Robustness comes from the same place `output_discipline_spec.rb` gets it: the
-# source is parsed with Ripper and the SYNTAX TREE is inspected, so the names
-# are never matched inside comments or string literals, and a receiver that
+# Robustness comes from parsing rather than matching text: the source is
+# parsed with Ripper and the SYNTAX TREE is inspected, so the names are never
+# matched inside comments or string literals, and a receiver that
 # merely reads a constant (`Provider::Ollama::DEFAULT_MODEL`, which is
 # `oracle/secret_read.rb`'s default argument) is not mistaken for a
 # construction. Which selectors ARE a construction is {FACTORY_SELECTORS}.

@@ -34,7 +34,7 @@ load File.expand_path("../../../exe/lain", __dir__)
 #
 # Prism rather than a grep: `options[:foo]` appears in prose comments in these
 # files, and a receiverless `[]` on some other collection is not an option read.
-# Ripper would do (spec/output_discipline_spec.rb uses it) but Prism's node
+# Ripper would do, but Prism's node
 # types name what we are matching on, so the matcher reads as the rule.
 module ChatFlags
   ROOT = Pathname.new(File.expand_path("../../..", __dir__))

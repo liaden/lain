@@ -91,7 +91,7 @@ Gem::Specification.new do |spec|
   # ships in the gem and attaches to a running `nvim --listen` socket.
   spec.add_dependency "neovim", "~> 0.10"
   # Terminal primitives for Frontend::TTY. `reline` (stdlib) does line editing and
-  # history. Only the frontend may touch the terminal; see spec/output_discipline_spec.rb.
+  # history. Only the frontend may touch the terminal; see the Lain/TerminalOutput cop.
   # HTML to readable text for web_fetch. A result is sized for the model's window,
   # and markup spends that window on tags; the converter keeps the words.
   spec.add_dependency "nokogiri", "~> 1.19"

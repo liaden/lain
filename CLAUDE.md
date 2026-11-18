@@ -177,8 +177,9 @@ one is allowed to cite. `bin/comment-census` measures all three and is the workl
 
 Only the frontend may touch `$stdout`/`$stderr`. Everything else writes to an injected
 `Lain::Sink` or pushes attributed events onto a `Lain::Channel`.
-`spec/output_discipline_spec.rb` fails on `puts`/`print`/`warn`/`$stdout`/`$stderr` anywhere in
-`lib/` outside `lib/lain/frontend/`; the Rust crates deny `clippy::print_stdout`/`print_stderr`.
+The `Lain/TerminalOutput` cop (`.rubocop/cops/lain/terminal_output.rb`) fails on
+`puts`/`print`/`warn`/`$stdout`/`$stderr` anywhere in `lib/` outside `lib/lain/frontend/`; the
+Rust crates deny `clippy::print_stdout`/`print_stderr`.
 
 The experiment record does not rest on that scan. The Journal holds its own descriptor —
 opened on the session file, never on a terminal stream — in sync mode, and writes each record

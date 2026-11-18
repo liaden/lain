@@ -17,10 +17,9 @@ require "pathname"
 # So the current set is an explicit allowlist and anything outside it reddens.
 # A documentation line does not stop the forty-first one.
 #
-# Ripper, not a grep, for the reason `spec/output_discipline_spec.rb` and
-# `spec/lain/project_dir_spec.rb` both parse: the text `root: Dir.pwd` appears
-# in prose in this very file, in {Lain::CLI::Wiring}'s comments, and in a YARD
-# `@param` line -- while a keyword default written `root: Dir.getwd` or
+# Ripper, not a grep, as in `spec/lain/project_dir_spec.rb`: the text
+# `root: Dir.pwd` appears in prose in this very file, in {Lain::CLI::Wiring}'s
+# comments, and in a YARD `@param` line -- while a keyword default written `root: Dir.getwd` or
 # `root: File.expand_path(Dir.pwd)` is the same defect and matches no grep for
 # the literal.
 #
@@ -77,8 +76,8 @@ module RootDefaultDiscipline
   PARAM_HOLDERS = %i[def defs lambda brace_block do_block].freeze
 
   # Every parameter default in `lib/` that reads the working directory today,
-  # as `<owner>:<parameter>`, relative to `lib/` like {OutputDiscipline}'s
-  # allowlist. A label may legitimately repeat within one file's row -- two
+  # as `<owner>:<parameter>`, keyed by path relative to `lib/`, the root the
+  # scan walks and names files from. A label may legitimately repeat within one file's row -- two
   # classes in the same file can each declare an `initialize` defaulting the
   # same parameter -- and that repetition is deliberate: collapsing it to a
   # Set would let a third such default slip in unseen, budgeted by its twin.

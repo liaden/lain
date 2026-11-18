@@ -441,7 +441,7 @@ module Lain
       # figure on a report naming no model is the lie {PriceBook} refuses to
       # tell. Attribution ONLY: no credential and no provider base URL reaches
       # here, and none may -- a report is pasted into an issue, and
-      # `spec/output_discipline_spec.rb` cannot see inside a String.
+      # the `Lain/TerminalOutput` cop cannot see inside a String.
       def header
         ["Arm driver — #{@arms.size} arms over #{@tasks.size} tasks",
          "  fixture:   #{attributed(@fixture)}",

@@ -14,8 +14,7 @@ require "pathname"
 # ({Lain::CLI::HumanReplies::Reply#classify}), pinned below.
 #
 # Silence is the whole problem, so the declaration is checked here rather than
-# left to whoever writes the next command -- {OutputDiscipline}'s idiom, for its
-# reason. This is a *syntax tree* walk, not a text scan, so the trigger names are
+# left to whoever writes the next command. This is a *syntax tree* walk, not a text scan, so the trigger names are
 # never matched inside comments or string literals, and the generic `prompt` is
 # counted only as a call on an explicit receiver (`tty.prompt`) rather than as
 # the local variable `/meta` names its argument.

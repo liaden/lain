@@ -1,15 +1,5 @@
 # frozen_string_literal: true
 
-# New code, not a port. RubyLLM's Connection hands Faraday's `:logger`
-# middleware a real ::Logger (`RubyLLM.logger`) writing to $stdout by default
-# (leak sites: connection.rb:17,89,90). Output discipline forbids that --
-# `spec/output_discipline_spec.rb` parses every file under lib/ and fails on
-# any $stdout/$stderr touch outside lib/lain/frontend/. Faraday's logger
-# middleware only needs four methods (`#debug`/`#info`/`#warn`/`#error`/
-# `#fatal`, block form) plus `#debug?` to decide whether to log bodies, so
-# this is the whole surface: everything routes to an injected `Lain::Sink`,
-# defaulting to `Sink::Null`.
-
 module Lain
   class Provider
     module HTTP
@@ -17,6 +7,16 @@ module Lain
         # Adapts a `Lain::Sink` to the Logger duck Faraday::Response::Logger's
         # formatter expects (`Formatter#def_delegators :@logger, :debug, :info,
         # :warn, :error, :fatal`).
+        #
+        # New code, not a port. RubyLLM's Connection hands Faraday's `:logger`
+        # middleware a real ::Logger (`RubyLLM.logger`) writing to $stdout by default
+        # (leak sites: connection.rb:17,89,90). Output discipline forbids that --
+        # the `Lain/TerminalOutput` cop reads every file under lib/ and fails on
+        # any $stdout/$stderr touch outside lib/lain/frontend/. Faraday's logger
+        # middleware only needs four methods (`#debug`/`#info`/`#warn`/`#error`/
+        # `#fatal`, block form) plus `#debug?` to decide whether to log bodies, so
+        # this is the whole surface: everything routes to an injected `Lain::Sink`,
+        # defaulting to `Sink::Null`.
         class SinkLogger
           LEVELS = %i[debug info warn error fatal].freeze
 

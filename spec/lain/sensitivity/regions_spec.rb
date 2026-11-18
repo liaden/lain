@@ -1649,7 +1649,7 @@ RSpec.describe Lain::Sensitivity::Regions do
     end
 
     # A region's bytes are the one thing that must never reach a log or the
-    # NDJSON Journal by accident; `spec/output_discipline_spec.rb` exists because
+    # NDJSON Journal by accident; the `Lain/TerminalOutput` cop exists because
     # one stray byte in that stream was a real incident.
     it "names no shape it was over-masked for, unless one is given" do
       over = described_class.new(start: 0, bytes: "x", reason: "over-masked: TOKEN could not be scanned to the end",

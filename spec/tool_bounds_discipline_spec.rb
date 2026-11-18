@@ -3,7 +3,7 @@
 # Mechanical enforcement of the rule {Lain::Tool::Bounds} states and nothing
 # until now checked: a tool whose result carries arbitrary content declares a
 # ceiling. It sits at `spec/*_discipline_spec.rb` with its siblings rather than
-# at a mirror path, for `output_discipline_spec.rb`'s reason -- the subject is
+# at a mirror path, because the subject is
 # the whole toolset, not one class, and a gate nobody finds gets duplicated or
 # disabled.
 #

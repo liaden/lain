@@ -2566,7 +2566,7 @@ phone relay as a confined worker. The isolation work
 that exists lives in its sibling `crates/lain-fence`.
 
 `ext/lain` denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root, matching
-what `spec/output_discipline_spec.rb` enforces on the Ruby side. It does not forbid `unsafe`:
+what the `Lain/TerminalOutput` cop enforces on the Ruby side. It does not forbid `unsafe`:
 `lib.rs` has 6 `unsafe` sites, all confined to the magnus FFI boundary (`classname` and
 `as_slice`).
 `#![forbid(unsafe_code)]` lives on `crates/lain-daemon` instead, whose `main.rs` carries it at the

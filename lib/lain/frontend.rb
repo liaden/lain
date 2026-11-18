@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 module Lain
-  # The one place allowed to touch the terminal (see spec/output_discipline_spec.rb).
+  # The one place allowed to touch the terminal (see the Lain/TerminalOutput cop).
   # Everything under lib/lain/frontend/ is exempt from that rule; nothing outside it
   # may write to $stdout/$stderr. {TTY} owns the terminal and drains a {Lain::Channel}
   # of already-attributed {Lain::Telemetry}s; {ApprovalPolicy} is the interactive

@@ -123,7 +123,7 @@ RSpec.describe Lain::Bench::CLI do
 
     # The header must attribute without leaking: a report is pasted into an
     # issue, and `Lain::CLI::Backend` holds the key and base URL the provider
-    # was resolved from. spec/output_discipline_spec.rb cannot see inside a
+    # was resolved from. The Lain/TerminalOutput cop cannot see inside a
     # String, so the claim is made here.
     it "names no API key and no provider base URL" do
       expect(arms_report).not_to match(%r{sk-ant|api_key|https?://}i)

@@ -4,7 +4,7 @@ require "pathname"
 require "strscan"
 
 # Mechanical enforcement of HOW a user command refuses, and deliberately the
-# same shape {OutputDiscipline} and {RefusalWidthDiscipline} are: read the
+# same shape {RefusalWidthDiscipline} is: read the
 # tree, derive the subject set from the code, fail naming file and line. It
 # sits at `spec/*_discipline_spec.rb` with its eight siblings rather than at a
 # mirror path, because it derives from the whole runtime and not from one

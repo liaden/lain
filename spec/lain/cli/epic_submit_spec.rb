@@ -1670,7 +1670,7 @@ RSpec.describe Lain::CLI::EpicSubmit do
   end
 
   # The interactive asker: a y/n prompt on the INJECTED streams. Nothing here
-  # may touch $stdout -- `spec/output_discipline_spec.rb` parses lib/ for that
+  # may touch $stdout -- the `Lain/TerminalOutput` cop parses lib/ for that
   # -- so the question is written to the stream the command was handed.
   describe "the TTY prompt" do
     before do

@@ -12,7 +12,7 @@ require "tty-screen"
 module Lain
   module Frontend
     # Owns the terminal. The only class in this codebase permitted to write to
-    # $stdout (see spec/output_discipline_spec.rb, which is scoped to lib/lain/frontend/).
+    # $stdout (see the Lain/TerminalOutput cop, which exempts lib/lain/frontend/).
     #
     # Two duties, kept in one class because they share the same terminal state:
     #
@@ -79,7 +79,7 @@ module Lain
       #   state -- `call(text:, theme:) -> String`, newlines allowed. The
       #   default composes nothing, which is what keeps the bytes the line
       #   editor receives identical to the pre-seam prompt. Only the renderer
-      #   is injectable, not the {PromptComposer} around it: the theme is this class's
+      #   is injectable, not the {Lain::Frontend::PromptComposer} around it: the theme is this class's
       #   to hand over, and a second one passed in could disagree with it
       # @param history_path [String] durable reline history file, under
       #   {Paths#state_home} by default -- injectable so specs use a tmpdir
@@ -89,7 +89,7 @@ module Lain
       #   uses, so a countdown's remaining seconds are testable without a real
       #   clock tick
       # @param state_path [String] {StatusFeed}'s published state, resolved
-      #   through {ProjectDir} -- the one locator {StatusFeed} and {CLI::Up}
+      #   through `Lain::ProjectDir` -- the one locator {StatusFeed} and {CLI::Up}
       #   default through too, so the three renderers of one feed cannot name
       #   three different files. Injectable so specs use a tmpdir
       # @param wall_clock [#call] absolute time source for {#prompt}'s warmth
@@ -177,7 +177,7 @@ module Lain
       # The prompt as the line editor is handed it: {Warmth}'s cache glyph -- a
       # per-prompt SNAPSHOT of {StatusFeed}'s published deadline, since Reline
       # fixes its prompt string for the whole wait -- then the painted words,
-      # composed by {PromptComposer}. Everything the rendering puts ABOVE the
+      # composed by {Lain::Frontend::PromptComposer}. Everything the rendering puts ABOVE the
       # editor's line is printed here, because Reline's prompt is one line and
       # it mangles a newline into a literal backslash-n rather than wrapping.
       #

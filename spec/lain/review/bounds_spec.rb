@@ -941,7 +941,7 @@ RSpec.describe Lain::Review::Bounds do
   # caller added later would restore the two-places-enforce-one-ceiling shape
   # and nothing anywhere would go red.
   #
-  # Pinned mechanically, `spec/output_discipline_spec.rb`'s way: Ripper over the
+  # Pinned mechanically: Ripper over the
   # syntax tree, never a grep, because the files that discuss this guard discuss
   # it at length in comments -- {Lain::CLI::Review}'s class doc still names it,
   # and must, since that is where the follow-up this move discharged was written.
@@ -987,7 +987,7 @@ RSpec.describe Lain::Review::Bounds do
       expect(call_sites.fetch("lain/review/session.rb").size).to eq(1)
     end
 
-    # Guards the guard, `output_discipline_spec.rb`'s way: the scanner reads the
+    # Guards the guard: the scanner reads the
     # syntax tree, so the word in a comment, in a String literal and in the
     # `def` that declares it are all invisible to it -- and all three of those
     # are present in `lib/` as it stands.

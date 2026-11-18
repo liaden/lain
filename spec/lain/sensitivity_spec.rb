@@ -50,7 +50,7 @@ module SensitivitySpecSupport
   BANNED_CONSTANTS = %w[Dir ENV IO FileTest Kernel Process Open3 FileUtils Tempfile Etc Socket].freeze
   PURE_FILE_METHODS = %w[basename fnmatch?].freeze
 
-  # Ripper, not a text scan, for `output_discipline_spec.rb`'s reason: a trigger
+  # Ripper, not a text scan: a trigger
   # word inside a comment or a string literal is not a call, and this file's
   # comments discuss `File.expand_path` at length.
   def self.nodes(sexp, &)
@@ -1433,7 +1433,7 @@ RSpec.describe Lain::Sensitivity do
   # The stubs above prove the subject does not USE these doors on the paths the
   # examples happen to try. This proves it does not NAME them at all, on any
   # path, which is the claim the class comment actually makes. Ripper rather
-  # than a text scan, per `output_discipline_spec.rb`: this file's comments
+  # than a text scan: this file's comments
   # discuss `File.expand_path` and `Dir.home` at length, and neither is a call.
   describe "the source names no door to the filesystem" do
     let(:source) { File.read(File.expand_path("../../lib/lain/sensitivity.rb", __dir__)) }

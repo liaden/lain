@@ -25,7 +25,7 @@ require "pathname"
 #   it_behaves_like "a contract", corpus: Dir.glob(...)   # the SHARED GROUP loops
 #
 # NOT forbidden: reading repository files INSIDE an example. That is what
-# `spec/output_discipline_spec.rb`, `spec/docs_naming_spec.rb`,
+# `spec/rubocop/lain_cops_spec.rb`, `spec/docs_naming_spec.rb`,
 # `spec/lain/agent_state_machine_diagram_spec.rb`, `spec/lain/review/bounds_spec.rb`
 # and `spec/lain/epic/scribe_write_side_spec.rb` all do, and in every one of them
 # lain's own artifact IS the subject. One example iterating a thousand files is a

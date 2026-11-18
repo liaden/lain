@@ -378,7 +378,7 @@ RSpec.describe ExampleNetwork do
 
   # Blocker #3 made unviolatable instead of written down. The bug was one object
   # missing and three call sites free to skip it; this is the same shape as
-  # spec/output_discipline_spec.rb, and it is what stops the next tag from
+  # the Lain/TerminalOutput cop, and it is what stops the next tag from
   # quietly becoming a fourth.
   #
   # Parsed, not grepped: four of the six textual occurrences under spec/support

@@ -40,8 +40,8 @@ module SpecCensus
   # Mechanical, REPORT-ONLY guard against assertion shapes that structurally
   # cannot fail. The suite is largely LLM-written and keeps growing that way, so
   # a one-time prune only fixes today's instances -- this census is what
-  # makes tomorrow's mechanically visible, the way `output_discipline_spec.rb`
-  # makes a stray `puts` visible.
+  # makes tomorrow's mechanically visible, the way the `Lain/TerminalOutput`
+  # cop makes a stray `puts` visible.
   #
   # Two shapes, both drawn from a manual audit during planning:
   #

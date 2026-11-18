@@ -25,7 +25,7 @@ module Lain
     # The approval decision is an injected policy answering
     # `#rule(effect, context)` with an {Approval::Escalation::Ruling}, never a
     # hardcoded terminal prompt: `lib/` may not touch the terminal
-    # (spec/output_discipline_spec.rb), so a real interactive policy belongs to
+    # (the Lain/TerminalOutput cop), so a real interactive policy belongs to
     # the frontend and is handed in. A ruling rather than a Boolean because a
     # refusal the session decided before anyone was asked has to say so, or the
     # model takes "denied" for a missing tool and routes around it.

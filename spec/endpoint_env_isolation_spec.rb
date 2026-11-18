@@ -7,9 +7,8 @@
 # without these examples the whole mechanism could be deleted and the suite would
 # stay green on any machine that happens not to export these.
 #
-# It is a top-level spec rather than one under `spec/lain/` for
-# `output_discipline_spec.rb`'s reason: the subject is a rule about the SUITE, not
-# a class in `lib/`.
+# It is a top-level spec rather than one under `spec/lain/` because the subject
+# is a rule about the SUITE, not a class in `lib/`.
 RSpec.describe "endpoint env isolation" do
   # The observable consequence, and the example that actually failed on a macOS
   # checkout whose `.envrc` pinned `LAIN_PROVIDER` to something other than the

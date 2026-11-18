@@ -7,7 +7,7 @@ require "state_machines-mermaid" # DEV-only: the diagram never renders at runtim
 # A checked-in diagram that silently diverges from the code is worse than none,
 # so it is generated, not drawn, and this spec is its drift guard: it regenerates
 # the mermaid source from the live machine and diffs it against the committed
-# file. Same posture as `output_discipline_spec.rb` -- enforce mechanically, do
+# file. Same posture as the `Lain/TerminalOutput` cop -- enforce mechanically, do
 # not document and hope.
 #
 # Regenerate after an intended machine change:

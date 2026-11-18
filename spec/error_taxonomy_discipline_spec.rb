@@ -57,7 +57,7 @@ module ErrorTaxonomyDiscipline
 
   # This file names classes in {TOLERATED} as string literals, and a scan that
   # read itself would hand each of them the very cover the entry records them as
-  # lacking. {OutputDiscipline} skips itself for the same reason.
+  # lacking.
   SELF = "spec/#{File.basename(__FILE__)}".freeze
 
   # One instance, built once, memoising into its own ivars -- the scan is three

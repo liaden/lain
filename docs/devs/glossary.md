@@ -684,7 +684,7 @@ descriptor, opened on the session file and never on a terminal stream, so a term
 on fd 2 (`spec/lain/journal_spec.rb` pins it).
 
 Output discipline is enforced anyway, to protect the cockpit and not the record.
-`spec/output_discipline_spec.rb` parses the AST of every file in `lib/` and fails on
+The `Lain/TerminalOutput` cop parses the AST of every file in `lib/` and fails on
 `puts`/`print`/`warn`/`$stdout`/`$stderr` outside the frontend, and the Rust
 side denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root.
 
