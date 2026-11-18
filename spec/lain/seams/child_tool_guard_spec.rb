@@ -48,7 +48,8 @@ RSpec.describe "A child's tools run behind its parent's guard", :seam do
   def project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
 
   def wired(chronicle: Lain::CLI::Chronicle::Null.new, notice: ->(_line) {}, **options)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5, **options }, chronicle:, status_feed:, project:)
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5, **options },
+                                   chronicle:, status_feed:, project:)
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: RecordingChannel.new, recorder:, session:, backend:, notice:)
     [wiring, agent]

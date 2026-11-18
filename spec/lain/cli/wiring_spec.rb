@@ -326,7 +326,16 @@ class WiringAgentSpecBoard
   end
 end
 
+# The Human the launch would read off the options, unless the example hands one in.
+module WiringSpecHuman
+  def wiring_over(**kwargs)
+    Lain::CLI::Wiring.new(**kwargs, human: kwargs.fetch(:human) { Lain::CLI::Human.from(kwargs.fetch(:options)) })
+  end
+end
+
 RSpec.describe Lain::CLI::Wiring do
+  include WiringSpecHuman
+
   # Provider resolution, context, slots, and spawn policies stay the real
   # Backend's; only the network edge swaps for Provider::Mock, so the whole
   # chat assembly is exercised offline exactly as the exe wires it (the
@@ -390,7 +399,7 @@ RSpec.describe Lain::CLI::Wiring do
 
   def new_wiring(tty_factory: nil, **kwargs)
     herdr = tty_factory ? { herdr: null_herdr(tty_factory) } : {}
-    described_class.new(project: throwaway_project(project_dir), **herdr, **kwargs)
+    wiring_over(project: throwaway_project(project_dir), **herdr, **kwargs)
   end
 
   def wire_agent
@@ -602,6 +611,29 @@ RSpec.describe Lain::CLI::Wiring do
       expect(seen).to eq([0, backend.model])
     end
 
+    # A phone's run reads no line, and its parked calls are answered only away from the terminal.
+    it "builds the Repl of a run the phone answers as one nobody types into", :seam do
+      attended = []
+      allow(Lain::CLI::Repl).to receive(:new).and_wrap_original do |original, **kwargs|
+        attended << kwargs[:attended]
+        original.call(**kwargs)
+      end
+
+      Dir.mktmpdir("wiring-remote") do |dir|
+        terminal = lambda do |channel:, **|
+          Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
+        end
+        wiring = new_wiring(options: { grace: 5, prompt: "hello", non_interactive: true, human: "remote" },
+                            human: Lain::CLI::Human.new(kind: :remote), chronicle:, status_feed:,
+                            stdin: StringIO.new, tty_factory: terminal,
+                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+        Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+        wiring.conductor.close(reason: :exit)
+      end
+
+      expect(attended).to eq([false])
+    end
+
     # The board reads what the Repl hears, so both must hold the one Heard, and a
     # --prompt seed must reach it through the run's own path.
     it "hands the board and the Repl one Heard, which hears the --prompt seed", :seam do
@@ -638,8 +670,8 @@ RSpec.describe Lain::CLI::Wiring do
       Dir.mktmpdir("lain-wiring-prime") do |dir|
         root = File.realpath(dir)
         env = { "XDG_STATE_HOME" => File.join(root, "s"), "HOME" => File.join(root, "h") }
-        reader = described_class.new(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle:,
-                                     status_feed:, paths: Lain::Paths.new(env:), project: throwaway_project(root))
+        reader = wiring_over(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle:,
+                             status_feed:, paths: Lain::Paths.new(env:), project: throwaway_project(root))
         board_existed = []
         allow(Lain::Confine::MaskList).to receive(:new).and_wrap_original do |original, **kwargs|
           original.call(**kwargs).tap do |list|
@@ -667,8 +699,8 @@ RSpec.describe Lain::CLI::Wiring do
         write_config(root, "sensitivity denied: %w[*.secret]\nshell exclude: %w[curl]\napproval timeout: 900\n" \
                            "review model: \"claude-sonnet-5-5\"\nbudget iterations: { default: 7 }\n" \
                            "search include: [\"notes/**/*.md\"]\ntests preset: :rspec\n", paths:)
-        wiring = described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:, paths:,
-                                     project: throwaway_project(root))
+        wiring = wiring_over(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:, paths:,
+                             project: throwaway_project(root))
         recorder, session = wiring.run_state(nil)
 
         with_env("HOME" => elsewhere, "XDG_STATE_HOME" => elsewhere, "XDG_CONFIG_HOME" => elsewhere) do
@@ -683,9 +715,9 @@ RSpec.describe Lain::CLI::Wiring do
     # the rule would abstain for that reason instead.
     describe "under --confine classes" do
       let(:classed) do
-        described_class.new(options: { grace: 5, approval: "auto", confine: "classes" }, chronicle:, status_feed:,
-                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }),
-                            project: throwaway_project(@root))
+        wiring_over(options: { grace: 5, approval: "auto", confine: "classes" }, chronicle:, status_feed:,
+                    paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }),
+                    project: throwaway_project(@root))
       end
       let(:backend_root) { @root }
 
@@ -764,9 +796,9 @@ RSpec.describe Lain::CLI::Wiring do
 
       context "with --exec docker" do
         let(:docked) do
-          described_class.new(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker" },
-                              chronicle:, status_feed:, project: throwaway_project(@root),
-                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+          wiring_over(options: { grace: 5, approval: "auto", confine: "classes", exec: "docker" },
+                      chronicle:, status_feed:, project: throwaway_project(@root),
+                      paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
         end
 
         let(:image_id) { "d529dd0c6e5597ac7e4a3e2dea65c3fcc6173f4cae713c409265c1dd9914a11b" }
@@ -838,10 +870,10 @@ RSpec.describe Lain::CLI::Wiring do
             original.call(**kwargs, judge: Lain::Approval::Judge.new(provider: approving, model: "m",
                                                                      slots: Lain::Prompt::Slots.new(fills: {})))
           end
-          judged = described_class.new(options: { grace: 5, approval: "auto", confine: "off", exec: "docker",
-                                                  judge_facts: "facts" },
-                                       chronicle:, status_feed:, project: throwaway_project(@root),
-                                       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+          judged = wiring_over(options: { grace: 5, approval: "auto", confine: "off", exec: "docker",
+                                          judge_facts: "facts" },
+                               chronicle:, status_feed:, project: throwaway_project(@root),
+                               paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
 
           board, ruling, stage = docked_on_path(judged) do |built|
             ruled = Sync { |task| task.with_timeout(5) { built.policy_switch.rule(bash_of("uname -a"), nil) } }
@@ -940,9 +972,9 @@ RSpec.describe Lain::CLI::Wiring do
           original.call(**kwargs, judge: ->(tool:, **) { asked.push(tool).then { :approve } })
         end
         options = { grace: 5, approval: "auto", confine: "workspace", non_interactive: true, **over }
-        described_class.new(options:,
-                            chronicle:, status_feed:, project: throwaway_project(@root),
-                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
+        wiring_over(options:,
+                    chronicle:, status_feed:, project: throwaway_project(@root),
+                    paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @home }))
       end
 
       def asked = @asked ||= []
@@ -1001,10 +1033,10 @@ RSpec.describe Lain::CLI::Wiring do
         Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io: journal_io), journal_path: "seam.ndjson")
       end
       let(:tripped) do
-        described_class.new(options: { grace: 5, approval: "auto", confine: "reader", tripwire: "observe" },
-                            chronicle:, status_feed:, project: throwaway_project(project_root),
-                            paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
-                                                          "HOME" => File.join(base, "h") }))
+        wiring_over(options: { grace: 5, approval: "auto", confine: "reader", tripwire: "observe" },
+                    chronicle:, status_feed:, project: throwaway_project(project_root),
+                    paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
+                                                  "HOME" => File.join(base, "h") }))
       end
       # A stray non-executable wc first on PATH: the shell tries it and the kernel refuses it on an honest call.
       let(:noise) { File.join(base, "noexec", "wc") }
@@ -1130,7 +1162,7 @@ RSpec.describe Lain::CLI::Wiring do
     shown = Dir.mktmpdir do |dir|
       sub = File.join(dir, "lib", "sub").tap { |path| FileUtils.mkdir_p(path) }
       project = Lain::Project.new(root: dir, cwd: sub, kind: :project, detected_by: :flag)
-      _, session = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project:).run_state(nil)
+      _, session = wiring_over(options: { grace: 5 }, chronicle:, status_feed:, project:).run_state(nil)
       written = File.join(dir, "lib", "other.rb")
       session.open_pre_images.record_pre_image(written) { nil }.record_write(written)
       session.round_writes
@@ -1510,6 +1542,34 @@ RSpec.describe Lain::CLI::Wiring do
       expect(wiring.questions).to be_a(Async::Queue)
       expect(wiring.supervisor).to be_a(Lain::Supervisor)
       expect(wiring.approvals).to be_a(Lain::Approval::Parked::Queue)
+    end
+
+    # A forgotten Human must be loud: defaulted from the options, it would be a
+    # second reading of the flags, and a caller that forgot it would get a
+    # sandbox that runs unconfined calls for a phone.
+    it "refuses to build without the Human the launch read" do
+      expect do
+        described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project: throwaway_project(project_dir))
+      end
+        .to raise_error(ArgumentError, /human/)
+    end
+
+    # The launch reads the flags once; the sandbox's refusal of an unconfined
+    # call follows the same Human the board and the askers do.
+    it "hands the toolset build the Human the launch handed it, and reads no flag of its own" do
+      remote = Lain::CLI::Human.new(kind: :remote)
+      allow(Lain::CLI::Human).to receive(:from).and_call_original
+      seen = []
+      allow(Lain::CLI::Wiring::ToolsetBuild).to receive(:new).and_wrap_original do |original, **kwargs|
+        seen << kwargs[:human]
+        original.call(**kwargs)
+      end
+      handed = new_wiring(options: { grace: 5 }, chronicle:, status_feed:, human: remote)
+      recorder, session = handed.run_state(nil)
+      handed.wire_agent(channel:, recorder:, session:, backend:)
+
+      expect(seen).to contain_exactly(be(remote))
+      expect(Lain::CLI::Human).not_to have_received(:from)
     end
 
     it "takes the queue and the asker from the Human, not from the flag" do
@@ -2265,9 +2325,9 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
-                          project: throwaway_project(@state))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                  project: throwaway_project(@state))
     end
     let(:backend_root) { @state }
     let(:credential_provider) do
@@ -2330,9 +2390,9 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
-                          project: throwaway_project(@state))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                  project: throwaway_project(@state))
     end
     let(:backend_root) { @state }
     let(:journal) { RecordingChannel.new }
@@ -2468,9 +2528,9 @@ RSpec.describe Lain::CLI::Wiring do
     # A throwaway state home: the bash turn primes the shadow
     # snapshot store, which lives there.
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
-                          project: throwaway_project(@state))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                  project: throwaway_project(@state))
     end
     let(:backend_root) { @state }
 
@@ -2579,9 +2639,9 @@ RSpec.describe Lain::CLI::Wiring do
                                            text_response("settled")])
     end
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
-                          project: throwaway_project(@state))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                  project: throwaway_project(@state))
     end
     let(:backend_root) { @state }
 
@@ -2717,7 +2777,7 @@ RSpec.describe Lain::CLI::Wiring do
     end
     let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }) }
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:, paths:, project: throwaway_project(@state))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:, paths:, project: throwaway_project(@state))
     end
     let(:backend_root) { @state }
     let(:cat) { File.join(@state, "bin", "cat") }
@@ -2956,9 +3016,9 @@ RSpec.describe Lain::CLI::Wiring do
     # The read turn primes the shadow snapshot store, which lives
     # under the state home -- this example's own tmpdir, not the developer's.
     let(:wiring) do
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir, "HOME" => @dir }),
-                          project: throwaway_project(@dir))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir, "HOME" => @dir }),
+                  project: throwaway_project(@dir))
     end
     let(:backend_root) { @dir }
 
@@ -3149,7 +3209,7 @@ RSpec.describe Lain::CLI::Wiring do
     let(:chronicle) { Lain::CLI::Chronicle.new(journal: record, journal_path: "fleet-isolation-session.ndjson") }
 
     def wiring_with(isolation)
-      described_class.new(options: { grace: 5, isolation: }, chronicle:, status_feed:)
+      wiring_over(options: { grace: 5, isolation: }, chronicle:, status_feed:)
     end
 
     # Adoption is what leases: the Supervisor acquires the worker's environment
@@ -5196,15 +5256,15 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       def toolset_named(options: { grace: 5 })
-        mounted = described_class.new(options:, chronicle:, status_feed:)
+        mounted = wiring_over(options:, chronicle:, status_feed:)
         recorder, session = mounted.run_state(nil)
         mounted.wire_agent(channel:, recorder:, session:, backend:).toolset.names
       end
 
       def run_in(dir, options: { grace: 5 }, &notice)
-        wiring = described_class.new(options:, chronicle:, status_feed:,
-                                     herdr: null_herdr(tty_factory(dir)),
-                                     stdin: StringIO.new("quit\n"), conductor_opener:)
+        wiring = wiring_over(options:, chronicle:, status_feed:,
+                             herdr: null_herdr(tty_factory(dir)),
+                             stdin: StringIO.new("quit\n"), conductor_opener:)
         wiring.run(backend: fresh_backend, resumed: nil, nvim: nil, &notice)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -5486,7 +5546,7 @@ RSpec.describe Lain::CLI::Wiring do
     def project_at(root, cwd) = Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag)
 
     def wiring_for(project, options: { grace: 5 })
-      described_class.new(options:, chronicle:, status_feed:, project:)
+      wiring_over(options:, chronicle:, status_feed:, project:)
     end
 
     # The whole run, so {Lain::CLI::Command::Surface} exists: it is built in
@@ -5495,9 +5555,9 @@ RSpec.describe Lain::CLI::Wiring do
     # group above already drives.
     def run_project(project, options: { grace: 5 })
       Dir.mktmpdir("lain-t5-tty") do |dir|
-        wiring = described_class.new(options:, chronicle:, status_feed:, project:,
-                                     herdr: null_herdr(project_tty_factory(dir)),
-                                     stdin: StringIO.new("quit\n"))
+        wiring = wiring_over(options:, chronicle:, status_feed:, project:,
+                             herdr: null_herdr(project_tty_factory(dir)),
+                             stdin: StringIO.new("quit\n"))
         wiring.run(backend:, resumed: nil, nvim: nil)
         wiring.conductor.close(reason: :exit)
         wiring
@@ -5532,9 +5592,9 @@ RSpec.describe Lain::CLI::Wiring do
             original.call(**kwargs)
           end
         end
-        wiring = described_class.new(options: { grace: 5, isolation: "worktree" }, chronicle:, status_feed:, paths:,
-                                     project: throwaway_project(root), herdr: null_herdr(project_tty_factory(base)),
-                                     stdin: StringIO.new("quit\n"))
+        wiring = wiring_over(options: { grace: 5, isolation: "worktree" }, chronicle:, status_feed:, paths:,
+                             project: throwaway_project(root), herdr: null_herdr(project_tty_factory(base)),
+                             stdin: StringIO.new("quit\n"))
 
         with_env("HOME" => base, "XDG_STATE_HOME" => base, "XDG_CONFIG_HOME" => base) do
           owned = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: mock_provider,
@@ -5592,8 +5652,8 @@ RSpec.describe Lain::CLI::Wiring do
           factory = lambda do |channel:, **|
             Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
           end
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:, project: project_at(root, cwd),
-                                       herdr: null_herdr(factory), stdin: StringIO.new("quit\n"))
+          wiring = wiring_over(options: { grace: 5 }, chronicle:, status_feed:, project: project_at(root, cwd),
+                               herdr: null_herdr(factory), stdin: StringIO.new("quit\n"))
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.hold("/approve")
           wiring.conductor.hold("do this later")
@@ -5636,7 +5696,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "is byte-identical to WorkerEnv.default when the cwd is its own root" do
         Dir.mktmpdir("lain-t5-default") do |dir|
           Dir.chdir(File.realpath(dir)) do
-            _, session = described_class.new(options: { grace: 5 }, chronicle:, status_feed:).run_state(nil)
+            _, session = wiring_over(options: { grace: 5 }, chronicle:, status_feed:).run_state(nil)
 
             expect(session.worker_env).to eq(Lain::WorkerEnv.default)
           end
@@ -5646,7 +5706,7 @@ RSpec.describe Lain::CLI::Wiring do
       it "resolves the working directory's own project" do
         Dir.mktmpdir("lain-t5-default") do |dir|
           Dir.chdir(File.realpath(dir)) do
-            project = described_class.new(options: { grace: 5 }, chronicle:, status_feed:).project
+            project = wiring_over(options: { grace: 5 }, chronicle:, status_feed:).project
 
             expect([project.root, project.cwd]).to eq([File.realpath(dir), File.realpath(dir)])
           end
@@ -5701,7 +5761,7 @@ RSpec.describe Lain::CLI::Wiring do
 
           with_env("HOME" => base, "XDG_STATE_HOME" => File.join(base, "state")) do
             Dir.chdir(cwd) do
-              wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:)
+              wiring = wiring_over(options: { grace: 5 }, chronicle:, status_feed:)
               _, session = wiring.run_state(nil)
 
               expect(session.worker_env.cwd).to eq(cwd)
@@ -5732,8 +5792,8 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     def wired(root:, cwd: root, chronicle: self.chronicle)
-      wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                   project: Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag))
+      wiring = wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                           project: Lain::Project.new(root:, cwd:, kind: :project, detected_by: :flag))
       recorder, session = wiring.run_state(nil)
       wiring.wire_agent(channel:, recorder:, session:, backend:)
       wiring
@@ -5776,8 +5836,8 @@ RSpec.describe Lain::CLI::Wiring do
         )])
         configured = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
                                                mock: mock_provider, root:, middleware:)
-        wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                     project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+        wiring = wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                             project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
         recorder, session = wiring.run_state(nil)
         runner = wiring.wire_agent(channel:, recorder:, session:, backend: configured).send(:tool_runner)
 
@@ -5804,8 +5864,8 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     def configured_wiring(root)
-      described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                          project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+      wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                  project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
     end
 
     def configured_agent(root, **areas)
@@ -5877,13 +5937,13 @@ RSpec.describe Lain::CLI::Wiring do
         backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
                                             mock: mock_provider, root:, middleware:)
         Dir.mktmpdir do |dir|
-          wiring = described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                                       stdin: StringIO.new("hi\nquit\n"),
-                                       herdr: null_herdr(lambda { |channel:, **|
-                                         Lain::Frontend::TTY.new(channel:, output: StringIO.new,
-                                                                 history_path: File.join(dir, "history"))
-                                       }),
-                                       project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
+          wiring = wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                               stdin: StringIO.new("hi\nquit\n"),
+                               herdr: null_herdr(lambda { |channel:, **|
+                                 Lain::Frontend::TTY.new(channel:, output: StringIO.new,
+                                                         history_path: File.join(dir, "history"))
+                               }),
+                               project: Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag))
           wiring.run(backend:, resumed: nil, nvim: nil)
           wiring.conductor.close(reason: :exit)
         end
@@ -6244,13 +6304,13 @@ RSpec.describe Lain::CLI::Wiring do
       def epic_root = File.join(@tmp, "project")
 
       def seated(options = {})
-        described_class.new(options: { grace: 5, **options }, chronicle:, status_feed:,
-                            herdr: null_herdr(lambda { |channel:, **|
-                              Lain::Frontend::TTY.new(channel:, output: StringIO.new,
-                                                      history_path: File.join(@tmp, "history"))
-                            }), stdin: StringIO.new("quit\n"),
-                            project: Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project,
-                                                       detected_by: :flag))
+        wiring_over(options: { grace: 5, **options }, chronicle:, status_feed:,
+                    herdr: null_herdr(lambda { |channel:, **|
+                      Lain::Frontend::TTY.new(channel:, output: StringIO.new,
+                                              history_path: File.join(@tmp, "history"))
+                    }), stdin: StringIO.new("quit\n"),
+                    project: Lain::Project.new(root: epic_root, cwd: epic_root, kind: :project,
+                                               detected_by: :flag))
       end
 
       # What the editor is HANDED, taken off the `#run` path rather than from a
@@ -6444,9 +6504,9 @@ RSpec.describe Lain::CLI::Wiring do
     let(:mock_provider) { Lain::Provider::Mock.new(responses: [text_response("APPROVE"), text_response("APPROVE")]) }
     let(:backend_root) { @state }
     let(:wiring) do
-      described_class.new(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
-                          paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
-                          project: throwaway_project(@state))
+      wiring_over(options: { grace: 5, approval: "auto" }, chronicle:, status_feed:,
+                  paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
+                  project: throwaway_project(@state))
     end
 
     def board
@@ -6486,6 +6546,8 @@ end
 # compaction wiring hung off it, the instrumentation stack, and the executor
 # the board's gate closes over.
 RSpec.describe Lain::CLI::Wiring, "the Agent build" do
+  include WiringSpecHuman
+
   let(:mock_provider) do
     Lain::Provider::Mock.new(responses: [
                                Lain::Response.new(content: [{ "type" => "text", "text" => "settled" }],
@@ -6498,8 +6560,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
   let(:board) { WiringAgentSpecBoard.new(Lain::Toolset.new) }
   let(:status_feed) { instance_double(Lain::StatusFeed, bind_store: nil) }
   let(:wiring) do
-    described_class.new(options: { grace: 5 }, chronicle:, status_feed:,
-                        project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
+    wiring_over(options: { grace: 5 }, chronicle:, status_feed:,
+                project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
   end
 
   # The root every snapshot is rooted at reaches the build off the wiring's own
@@ -6671,7 +6733,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # asserted: what the stack holds, and what ran first.
     it "puts the window refresh outermost, ahead of the chronicle's own members" do
       trail = backend.context_window.trail
-      journalling = described_class.new(
+      journalling = wiring_over(
         options: { grace: 5 }, chronicle: WiringAgentSpecJournallingChronicle.new(trail), status_feed:,
         project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
       )
@@ -6797,7 +6859,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     end
 
     def wired_chat
-      wiring = described_class.new(
+      wiring = wiring_over(
         options: { grace: 5 }, chronicle:, status_feed: instance_double(Lain::StatusFeed),
         project: Lain::Project.new(root: @project, cwd: File.join(@project, "sub"), kind: :project,
                                    detected_by: :flag),
@@ -7007,7 +7069,8 @@ RSpec.describe Lain::CLI::Wiring::BaseTools do
     let(:journal) { RecordingChannel.new }
     let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
     let(:assembler) do
-      Lain::CLI::Wiring::ToolsetBuild.new(backend:, provider: backend.provider(spool: chronicle.spool),
+      Lain::CLI::Wiring::ToolsetBuild.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                          backend:, provider: backend.provider(spool: chronicle.spool),
                                           chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
                                           parent:, journal:, library: backend.library,
                                           epic: SpecNulls.unmounted_epic, root: Dir.pwd,
@@ -7121,6 +7184,8 @@ end
 # the backend's own #repo_root instead makes the two answers unrepresentable
 # as different directories.
 RSpec.describe Lain::CLI::Wiring, "the handback a worker's work comes home on", :seam do
+  include WiringSpecHuman
+
   around do |example|
     Dir.mktmpdir("lain-handback-repo") do |dir|
       @repo = File.realpath(dir)
@@ -7138,11 +7203,11 @@ RSpec.describe Lain::CLI::Wiring, "the handback a worker's work comes home on", 
   # the run's OWN isolation produces, and a second backend built here could
   # answer a different repository than the one the run cut checkouts from.
   def handback_of_chat
-    described_class.new(options: { grace: 5, isolation: "worktree" },
-                        chronicle: Lain::CLI::Chronicle::Null.new,
-                        status_feed: instance_double(Lain::StatusFeed),
-                        project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
-                   .send(:handback)
+    wiring_over(options: { grace: 5, isolation: "worktree" },
+                chronicle: Lain::CLI::Chronicle::Null.new,
+                status_feed: instance_double(Lain::StatusFeed),
+                project: Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag))
+      .send(:handback)
   end
 
   it "refuses, naming the file and line, when the project's config will not load" do

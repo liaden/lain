@@ -35,7 +35,8 @@ RSpec.describe "A diff docent's grep after a release was answered", :seam do
 
   def wiring
     chronicle = Lain::CLI::Chronicle.new(journal:, journal_path:)
-    @wiring ||= Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, status_feed:, project:)
+    @wiring ||= Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle:,
+                                      status_feed:, project:)
   end
 
   def result_of(id)

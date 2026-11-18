@@ -91,16 +91,21 @@ RSpec.describe "Plan scope confines a session to a spike", :seam do
   # The spawn wiring a chat builds over this board, with a child that writes
   # what `provider` scripts.
   def role_spawn(provider)
+    build = toolset_build(provider)
+    build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
+    build.role_spawn
+  end
+
+  def toolset_build(provider)
     backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     the_board = board
-    build = Lain::CLI::Wiring::ToolsetBuild.new(
+    Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { CoreGraph.timeline },
       supervisor: Lain::Supervisor.new(journal:), journal:, library: backend.library, root: @repo,
       epic: SpecNulls.unmounted_epic, switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
     )
-    build.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
-    build.role_spawn
   end
 
   describe "in a git project with an uncommitted edit" do

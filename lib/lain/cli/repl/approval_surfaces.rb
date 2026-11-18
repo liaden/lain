@@ -18,12 +18,15 @@ module Lain
         # into a surface that is silently inert. Forgetting it is an
         # ArgumentError. `remote:` is defaulted, because nil is what every chat
         # without `remote relay:` is, and the Repl passes what Wiring built.
-        def initialize(approvals:, secret_surface:, tty:, conductor:, remote: nil)
+        # `terminal:` is false under `--human remote`, where the phone is the
+        # one who answers and nobody reads the terminal.
+        def initialize(approvals:, secret_surface:, tty:, conductor:, remote: nil, terminal: true)
           @approvals = approvals
           @secret_surface = secret_surface
           @remote = remote
           @tty = tty
           @conductor = conductor
+          @terminal = terminal
         end
 
         # Bound rather than injected because {Repl} builds this collaborator in
@@ -74,7 +77,7 @@ module Lain
         #   that an undecided parked call is outstanding, so the chat's command
         #   reader is open while one is
         def watch(task, attention: ConversationScope::Attention.new)
-          @approvals && [terminal_surface(task, attention),
+          @approvals && [*(terminal_surface(task, attention) if @terminal),
                          *(@secret_surface && task.async { @secret_surface.watch(@approvals) }),
                          *(@editor && task.async { @editor.watch(@approvals) }),
                          *(@remote && task.async { @remote.watch })]

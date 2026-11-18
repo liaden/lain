@@ -282,7 +282,7 @@ module T14RecordedRun
   def ask(chronicle, state, project)
     # A throwaway state home: a tool turn primes the default posture's shadow
     # snapshot store, which lives there.
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle:,
                                    status_feed: Lain::StatusFeed.new(path: File.join(state, "state.json")),
                                    paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state }),
                                    project: Lain::Project.new(root: project, cwd: project,

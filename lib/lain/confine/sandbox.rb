@@ -12,6 +12,50 @@ module Lain
       LAYERS = %i[bwrap landlock].freeze
       NO_PRIVATE_NET = "the box cannot give a call a private network"
 
+      # A session whose phone answers its calls runs outside the sandbox only what a human approved, traced.
+      class Unconfined < Error
+        attr_reader :profile
+
+        # @param profile [Symbol] the unconfined profile the call would have run under
+        def initialize(profile:)
+          @profile = profile
+          super("a #{profile} call runs outside the sandbox")
+        end
+      end
+
+      # The profiles of a session a phone answers. A human's approval runs traced, as at the terminal (user
+      # ruling 2026-11-17); any other call outside the sandbox could pair itself as a phone and approve itself.
+      class PhoneAnswered
+        # @param profiles [Profiles]
+        # @param reaps [Boolean] whether the fence can run an unconfined call traced; without it the call runs bare
+        def initialize(profiles, reaps:)
+          @profiles = profiles
+          @reaps = reaps
+        end
+
+        # @param request [Request]
+        # @return [Profile] a confining one, or the traced one for a human's approval
+        # @raise [Unconfined] when the call would run unconfined without a human's approval, or untraced
+        def for(request)
+          profile = @profiles.for(request)
+          return profile if profile.confined? || (watched?(profile) && request.ruling.human?)
+
+          raise Unconfined.new(profile: watched?(profile) ? profile.name : Profile::NONE.name)
+        end
+
+        private
+
+        def watched?(profile) = @reaps && profile.trace
+      end
+
+      # The profiles of a session a phone answers, on a box that can build no sandbox:
+      # every call would run bare, so each is refused.
+      module Unsandboxed
+        # @param _request [Request]
+        # @raise [Unconfined] always
+        def self.for(_request) = raise(Unconfined.new(profile: Profile::NONE.name))
+      end
+
       Containment = Data.define(:state, :because, :grants, :ports)
 
       # Whether a plain approval of a call that reads secrets can run it
@@ -118,6 +162,19 @@ module Lain
       # @return [Array<Symbol>] the layers the box does not offer
       def self.lacking(probe) = LAYERS.reject { probe.supports?(_1) }
 
+      # @param probe [Probe]
+      # @return [String, nil] why the box cannot build a sandbox; nil when it can
+      def self.gap(probe)
+        lacking = lacking(probe)
+        return if lacking.empty?
+        return "the box lacks #{lacking.join(" and ")}" unless lacking.include?(:landlock)
+        return "the box lacks #{lacking.join(" and ")} (#{probe.fence_gap})" unless probe.fence_unstartable?
+
+        others = lacking - [:landlock]
+        fence = "the lain-fence #{probe.fence_gap}"
+        others.empty? ? fence : "the box lacks #{others.join(" and ")}; #{fence}"
+      end
+
       # A box without the layers cannot make a sandbox; the run says so, because the session
       # still records the reader arm.
       #
@@ -142,8 +199,10 @@ module Lain
       # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
       # @param fresh [#any_under?] the lineage's freshness; by default every root is fresh and no port is granted
+      # @param phone_answered [Boolean] whether a call that would run unconfined is refused rather than run,
+      #   unless a human approved it and it runs traced
       def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal, workspace: false,
-                     tmpdir: Dir.tmpdir, fresh: Profiles::Unread)
+                     tmpdir: Dir.tmpdir, fresh: Profiles::Unread, phone_answered: false)
         @root = root
         @home = home
         @masks = masks
@@ -152,19 +211,18 @@ module Lain
         @journal = journal
         @notes = notes
         @profiling = { workspace:, tmpdir:, fresh: }
+        @phone_answered = phone_answered
         @built = false
       end
 
       # @param inner [Exec::Local]
       # @param requirer [String] who asked, for the degraded record
-      # @return [Exec::Sandboxed, Exec::Local] the inner exec itself when the box lacks a layer
+      # @return [Exec::Sandboxed, Exec::Local] the inner exec itself when the box lacks a layer, unless a
+      #   phone answers the session
       def wrap(inner, requirer:)
-        lacking = self.class.lacking(@probe)
-        return unsandboxed(inner, requirer, lacking) if lacking.any?
+        return unsandboxed(inner, requirer) if self.class.lacking(@probe).any?
 
         @built = true
-        profiles = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks,
-                                **@profiling)
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
       end
 
@@ -183,25 +241,25 @@ module Lain
       private
 
       def contained_here
-        lacking = self.class.lacking(@probe)
-        return Containment.unable(reason_for(lacking)) if lacking.any?
+        gap = self.class.gap(@probe)
+        return Containment.unable(gap) if gap
 
         return Containment.unable(NO_PRIVATE_NET) unless @probe.supports?(:private_net)
 
         Containment.able(grants: @profiling[:workspace])
       end
 
-      def unsandboxed(inner, requirer, lacking)
-        self.class.degraded(inner, journal: @notes, requirer:, because: reason_for(lacking))
+      def profiles
+        built = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks, **@profiling)
+        @phone_answered ? PhoneAnswered.new(built, reaps: @probe.supports?(:reap)) : built
       end
 
-      def reason_for(lacking)
-        return "the box lacks #{lacking.join(" and ")}" unless lacking.include?(:landlock)
-        return "the box lacks #{lacking.join(" and ")} (#{@probe.fence_gap})" unless @probe.fence_unstartable?
+      # A box can lose a layer after the launch checked it, and a phone's session never runs a call bare.
+      def unsandboxed(inner, requirer)
+        bare = self.class.degraded(inner, journal: @notes, requirer:, because: self.class.gap(@probe))
+        return bare unless @phone_answered
 
-        others = lacking - [:landlock]
-        [("the box lacks #{others.join(" and ")}" if others.any?),
-         "the lain-fence #{@probe.fence_gap}"].compact.join("; ")
+        Exec::Sandboxed.new(inner: bare, launcher:, profiles: Unsandboxed, journal: @journal)
       end
 
       # The probe finds both programs on PATH, so the launcher runs the ones it found.

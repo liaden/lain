@@ -1461,6 +1461,7 @@ RSpec.describe Lain::CLI::Switchboard do
 
     def toolset_build(options, switchboard)
       Lain::CLI::Wiring::ToolsetBuild.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
         backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options:, switchboard:,
         supervisor: Lain::Supervisor.new(journal: RecordingChannel.new),
         parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }, journal: RecordingChannel.new,

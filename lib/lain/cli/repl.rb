@@ -146,7 +146,7 @@ module Lain
       # rule's denials on.
       def name_seams(supervisor:, idle:, notices:, registration:, **approval_seams)
         @lapses = approval_seams[:approvals] || HumanReplies::NoLapses
-        @surfaces = ApprovalSurfaces.new(**approval_seams)
+        @surfaces = ApprovalSurfaces.new(**approval_seams, terminal: @attended)
         @conversation = ConversationScope.new(supervisor:, replies: @replies, surfaces: @surfaces, idle:, notices:,
                                               registration:)
       end

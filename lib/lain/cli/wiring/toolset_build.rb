@@ -240,13 +240,16 @@ module Lain
         #   workspace (the default)
         # @param fresh [#any_under?] the lineage's freshness, which a build tool's port grant reads; by
         #   default every root counts as fresh, so nothing is granted
+        # @param human [Lain::CLI::Human] who answers the run; outside the sandbox a phone's run runs only
+        #   what a human approved, traced. Required, so a caller that forgets it is loud rather than unconfined
         # @option options [String] :exec the transport the `exec:` default
         #   resolves, with `:exec_image` the only other keys this class reads.
         #   `--auto-approve` is not among them: it seeds the mode's layer on
         #   {Switchboard.for}, and the surface here reads that layer. Last,
         #   after every `@param`, because yard-lint fixes that order.
         def initialize(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
-                       root:, switchboard:, askers:, paths:, config:, agent: nil, session: Lain::Session::Null.instance,
+                       root:, switchboard:, askers:, paths:, config:, human:, agent: nil,
+                       session: Lain::Session::Null.instance,
                        verdict: Lain::Shell::Verdict.new, isolation: Lain::Isolation::Null.new,
                        handback: Handback.none, attachments: Lain::Attachment::Store.for(root:),
                        middleware: Lain::Config::Middleware.empty, display: Lain::Channel::Null.instance,
@@ -262,7 +265,7 @@ module Lain
           @backend = backend
           @attachments = attachments
           @root = root
-          bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:)
+          bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:, human:)
           @epic = epic
           @in_chat = { chronicle:, root:, paths:, config: }.freeze
           @askers = askers
@@ -400,7 +403,8 @@ module Lain
 
         attr_reader :backend, :library, :seam, :epic, :askers
 
-        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:)
+        def bash_inputs(exec:, verdict:, resolver:, fence:, probe:, notes:, fresh:, human:)
+          @human = human
           @fresh = fresh
           @fence = fence
           @probe = probe
@@ -444,7 +448,8 @@ module Lain
           @masks = masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
                                                 journal: seam.journal, notes: @notes, fresh: @fresh,
-                                                workspace: @arms.workspace?)
+                                                workspace: @arms.workspace?,
+                                                phone_answered: @human.answers_remotely?)
           @confined = @sandbox.wrap(inner, requirer: self.class.name)
         end
 

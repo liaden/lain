@@ -56,6 +56,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
     backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     the_board = board
     Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, parent: -> { CoreGraph.timeline },
       supervisor: Lain::Supervisor.new(journal:), journal:, library: backend.library, root: @repo,
       epic: SpecNulls.unmounted_epic, switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build,

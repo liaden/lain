@@ -313,7 +313,8 @@ RSpec.describe "A leased child's shell calls are judged in its own worktree", :s
     def worktree_wiring
       chronicle = Lain::CLI::Chronicle.new(journal: RecordingChannel.new,
                                            journal_path: File.join(File.dirname(@repo), "session.ndjson"))
-      Lain::CLI::Wiring.new(options: { grace: 5, isolation: "worktree" }, chronicle:,
+      Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                            options: { grace: 5, isolation: "worktree" }, chronicle:,
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     end
 

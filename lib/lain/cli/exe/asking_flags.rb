@@ -29,6 +29,11 @@ module Lain
                    "DIRECTLY, not through `lain up` -- that puts the chat in a tmux pane whose exit status " \
                    "nothing reads, which is the whole of what this flag adds"
 
+        REMOTE = "With --non-interactive: a gated call the judge leaves open parks for the phone instead of being " \
+                 "refused, and ask_human waits for the phone's answer. Needs the daemon's phone relay (`remote " \
+                 "relay:` in the user config) and a sandbox that confines bash; a bash call runs outside it only " \
+                 "when a human approved it, traced as at the terminal"
+
         # @param thor [Class] the Thor class to declare on
         # @return [void]
         def self.declare(thor)
@@ -36,6 +41,7 @@ module Lain
                                       desc: "Seed the first question (the /btw child's side-question); the chat " \
                                             "then reads the terminal as usual"
           thor.method_option :non_interactive, type: :boolean, default: false, desc: HEADLESS
+          thor.method_option :human, type: :string, enum: %w[remote], desc: REMOTE
           thor.method_option :approval, type: :string, default: "auto", enum: %w[ask auto bypass],
                                         desc: "Who decides a gated call the rules left open: ask parks it for " \
                                               "a human, auto asks a model judge first, bypass approves it"

@@ -143,6 +143,7 @@ RSpec.describe Lain::Middleware::ParsedCommand do
 
     def board(**options)
       wiring = Lain::CLI::Wiring.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
         options: { grace: 5, approval: "auto", confine: "classes", **options }, chronicle:,
         status_feed: instance_double(Lain::StatusFeed, bind_store: nil), project: throwaway_project(@root),
         paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@base, "state"),

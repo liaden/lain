@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "socket"
 require "tmpdir"
 
 RSpec.describe Lain::Confine::Sandbox do
@@ -50,6 +51,75 @@ RSpec.describe Lain::Confine::Sandbox do
       profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles)
 
       expect(profiles.for(request)).to eq(Lain::Confine::Profile::TRACED)
+    end
+
+    # --human remote: a phone answers, and a call no human approved could write
+    # the devices file or reach the relay as a phone, so it would approve itself.
+    context "when it refuses an unconfined call" do
+      let(:sandbox) do
+        described_class.new(root: "/srv/project", home: "/home/h", masks:, probe:, fence:, journal:,
+                            phone_answered: true)
+      end
+
+      def request_for(ruling, dir = "/srv/project")
+        Lain::Confine::Request.new(ruling:, executables: [], cwd: dir, root: dir, tool_use_id: "toolu_1")
+      end
+
+      def phone_approved = Lain::Approval::Escalation::Ruling.allow(rung: "ask", because: "approved", authority: :human)
+
+      def profile_for(ruling)
+        sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles).for(request_for(ruling))
+      end
+
+      # User ruling 2026-11-17: a phone approval runs traced, as a terminal approval does.
+      it "runs a phone-approved bash call traced, as at the terminal" do
+        expect(profile_for(phone_approved)).to eq(Lain::Confine::Profile::TRACED)
+      end
+
+      it "refuses a call the rules allowed outside the sandbox, naming --human remote, and runs nothing" do
+        Dir.mktmpdir("lain-sandbox-unconfined") do |dir|
+          marker = File.join(dir, "ran")
+          ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "remembered")
+          capture = sandbox.wrap(inner, requirer: "Spec")
+                           .call(command: "touch #{marker}", cwd: dir, env: {}, timeout: 5,
+                                 confinement: request_for(ruling, dir))
+
+          expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
+          expect(capture.stderr).to start_with("lain: REFUSED").and include("--human remote")
+          expect(File.exist?(marker)).to be(false)
+          expect(journal.events.grep(Lain::Telemetry::Sandbox).last)
+            .to have_attributes(profile: :traced, tool_use_id: "toolu_1")
+        end
+      end
+
+      context "when the fence cannot reap, so an approved call would run untraced" do
+        let(:runner) { ->(argv) { [argv.include?("--status") ? '{"abi":3}' : "", true] } }
+
+        it "refuses a phone-approved call rather than run it unwatched" do
+          expect { profile_for(phone_approved) }
+            .to raise_error(described_class::Unconfined) { expect(_1.profile).to eq(:none) }
+        end
+      end
+
+      # The launch checked the box, but the fence can go between that check and this build.
+      context "when the box lost a layer after the launch checked it" do
+        let(:runner) { ->(_argv) { ["", false] } }
+
+        it "refuses every call with the same sentence rather than running it on the bare exec" do
+          Dir.mktmpdir("lain-sandbox-unconfined") do |dir|
+            marker = File.join(dir, "ran")
+            ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "spec", rule: "composed_term")
+            request = Lain::Confine::Request.new(ruling:, executables: [], cwd: dir, root: dir, tool_use_id: "toolu_1")
+            capture = sandbox.wrap(inner, requirer: "Spec")
+                             .call(command: "touch #{marker}", cwd: dir, env: {}, timeout: 5, confinement: request)
+
+            expect(capture).to have_attributes(exit_status: Lain::Shell::Pipeline::NOT_PERMITTED, stdout: "")
+            expect(capture.stderr).to include(Lain::Exec::Sandboxed::UNCONFINED)
+            expect(File.exist?(marker)).to be(false)
+            expect(degraded.last.capability).to eq(:sandbox)
+          end
+        end
+      end
     end
 
     describe "the lineage's freshness", :seam do
@@ -770,6 +840,110 @@ RSpec.describe Lain::Confine::Sandbox do
       capture = cat_plain(sandboxed_over("secrets.key", File.join(home, ".rust")))
 
       expect(capture).to have_attributes(exit_status: 0, stdout: "plain words\n")
+    end
+  end
+
+  # The 2 reaches a confined call under --human remote must not have: the
+  # devices file a phone is paired by, and the relay's loopback port.
+  describe "the phone's path, from a confined call on this box", :seam do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+    end
+
+    around do |example|
+      Dir.mktmpdir("lain-sandbox-phone") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p([repo, home, scratch])
+        system(SeedRepo::SCRUB, "git", "init", "-q", chdir: repo, exception: true)
+        TCPServer.open("127.0.0.1", 0) do |relay|
+          @relay = relay
+          example.run
+        end
+      end
+    end
+
+    def home = File.join(@base, "home")
+    def repo = File.join(@base, "repo")
+    def scratch = File.join(@base, "scratch")
+    def paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => File.join(home, ".local", "state") })
+
+    def devices
+      Lain::Remote::Devices.for(paths:).path.tap do |path|
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "pixel 0123\n")
+        File.chmod(0o600, path)
+      end
+    end
+
+    def policy
+      Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: repo, root: repo), home:, root: repo)
+    end
+
+    def remote_exec(workspace:)
+      judging = policy
+      masks = Lain::Confine::MaskList.new(root: repo, policy: -> { judging })
+      described_class.new(root: repo, home:, masks:, probe: Lain::Confine::Probe.new(fence:, journal:), fence:,
+                          journal:, workspace:, tmpdir: scratch, phone_answered: true)
+                     .wrap(Lain::Exec::Local.new, requirer: "Spec")
+    end
+
+    # A judge's approval runs under the workspace profile; a composed term under the reader.
+    def ruling_for(profile)
+      if profile == :workspace
+        Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged")
+      else
+        Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "spec", rule: "composed_term")
+      end
+    end
+
+    def confined(profile, command)
+      request = Lain::Confine::Request.new(ruling: ruling_for(profile), executables: [], cwd: repo, root: repo,
+                                           tool_use_id: "toolu_1")
+      remote_exec(workspace: profile == :workspace)
+        .call(command:, cwd: repo, env: {}, timeout: 10, confinement: request)
+        .tap { expect(journal.events.grep(Lain::Telemetry::Sandbox).last.profile).to eq(profile) }
+    end
+
+    def accepted?
+      @relay.accept_nonblock.close
+      true
+    rescue IO::WaitReadable
+      false
+    end
+
+    def append_to(path) = "printf 'phone 4567\\n' >> #{path}; echo tried"
+
+    # /dev/tcp is bash's, and /bin/sh may be dash, where the connect would fail for want of it.
+    def connect = "bash -c '(exec 3<>/dev/tcp/127.0.0.1/#{@relay.addr[1]}) && echo connected; echo tried'"
+
+    def bare(command) = Lain::Exec::Local.new.call(command:, cwd: repo, env: {}, timeout: 10)
+
+    # The control: unconfined, each reach lands, so a refusal above is the sandbox's and not the command's.
+    it "writes the devices file and connects to the relay from a bare exec" do
+      path = devices
+      appended = bare(append_to(path))
+      connected = bare(connect)
+
+      expect([appended.stdout, File.read(path)]).to eq(["tried\n", "pixel 0123\nphone 4567\n"])
+      expect([connected.stdout, accepted?]).to eq(["connected\ntried\n", true])
+    end
+
+    %i[workspace reader].each do |profile|
+      it "cannot write the devices file under the #{profile} profile" do
+        path = devices
+        capture = confined(profile, append_to(path))
+
+        expect([capture.stdout, File.read(path)]).to eq(["tried\n", "pixel 0123\n"])
+      end
+
+      it "cannot connect to the relay's loopback port under the #{profile} profile" do
+        capture = confined(profile, connect)
+
+        expect([capture.stdout, accepted?]).to eq(["tried\n", false])
+      end
     end
   end
 end

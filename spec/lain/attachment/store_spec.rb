@@ -190,6 +190,7 @@ RSpec.describe Lain::Attachment::Store, :seam do
 
     def toolset_build(root:)
       Lain::CLI::Wiring::ToolsetBuild.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
         backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
         supervisor: Lain::Supervisor.new(journal: RecordingChannel.new), parent: -> { CoreGraph.timeline },
         journal: RecordingChannel.new, library: backend.library, epic: SpecNulls.unmounted_epic, root:,

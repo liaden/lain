@@ -253,6 +253,7 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
 
   def unbuilt
     Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new,
       options: {}, supervisor: Lain::Supervisor.new, parent: -> { CoreGraph.timeline },
       journal: Lain::Channel::Null.instance, library: backend.library, epic: SpecNulls.unmounted_epic,

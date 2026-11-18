@@ -49,6 +49,7 @@ RSpec.describe "A cargo build the composed_term rule approves", :seam do
   let(:toolset_build) do
     backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root:)
     Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider: Lain::Provider::Mock.new, chronicle:, options: {}, journal:, library: backend.library,
       supervisor: Lain::Supervisor.new(journal:), parent:, epic: SpecNulls.unmounted_epic, root:,
       switchboard: -> { switchboard }, askers: SpecNulls::UnwiredAskers.build, paths:,

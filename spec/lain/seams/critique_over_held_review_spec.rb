@@ -342,7 +342,8 @@ RSpec.describe "a critique of a held review", :seam do
     output = StringIO.new
     holds = []
     project = Lain::Project.new(root: @repo, cwd: @repo, kind: :project, detected_by: :flag)
-    @wiring = Lain::CLI::Wiring.new(options: { grace: }, chronicle: Lain::CLI::Chronicle::Null.new, project:,
+    @wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                    options: { grace: }, chronicle: Lain::CLI::Chronicle::Null.new, project:,
                                     herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(
                                       tty_factory: tty_factory(output, holds)
                                     ),

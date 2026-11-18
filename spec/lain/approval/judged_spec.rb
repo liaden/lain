@@ -212,6 +212,7 @@ RSpec.describe Lain::Approval::Judged do
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
         Lain::CLI::Wiring.new(
+          human: Lain::CLI::Human.new(kind: :none),
           options: { grace: 5, approval: "auto", judge_facts: "request", prompt: line, non_interactive: true },
           chronicle: Lain::CLI::Chronicle::Null.new, status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
           project: throwaway_project(dir), stdin: StringIO.new,

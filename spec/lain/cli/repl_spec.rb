@@ -360,7 +360,7 @@ RSpec.describe Lain::CLI::Repl do
     tty_factory = lambda do |channel:, **|
       Lain::Frontend::TTY.new(channel:, output:, history_path: File.join(dir, "history"))
     end
-    wiring = Lain::CLI::Wiring.new(options:, chronicle:, herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options:, chronicle:, herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                                    paths: spec_state(dir),
                                    project: throwaway_project(dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
@@ -380,6 +380,26 @@ RSpec.describe Lain::CLI::Repl do
   # Driven through the real Wiring#run, like the round trip below it: the whole
   # question here is what an assembled chat does with a terminal nobody is at,
   # and a doubled Repl would answer that by construction.
+  # A Repl that reads no line has nobody at the terminal to answer a parked call either.
+  describe "the approval surfaces it opens" do
+    def surfaces_told(attended:)
+      allow(Lain::CLI::Repl::ApprovalSurfaces).to receive(:new).and_call_original
+      described_class.new(agent: instance_double(Lain::Agent), tty: instance_double(Lain::Frontend::TTY),
+                          replies: instance_double(Lain::CLI::HumanReplies), commands: nil,
+                          chronicle: Lain::CLI::Chronicle::Null.new, conductor: instance_double(Lain::CLI::Conductor),
+                          attended:)
+      Lain::CLI::Repl::ApprovalSurfaces
+    end
+
+    it "tells them nobody answers at the terminal when it reads no line" do
+      expect(surfaces_told(attended: false)).to have_received(:new).with(hash_including(terminal: false))
+    end
+
+    it "tells them the terminal answers when it reads lines" do
+      expect(surfaces_told(attended: true)).to have_received(:new).with(hash_including(terminal: true))
+    end
+  end
+
   describe "a conversation with no human at the other end" do
     # Every example leaves a SECOND line sitting in stdin. An attended chat
     # takes it; a headless one must not, so its absence from the record is what
@@ -395,7 +415,8 @@ RSpec.describe Lain::CLI::Repl do
     def run_headless(prompt, dir:, provider: mock_provider)
       output = StringIO.new
       headless = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider)
-      wiring = Lain::CLI::Wiring.new(options: { grace: 5, prompt:, non_interactive: true },
+      wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :none),
+                                     options: { grace: 5, prompt:, non_interactive: true },
                                      chronicle: Lain::CLI::Chronicle::Null.new,
                                      herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory: waiting_terminal(
                                        output, dir:
@@ -677,7 +698,7 @@ RSpec.describe Lain::CLI::Repl do
     around { |example| headless_editor("lain-repl-review-spec") { example.run } }
 
     def editor_wiring(tty_factory, dir)
-      Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+      Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
                             herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                             paths: spec_state(dir), project: throwaway_project(dir),
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
@@ -1193,7 +1214,7 @@ RSpec.describe Lain::CLI::Repl do
         tty_factory = lambda do |channel:, **|
           Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
         end
-        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+        wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
                                        herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:),
                                        paths: spec_state(dir), project: throwaway_project(dir),
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil),

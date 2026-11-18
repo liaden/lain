@@ -13,10 +13,18 @@ module Lain
     class Human
       KINDS = %i[terminal remote none].freeze
 
+      # A headless run with `--human remote` is answered from the phone. The flag
+      # without `--non-interactive` is refused at launch, so it reads as terminal here.
+      #
       # @param options [Hash] the launch options
-      # @option options [Boolean] :non_interactive nobody is attached to this run
+      # @option options [Boolean] :non_interactive nobody is attached to this run's terminal
+      # @option options [String, nil] :human "remote" when a phone answers a headless run
       # @return [Human]
-      def self.from(options) = new(kind: options[:non_interactive] ? :none : :terminal)
+      def self.from(options)
+        return new(kind: :terminal) unless options[:non_interactive]
+
+        new(kind: options[:human] == "remote" ? :remote : :none)
+      end
 
       # @param kind [Symbol] one of {KINDS}
       # @raise [ArgumentError] for any other kind
@@ -36,6 +44,12 @@ module Lain
 
       # @return [Boolean] whether a gated call must be refused because nobody can decide it
       def ladder_refuses? = kind == :none
+
+      # Outside the sandbox only what a human approved runs, traced: any other
+      # call could pair itself as a phone or reach the relay and approve its own run.
+      #
+      # @return [Boolean] whether the phone answers, so bash runs confined unless a human approved it
+      def answers_remotely? = kind == :remote
     end
   end
 end

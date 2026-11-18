@@ -97,7 +97,8 @@ RSpec.describe "capability degradation on the chat path", :seam do
 
   def wire_a_chat(provider)
     backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, wired: provider)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, status_feed:)
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle:,
+                                   status_feed:)
     recorder, session = wiring.run_state(nil)
     wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)
   end

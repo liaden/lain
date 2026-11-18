@@ -458,6 +458,7 @@ RSpec.describe "Subagent gating" do
       backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
       the_board = board
       build = Lain::CLI::Wiring::ToolsetBuild.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
         backend:, provider:, chronicle:, options: {}, supervisor: Lain::Supervisor.new(journal:),
         parent: -> { parent }, journal:, library: backend.library, epic: SpecNulls.unmounted_epic,
         root: "/home/tester/project", switchboard: -> { the_board }, askers: SpecNulls::UnwiredAskers.build,

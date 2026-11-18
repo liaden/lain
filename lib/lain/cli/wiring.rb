@@ -246,15 +246,18 @@ module Lain
       #   notices then replace the notifier's own immediate sequence and feed entry
       # @param registration [Daemon::Registration, Daemon::Registration::Null] the chat's place in the
       #   daemon's session list, held open by the conversation
+      # @param human [Human] who answers the run, read once by {ChatLaunch} so the record it opens, the
+      #   board and the sandbox take one answer. Required: a default would read the flags a second time
       # @option options [String] :prompt the first question, seeded from --prompt
       # @option options [Numeric] :grace seconds a first Ctrl-C grants a run
       # @option options [String] :isolation the backend a fleet leases workers from
-      def initialize(options:, chronicle:, status_feed:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
+      def initialize(options:, chronicle:, status_feed:, human:, run_clock: Lain::RunClock.new, paths: Lain::Paths.new,
                      project: Project::Resolver.default_project, herdr: HerdrBinding::Null.new,
                      conductor_opener: Lain::CLI::Conductor.public_method(:open), agent_states: nil,
                      stdin: Lain::Frontend::StdinPump.process_input, arms: CLI::Arms.from(options),
                      registration: ::Lain::Daemon::Registration::Null.new)
         @options = options
+        @human = human
         @registration = registration
         @agent_states = agent_states
         @secret_oracle = SecretOracle.new(options)
@@ -269,8 +272,7 @@ module Lain
         @stdin = stdin
         # Nobody is looking at anything until #run builds a frontend, and that
         # is the honest value for the window -- not a stand-in for one.
-        @human_line = SILENT
-        @notice = SILENT
+        @human_line = @notice = SILENT
       end
 
       # Assemble the run's collaborators over the now-open chronicle and hand off
@@ -427,7 +429,7 @@ module Lain
       def approval_key = -> { @switchboard.cycle_approval(surface: Switchboard::KEY_SURFACE) }
 
       def input_for(rail, tty)
-        InputProducer.new(human: human_input, attended: human.answers_at_terminal?,
+        InputProducer.new(human: human_input, attended: @human.answers_at_terminal?,
                           cockpit: options[:nvim] ? true : false, stdin: @stdin, notes:, paths: @paths, root:,
                           pending: Lain::Review::Queue::Pending.new(paths: @paths),
                           status_feed: @status_feed, switchboard: @switchboard, commands: method(:command_names),
@@ -435,13 +437,8 @@ module Lain
                      .call(rail, tty)
       end
 
-      # ONE reading of `--non-interactive`, so the Repl, the input, the askers
-      # and the board cannot come to disagree about whether a human is there --
-      # the way `--yolo` once did when it was read twice.
-      def human = @human ||= Human.from(options)
-
       def human_input
-        @human_input ||= HumanInput.new(input: options[:input], attended: human.answers_at_terminal?,
+        @human_input ||= HumanInput.new(input: options[:input], attended: @human.answers_at_terminal?,
                                         stdin: @stdin, paths: @paths, cwd: project.cwd)
       end
 
@@ -737,7 +734,7 @@ module Lain
       # routable for exactly as long as the run. A CHILD's must be kept and
       # deregistered on the lease that reaps it -- see {Askers::Enrolled}.
       def wire_askers(parent)
-        @askers = Askers.new(observer: chronicle.observer, human:, journal: chronicle.record_journal,
+        @askers = Askers.new(observer: chronicle.observer, human: @human, journal: chronicle.record_journal,
                              epic_slug: -> { epic_mount.slug if epic_mount.mounted? })
         @askers.enrol(parent, agent: Lain::Requester.main.label).asker
       end
@@ -773,7 +770,8 @@ module Lain
                                           verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
-                                          display: @channel, config:, arms:, **lineage_reads)
+                                          display: @channel, config:, arms:, human: @human,
+                                          **lineage_reads)
         @toolset_build.build(recorder, ask_human:, stops:)
       end
 
@@ -910,7 +908,7 @@ module Lain
       def switchboard(backend, toolset)
         @switchboard ||= BoardBuild.for(chronicle:, judge: JudgeSource.for(backend, config:),
                                         model: backend.model, middleware: backend.middleware, display: @channel,
-                                        options:, human:, resolver: exec_resolver, worker_env: chat_env,
+                                        options:, human: @human, resolver: exec_resolver, worker_env: chat_env,
                                         stops: observers.stops, toolset:, project:, verdict:, config:, paths: @paths,
                                         arms:, **chat_reads)
       end
@@ -960,7 +958,7 @@ module Lain
 
       def repl_over(agent:, tty:, backend:, input:)
         Repl.new(agent:, tty:, replies: @replies, chronicle: @chronicle, conductor: @conductor, approvals:,
-                 supervisor:, middleware: @command_surface.middleware, attended: human.answers_at_terminal?,
+                 supervisor:, middleware: @command_surface.middleware, attended: @human.answers_at_terminal?,
                  commands: @command_surface.commands, remote: remote_surface,
                  secret_surface: secret_surface(backend), goal_driver:, input:,
                  echo_input: human_input.pane?, notes:, mode_switch: @switchboard.mode_switch,

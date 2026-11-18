@@ -229,7 +229,8 @@ module Lain
 
         def wire_agent(dir)
           project = Project.new(root: dir, cwd: dir, kind: :project, detected_by: :flag)
-          wiring = ::Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: ::Lain::CLI::Chronicle::Null.new, project:,
+          wiring = ::Lain::CLI::Wiring.new(human: ::Lain::CLI::Human.new(kind: :terminal),
+                                           options: { grace: 5 }, chronicle: ::Lain::CLI::Chronicle::Null.new, project:,
                                            status_feed: StatusFeed.new(path: File.join(dir, "status.json")),
                                            paths: Paths.new(env: { "HOME" => dir }))
           recorder, session = wiring.run_state(nil)

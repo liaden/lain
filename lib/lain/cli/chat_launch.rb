@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 module Lain
   module CLI
     # The chat lifecycle bracket: resolve --resume, open the journal, run the
@@ -28,6 +30,17 @@ module Lain
       # @return [Boolean]
       def self.preflight?(env = ENV) = env[PREFLIGHT_ENV].to_s.strip == "1"
 
+      REMOTE_AT_TERMINAL = "--human remote needs --non-interactive: a chat that reads its own terminal is " \
+                           "answered there"
+      # The threat is the ruling's: under traced, none or a container a call
+      # can write the devices file or reach the relay as a phone.
+      UNCONTAINED = "--human remote needs bash confined, and %<because>s: an unconfined call could pair itself " \
+                    "as a phone or reach the relay, and so approve its own run"
+      UNRELAYED = "--human remote needs the daemon's phone relay, and it is %<state>s: set `remote relay:` in " \
+                  "the user config, %<config>s"
+      UNCONFIGURED = "--human remote needs `remote relay:` in the user config, %<config>s, which names none: " \
+                     "the chat's phone surface starts only on it"
+
       # @param options [Hash] the exe's parsed chat flags. Most pass through
       #   whole to {Backend}, LiveViews and {Wiring} rather than being read
       #   here: this object owns the bracket's ORDER, not the meaning of any
@@ -55,6 +68,8 @@ module Lain
       # @param paths [Paths] names the runtime dir the daemon the chat registers with listens in
       # @param env [#[]] the environment, read for $TMUX by
       #   {#refuse_windows_outside_tmux!} and for the daemon's off switch
+      # @param probe_factory [#call] builds the {Confine::Probe} a `--human remote` launch asks
+      #   whether the box can confine bash; called only for such a launch
       # @option options [Boolean] :journal whether the run records one
       # @option options [Boolean] :btw whether asides join the record
       # @option options [Boolean] :nvim whether the editor views open
@@ -76,7 +91,10 @@ module Lain
                      },
                      middleware_reader: Config.public_method(:middleware),
                      paths: Paths.new,
-                     env: ENV)
+                     env: ENV,
+                     probe_factory: lambda {
+                       Confine::Probe.new(fence: Confine::Bwrap.fence_binary, journal: Journal::Held.new)
+                     })
         @options = options
         @typed_profile = profile
         @typed_compaction = CompactionProfile.typed(options)
@@ -91,6 +109,7 @@ module Lain
         @middleware_reader = middleware_reader
         @paths = paths
         @env = env
+        @probe_factory = probe_factory
       end
 
       attr_reader :wiring, :live_views
@@ -110,6 +129,7 @@ module Lain
         refuse_before_launch!
         resolve_project!
         refuse_isolation!
+        refuse_unanswerable!
         resumed = resumed_run(backend)
         schedule_gc
         open_chronicle
@@ -161,6 +181,7 @@ module Lain
         Config.load(root: project.root, paths: @paths)
         configured_middleware
         @recorded_header = preflight_header
+        refuse_uncontained!
         constructed
         # A mode that says nothing looks exactly like a hang, and this one is
         # reachable by accident: LAIN_PREFLIGHT is inherited like any other
@@ -375,10 +396,13 @@ module Lain
         writer = Liveness::Writer.current
         LiveSessions::Record.new(session_id:, pid: writer.pid, start: writer.start, host: writer.host,
                                  root: project.root, cwd: project.cwd, input_socket:, journal: chronicle.journal_path,
-                                 attended: attended?, started_at: Time.now.utc.iso8601(6))
+                                 attended: human.answers_at_terminal?, started_at: Time.now.utc.iso8601(6))
       end
 
-      def attended? = !@options[:non_interactive]
+      # ONE reading of `--non-interactive` and `--human`, handed to the wiring, so the record, the Repl, the
+      # input, the askers, the board and the sandbox cannot come to disagree about whether a human is there --
+      # the way `--yolo` once did when it was read twice.
+      def human = @human ||= Human.from(@options)
 
       def session_id
         journal = chronicle.journal_path
@@ -386,7 +410,7 @@ module Lain
       end
 
       def input_socket
-        name = attended? && InputSocket.named(@options[:input])
+        name = human.answers_at_terminal? && InputSocket.named(@options[:input])
         InputSocket.path(name:, paths: @paths, cwd: project.cwd) if name
       end
 
@@ -452,6 +476,54 @@ module Lain
       def refuse_contradictory_flags!
         refuse_windows_without_journal!
         refuse_headless_without_prompt!
+        refuse_remote_at_terminal!
+      end
+
+      def refuse_remote_at_terminal!
+        raise Lain::Error, REMOTE_AT_TERMINAL if @options[:human] && !@options[:non_interactive]
+      end
+
+      # Before the record opens, so a refused run leaves no session file and no registration.
+      def refuse_unanswerable!
+        refuse_uncontained!
+        refuse_unrelayed!
+      end
+
+      def refuse_uncontained!
+        because = human.answers_remotely? && containment_gap
+        raise Lain::Error, format(UNCONTAINED, because:) if because
+      end
+
+      def containment_gap
+        return "--confine #{arms.confine} leaves it unsandboxed" unless arms.sandboxed?
+        unless local_exec?
+          return "--exec #{@options[:exec]} is not local, and only a local exec runs inside the sandbox"
+        end
+
+        Confine::Sandbox.gap(@probe_factory.call)
+      end
+
+      def local_exec? = (@options[:exec] || ExecBackend::DEFAULT) == ExecBackend::DEFAULT
+
+      # Asked over a connection of its own, since the chat's registration opens only inside the conversation.
+      def refuse_unrelayed!
+        return unless human.answers_remotely?
+        raise Lain::Error, format(UNCONFIGURED, config: @paths.user_config) unless Config.remote(paths: @paths)[:relay]
+
+        state = relay_state
+        return if state == Approval::RemoteSurface::RUNNING
+
+        raise Lain::Error, format(UNRELAYED, state:, config: @paths.user_config)
+      end
+
+      def relay_state = Sync { relay_of(::Lain::Daemon.ensure(paths: @paths, env: @env, notes: herdr_notes)) }
+
+      def relay_of(client)
+        return "unreachable (#{client.reason})" if client.is_a?(::Lain::Daemon::Absent)
+
+        client.call("daemon.info").fetch("relay", "off")
+      ensure
+        client.stop unless client.is_a?(::Lain::Daemon::Absent)
       end
 
       # --windows observes the live-view tee, which --no-journal never builds;
@@ -565,7 +637,7 @@ module Lain
       def converse(backend:, resumed:, &notice)
         @wiring = @wiring_factory.call(options: @options, chronicle:, status_feed:, run_clock:, project:, arms:,
                                        agent_states: teed_agent_states,
-                                       herdr: herdr_binding, registration:)
+                                       herdr: herdr_binding, registration:, human:)
         @wiring.run(backend:, resumed:, nvim: nvim_views, &notice)
       end
     end

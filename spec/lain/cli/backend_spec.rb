@@ -1519,6 +1519,7 @@ RSpec.describe Lain::CLI::Backend do
     chronicle = Lain::CLI::Chronicle::Null.new
     journal = RecordingChannel.new
     Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
       supervisor: Lain::Supervisor.new(journal:), parent: -> { CoreGraph.timeline }, journal:,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,

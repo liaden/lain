@@ -40,7 +40,8 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
     end.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: provider, root: @state)
   end
   let(:wiring) do
-    Lain::CLI::Wiring.new(options: { grace: 5, approval: "auto" }, chronicle:,
+    Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                          options: { grace: 5, approval: "auto" }, chronicle:,
                           status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                           paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
                           project: Lain::Project.new(root: @state, cwd: @cwd, kind: :project, detected_by: :flag))
@@ -190,7 +191,8 @@ RSpec.describe "auto approval asks the judge before a human", :seam do
       Lain::Provider::Mock.new(responses: [*asked, text_response("settled")])
     end
     let(:wiring) do
-      Lain::CLI::Wiring.new(options: { grace: 5, approval: "ask" }, chronicle:,
+      Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                            options: { grace: 5, approval: "ask" }, chronicle:,
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                             paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }),
                             project: Lain::Project.new(root: @state, cwd: @cwd, kind: :project, detected_by: :flag))

@@ -95,8 +95,8 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
     end
   end
 
-  def surfaces(approvals: queue, attached: nil, secret: nil, remote: nil)
-    described_class.new(approvals:, secret_surface: secret, tty:, conductor:, remote:)
+  def surfaces(approvals: queue, attached: nil, secret: nil, remote: nil, **terminal)
+    described_class.new(approvals:, secret_surface: secret, tty:, conductor:, remote:, **terminal)
                    .tap { |built| built.bind_editor(attached) }
   end
 
@@ -550,6 +550,40 @@ RSpec.describe Lain::CLI::Repl::ApprovalSurfaces do
 
       expect(result[:watched]).to contain_exactly(an_instance_of(Async::Task), an_instance_of(Async::Task))
       expect(remote.starts).to eq(1)
+    end
+
+    # --human remote: the phone is the only one who answers, and a [y/N] on a
+    # terminal nobody reads would be a second reader for a line nobody types.
+    context "when nobody answers at the terminal" do
+      def remote_only
+        Sync do |task|
+          watched = surfaces(remote:, terminal: false).watch(task)
+          parked(task) { { watched:, decided: queue.any?(&:decided?), written: output.string } }
+        ensure
+          watched&.each { |surface| surface&.stop }
+        end
+      end
+
+      # A short look after the call parks: a terminal surface would have answered it by then.
+      def parked(task)
+        gated = task.async { queue.call(effect, nil) }
+        pumped_until(task, reason: "the call parked and the phone's surface started") do
+          queue.any? && remote.starts.positive?
+        end
+        settle_for(task, 0.03)
+        yield.tap { gated.stop }
+      end
+
+      it "starts the remote surface and no terminal surface" do
+        expect([remote_only[:watched].size, remote.starts]).to eq([1, 1])
+      end
+
+      it "reads nothing at the terminal, so the parked call waits for the phone" do
+        result = remote_only
+
+        expect(conductor).not_to have_received(:read_reply)
+        expect([result[:decided], result[:written]]).to eq([false, ""])
+      end
     end
 
     it "starts no remote surface for an unattended run, which has no queue for it to answer" do

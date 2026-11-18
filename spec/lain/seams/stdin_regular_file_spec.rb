@@ -31,6 +31,7 @@ module StdinRegularFile
       define_method(:provider) { |**| provider }
     end.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
     wiring = Lain::CLI::Wiring.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
       paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }),
       status_feed: Lain::StatusFeed.new(path: File.join(dir, "state.json")),

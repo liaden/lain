@@ -34,7 +34,8 @@ RSpec.describe "a resumed chat keeps the skill's allowance", :seam do
   def chat(path, resumed: nil)
     journal = Lain::Journal.new(io: File.open(path, "ab"), owns_io: true, fsync: true, path:)
     chronicle = Lain::CLI::Chronicle.new(journal:, journal_path: path)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, project:,
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                   options: { grace: 5 }, chronicle:, project:,
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = resumed ? [resumed.recorder, resumed.session] : wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:, resumed:)

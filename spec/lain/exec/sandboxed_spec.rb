@@ -153,6 +153,23 @@ RSpec.describe Lain::Exec::Sandboxed do
           expect(recorded("sandbox").sole).to have_attributes(profile: :reader, refused: [])
         end
       end
+
+      context "when the sandbox refuses every unconfined call" do
+        let(:profiles) do
+          Class.new do
+            def for(_request) = raise(Lain::Confine::Sandbox::Unconfined.new(profile: :traced))
+          end.new
+        end
+
+        it "runs nothing, and the refusal names --human remote" do
+          capture = run(confinement: human)
+
+          expect(inner.calls).to be_empty
+          expect(capture.exit_status).to eq(Lain::Shell::Pipeline::NOT_PERMITTED)
+          expect(capture.stderr).to include(described_class::UNCONFINED).and include("--human remote")
+          expect(recorded("sandbox").sole).to have_attributes(profile: :traced, refused: [])
+        end
+      end
     end
 
     describe "the grants its record names" do

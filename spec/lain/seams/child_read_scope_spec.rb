@@ -44,7 +44,8 @@ RSpec.describe "A spawned child's read outside its scope", :seam do
   def project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
 
   def wired(**options)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5, **options }, chronicle: Lain::CLI::Chronicle::Null.new,
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                   options: { grace: 5, **options }, chronicle: Lain::CLI::Chronicle::Null.new,
                                    status_feed:, project:, paths: @paths)
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: RecordingChannel.new, recorder:, session:, backend:, notice: ->(_line) {})

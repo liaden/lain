@@ -39,7 +39,7 @@ RSpec.describe "Project memory across chats", :seam do
   # on the memory path reads it, and a double would be the one stand-in in a
   # seam that is about real components meeting.
   def wiring(chronicle)
-    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+    Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle:,
                           status_feed: Lain::StatusFeed.new(path: File.join(@home, "state.json")),
                           paths:, project: Lain::Project.new(root: @home, cwd: @home, kind: :project,
                                                              detected_by: :flag))

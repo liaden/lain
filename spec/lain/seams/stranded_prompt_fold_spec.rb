@@ -61,7 +61,8 @@ RSpec.describe "a stranded prompt folded into the next ask", :seam do
   def refused = stub_request(:post, %r{/api/chat}).to_raise(Errno::ECONNREFUSED)
 
   def chat
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:, project: throwaway_project(project_dir),
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                   options: { grace: 5 }, chronicle:, project: throwaway_project(project_dir),
                                    status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
     recorder, session = wiring.run_state(nil)
     agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)

@@ -135,7 +135,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
   def build_with(options, **over)
     described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:, epic:,
                         root:, switchboard: -> { SpecNulls::NoSwitchboard },
-                        askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project, **over)
+                        askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project,
+                        human: Lain::CLI::Human.new(kind: :terminal), **over)
   end
 
   describe "#build" do
@@ -1052,7 +1053,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
           backend = Lain::CLI::Backend.new(flags, root: Dir.pwd)
           described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:,
                               epic:, root:, switchboard: -> { SpecNulls::NoSwitchboard },
-                              askers: SpecNulls::UnwiredAskers.build, session:, **SpecNulls.unloaded_project)
+                              askers: SpecNulls::UnwiredAskers.build, session:, **SpecNulls.unloaded_project,
+                              human: Lain::CLI::Human.new(kind: :terminal))
         end
 
         it "holds a cut written under the run's named arm, and not one written under the control arm" do
@@ -1274,6 +1276,42 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(exec.instance_variable_get(:@inner)).to be_a(Lain::Exec::Local)
       expect(exec.instance_variable_get(:@launcher)).to be_a(Lain::Confine::Bwrap)
       expect(degraded).to be_empty
+    end
+
+    # Defaulted, a caller that forgot it would read the flags a second time and
+    # could hand a phone's run a sandbox that runs unconfined calls.
+    it "refuses to build without the Human the launch read" do
+      expect do
+        described_class.new(backend:, provider:, chronicle:, options:, supervisor:, parent:, journal:, library:,
+                            epic:, root:, switchboard: -> { SpecNulls::NoSwitchboard },
+                            askers: SpecNulls::UnwiredAskers.build, **SpecNulls.unloaded_project)
+      end.to raise_error(ArgumentError, /human/)
+    end
+
+    describe "a call a human approved, which runs traced" do
+      def profile_for(human)
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: "ask", because: "approved", authority: :human)
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: nil, root: nil, tool_use_id: "tu_1")
+        bash_exec(built(reader, human:)).instance_variable_get(:@profiles).for(request)
+      end
+
+      # User ruling 2026-11-17: a phone approval runs traced, as a terminal approval does.
+      it "runs traced when the phone approved it, as at the terminal" do
+        expect(profile_for(Lain::CLI::Human.new(kind: :remote))).to eq(Lain::Confine::Profile::TRACED)
+      end
+
+      it "is refused when the phone answers and no human approved it" do
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: "rules", because: "remembered")
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: nil, root: nil, tool_use_id: "tu_1")
+        remote = Lain::CLI::Human.new(kind: :remote)
+        profiles = bash_exec(built(reader, human: remote)).instance_variable_get(:@profiles)
+
+        expect { profiles.for(request) }.to raise_error(Lain::Confine::Sandbox::Unconfined)
+      end
+
+      it "runs traced when the human answers at the terminal" do
+        expect(profile_for(Lain::CLI::Human.new(kind: :terminal))).to eq(Lain::Confine::Profile::TRACED)
+      end
     end
 
     it "hands the launcher the fence the probe tried, and the programs the probe found on PATH" do
@@ -1514,7 +1552,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     let(:recording) { Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:), journal_path: "seam.ndjson") }
     let(:wiring) do
       project = Lain::Project.new(root: project_root, cwd: project_root, kind: :project, detected_by: :flag)
-      Lain::CLI::Wiring.new(options: { grace: 5, approval: "auto" }, chronicle: recording,
+      Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                            options: { grace: 5, approval: "auto" }, chronicle: recording,
                             status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
                             paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"),
                                                           "HOME" => File.join(base, "h") }),
@@ -1585,6 +1624,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def wiring(flags)
       @wiring ||= Lain::CLI::Wiring.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
         options: { grace: 5, approval: "auto", **flags }, chronicle: recording,
         status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
         paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h") }),
@@ -2080,7 +2120,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       # The chat's own Agent, and the build its toolset came from.
       def wired
-        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+        wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
         recorder, session = wiring.run_state(nil)
         backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 }, mock: wired_provider)

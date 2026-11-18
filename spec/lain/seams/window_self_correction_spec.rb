@@ -93,7 +93,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
   # the run's own book. Rebuilding the composition here would prove that this
   # file can compose a middleware, which is not the claim.
   def turn_stack
-    Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
+    Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle: Lain::CLI::Chronicle::Null.new,
                           status_feed: instance_double(Lain::StatusFeed),
                           project: Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project,
                                                      detected_by: :flag))
@@ -453,7 +453,7 @@ RSpec.describe "a --num-ctx window self-corrects once its runner is resident", :
 
     def ask
       @ask ||= begin
-        wiring = Lain::CLI::Wiring.new(options: { grace: 5 }, chronicle:,
+        wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options: { grace: 5 }, chronicle:,
                                        status_feed: instance_double(Lain::StatusFeed, bind_store: nil))
         recorder, session = wiring.run_state(nil)
         agent = wiring.wire_agent(channel: Lain::Channel.new, recorder:, session:, backend:)

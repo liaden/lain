@@ -81,7 +81,8 @@ RSpec.describe LainCLI do
   # plain options hash and the Null chronicle -- the same records-nothing duct
   # a directly-constructed CLI instance used to get from #chronicle.
   def wiring(chronicle: Lain::CLI::Chronicle::Null.new, **options)
-    Lain::CLI::Wiring.new(options:, chronicle:, status_feed: instance_double(Lain::StatusFeed))
+    Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal), options:, chronicle:,
+                          status_feed: instance_double(Lain::StatusFeed))
   end
 
   describe LainCLI::Backend, "#provider" do
@@ -280,7 +281,8 @@ RSpec.describe LainCLI do
     def wired_tool_stack(tripwire)
       Dir.mktmpdir("cli-tripwire") do |state|
         paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "HOME" => state })
-        armed = Lain::CLI::Wiring.new(options: { grace: 5, tripwire: }, chronicle: Lain::CLI::Chronicle::Null.new,
+        armed = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                      options: { grace: 5, tripwire: }, chronicle: Lain::CLI::Chronicle::Null.new,
                                       status_feed: instance_double(Lain::StatusFeed, bind_store: nil), paths:)
         recorder, session = armed.run_state(nil)
         agent = armed.wire_agent(channel:, recorder:, session:,
@@ -654,6 +656,23 @@ RSpec.describe LainCLI do
       described_class.start(%w[chat --compact-schedule turn], debug: true)
 
       expect(Lain::CLI::ChatLaunch).to have_received(:new).with(hash_including("compact_schedule" => "turn"), any_args)
+    end
+  end
+
+  describe "chat --human" do
+    it "declares remote as its one value, with no default" do
+      option = described_class.commands.fetch("chat").options.fetch(:human)
+
+      expect([option.enum, option.default]).to eq([%w[remote], nil])
+    end
+
+    it "reaches the launch as typed" do
+      launch = instance_double(Lain::CLI::ChatLaunch, call: nil, exit_status: 0)
+      allow(Lain::CLI::ChatLaunch).to receive(:new).and_return(launch)
+
+      expect { described_class.start(%w[chat --non-interactive --prompt hi --human remote], debug: true) }
+        .to raise_error(SystemExit)
+      expect(Lain::CLI::ChatLaunch).to have_received(:new).with(hash_including("human" => "remote"), any_args)
     end
   end
 

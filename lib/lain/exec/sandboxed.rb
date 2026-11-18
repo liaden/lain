@@ -69,6 +69,10 @@ module Lain
                       "secrets and this box cannot give it a private network, so it cannot run contained. Retrying " \
                       "will be refused again. Stop and ask the human to approve it with network, which runs it " \
                       "unconfined, then wait for the answer."
+      UNCONFINED = "REFUSED by the sandbox, not a transient error: this chat runs under --human remote, where a " \
+                   "phone answers its calls, so a bash call runs outside the sandbox only when a human approved it " \
+                   "and lain can trace it, and this call would run outside it otherwise. Retrying will be refused " \
+                   "again. Stop and tell the human, then wait for the answer."
       CONTAINED = "This call ran contained, as it was approved without network: files lain masks cannot be read " \
                   "in the sandbox, and it had no network. To see a masked file's values, use read_file."
       CONTAINED_PORTED = "This call ran contained, as it was approved: files lain masks cannot be read in the " \
@@ -124,6 +128,8 @@ module Lain
           return unsealable(confinement, e, sinks)
         rescue Confine::Profiles::Uncontainable => e
           return refused_before(confinement, e, UNCONTAINABLE, sinks, on: nil)
+        rescue Confine::Sandbox::Unconfined => e
+          return refused_before(confinement, e, UNCONFINED, sinks, on: nil)
         rescue *UNBUILT.keys => e
           return refused_before(confinement, e, phrased(unbuilt(e), path: printable(e.path)), sinks)
         end

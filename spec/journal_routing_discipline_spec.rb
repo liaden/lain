@@ -74,7 +74,7 @@ RSpec.describe Lain::CLI::Wiring, "the journal routing discipline" do
   end
 
   def wiring
-    @wiring ||= described_class.new(options:, chronicle:, status_feed:,
+    @wiring ||= described_class.new(options:, chronicle:, status_feed:, human: Lain::CLI::Human.new(kind: :terminal),
                                     paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @state, "HOME" => @state }))
   end
 

@@ -407,8 +407,9 @@ RSpec.describe Lain::Approval::RemoteSurface do
     described_class.new(registration:, agenda:, secrets:, journal:, poll_interval: 0.02, project:, trace:, **options)
   end
 
-  def agenda_over(gates: RemoteSurfaceSpecSupport::NoGates.new, queue: self.queue, **options)
-    Lain::Remote::Agenda.new(queue:, gates:, replies: RemoteSurfaceSpecSupport::NoReplies.new, **options)
+  def agenda_over(gates: RemoteSurfaceSpecSupport::NoGates.new, queue: self.queue,
+                  replies: RemoteSurfaceSpecSupport::NoReplies.new, **options)
+    Lain::Remote::Agenda.new(queue:, gates:, replies:, **options)
   end
 
   def park(task, command = "ls -la")
@@ -865,6 +866,65 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
         expect([item.session, item.project]).to eq([RemoteSurfaceSpecSupport::Desk::SESSION, @dir])
       end
+    end
+
+    # The headless chat `lain chat --non-interactive --human remote` wires: its
+    # board under the Human it reads, with the phone as the only surface.
+    context "when a --human remote chat's board parks the call" do
+      let(:board) do
+        Lain::CLI::Switchboard.for(chronicle: instance_double(Lain::CLI::Chronicle, record_journal: journal),
+                                   options: { approval: "auto" }, model: "claude-opus-4-8", toolset:,
+                                   test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+                                   judge: Lain::CLI::Switchboard::DEFERRING, human: Lain::CLI::Human.new(kind: :remote),
+                                   approval_timeout:)
+      end
+      let(:approval_timeout) { 20 }
+      let(:queue) { board.approvals }
+      let(:gate) { Lain::Middleware::Gate.new(policy: board.policy_switch) }
+
+      it "reaches the phone when the judge abstains, and the phone's Approve runs it as the device, by a human" do
+        result = with_a_parked_call(command: "make deploy") do |phone, call, item|
+          expect(JSON.parse(item.input)).to eq("command" => "make deploy")
+          phone.answer(approve(item))
+          call.wait
+        end
+
+        expect([result, runs]).to eq([Lain::Tool::Result.ok("ran make deploy"), [{ "command" => "make deploy" }]])
+        expect(records("approval_decision").last).to include("surface" => "remote:pixel")
+        expect(records("escalation").last).to include("verdict" => "allow", "authority" => "human")
+      end
+
+      context "when nobody answers within the window" do
+        let(:approval_timeout) { 0.3 }
+
+        it "holds the call rather than approving it" do
+          result = with_a_parked_call(command: "make deploy") { |_phone, call, _item| call.wait }
+
+          expect(runs).to be_empty
+          expect(result.to_s).to include("postponed").and include(Lain::Approval::Silence::WAITS)
+          expect(records("escalation").map { _1["verdict"] }).not_to include("allow")
+        end
+      end
+    end
+
+    it "carries a --human remote agent's question to the phone, and the phone's answer back to the agent" do
+      askers = Lain::CLI::Wiring::Askers.new(observer: Lain::EventLog::ChainWriter::Null.new,
+                                             human: Lain::CLI::Human.new(kind: :remote))
+      replies = Lain::CLI::HumanReplies.new(tty: nil, conductor: nil, ask_human: askers.directory,
+                                            questions: askers.questions)
+      asker = askers.enrol(Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
+                                             .commit(role: :user, content: [{ "type" => "text", "text" => "hi" }]))
+                    .asker
+      invocation = Lain::Tool::Invocation.new(context: Lain::Session::Null.instance)
+      answered = with_a_phone(agenda: agenda_over(replies:)) do |phone, _watching, task|
+        asking = task.async { asker.call({ "question" => "which branch?" }, invocation) }
+        item = phone.until_open(&:any?).first
+        phone.answer(wire::Answer::Question.new(id: item.id, option: nil, text: "main", device: nil))
+        [item.question, asking.wait]
+      end
+
+      expect(answered.first).to include("which branch?")
+      expect(answered.last.to_s).to include("main")
     end
 
     it "sends the phone the parked call, and its Approve runs it as the paired device, with human authority" do

@@ -81,7 +81,8 @@ RSpec.describe "A one-shot child's commits come home on the chat path", :seam do
   end
 
   def wired(options = {})
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5, isolation: "worktree", **options },
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                   options: { grace: 5, isolation: "worktree", **options },
                                    chronicle:, status_feed:)
     recorder, session = wiring.run_state(nil)
     wiring.wire_agent(channel:, recorder:, session:, backend:, notice: ->(_line) {})

@@ -792,6 +792,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
     chronicle = Lain::CLI::Chronicle::Null.new
     journal = RecordingChannel.new
     Lain::CLI::Wiring::ToolsetBuild.new(
+      human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider: backend.provider(spool: chronicle.spool), chronicle:, options: {},
       supervisor: Lain::Supervisor.new(journal:), parent: -> { CoreGraph.timeline }, journal:,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: Dir.pwd,
@@ -2149,5 +2150,182 @@ RSpec.describe Lain::CLI::ChatLaunch, "the daemon registration" do
 
     expect(built.size).to eq(1)
     expect(seen).to be_empty
+  end
+end
+
+# A headless chat whose gated calls a phone answers. Every refusal lands before
+# the record opens, so a refused run leaves no session file and no registration.
+RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
+  around do |example|
+    Dir.mktmpdir("lain-launch-remote") do |dir|
+      @dir = File.realpath(dir)
+      example.run
+    end
+  end
+
+  before do
+    stub_request(:get, %r{/api/ps})
+      .to_return(status: 200, headers: { "Content-Type" => "application/json" }, body: JSON.generate("models" => []))
+  end
+
+  let(:state) { File.join(@dir, "state") }
+  let(:chronicle_factory) { spy("chronicle_factory") }
+  let(:wiring_factory) { spy("wiring_factory") }
+  let(:full_box) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":true}' : "", true] } }
+
+  def probe(runner = full_box)
+    Lain::Confine::Probe.new(fence: "/srv/lain-fence", journal: Lain::Journal::Held.new, runner:,
+                             ptrace_scope: -> { "0" })
+  end
+
+  def remote(**options)
+    { non_interactive: true, prompt: "fix the build", human: "remote", journal: true, nvim: false,
+      max_tokens: 16 }.merge(options)
+  end
+
+  # The user's own config is never read: every home is this example's.
+  def homes(config: "config")
+    { "XDG_STATE_HOME" => state, "HOME" => File.join(@dir, "home"), "XDG_CONFIG_HOME" => File.join(@dir, config) }
+  end
+
+  def launch(options, paths: Lain::Paths.new(env: homes), env: {}, box: probe,
+             chronicle_factory: self.chronicle_factory, wiring_factory: self.wiring_factory)
+    described_class.new(options, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
+                                 project_factory: -> { throwaway_project(@dir) },
+                                 gc_schedule_factory: ->(**) { -> {} }, probe_factory: -> { box }, paths:, env:,
+                                 chronicle_factory:, wiring_factory:)
+  end
+
+  def refused(options, **factories)
+    launch(options, **factories).call { |_notice| nil }
+  rescue Lain::Error => e
+    e.message
+  end
+
+  def opened_nothing
+    expect(chronicle_factory).not_to have_received(:call)
+    expect(wiring_factory).not_to have_received(:call)
+  end
+
+  it "refuses --human remote without --non-interactive, since a terminal chat is answered there" do
+    expect(refused(remote(non_interactive: false))).to include("--human remote needs --non-interactive")
+    opened_nothing
+  end
+
+  describe "without containment" do
+    it "refuses a box that lacks a sandbox layer, naming it and the threat it closes" do
+      message = refused(remote, box: probe(->(_argv) { ["", false] }))
+
+      expect(message).to include("--human remote", "the box lacks", "approve its own")
+      opened_nothing
+    end
+
+    it "refuses --confine off, which leaves bash unsandboxed" do
+      expect(refused(remote(confine: "off"))).to include("--human remote", "--confine off")
+      opened_nothing
+    end
+
+    %w[docker podman].each do |exec|
+      it "refuses --exec #{exec}, since only a local exec runs inside the sandbox" do
+        expect(refused(remote(exec:))).to include("--human remote", "--exec #{exec}", "only a local exec")
+        opened_nothing
+      end
+    end
+
+    it "refuses in the pre-flight too, so `lain up` hears it on the operator's terminal" do
+      expect { launch(remote(confine: "off")).preflight }.to raise_error(Lain::Error, /--human remote/)
+    end
+  end
+
+  describe "the daemon's phone relay" do
+    def daemon_answering(relay)
+      instance_double(Lain::Core::Client, stop: nil).tap do |client|
+        allow(client).to receive(:call).with("daemon.info").and_return({ "relay" => relay })
+        allow(Lain::Daemon).to receive(:ensure).and_return(client)
+      end
+    end
+
+    def relay_in_user_config(paths = Lain::Paths.new(env: homes))
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, "remote relay: \"127.0.0.1:7820\"\n")
+      Lain::Project::Trust.for_user(paths:).grant!
+    end
+
+    it "launches once the daemon reports its relay running, and lets go of the connection it asked on" do
+      relay_in_user_config
+      client = daemon_answering("running")
+
+      launch(remote).call { |_notice| nil }
+
+      expect(wiring_factory).to have_received(:call).with(hash_including(human: Lain::CLI::Human.new(kind: :remote)))
+      expect(client).to have_received(:stop)
+    end
+
+    it "refuses when the daemon's relay is off, naming `remote relay:` in the user config" do
+      relay_in_user_config
+      daemon_answering("off")
+
+      expect(refused(remote)).to include("remote relay:", "off")
+      opened_nothing
+    end
+
+    # The chat's own phone surface reads the same setting, so a daemon left running on an older config is not enough.
+    it "refuses when the chat's own user config names no relay, before asking the daemon" do
+      allow(Lain::Daemon).to receive(:ensure)
+
+      expect(refused(remote)).to include("remote relay:", Lain::Paths.new(env: homes).user_config)
+      expect(Lain::Daemon).not_to have_received(:ensure)
+      opened_nothing
+    end
+
+    it "asks the daemon nothing for a chat answered at its terminal" do
+      allow(Lain::Daemon).to receive(:ensure)
+      wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0)
+      allow(wiring).to receive(:run)
+
+      launch({ journal: false, max_tokens: 16 }, wiring_factory: ->(**) { wiring }).call { |_notice| nil }
+
+      expect(Lain::Daemon).not_to have_received(:ensure)
+    end
+
+    # The chat's config names a relay, but the daemon answering was started on a config that named none,
+    # and a chat registered with it keeps it running.
+    context "with a real daemon that runs no relay", :daemon do
+      def env(config) = daemon_env.merge(homes(config:))
+
+      def paths(config) = Lain::Paths.new(env: env(config))
+
+      def held_chat
+        writer = Lain::Liveness::Writer.current
+        Lain::LiveSessions::Record.new(session_id: "held", pid: writer.pid, start: writer.start, host: writer.host,
+                                       root: @dir, cwd: @dir, input_socket: nil, journal: nil, attended: true,
+                                       started_at: Time.now.utc.iso8601(6))
+      end
+
+      def holding_a_chat
+        Sync do
+          client = Lain::Daemon.ensure(paths: paths("plain"), env: env("plain"))
+          client.call("session.register", [held_chat.to_h])
+          yield client
+        ensure
+          client&.stop
+        end
+      end
+
+      it "refuses before the record opens, leaving no session file and no registration" do
+        chat_paths = paths("remote")
+        relay_in_user_config(chat_paths)
+        message = nil
+        listed = holding_a_chat do |client|
+          message = refused(remote, paths: chat_paths, env: env("remote"),
+                                    chronicle_factory: ->(**kw) { Lain::CLI::Chronicle.for(**kw, paths: chat_paths) })
+          client.call("session.list").map { _1.fetch("session_id") }
+        end
+
+        expect(message).to include("remote relay:", "off")
+        expect(Dir.glob(File.join(state, "**", "*.ndjson"))).to be_empty
+        expect(listed).to eq(["held"])
+      end
+    end
   end
 end

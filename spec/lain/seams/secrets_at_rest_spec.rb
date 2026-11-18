@@ -63,7 +63,8 @@ RSpec.describe "a lent secret in the session file", :seam do
 
   def drive(chronicle, mock)
     project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
-    wiring = Lain::CLI::Wiring.new(options: { grace: 5, approval: "bypass" }, chronicle:,
+    wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                                   options: { grace: 5, approval: "bypass" }, chronicle:,
                                    status_feed: Lain::StatusFeed.new(path: File.join(@state, "state.json")),
                                    project:, paths: @paths)
     lend_canary(wiring, project)

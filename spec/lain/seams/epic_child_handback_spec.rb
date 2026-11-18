@@ -27,7 +27,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
   let(:ask_human) { Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }) }
   let(:provider) { Lain::Provider::Mock.new(responses: %w[a b].flat_map { |id| plan_turns(id) }) }
   let(:build) do
-    described_class.new(backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {},
+    described_class.new(human: Lain::CLI::Human.new(kind: :terminal),
+                        backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {},
                         supervisor: Lain::Supervisor.new, parent: -> { CoreGraph.timeline },
                         journal: Lain::Channel::Null.instance, library: backend.library,
                         epic: SpecNulls.unmounted_epic, root: @repo,
@@ -107,7 +108,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
     chronicle = Lain::CLI::Chronicle.new(journal:).start(context: backend.context, toolset: Lain::Toolset.new([]),
                                                          sections: SessionSections.complete)
     replies = Lain::Provider::Mock.new(responses: [text_response("a"), text_response("b")])
-    fleet = described_class.new(backend:, provider: replies,
+    fleet = described_class.new(human: Lain::CLI::Human.new(kind: :terminal), backend:, provider: replies,
                                 chronicle:, options: {}, supervisor: Lain::Supervisor.new,
                                 parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) },
                                 journal: chronicle.durable_journal,

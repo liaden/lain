@@ -41,7 +41,8 @@ RSpec.describe "a passed value's secret masked in bash output", :seam do
 
   def wiring
     project = Lain::Project.new(root: @root, cwd: @root, kind: :project, detected_by: :flag)
-    Lain::CLI::Wiring.new(options: { grace: 5, approval: "bypass" }, chronicle: Lain::CLI::Chronicle::Null.new,
+    Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
+                          options: { grace: 5, approval: "bypass" }, chronicle: Lain::CLI::Chronicle::Null.new,
                           status_feed: instance_double(Lain::StatusFeed, bind_store: nil), project:, paths: @paths)
   end
 

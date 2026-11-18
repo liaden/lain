@@ -9,6 +9,27 @@ RSpec.describe Lain::CLI::Human do
     it "is nobody under --non-interactive" do
       expect(described_class.from({ non_interactive: true }).kind).to eq(:none)
     end
+
+    it "is remote under --non-interactive --human remote" do
+      expect(described_class.from({ non_interactive: true, human: "remote" }).kind).to eq(:remote)
+    end
+
+    # The launch refuses the flag without --non-interactive, so a terminal chat must never read as remote.
+    it "is at the terminal for --human remote without --non-interactive" do
+      expect(described_class.from({ human: "remote" }).kind).to eq(:terminal)
+    end
+
+    it "reads the flag as Thor hands it, keyed by string" do
+      options = Thor::CoreExt::HashWithIndifferentAccess.new("non_interactive" => true, "human" => "remote")
+
+      expect(described_class.from(options).kind).to eq(:remote)
+    end
+  end
+
+  # Outside the sandbox a phone's run runs only what a human approved, traced: any other call could reach the phone.
+  it "is answered from away only when remote, which is what keeps unapproved bash confined" do
+    expect(described_class::KINDS.to_h { [_1, described_class.new(kind: _1).answers_remotely?] })
+      .to eq(terminal: false, remote: true, none: false)
   end
 
   def answers(kind)
