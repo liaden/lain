@@ -293,8 +293,8 @@ The fork column is history. Since 2026-10-02 lib shells out only through
 |---|---|---|
 | one `git rev-parse`, parent at 98MB RSS | 7.7ms | 1.3ms |
 | the same, parent at 371MB RSS | 29.4ms | 1.3ms |
-| per git call inside a worker, via `bin/strace-children` | 21.2ms (clone 8.2, pre-exec 1.7, exec teardown 8.6, git 2.7) | 2.9ms |
-| parent syscall over a whole `pspec`, via `bin/trace-pspec` | 9,740 forks, 74s | 12,813 vforks, 3.6s |
+| per git call inside a worker, via strace | 21.2ms (clone 8.2, pre-exec 1.7, exec teardown 8.6, git 2.7) | 2.9ms |
+| parent syscall over a whole `pspec`, via a bpftrace run over `pspec` | 9,740 forks, 74s | 12,813 vforks, 3.6s |
 
 Every git program in that run executed in 64s in total. Forking them cost the parents
 74s in `clone` and the children about 84s tearing down their copied address space at
@@ -341,7 +341,7 @@ research), with no box configuration needed.
 
 A worker's RSS grows to 140 to 360MB while its live Ruby objects are 21 to 57MB. On the
 heaviest worker, `malloc_trim(0)` returned 100MB of 345MB: memory glibc freed and kept.
-`bin/trace-memleak` attributes the rest of the malloc'd memory to Ruby's own
+A bpftrace memleak trace attributed the rest of the malloc'd memory to Ruby's own
 `xmalloc` and `xcalloc` (about 74MB, twice what `ObjectSpace.memsize_of_all` reports);
 `lain.so` and the C extensions hold almost none.
 
@@ -380,21 +380,20 @@ the `stack-wall` lens one example failed once in 6 profiled runs; see
 The figures above are from 2026-08-05. A fuller, later set (per-file probes, kernel
 traces, allocator A/Bs, and a long-session bench) is in
 `planning/spec-suite-profiling-research-2026-09.md`. These commands reproduce its
-system-level measurements. Each prints its usage and the traps it avoids at the top of
-the file.
+system-level measurements, except the kernel-trace ones: those scripts were removed, and
+the paragraph after the table says how to recover them. Each remaining command prints its
+usage and the traps it avoids at the top of the file.
 
 | command | root | what it answers |
 |---|---|---|
 | `bin/box-state [--guard\|--json]` | no | what else is competing for this machine (load, pressure, swap, THP, governor, running mempalace units, other suites); `--guard` refuses a timed run while it is not quiet |
-| `bin/setup-profiling <tool...>` | to install | whether bpftrace, the libbpf bcc tools, strace and perf are present; the install command for Arch, Debian or Ubuntu, run for you with `PROFILING_INSTALL=1` |
-| `bin/trace-pspec` | yes | one `pspec` under bpftrace: every exec, each program's life, the parent's time in `clone` against `vfork`, off-CPU stacks, run-queue latency, syscalls; summarized by `bin/trace-summary` |
-| `bin/trace-memleak <spec files...>` | yes | every libc allocation still held at the end of one rspec process, by caller and library; summarized by `bin/memleak-summary` |
-| `bin/strace-children <command...>` | no | per child process, how long creating it took (fork or vfork, then exec) against how long the program ran |
 | `bin/with-ruby <ruby-bin-dir> <command...>` | no | the same command under a different Ruby build (a jemalloc one, say) with an identical environment |
 | `bin/suite-load --card <tree> --base <tree> --load <tree> --rounds N <spec files...>` | no | whether a spec change holds under real suite load: runs the files on the card and base trees, alternating in random order, while full `pspec` runs loop in a load tree; failures by location and seed, and a run with no examples, a summary missing, an example count that varies between rounds, or a dead load loop counts as a failure |
 | `bin/suite-redrate --card <tree> --base <tree> --rounds N` | no | how often a whole `rake pspec` fails on the card tree against the base, interleaved and padded; failures by name and the median wall |
 | `bin/runtime-census [--record\|--check]` | no | which spec files grew past their ceilings over the last 3 recorded pspec runtime logs (each must name every ceilinged file), and whether a `LAIN_SLOW=1` dry run still reaches the example floor |
 | `LAIN_SEAM_REPORT=1 bundle exec rake pspec` | no | which spec files run real git in an example tagged neither `:seam` nor `:e2e`, one `seam-report: <file> <count>` line per file per worker on stderr, which may follow progress dots on the same line, so grep without a line-start anchor; report only, it never changes a result |
+
+The bpftrace and strace scripts that produced the fork and memory figures above (`trace-pspec`, `trace-summary`, `trace-memleak`, `memleak-summary`, `strace-children`, `setup-profiling`) are deleted. Recover one with `git show @DELETE_SHA@^:bin/<name>`.
 
 ### Keeping `--tag '~seam'` free of git
 
