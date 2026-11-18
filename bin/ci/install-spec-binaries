@@ -73,9 +73,34 @@ allow_userns() {
   fi
 }
 
+# "stable" is a moving tag, so it resolves through the latest-release redirect to a version tag.
+# An empty result means the lookup failed.
+resolve_nvim_version() {
+  if [ "$version" != stable ]; then echo "$version"; return 0; fi
+  local resolved
+  resolved=$(curl -fsSLI -o /dev/null -w '%{url_effective}' https://github.com/neovim/neovim/releases/latest 2>/dev/null | sed 's|.*/||') || true
+  case "$resolved" in v[0-9]*) echo "$resolved" ;; *) echo "" ;; esac
+}
+
 # NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind a dev box, and
 # the specs talk to it over RPC.
 install_nvim() {
+  local wanted installed
+  wanted=$(resolve_nvim_version)
+  if command -v nvim >/dev/null 2>&1; then
+    installed=$(nvim --version | head -1 | awk '{print $2}')
+    if [ -z "$wanted" ]; then
+      echo "warning: could not resolve stable; keeping installed nvim $installed" >&2
+      return 0
+    fi
+    if [ "$installed" = "$wanted" ]; then
+      echo "skip: nvim $wanted already installed"
+      return 0
+    fi
+  elif [ -z "$wanted" ]; then
+    echo "::error::could not resolve stable and no nvim is installed" >&2
+    return 1
+  fi
   local tarball
   tarball=$(mktemp)
   curl -fsSL "$(nvim_url)" -o "$tarball"

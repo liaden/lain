@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Installs the build toolchain lain needs: mise, Ruby, rustup, clang, and the bundle.
+#
+#   bin/ci/install-toolchain
+#
+# Runs as the user who will build lain; apt steps go through sudo when not root. Every step skips what
+# is already installed, so a repeated run downloads nothing and says what it skipped.
+set -euo pipefail
+
+repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+# .ruby-version carries a "ruby-" prefix that mise does not accept.
+ruby_version=$(sed 's/^ruby-//' "$repo/.ruby-version" | tr -d '[:space:]')
+
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+install_apt_packages() {
+  local pkgs=() pkg
+  for pkg in build-essential clang libclang-dev curl git ca-certificates libssl-dev libyaml-dev zlib1g-dev libffi-dev libreadline-dev pkg-config; do
+    dpkg -s "$pkg" >/dev/null 2>&1 || pkgs+=("$pkg")
+  done
+  if [ ${#pkgs[@]} -eq 0 ]; then
+    echo "skip: apt packages already installed"
+    return 0
+  fi
+  as_root apt-get update -q
+  as_root apt-get install -y -q "${pkgs[@]}"
+}
+
+install_mise() {
+  if command -v mise >/dev/null 2>&1; then
+    echo "skip: mise already installed"
+    return 0
+  fi
+  curl -fsSL https://mise.run | sh
+}
+
+install_ruby() {
+  if mise where "ruby@$ruby_version" >/dev/null 2>&1; then
+    echo "skip: ruby $ruby_version already installed"
+    return 0
+  fi
+  mise install "ruby@$ruby_version"
+}
+
+install_rust() {
+  if command -v cargo >/dev/null 2>&1; then
+    echo "skip: rust already installed"
+    return 0
+  fi
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal
+}
+
+install_bundle() {
+  # bundle install is already a no-op when the lockfile is satisfied; it prints its own skip line.
+  (cd "$repo" && mise exec "ruby@$ruby_version" -- bundle install)
+}
+
+install_apt_packages
+install_mise
+install_ruby
+install_rust
+install_bundle
+
+ruby_actual=$(mise exec "ruby@$ruby_version" -- ruby -e 'print RUBY_VERSION')
+echo "ruby:  $ruby_actual"
+echo "cargo: $(cargo -V)"
+echo "clang: $(clang --version | head -1)"
