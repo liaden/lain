@@ -998,3 +998,71 @@ Ratchet specs: `spec/*_discipline_spec.rb`, `spec/lain_spec.rb`, `spec/zeitwerk_
 Build outputs a fresh worktree needs, copied at the cut: `lib/lain/lain.so`, `target/release/lain-fence`, `target/release/lain-daemon`, `tmp/parallel_runtime_rspec.log`.
 
 Paths that need user approval: none.
+
+- 15:01: plan committed at 3aa11f1c. S14 (opus), S15, S2, S10, S5, S9, S3 started; worktrees cut from 3aa11f1c. S1 done by the main session (deletions and .gitignore only).
+- 15:02: S1 landed a994effd
+- 15:02: S3, S10, S5 handed back; reviews started (S3 low, S10 low, S5 medium). S10 wiring applied in its worktree.
+- 15:03: S2 handed back; review started (medium).
+- 15:03: base example count by LAIN_SLOW=1 rspec --dry-run at a994effd: 36212. S10 APPROVE (low). S3 and S5 APPROVE-WITH-FIXES, mechanical, sent back.
+- 15:08: S10 landed d9fca227
+- 15:08: S10 landed d9fca227 (ruby-checks passed in the hook). S9 handed back, wiring applied, review started (medium). S3 and S5 fixes applied.
+- 15:17: S3 landed 1f944245
+- 15:17: S5 landed 28818f88
+- 15:17: S3 landed 1f944245, S5 landed 28818f88 (neither hook ran the suite: no Ruby staged). S3 follow-up names the sha: 9f155393.
+- 15:17: S6, S16, S8 started from 9f155393.
+- 15:18: S15 stop: workspace_profile seam red (sandboxed child inherits LAIN_BOOTSNAP_CACHE pointing at the read-only repo cache, now that bootsnap_setup reads it). Ruled in the main session: the env var is load-bearing for exe/lain children (launch.rb:46) and stays; scope adds 1 line to spec/lain/seams/workspace_profile_spec.rb giving the lease its own cache, as it already does TMPDIR and CARGO_TARGET_DIR.
+- 15:18: S14 handed back (stop condition on bench/hot_paths.rb:284 fired as a report: Bwrap.new there keeps the /usr/bin/bwrap default; left for a follow-up per the card). Review started (high, opus).
+- 15:18: S8 handed back, wiring applied and the 4 hooks pass --all-files in its worktree; review started (low).
+- 15:29: S8 landed 81f67ed9
+- 15:30: S8 APPROVE (low), landed 81f67ed9. S6 handed back; its agent ran pre-commit with no hook id, which finished on its own; main's status and S6's worktree checked intact. Review started (low).
+- 15:30: S4 started from 81f67ed9.
+- 15:31: S6 REQUEST-CHANGES (blocker: empty base aborts changed-paths, so workflow_dispatch fails the changes job). Fix round sent; second review to follow.
+- 15:31: S15 fix round done (seam green, no runtime growth). CLAUDE.md bullet applied in its worktree; review started (medium).
+- 15:31: S9 APPROVE-WITH-FIXES: dead allowlist entries, a cassette Bearer rule (substantive, so a second review), a staged-only comment, comment cleanup. Accepted as recorded: the 3 corpus files (ext/lain/corpus/regions.ndjson, spec/fixtures/sensitivity/digest_corpus.yml, spec/fixtures/sensitivity/hinted_corpus.yml) are allowlisted whole by path, because they are generated corpora of fake secrets that cannot be listed by value. CI does not run gitleaks (the hook scans staged changes only); a CI step is a later card if wanted.
+- 15:32: S4 handed back; diff reviewed inline by the main session (2 unused gems, lockfile drops only them). Landing.
+- 15:41: S4 landed 790c10ab
+- 15:41: S4 landed 790c10ab (ruby-checks passed: covers S3 and S5 too). S6 fix done, narrow second review sent to the same reviewer. S16 handed back; limactl download refused by the auto-mode classifier, so validate moves to the Mac pass (accepted, per the card); scope addition to bin/ci/install-spec-binaries for the nvim version guard the card requires.
+- 15:42: S17 started from 790c10ab.
+- 15:52: S6 second review APPROVE; landing (hook running). S14 APPROVE-WITH-FIXES, 4 mechanical items sent (a bare "true" resolved from the cwd could turn the sandbox off; a vacuous agreement spec; journal text; a missing assertion); item 5, launcher from the probe's own Bwrap, left out of scope. S9 fixes done; second review sent. User asked about benchmark-ips: only planning/specs/algebra-and-flip/spike-rust-bench.rb (a finished spike) ever required it; no bin/ file in history; the gem stays out unless the user says otherwise.
+- 16:16: S17 stopped: sweep counts differ from mutants-baseline.txt in 6 of 8 files (misses unchanged); main.yml CI red since 2026-11-10. User ruled: refresh the baseline in S17. Sent back with ext/lain/mutants-baseline.txt added to scope.
+- 16:19: S6 landed 778417d9
+- 16:19: S6 landed 778417d9 (ruby-checks and shellcheck passed). Worktrees of S1 S3 S4 S5 S6 S8 S10 removed, hand-backs kept in the scratchpad.
+- 16:20: S7 started from 778417d9. S17 done after the ruling (baseline rows from outcomes.json); review started (low).
+- 16:23: S17 landed 77402f40
+- 16:23: S17 APPROVE (low), landed 77402f40. S7 handed back, CLAUDE.md wiring applied in its worktree; review started (low).
+- 16:23: S11 started from 77402f40. S17 worktree removed.
+- 16:23: S14 fixes 1 to 4 done (2842 examples green); a 5th mechanical item sent: the strace check's bare strace resolves from the cwd too.
+- 16:25: S7 landed 0506231e
+- 16:25: S7 APPROVE (low), landed 0506231e. S15 APPROVE-WITH-FIXES (a gem-dir example, substantive, so a second review; constants nested). S16 fix done; review started (medium).
+- 16:26: S2 REQUEST-CHANGES: binary changes not archived (no --binary), and a same-name archive overwritten, both followed by deletion; plus 5 smaller items. Fix round sent; second review to follow.
+- 16:27: S16 APPROVE-WITH-FIXES, mechanical (offline lookup falls through to a download; version computed twice; exact version compare; comment placement). Lima keys unconfirmed are listed in the review; all go to the Mac pass.
+- 16:27: S16 fixes verified by the main session from the diff (mechanical round). Landing.
+- 16:28: S16 landed a3bad618
+- 16:28: S16 landed a3bad618. S2 and S15 fix rounds done; second reviews sent to their reviewers.
+- 16:29: the first reviewers of S2, S9 and S15 could not answer their second-review messages (stuck background work), so fresh second reviewers started.
+- 16:30: S14 re-check APPROVE (every mutant red; the cwd true and strace cases fixed). Landing.
+- 16:36: S9 second review APPROVE-WITH-FIXES, mechanical (the docent entry had an empty path list, so it matched in any file; comment wording), applied by the main session; gitleaks dir . clean. Queued to land after S14.
+- 16:38: S9 landed a21b27fe
+- 16:38: S14 hook red: 36228 examples, 1 failure, seed 45549 (worker): workspace_profile_spec.rb:49 'passes one spec file with the example count an unconfined run reports', SpecWatchdog STUCK at 60.8s in the UNCONFINED bundle run, load1 28.3/16. Hook log kept as land-S14/hook-1.keep.log. Flaky procedure next, after S9's landing.
+- 16:39: S9 landed a21b27fe. S14 flake procedure: workspace_profile_spec.rb:49 passed alone on a quiet box with S14's tree, seed 45549, 6.3s. Its name is on the known-flake list (docs/devs/toolchain-traps.md, starvable since 2026-11-10), so it is a repeat: an F-card at the end of this plan, and S14 lands. The repeat shows the starvable guard missed: STUCK raised at load 28.3/16 instead of STARVED. Base moved (S9), so the landing retries.
+- 16:39: S2 second review APPROVE-WITH-FIXES with a substantive item (a prunable worktree aborts --apply and leaves a half archive that wedges reruns; build archives atomically). Third fix round sent; third review to follow. S15 likewise in a third round (Gem.path unpinned).
+- 16:51: S14 retry red again: same example, STUCK 60.9s, load 23.8/16, 36228 examples 1 failure. Base passed it in 2 earlier landing suites; S14 red 2 of 2. Alone: S14 6.2s and 6.6s, base 21.4s and 21.8s (alternating). Sent back to the S14 implementer per the procedure (card may cause it; compare under load). S15 third round done (Gem.path pinned; header and doc sentence); S2 third round done (revert red, so re-prove by backing out); third reviews next.
+- 16:53: S11 handed back. Wiring applied in its worktree; the plan's AllCops Include wiring alone would have cut rubocop to 20 files, so the implementer's inherit_mode merge is used (2777 files, 0 offenses). Main session added the 6th OutputDiscipline citation fix (spec/approval_consumer_discipline_spec.rb, 1 comment) so the card's grep prints nothing. 14 examples green. Review started (medium, opus).
+- 16:54: S15 third review APPROVE-WITH-FIXES (sibling-prefix example, rewrap), applied. Landing.
+- 16:55: S2 third review APPROVE-WITH-FIXES (macOS: GNU-only tar flag and /proc in-use check; a hidden ls-files failure could drop handbacks; nits). Main session ruled the script Linux-only with a loud startup check rather than a port; final fixes sent, verified by the main session, no 4th review.
+- 16:59: S15 landed 7826c6d5
+- 17:02: S15 landed 7826c6d5 (ruby-checks passed; the workspace-profile seam green, 3 of 3 base suites). S14 implementer measured no slowdown (8 alternating runs at load 13 to 23: 11 to 20s both trees; the stuck unconfined step never runs S14 code). Base moved, so S14 retries once more; a third red goes to the user.
+- 17:03: S2 final fixes verified by the main session (Linux and GNU tar guard, ignored listing under set -e, mv -T, archive kept message). Queued to land after S14.
+- 17:08: S14 third try: suite passed (36228 examples, flake did not recur), but yard-lint --staged failed on a pre-existing {Profiles} reference in bwrap.rb, which staged mode cannot resolve; it had failed in tries 1 and 2 as well, hidden behind the red suite. Main session made it a plain code span (yard-lint --staged clean). land.sh now runs yard-lint --staged before the commit. S14 retries after S2.
+- 17:10: S2 landed 52d724db (ruby-checks passed). Its landing script's last line errored because the main session edited land.sh while bash was still reading it; the commit was whole and the index clean, only the log line was lost (this one replaces it).
+- 17:14: S14 landed 63565fc5
+- 17:14: S14 landed 63565fc5 (ruby-checks and yard-lint passed).
+- 17:18: prune dry run: would remove 82, skipped 1 (S11, a plan card); no card branch unmerged. --apply removed 82: tmp/worktrees 21G to 166M, archive 9.1M. All 81 non-empty diff.patch files pass git apply --check at their base.txt; 1 archive had no diff. Deleting tmp/cache/bootsnap/compile-cache-iseq under the gate next.
+- 17:19: S11 APPROVE-WITH-FIXES (example count tied to the cop registry; rubocop:disable all not caught; stale comment citations; message names the exemption route). Gate passed: the cop (51 lines) reads more clearly than the 164-line spec, and its message says what to do; parity with the old Ripper scanner on 21 edge inputs. Fixes sent; S12 and S13 start after S11 lands.
+- 17:23: bootsnap iseq cache deleted, rc 0; tmp/cache now 11M (was 85G).
+- 17:28: S11 landing attempt 1 refused by land.sh yard-lint --staged before the suite: 4 offenses that were already in sink_logger.rb and tty.rb (whole-file lint). Sent back to the implementer.
+- 17:30: S11 attempt 2 refused by yard-lint --staged: {Lain::ProjectDir} unresolved because project_dir.rb is not staged. Made it a plain code span; attempt 3.
+- 17:34: S11 attempt 3 red in suite: 36256 examples, 1 failure. terminal_output_spec 'finds no terminal write in the real tree' STUCK 30.6s (whole-tree rubocop in a worker, load 21.8). Card-caused (a new whole-tree subprocess), so not a flake. Sent back: remove that example, since the hook's rubocop already gates the real tree.
+- 17:38: S11 landed 79196856
+- 17:38: S11 landed 79196856 (attempt 4; hook passed, ruby-checks green).
+- 17:39: S12 started, S13 started (cut from 79196856).
