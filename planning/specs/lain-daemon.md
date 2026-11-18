@@ -1,6 +1,7 @@
 # lain-daemon: 1 per-user Rust daemon for sessions, the phone, headless runs and fast spawning
 
-status: in-progress
+status: done
+head: 793eeda52976a061416b84d01643ce61a6e5c6fc
 base: 7eea39c5e92903ae975887cb5ce268c75926fd2f
 commit-mode: orchestrator-commits
 language: rust, ruby
@@ -1581,3 +1582,17 @@ Run log after the 911588e9 checkpoint:
 - D21 landed ef8e687d 09:42 (3 reviews; landing 1 red: 36 examples starved by an OOM event on the box, 1 order-dependent count in the card's own spec).
 - D22 landed 44eb572b 10:38 (2 stops on scope, 3 reviews: an untracked fork on a cancelled start, a double run after a timeout, a stale-spawner teardown).
 - Checkpoint after D22: no agents in flight. Ready next: D24 and D27 (docs tails), then the 2 spawn_fork ceilings to seed.
+
+Run log after the 51769173 checkpoint:
+
+- D24 and D27 started at 51769173, both docs-only. D27 landed 48dc68c9 after 2 reviews: the desk-only gate wording was wrong, the list of fields crossing the tailnet was incomplete, and an iPhone on a self-hosted ntfy still sends a poll request to ntfy.sh. D24 landed 40f9abe0 after 2 reviews: the helper scripts needed bundler or the containment check would false-green, the socket refusal needs Landlock ABI 9's Unix-resolve right, and the live-run step used a run that exits at once.
+- The spawn_fork ceilings were seeded at 86e93027 from 3 logs at load 0.99 to 1.18 (52.0 ms, 11.5 MB). 2 hook runs went red on memory starvation first (swap full, OOM kills); attempt 3 landed at 8 spec workers.
+- The dotfiles steps E1 to E3 were done on the Linux box (dotfiles 249f635). The user ran `lain trust --user`; the daemon runs from `lain-daemon-ensure.service` and its first review poll exited 0.
+
+Close-out, 2026-11-18:
+
+- `cargo test --workspace`, workspace clippy, the darwin `cargo check` for lain-wire, lain-rpc and lain-fence, the daemon tier (69 examples, 0 failures), `bin/zeitwerk-census --check` and `pre-commit run --all-files` (the full suite at 8 workers, and every hook) are green.
+- `bin/spec-census --check` read 215 assertions against 213 at the base; the 2 new ones came from this run, and 793eeda5 rewrote them plus 2 older ones of the same shape (211). lib_reach reads 62 at both. Both stay over their ceilings (184, 49), as at the base.
+- `bin/hot-path-bench --check`: wire_ready reads 18.1 ms against its 17.1 ceiling, and 17.8 ms at the base 7eea39c5, so it was over before this run. request_1000000 passed (2.80 at the base). The new spawn rows pass.
+- 4 watchdog flakes under memory pressure are recorded by name in docs/toolchain-traps.md.
+- Owed: `/manual-qa planning/qa/scenarios/daemon.md` with the paired phone; clippy for lain-daemon on the Mac; the Mac's launchd swap (its queue-poll plist still runs).
