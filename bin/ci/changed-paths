@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# Reports which CI job groups a change touches, as `group=true|false` lines.
+#
+#   bin/ci/changed-paths <base-sha> <head-sha>
+#
+# Lines go to $GITHUB_OUTPUT, or to stdout when it is unset. A base git cannot
+# resolve (empty, a new branch, a force push) runs every group rather than skip one.
+set -euo pipefail
+
+# An empty base is legal: workflow_dispatch has none.
+[ "$#" -eq 2 ] || { echo "usage: changed-paths <base-sha> <head-sha>" >&2; exit 2; }
+base=$1
+head=$2
+out=${GITHUB_OUTPUT:-/dev/stdout}
+
+# Editing this script or an extracted remote script must run what it feeds.
+touched() {
+  if [ -z "${changed+set}" ] || grep -Eq "$2" <<< "$changed"; then
+    echo "$1=true" >> "$out"
+  else
+    echo "$1=false" >> "$out"
+  fi
+}
+
+changed=$(git diff --name-only "$base" "$head" 2>/dev/null) || unset changed
+touched mutants '^(ext/lain/|Rakefile$|bin/ci/changed-paths$)'
+touched remote '^(apps/lain-remote/|crates/lain-(wire|rpc|daemon)/|Cargo\.(toml|lock)$|\.github/workflows/main\.yml$|bin/ci/(changed-paths|remote-app-hooks|dioxus-cli-version|build-apk)$)'

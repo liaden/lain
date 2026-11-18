@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Builds the lain-remote debug APK; run from the app directory, on a runner that carries the SDK and NDK.
+set -euo pipefail
+
+export JAVA_HOME=$JAVA_HOME_17_X64 NDK_HOME=$ANDROID_NDK_LATEST_HOME
+dx build --platform android --target aarch64-linux-android

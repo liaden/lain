@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# Runs the lain-remote app's pre-commit hooks over the whole tree.
+set -euo pipefail
+
+for hook in remote-fmt remote-clippy remote-test remote-deny; do
+  pipx run pre-commit run --all-files "$hook"
+done

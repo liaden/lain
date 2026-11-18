@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+# Type-checks the pure Linux-gated crates for macOS; ext/lain and lain-daemon need the macOS SDK.
+set -euo pipefail
+
+rustup target add aarch64-apple-darwin
+cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-fence

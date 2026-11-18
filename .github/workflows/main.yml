@@ -167,9 +167,7 @@ jobs:
       # ext/lain needs a macOS SDK to type-check, so only the pure crates are covered here.
       # lain-daemon is absent on purpose: its rustls dependency ring needs the macOS SDK, so check it on the Mac.
       - name: Type-check the Linux-gated crates for macOS
-        run: |
-          rustup target add aarch64-apple-darwin
-          cargo check --target aarch64-apple-darwin --all-targets -p lain-wire -p lain-fence
+        run: bin/ci/check-macos-target
       # `ruby-checks` would run the suite a second time; rubocop, its other
       # half, runs on its own below.
       # The remote-* hooks need WebKitGTK; the remote-app job runs them on a runner that has it.
@@ -195,18 +193,7 @@ jobs:
       - id: diff
         env:
           BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
-        run: |
-          # A new branch or a force push has no usable base; run everything rather than skip.
-          touched() {
-            if [ -z "${changed+set}" ] || grep -Eq "$2" <<< "$changed"; then
-              echo "$1=true" >> "$GITHUB_OUTPUT"
-            else
-              echo "$1=false" >> "$GITHUB_OUTPUT"
-            fi
-          }
-          changed=$(git diff --name-only "$BASE" "$GITHUB_SHA" 2>/dev/null) || unset changed
-          touched mutants '^(ext/lain/|Rakefile$)'
-          touched remote '^(apps/lain-remote/|crates/lain-(wire|rpc|daemon)/|Cargo\.(toml|lock)$|\.github/workflows/main\.yml$)'
+        run: bin/ci/changed-paths "$BASE" "$GITHUB_SHA"
 
   remote-app:
     # Dioxus and WebKitGTK are a long cold build, so it runs only when the app, the wire or the relay changed.
@@ -245,10 +232,7 @@ jobs:
         with:
           tool: cargo-deny@0.21.0
       - name: Run the app's hooks
-        run: |
-          for hook in remote-fmt remote-clippy remote-test remote-deny; do
-            pipx run pre-commit run --all-files "$hook"
-          done
+        run: bin/ci/remote-app-hooks
 
   remote-android:
     # The runner image already carries the SDK, an NDK and JDK 17; apps/lain-remote/bin/android-setup installs them locally.
@@ -274,17 +258,13 @@ jobs:
           key: android-${{ runner.os }}-${{ hashFiles('apps/lain-remote/Cargo.lock') }}
           restore-keys: android-${{ runner.os }}-
       - name: Install the Dioxus CLI the app's Cargo.lock pins
-        run: |
-          version=$(awk '/^name = "dioxus"$/ { getline; gsub(/version = |"/, ""); print; exit }' "$APP/Cargo.lock")
-          echo "DIOXUS_CLI=dioxus-cli@$version" >> "$GITHUB_ENV"
+        run: bin/ci/dioxus-cli-version
       - uses: taiki-e/install-action@v2
         with:
           tool: ${{ env.DIOXUS_CLI }}
       - name: Build the APK
         working-directory: ${{ env.APP }}
-        run: |
-          export JAVA_HOME=$JAVA_HOME_17_X64 NDK_HOME=$ANDROID_NDK_LATEST_HOME
-          dx build --platform android --target aarch64-linux-android
+        run: bin/ci/build-apk
       - uses: actions/upload-artifact@v4
         with:
           name: lain-remote-debug-apk

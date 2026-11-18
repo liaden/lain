@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Exports DIOXUS_CLI=dioxus-cli@<version> to $GITHUB_ENV, the version the app's Cargo.lock pins.
+#
+#   APP=apps/lain-remote bin/ci/dioxus-cli-version
+set -euo pipefail
+
+app=${APP:?set APP to the app directory}
+version=$(awk '/^name = "dioxus"$/ { getline; gsub(/version = |"/, ""); print; exit }' "$app/Cargo.lock")
+echo "DIOXUS_CLI=dioxus-cli@$version" >> "${GITHUB_ENV:-/dev/stdout}"
