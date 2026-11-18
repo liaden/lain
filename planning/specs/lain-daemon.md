@@ -947,12 +947,12 @@ Spec file: `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/approval/remote_surfa
 ### D16: Supervise headless runs from a closed set of kinds          [risk: high]
 
 **Depends on:** D12, D13, D17
-**Files:** `crates/lain-daemon/src/main.rs`, `crates/lain-daemon/src/supervisor.rs` (new), `crates/lain-wire/src/lib.rs`, `crates/lain-daemon/tests/supervisor.rs` (new), `lib/lain/daemon/launch.rb`, `spec/lain/daemon/launch_spec.rb`
+**Files:** `crates/lain-daemon/Cargo.toml` (nix `signal`, by ruling), `crates/lain-daemon/src/main.rs`, `crates/lain-daemon/src/supervisor.rs` (new), `crates/lain-wire/src/lib.rs`, `crates/lain-daemon/tests/supervisor.rs` (new), `lib/lain/daemon/launch.rb`, `spec/lain/daemon/launch_spec.rb`
 **Reuse:** `Chores::Runner`'s argv (`chores/runner.rb:162`); `std::process::Command` with `process_group(0)`.
 **Shared-file wiring:** none
 **Reachable from:**
 - the daemon's local handler: `run.start { kind, root, args }`, `run.list`, `run.stop`;
-- `Daemon::Launch` adds `--ruby`, `--lain`, `--max-cost` (from the user config) and the run env allowlist.
+- `Daemon::Launch` adds `--ruby`, `--lain`, `--runs-dir` and the run env allowlist. A run carries no `--max-cost` (user ruling 2026-11-17).
 
 **Acceptance criteria**
 
@@ -962,10 +962,11 @@ Scenario: daemon.info reports live runs
 
 Scenario: a run kind builds its own argv
   When run.start { kind: "epic", root: R, args: { slug: "research-x" } } arrives
-  Then the daemon runs `<ruby> <lain> chat --root R --cwd R --non-interactive --approval auto --human remote --max-cost N --prompt "/implement-epic research-x"` in its own process group, with the allowlisted env and output to state_home/daemon/runs/<id>.log
+  Then the daemon runs `<ruby> <lain> chat --root R --cwd R --non-interactive --approval auto --human remote --epic research-x --prompt "/implement-epic research-x"` in its own process group, with the allowlisted env and output to state_home/daemon/runs/<id>.log
 
 Scenario: inputs are checked, not trusted
-  Then run.start is refused when the kind is unknown, when argv, approval or env keys are passed, when the slug doesn't match [a-z0-9-]+ or names no epic under R, or when R has no lain project marker
+  Then run.start is refused when the kind is unknown, when argv, approval or env keys are passed, when the slug doesn't match [a-z0-9][a-z0-9-]* (checked by regex only), or when R has no lain project marker
+  And the run's own chat refuses a slug that names no epic under R
 
 Scenario: exits are recorded
   When a run exits 3
@@ -973,7 +974,7 @@ Scenario: exits are recorded
 
 Scenario: stopping a run stops its group
   When run.stop runs
-  Then the group gets TERM, then KILL after 10 s
+  Then the group gets TERM, then KILL after 70 s, past the chat's own 60 s shutdown grace
 ```
 
 Spec file: `crates/lain-daemon/tests/supervisor.rs`, `spec/lain/daemon/launch_spec.rb`

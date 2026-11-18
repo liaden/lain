@@ -296,6 +296,32 @@ pub struct OfferReply {
     pub field: Option<String>,
 }
 
+/// `run.start`: a headless run of 1 kind in 1 project. The daemon builds the run's argv, approval
+/// and env itself, so a request naming any of them does not decode.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunStart {
+    /// One of the daemon's run kinds: `epic`, `review-poll` or `chores`.
+    pub kind: String,
+    /// The project the run works in, as an absolute path.
+    pub root: String,
+    /// What the kind takes: an epic's `slug`, and nothing for the others.
+    #[serde(default)]
+    pub args: BTreeMap<String, String>,
+}
+
+/// `run.stop`: the run to end.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunStop {
+    /// The id `run.start` answered with.
+    pub id: String,
+}
+
 /// Encodes a message with named struct fields.
 pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, rmp_serde::encode::Error> {
     rmp_serde::to_vec_named(value)
@@ -840,6 +866,98 @@ mod tests {
         })
         .expect("encode");
         assert_eq!(None, decode::<OfferReply>(&bytes).expect("decode").field);
+    }
+
+    fn run_start_with(extra: &[(&str, rmpv::Value)]) -> Vec<u8> {
+        let mut fields = vec![
+            (rmpv::Value::from("kind"), rmpv::Value::from("epic")),
+            (rmpv::Value::from("root"), rmpv::Value::from("/work/api")),
+            (
+                rmpv::Value::from("args"),
+                rmpv::Value::Map(vec![(
+                    rmpv::Value::from("slug"),
+                    rmpv::Value::from("research-x"),
+                )]),
+            ),
+        ];
+        fields.extend(
+            extra
+                .iter()
+                .map(|(key, value)| (rmpv::Value::from(*key), value.clone())),
+        );
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &rmpv::Value::Map(fields)).expect("encode");
+        bytes
+    }
+
+    #[test]
+    fn a_run_start_carries_a_kind_a_root_and_its_args() {
+        let start: RunStart = decode(&run_start_with(&[])).expect("decode");
+        assert_eq!(
+            RunStart {
+                kind: s("epic"),
+                root: s("/work/api"),
+                args: [(s("slug"), s("research-x"))].into_iter().collect(),
+            },
+            start
+        );
+    }
+
+    #[test]
+    fn a_run_start_without_args_has_none() {
+        #[derive(Serialize)]
+        struct Bare {
+            kind: String,
+            root: String,
+        }
+        let bytes = encode(&Bare {
+            kind: s("chores"),
+            root: s("/work/api"),
+        })
+        .expect("encode");
+        assert!(decode::<RunStart>(&bytes).expect("decode").args.is_empty());
+    }
+
+    #[test]
+    fn a_run_start_naming_its_own_argv_approval_or_env_does_not_decode() {
+        for key in ["argv", "approval", "env"] {
+            let error = decode::<RunStart>(&run_start_with(&[(key, rmpv::Value::from("x"))]))
+                .expect_err(key)
+                .to_string();
+            assert!(error.contains(key), "{key}: {error}");
+        }
+    }
+
+    #[test]
+    fn a_run_start_arg_that_is_not_a_string_does_not_decode() {
+        let mut bytes = Vec::new();
+        let value = rmpv::Value::Map(vec![
+            (rmpv::Value::from("kind"), rmpv::Value::from("epic")),
+            (rmpv::Value::from("root"), rmpv::Value::from("/work/api")),
+            (
+                rmpv::Value::from("args"),
+                rmpv::Value::Map(vec![(rmpv::Value::from("slug"), rmpv::Value::from(3))]),
+            ),
+        ]);
+        rmpv::encode::write_value(&mut bytes, &value).expect("encode");
+        assert!(decode::<RunStart>(&bytes).is_err());
+    }
+
+    #[test]
+    fn a_run_stop_names_only_the_run() {
+        let bytes = encode(&RunStop { id: s("r1") }).expect("encode");
+        assert_eq!(RunStop { id: s("r1") }, decode(&bytes).expect("decode"));
+        #[derive(Serialize)]
+        struct Signalled {
+            id: String,
+            signal: String,
+        }
+        let bytes = encode(&Signalled {
+            id: s("r1"),
+            signal: s("KILL"),
+        })
+        .expect("encode");
+        assert!(decode::<RunStop>(&bytes).is_err());
     }
 
     #[test]

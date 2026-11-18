@@ -35,9 +35,9 @@ serde = { version = "1", features = ["derive"] }
 # its timing tells a peer neither which device nor how much of a guess matched.
 subtle = "2.6"
 blake3 = "1"
-# `getifaddrs` without unsafe, to find this host's tailscale0 address, and `O_NOFOLLOW` (`fs`), so
-# the devices file is never read through a symlink.
-nix = { version = "0.31", default-features = false, features = ["fs", "net"] }
+# `getifaddrs` without unsafe, to find this host's tailscale0 address, `O_NOFOLLOW` (`fs`), so
+# the devices file is never read through a symlink, and `killpg` (`signal`), to stop a run's group.
+nix = { version = "0.31", default-features = false, features = ["fs", "net", "signal"] }
 
 [dev-dependencies]
 lain-rpc = { path = "../lain-rpc", version = "0.1.0", features = ["test-support"] }

@@ -107,6 +107,8 @@ RSpec.describe Lain::Daemon do
         @sessions = []
         @refuse_info = false
         @push_on_info = false
+        @digest = "another"
+        @provider_key = false
         @hangups = Thread::Queue.new
         @server = UNIXServer.new(described_class.socket(paths: @paths))
         @serving = Thread.new { loop { answer(@server.accept) } }
@@ -136,7 +138,8 @@ RSpec.describe Lain::Daemon do
       return ["refused", nil] if method == "daemon.info" && @refuse_info
 
       [nil, { "ping" => { "version" => Lain::Core::Client::PROTOCOL_VERSION, "pid" => @stand_in },
-              "daemon.info" => { "launch_digest" => "another", "live_runs" => @live_runs },
+              "daemon.info" => { "launch_digest" => @digest, "live_runs" => @live_runs,
+                                 "provider_key" => @provider_key },
               "session.list" => @sessions }.fetch(method)]
     end
 
@@ -203,6 +206,28 @@ RSpec.describe Lain::Daemon do
         "this chat uses the daemon another checkout started at #{described_class.socket(paths: @paths)}, " \
         "which has 2 chats and 3 live runs; it restarts on this checkout's build once those end\n"
       )
+    end
+
+    def keyed(launch) = launch.with(env: launch.env.merge(Lain::Daemon::Launch::PROVIDER_KEY => "sk-test"))
+
+    it "says a kept daemon lacks the provider key when the key is all that differs" do
+      keyless = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      @digest = keyless.digest
+      notes = StringIO.new
+      Sync { described_class.ensure(paths: @paths, launch: keyed(keyless), notes:, env: {}).stop }
+
+      expect(notes.string).to eq(
+        "the daemon at #{described_class.socket(paths: @paths)} lacks ANTHROPIC_API_KEY, so runs it starts " \
+        "cannot reach anthropic until it restarts; it has 1 live run and restarts once that ends\n"
+      )
+    end
+
+    it "says it is another checkout's when more than the key differs" do
+      keyless = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      notes = StringIO.new
+      Sync { described_class.ensure(paths: @paths, launch: keyed(keyless), notes:, env: {}).stop }
+
+      expect(notes.string).to start_with("this chat uses the daemon another checkout started at")
     end
 
     it "attaches to an idle one without replacing it when told not to replace" do

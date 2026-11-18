@@ -6,7 +6,7 @@ require "rbconfig"
 
 module Lain
   module Daemon
-    Launch = Data.define(:binary, :socket, :trace, :ruby, :lain, :env, :flags, :digest)
+    Launch = Data.define(:binary, :socket, :trace, :ruby, :lain, :runs, :env, :flags, :digest)
 
     # Everything that decides how a daemon behaves, so a running daemon whose
     # digest differs was started by another launch and is due a restart.
@@ -25,6 +25,14 @@ module Lain
       NTFY = "DAEMON_NTFY_TOPIC"
       DIGEST = "DAEMON_LAUNCH_DIGEST"
 
+      # The one secret-shaped name a run is handed: a headless chat on the anthropic provider has
+      # no other way to its key. The relay worker the daemon runs clears its env, so it never has it.
+      PROVIDER_KEY = "ANTHROPIC_API_KEY"
+
+      # What a run the daemon starts needs beyond KEEP, which the daemon hands on to it whole.
+      RUN_NAMES = [*CLI::PaneCommand::RUNTIME_ENV, "SHELL", "OLLAMA_HOST", PROVIDER_KEY].freeze
+      RUN_ENV = /\A(?:#{Regexp.union(*RUN_NAMES).source}|LC_\w+)\z/
+
       # @param paths [Paths] where the socket and trace go, the XDG homes the daemon is handed, and
       #   the user's config, whose `remote relay:` the daemon runs the phone relay on
       # @param env [Hash] the caller's environment, read for cargo's target dir and the allowlist
@@ -34,14 +42,18 @@ module Lain
         Ractor.make_shareable(
           new(binary: File.join(Paths::Shipped.cargo_target(env:), "release", "lain-daemon"),
               socket: Daemon.socket(paths:), trace: trace_path(paths:),
-              ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"),
-              env: kept(env).merge(homes(paths), topic_env(remote)), flags: relay_flags(remote, paths))
+              ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"), runs: runs_dir(paths),
+              env: kept(env).merge(run_env(env), homes(paths), topic_env(remote)), flags: relay_flags(remote, paths))
         )
       end
 
       # @param paths [Paths]
       # @return [String] where the daemon, and the relay worker it runs, write their trace
       def self.trace_path(paths:) = File.join(paths.daemon_dir, "daemon.trace")
+
+      # @param paths [Paths]
+      # @return [String] where each run's log goes, as `<id>.log`
+      def self.runs_dir(paths) = File.join(paths.state_home, "daemon", "runs")
 
       # A user config that cannot be read starts a daemon with no relay; the chat reading the same
       # file is what says why.
@@ -73,36 +85,51 @@ module Lain
 
       def self.kept(env) = env.to_h.select { |name, _| KEEP.match?(name) && !Exec::ChildEnv::SECRET.match?(name) }
 
+      def self.run_env(env)
+        env.to_h.select do |name, _|
+          RUN_ENV.match?(name) && (name == PROVIDER_KEY || !Exec::ChildEnv::SECRET.match?(name))
+        end
+      end
+
       # The daemon resolves its own paths from these, so they must be the ones the caller's paths did.
       def self.homes(paths)
         { "XDG_RUNTIME_DIR" => paths.runtime_dir, "XDG_STATE_HOME" => paths.state_home,
           "XDG_CONFIG_HOME" => paths.config_home, "XDG_CACHE_HOME" => paths.cache_home }
           .transform_values { |dir| File.dirname(dir) }
       end
-      private_class_method :kept, :homes, :relay_flags, :devices_file, :remote_settings, :topic_env
+      private_class_method :kept, :run_env, :homes, :relay_flags, :devices_file, :remote_settings, :topic_env,
+                           :runs_dir
 
       # Content, not mtime or size, so an untouched or re-copied binary does
       # not restart the daemon. A rebuild at a new commit stamps a new sha in,
       # so it does. The allowlist, not the env: 2 shells that differ only in
       # whether TMPDIR is set would otherwise restart each other's daemon.
+      # Whether the provider key is there, never its value, so a daemon started without it is
+      # replaced by a launch that has it rather than keeping every later run keyless.
       # @return [String, nil] hex; nil when the binary is not built
-      def self.digest_of(binary:, ruby:, lain:, flags:, topic: nil)
+      def self.digest_of(binary:, ruby:, lain:, runs:, flags:, topic: nil, keyed: false)
         return unless File.file?(binary)
 
-        Digest::SHA256.hexdigest([Digest::SHA256.file(binary).hexdigest, ruby, lain, KEEP.source, flags, topic].inspect)
+        Digest::SHA256.hexdigest([Digest::SHA256.file(binary).hexdigest, ruby, lain, runs, KEEP.source, RUN_ENV.source,
+                                  flags, topic, keyed].inspect)
       end
 
       # Recomputed from the fields, so a #with never carries a stale digest; it is also put in
       # the environment, where the daemon reads it.
       def initialize(**fields)
         given = fields.except(:digest)
-        digest = Launch.digest_of(**given.slice(:binary, :ruby, :lain, :flags), topic: given[:env][NTFY])
+        digest = Launch.digest_of(**given.slice(:binary, :ruby, :lain, :runs, :flags),
+                                  topic: given[:env][NTFY], keyed: given[:env].key?(PROVIDER_KEY))
         env = digest ? given[:env].merge(DIGEST => digest) : given[:env]
         super(**given, env:, digest:)
       end
 
       # @return [Array<String>] the command the daemon is started with
-      def argv = [binary, "--socket", socket, "--trace", trace, *flags]
+      def argv = [binary, "--socket", socket, "--trace", trace, *run_flags, *flags]
+
+      private
+
+      def run_flags = ["--ruby", ruby, "--lain", lain, "--runs-dir", runs]
     end
   end
 end

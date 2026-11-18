@@ -19,7 +19,8 @@ RSpec.describe Lain::Daemon::Launch do
 
   def launch(**overrides)
     described_class.new(binary:, socket: "/run/lain/daemon/daemon.sock", trace: "/run/lain/daemon/daemon.trace",
-                        ruby: "/usr/bin/ruby", lain: "/src/lain/exe/lain", env: { "PATH" => "/usr/bin" }.freeze,
+                        ruby: "/usr/bin/ruby", lain: "/src/lain/exe/lain", runs: "/state/lain/daemon/runs",
+                        env: { "PATH" => "/usr/bin" }.freeze,
                         flags: [].freeze, **overrides)
   end
 
@@ -38,7 +39,8 @@ RSpec.describe Lain::Daemon::Launch do
                                          socket: "/run/user/7/lain/daemon/daemon.sock",
                                          trace: "/run/user/7/lain/daemon/daemon.trace",
                                          ruby: RbConfig.ruby,
-                                         lain: File.join(Lain::Paths::Shipped::GEM_ROOT, "exe", "lain"))
+                                         lain: File.join(Lain::Paths::Shipped::GEM_ROOT, "exe", "lain"),
+                                         runs: "/home/someone/.local/state/lain/daemon/runs")
     end
 
     it "hands the daemon only the allowlisted names, and the XDG homes its paths resolved" do
@@ -46,7 +48,26 @@ RSpec.describe Lain::Daemon::Launch do
         .to eq("HOME" => "/home/someone", "PATH" => "/usr/bin", "XDG_RUNTIME_DIR" => "/run/user/7",
                "XDG_STATE_HOME" => "/home/someone/.local/state",
                "XDG_CONFIG_HOME" => "/home/someone/.config",
-               "XDG_CACHE_HOME" => "/home/someone/.cache")
+               "XDG_CACHE_HOME" => "/home/someone/.cache",
+               "ANTHROPIC_API_KEY" => "sk-secret", "LC_PAPER" => "a4")
+    end
+
+    # The daemon hands a run its own env, so what a headless chat needs to run rides in it too.
+    it "hands the daemon what a run needs, and of the secret-shaped names only the provider key" do
+      run = { "LD_LIBRARY_PATH" => "/opt/lib", "LAIN_GH_ACCOUNT" => "me", "LAIN_CONNECT_TIMEOUT" => "9",
+              "SHELL" => "/bin/zsh", "OLLAMA_HOST" => "127.0.0.1:11434", "LC_CTYPE" => "C.UTF-8" }
+      secrets = { "GH_TOKEN" => "ghp", "SSH_AUTH_SOCK" => "/tmp/agent", "OPENAI_API_KEY" => "sk-o",
+                  "LAIN_SECRET" => "x", "ANTHROPIC_API_KEY_2" => "sk-2", "LC_API_TOKEN" => "t" }
+      handed = described_class.current(paths: Lain::Paths.new(env:), env: env.merge(run, secrets)).env
+
+      expect(handed).to include(run.merge("ANTHROPIC_API_KEY" => "sk-secret"))
+      expect(handed.keys & secrets.keys).to eq([])
+    end
+
+    it "hands a run none of the suite's own LAIN_ controls" do
+      handed = described_class.current(paths: Lain::Paths.new(env:), env: env.merge("LAIN_INTEGRATION" => "1")).env
+
+      expect(handed).not_to have_key("LAIN_INTEGRATION")
     end
 
     # A user behind a required proxy has no other route to the topic.
@@ -198,12 +219,60 @@ RSpec.describe Lain::Daemon::Launch do
     end
   end
 
+  describe "a daemon's runs", :daemon do
+    around do |example|
+      Dir.mktmpdir("daemon-run") do |root|
+        @root = File.realpath(root)
+        example.run
+      end
+    end
+
+    def runs(client) = client.call("run.list")
+
+    def ended(client, id)
+      Lain::FileLock::Wait.new(patience: 10, interval: 0.02).succeeded?(-> {}, deadline: 10) do
+        runs(client).find { _1["id"] == id }&.fetch("status")
+      end
+      runs(client).find { _1["id"] == id }
+    end
+
+    it "reports no live runs from the real binary" do
+      info = Sync do
+        client = Lain::Daemon.ensure(paths: daemon_paths, env: daemon_env)
+        client.call("daemon.info").tap { client.stop }
+      end
+
+      expect(info.fetch("live_runs")).to eq(0)
+    end
+
+    it "hands a run the provider key and none of the other secret-shaped names" do
+      FileUtils.mkdir_p(File.join(@root, ".git"))
+      lain = File.join(@root, "fake-lain")
+      File.write(lain, "File.write(File.join(Dir.pwd, 'env-names'), ENV.keys.sort.join(\"\\n\"))\n")
+      env = daemon_env.merge("ANTHROPIC_API_KEY" => "sk-test", "GH_TOKEN" => "ghp", "SSH_AUTH_SOCK" => "/tmp/agent")
+      launch = described_class.current(paths: daemon_paths, env:).with(lain:)
+      row = Sync do
+        client = Lain::Daemon.ensure(paths: daemon_paths, env:, launch:)
+        id = client.call("run.start", [{ "kind" => "chores", "root" => @root }]).fetch("id")
+        ended(client, id).tap { client.stop }
+      end
+
+      names = File.read(File.join(@root, "env-names")).lines(chomp: true)
+
+      expect(row.fetch("status")).to eq(0)
+      expect(names).to include("ANTHROPIC_API_KEY")
+      expect(names & %w[GH_TOKEN SSH_AUTH_SOCK DAEMON_LAUNCH_DIGEST]).to eq([])
+    end
+  end
+
   describe "#argv" do
-    it "names the socket and the trace, then the flags, and carries no digest" do
+    it "names the socket, the trace, what a run is started with, then the flags, and carries no digest" do
       subject = launch(flags: ["--relay", "on"].freeze)
 
       expect(subject.argv).to eq([subject.binary, "--socket", "/run/lain/daemon/daemon.sock",
-                                  "--trace", "/run/lain/daemon/daemon.trace", "--relay", "on"])
+                                  "--trace", "/run/lain/daemon/daemon.trace", "--ruby", "/usr/bin/ruby",
+                                  "--lain", "/src/lain/exe/lain", "--runs-dir", "/state/lain/daemon/runs",
+                                  "--relay", "on"])
     end
 
     # The digest hashes the topic with inputs a local user can read, so on a world-readable
@@ -241,11 +310,11 @@ RSpec.describe Lain::Daemon::Launch do
       expect(launch(binary: built("built twice", name: "other")).digest).not_to eq(launch.digest)
     end
 
-    it "changes with the ruby, the lain and the flags" do
+    it "changes with the ruby, the lain, the runs dir and the flags" do
       digests = [launch, launch(ruby: "/opt/ruby"), launch(lain: "/elsewhere/exe/lain"),
-                 launch(flags: ["--relay"].freeze)].map(&:digest)
+                 launch(runs: "/elsewhere/runs"), launch(flags: ["--relay"].freeze)].map(&:digest)
 
-      expect(digests.uniq.size).to eq(4)
+      expect(digests.uniq.size).to eq(5)
     end
 
     # 2 lains whose shells differ only in whether TMPDIR is set must share 1 daemon, not restart each other's.
@@ -257,6 +326,29 @@ RSpec.describe Lain::Daemon::Launch do
     it "changes with the allowlist" do
       before = launch.digest
       stub_const("Lain::Daemon::Launch::KEEP", /\APATH\z/)
+
+      expect(launch.digest).not_to eq(before)
+    end
+
+    # A daemon started from a shell without the key would otherwise keep every later run keyless.
+    it "changes when the provider key arrives, and again when it goes" do
+      without = launch
+      with = launch(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-a" }.freeze)
+
+      expect(with.digest).not_to eq(without.digest)
+      expect(with.with(env: { "PATH" => "/usr/bin" }.freeze).digest).to eq(without.digest)
+    end
+
+    it "hashes only whether the provider key is there, never its value" do
+      first = launch(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-a" }.freeze)
+
+      expect(first.with(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-b" }.freeze).digest)
+        .to eq(first.digest)
+    end
+
+    it "changes with the run allowlist" do
+      before = launch.digest
+      stub_const("Lain::Daemon::Launch::RUN_ENV", /\ASHELL\z/)
 
       expect(launch.digest).not_to eq(before)
     end

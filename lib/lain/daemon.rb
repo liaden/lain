@@ -22,6 +22,8 @@ module Lain
     SWITCHED_OFF = "the daemon is off: #{SWITCH}=#{OFF}".freeze
     PENDING = "this chat uses the daemon another checkout started at %<socket>s, which has %<busy>s; " \
               "it restarts on this checkout's build once %<those>s"
+    KEYLESS = "the daemon at %<socket>s lacks #{Launch::PROVIDER_KEY}, so runs it starts cannot reach anthropic " \
+              "until it restarts; it has %<busy>s and restarts once %<those>s".freeze
 
     # The daemon was spawned and never answered.
     class Unstarted < Error; end
@@ -93,9 +95,10 @@ module Lain
       !replace || closing_on_error(client) { kept?(client, launch, notes) }
     end
 
-    # A daemon whose runs would die with it, or whose chats would have to
-    # register again, is kept until they end. Two checkouts sharing a runtime
-    # dir would otherwise replace each other's daemon on every start.
+    # A daemon with live runs, which a replacement could no longer list or
+    # stop, or with chats that would have to register again, is kept until
+    # they end. Two checkouts sharing a runtime dir would otherwise replace
+    # each other's daemon on every start.
     def self.kept?(client, launch, notes)
       info = client.call("daemon.info")
       return true if info.fetch("launch_digest") == launch.digest
@@ -103,14 +106,21 @@ module Lain
       runs = info.fetch("live_runs", 0)
       chats = client.call("session.list").size
       busy = runs.positive? || chats.positive?
-      busy ? notes.puts(pending(launch.socket, chats:, runs:)) : halt(client, launch.socket)
+      busy ? notes.puts(pending(launch, info, chats:, runs:)) : halt(client, launch.socket)
       busy
     end
 
-    def self.pending(socket, chats:, runs:)
+    def self.pending(launch, info, chats:, runs:)
       held = { "chat" => chats, "live run" => runs }.select { |_, count| count.positive? }
       busy = held.map { |noun, count| "#{count} #{noun}#{"s" unless count == 1}" }.join(" and ")
-      format(PENDING, socket:, busy:, those: held.values.sum == 1 ? "that ends" : "those end")
+      format(keyless?(launch, info) ? KEYLESS : PENDING,
+             socket: launch.socket, busy:, those: held.values.sum == 1 ? "that ends" : "those end")
+    end
+
+    # The daemon is this launch's in all but the provider key it was started without: a launch
+    # with no key has the same digest without one, which already differed from the daemon's.
+    def self.keyless?(launch, info)
+      launch.with(env: launch.env.except(Launch::PROVIDER_KEY)).digest == info.fetch("launch_digest")
     end
 
     def self.halt(client, socket)
@@ -158,7 +168,7 @@ module Lain
       "lain-daemon #{how}; its trace is #{launch.trace}"
     end
 
-    private_class_method :built?, :absent, :attach, :closing_on_error, :usable?, :kept?, :pending, :halt, :running?,
-                         :started, :spawned, :unstarted
+    private_class_method :built?, :absent, :attach, :closing_on_error, :usable?, :kept?, :pending, :keyless?, :halt,
+                         :running?, :started, :spawned, :unstarted
   end
 end

@@ -67,7 +67,7 @@ fn process_of_stat(stat: &str) -> Option<Process> {
 
 /// TZ and locale are pinned because `lstart` prints local time in the locale's words. The topic is
 /// as good as a password to anyone who can post to it, and the digest hashes it, so the child
-/// inherits neither.
+/// inherits neither; nor the provider key the daemon carries only for its runs.
 fn ps_command(pid: u32) -> Command {
     let mut command = Command::new("ps");
     command
@@ -77,6 +77,7 @@ fn ps_command(pid: u32) -> Command {
         .env("LANG", "C")
         .env_remove(crate::NTFY_VAR)
         .env_remove(crate::DIGEST_VAR)
+        .env_remove(crate::PROVIDER_KEY_VAR)
         .stdin(Stdio::null())
         .stderr(Stdio::null());
     command
@@ -479,6 +480,17 @@ mod tests {
                 "ps would inherit {name} from the daemon's environment"
             );
         }
+    }
+
+    #[test]
+    fn the_ps_child_is_never_handed_the_provider_key_runs_are_given() {
+        let command = super::ps_command(1);
+        assert!(
+            command
+                .get_envs()
+                .any(|(set, value)| set == "ANTHROPIC_API_KEY" && value.is_none()),
+            "ps would inherit ANTHROPIC_API_KEY from the daemon's environment"
+        );
     }
 
     const OWNER: u32 = 1000;

@@ -10,6 +10,7 @@ mod agenda_watch;
 mod ntfy;
 mod registry;
 mod relay;
+mod supervisor;
 
 use std::io;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
@@ -23,6 +24,7 @@ use rmpv::Value;
 use tokio::sync::mpsc;
 
 use registry::{Registration, Registry};
+use supervisor::{Run, Supervisor};
 
 /// Bad invocation or an unopenable trace path. There is no usage text on purpose: this binary
 /// may never touch stdout/stderr, so a bad invocation is an exit code, not a message.
@@ -53,6 +55,9 @@ struct Args {
     relay: Option<(String, PathBuf)>,
     /// The ntfy topic items still waiting after a minute are announced on; only a relay has items.
     ntfy: Option<String>,
+    /// The ruby, the `exe/lain` and the log directory every run is started with, given together or
+    /// not at all.
+    run: Option<(PathBuf, PathBuf, PathBuf)>,
 }
 
 impl Args {
@@ -65,6 +70,7 @@ impl Args {
     ) -> Option<Self> {
         let (mut socket, mut trace) = (None, None);
         let (mut listen, mut devices) = (None, None);
+        let (mut ruby, mut lain, mut runs) = (None, None, None);
         while let Some(flag) = args.next() {
             let value = args.next()?;
             match flag.as_str() {
@@ -72,9 +78,17 @@ impl Args {
                 "--trace" => trace = Some(PathBuf::from(value)),
                 "--relay" => listen = Some(value),
                 "--devices-file" => devices = Some(PathBuf::from(value)),
+                "--ruby" => ruby = Some(PathBuf::from(value)),
+                "--lain" => lain = Some(PathBuf::from(value)),
+                "--runs-dir" => runs = Some(PathBuf::from(value)),
                 _ => return None,
             }
         }
+        let run = match (ruby, lain, runs) {
+            (Some(ruby), Some(lain), Some(runs)) => Some((ruby, lain, runs)),
+            (None, None, None) => None,
+            _ => return None,
+        };
         let relay = match (listen, devices) {
             (Some(listen), Some(devices)) => Some((listen, devices)),
             (None, None) => None,
@@ -89,6 +103,7 @@ impl Args {
             launch_digest: launch_digest?,
             relay,
             ntfy,
+            run,
         })
     }
 }
@@ -103,6 +118,9 @@ fn is_topic_url(url: &str) -> bool {
 
 /// The env var `Daemon::Launch` hands the daemon the ntfy topic in.
 pub(crate) const NTFY_VAR: &str = "DAEMON_NTFY_TOPIC";
+
+/// The one secret `Daemon::Launch` hands the daemon, only for its runs.
+pub(crate) const PROVIDER_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 
 /// Where `Daemon::Launch` hands the daemon its launch digest. The digest hashes the topic with inputs
 /// any user can read, so on a command line it would let a user test guesses at the topic.
@@ -187,6 +205,10 @@ struct Daemon {
     registry: Arc<Registry>,
     owner_uid: u32,
     relay: PhoneRelay,
+    runs: Arc<Supervisor>,
+    /// Whether the env runs inherit holds the provider key, so a launch that has it can say why
+    /// a kept daemon's runs cannot reach anthropic.
+    provider_key: bool,
 }
 
 /// The phone relay the daemon runs, as `daemon.info` reports it.
@@ -278,6 +300,8 @@ impl Handler for Daemon {
                     Value::from(self.launch_digest.as_str()),
                 ),
                 (Value::from("relay"), Value::from(self.relay.state())),
+                (Value::from("live_runs"), Value::from(self.runs.live())),
+                (Value::from("provider_key"), Value::from(self.provider_key)),
             ])),
             "session.register" => self.register(caller, params).await.inspect_err(|error| {
                 if let RpcError::Refused { code, message } = error {
@@ -294,6 +318,18 @@ impl Handler for Daemon {
             )),
             "offer.send" => self.offer(params).await,
             "offer.reply" => self.offer_reply(caller, params),
+            "run.start" => self.run_start(params).inspect_err(|error| {
+                if let RpcError::Refused { code, .. } = error {
+                    tracing::warn!(code, peer = ?caller.peer, "refused a run.start");
+                }
+            }),
+            "run.list" => Ok(Value::Array(
+                self.runs.list().iter().map(Run::to_value).collect(),
+            )),
+            "run.stop" => {
+                let stop: lain_wire::RunStop = decoded(params, "run.stop takes [{id}]")?;
+                self.runs.stop(&stop.id).await.map(|run| run.to_value())
+            }
             other => Err(RpcError::UnknownMethod(other.to_string())),
         }
     }
@@ -395,6 +431,32 @@ impl Daemon {
         registration.reply(decoded(params, "offer.reply takes [OfferReply]")?)?;
         Ok(Value::Nil)
     }
+}
+
+impl Daemon {
+    /// A request naming anything the kind does not take learns which name it was.
+    fn run_start(&self, params: Vec<Value>) -> Result<Value, RpcError> {
+        let usage = "run.start takes [{kind, root, args}]";
+        let [param] = <[Value; 1]>::try_from(params).map_err(|_| RpcError::Refused {
+            code: "bad_params",
+            message: usage.to_string(),
+        })?;
+        let mut bytes = Vec::new();
+        rmpv::encode::write_value(&mut bytes, &param).map_err(|_| RpcError::Refused {
+            code: "bad_params",
+            message: usage.to_string(),
+        })?;
+        let start: lain_wire::RunStart =
+            lain_wire::decode(&bytes).map_err(|error| RpcError::Refused {
+                code: "bad_params",
+                message: format!("{usage}: {}", clipped(&error.to_string())),
+            })?;
+        self.runs.start(start).map(|run| run.to_value())
+    }
+}
+
+fn clipped(text: &str) -> String {
+    text.chars().take(200).collect()
 }
 
 /// What the chat was pushed: the offer's id to reply with, and the request and row as sent.
@@ -551,11 +613,19 @@ async fn serve_unix(args: Args) -> ExitCode {
             relay::Worker::spawn(listen, devices, args.trace.as_deref(), registry, events)
         },
     );
+    let runs = Supervisor::new(args.run.map(|(ruby, lain, runs)| supervisor::Settings {
+        ruby,
+        lain,
+        runs,
+        env: run_env(std::env::vars_os()),
+    }));
     let handler = Daemon {
         launch_digest: args.launch_digest,
         registry,
         owner_uid,
         relay,
+        runs,
+        provider_key: std::env::var_os(PROVIDER_KEY_VAR).is_some(),
     };
     let code = tokio::select! {
         never = lain_rpc::serve(listener, handler, env!("CARGO_PKG_VERSION")) => match never {},
@@ -565,6 +635,15 @@ async fn serve_unix(args: Args) -> ExitCode {
         tracing::warn!(%error, "could not remove the socket");
     }
     code
+}
+
+/// A run gets the daemon's own env, which `Daemon::Launch` allowlisted, less the topic and the
+/// digest: those are the daemon's alone.
+fn run_env(
+    env: impl Iterator<Item = (std::ffi::OsString, std::ffi::OsString)>,
+) -> Vec<(std::ffi::OsString, std::ffi::OsString)> {
+    env.filter(|(name, _)| name != NTFY_VAR && name != DIGEST_VAR)
+        .collect()
 }
 
 /// The socket the daemon just bound is owned by its effective uid, read without `unsafe` `geteuid`.
@@ -702,6 +781,8 @@ mod tests {
             registry,
             owner_uid: OWNER,
             relay,
+            runs: Supervisor::new(None),
+            provider_key: false,
         }
     }
 
@@ -918,6 +999,31 @@ mod tests {
         );
         let flags = ["--launch-digest", "abc"];
         assert!(Args::parse(argv(&flags), None, digest()).is_none());
+    }
+
+    #[test]
+    fn what_a_run_is_started_with_is_given_whole_or_not_at_all() {
+        let whole = ["--ruby", "/r", "--lain", "/l", "--runs-dir", "/runs"];
+        let run = Args::parse(argv(&whole), None, digest())
+            .expect("parse")
+            .run
+            .expect("run settings");
+        assert_eq!(
+            (Path::new("/r"), Path::new("/l"), Path::new("/runs")),
+            (run.0.as_path(), run.1.as_path(), run.2.as_path())
+        );
+        assert!(
+            Args::parse(argv(&[]), None, digest())
+                .expect("parse")
+                .run
+                .is_none()
+        );
+        for part in [&whole[..2], &whole[..4], &whole[2..]] {
+            assert!(
+                Args::parse(argv(part), None, digest()).is_none(),
+                "{part:?}"
+            );
+        }
     }
 
     const RELAY: [&str; 4] = ["--relay", "127.0.0.1:0", "--devices-file", "/d/devices"];
