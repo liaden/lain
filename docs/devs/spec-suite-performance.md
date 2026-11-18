@@ -393,7 +393,7 @@ usage and the traps it avoids at the top of the file.
 | `bin/runtime-census [--record\|--check]` | no | which spec files grew past their ceilings over the last 3 recorded pspec runtime logs (each must name every ceilinged file), and whether a `LAIN_SLOW=1` dry run still reaches the example floor |
 | `LAIN_SEAM_REPORT=1 bundle exec rake pspec` | no | which spec files run real git in an example tagged neither `:seam` nor `:e2e`, one `seam-report: <file> <count>` line per file per worker on stderr, which may follow progress dots on the same line, so grep without a line-start anchor; report only, it never changes a result |
 
-The bpftrace and strace scripts that produced the fork and memory figures above (`trace-pspec`, `trace-summary`, `trace-memleak`, `memleak-summary`, `strace-children`, `setup-profiling`) are deleted. Recover one with `git show @DELETE_SHA@^:bin/<name>`.
+The bpftrace and strace scripts that produced the fork and memory figures above (`trace-pspec`, `trace-summary`, `trace-memleak`, `memleak-summary`, `strace-children`, `setup-profiling`) are deleted. Recover one with `git show 1f9442457bf3^:bin/<name>`.
 
 ### Keeping `--tag '~seam'` free of git
 
