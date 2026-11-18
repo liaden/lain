@@ -1,28 +1,28 @@
 # lain.nvim
 
-The optional Neovim plugin for the [lain](../../README.md) agent harness.
+The optional Neovim plugin for the [lain](../../README.md) coding agent.
 
-It is deliberately thin. The lain gem injects its own runtime into the editor
-at attach time — every `lain://` buffer, every `:Lain*` agent command, all RPC
-— so gem and editor can never drift, and a bare `nvim --listen` needs nothing
-installed. This plugin only owns the conventions around that contract:
+The plugin is thin. The lain gem injects its own runtime into the editor when
+it attaches: every `lain://` buffer, every `:Lain*` command and all RPC. Gem
+and editor therefore cannot drift, and a bare `nvim --listen` needs nothing
+installed. The plugin adds only the conventions around that contract:
 
-- **a deterministic per-project server socket**, served on `VimEnter`, so
-  `lain chat --nvim` finds your editor from the cwd alone:
+- A deterministic per-project server socket, served on `VimEnter`, so
+  `lain chat --nvim` finds your editor from the cwd alone. The path is
   `$XDG_RUNTIME_DIR/lain/nvim-<sha256(cwd)[:12]>.sock`, or `.lain/nvim.sock`
-  when the project carries a `.lain/` directory. First instance wins; a
-  stale socket left by a crash is reclaimed; a live one is respected.
-- **`lain.socket_path()`** — that path, computed, nothing created.
-- **`lain.state_path()`** — the running session's state feed path, computed
-  under `$XDG_STATE_HOME/lain` (or `$HOME/.local/state/lain`) and keyed by the
-  same project hash as the socket, nothing created.
-- **`lain.status()`** — the decoded contents of `lain.state_path()`, or `nil`.
-- **`:LainStart`** — switch to the one session tab over the injected
-  buffers, or rebuild it if you closed it; views fill in as they render, and
-  a view you close stays closed until the tab is rebuilt. Approvals and
-  questions open there, with a notice when you are in another tab.
+  when the project has a `.lain/` directory. The first instance wins, a stale
+  socket left by a crash is reclaimed, and a live one is respected.
+- `lain.socket_path()` returns that path. It creates nothing.
+- `lain.state_path()` returns the running session's state feed path, under
+  `$XDG_STATE_HOME/lain` (or `$HOME/.local/state/lain`), keyed by the same
+  project hash as the socket. It creates nothing.
+- `lain.status()` returns the decoded contents of `lain.state_path()`, or `nil`.
+- `:LainStart` switches to the one session tab over the injected buffers, or
+  rebuilds it if you closed it. Views fill in as they render, and a view you
+  close stays closed until the tab is rebuilt. Approvals and questions open
+  there, with a notice when you are in another tab.
 
-No buffer logic, no RPC handling — that all stays in the gem.
+The plugin has no buffer logic and no RPC handling. Both live in the gem.
 
 ## Install
 
@@ -39,12 +39,12 @@ manager (or `runtimepath`) at it and call setup:
 }
 ```
 
-Every default is overridable via `setup` opts or `vim.g.lain_*` — see
+You can override every default through `setup` opts or `vim.g.lain_*`. See
 `:help lain-configuration`.
 
 ## Docs
 
-`:help lain` covers setup, configuration, the socket convention, and — the
-part your own config will care about — the v3 attach contract: the
-`User LainAttach` / `User LainRender` events, `b:lain_view` dispatch, and the
+`:help lain` covers setup, configuration and the socket convention. It also
+documents the v3 attach contract, which your own config will care about: the
+`User LainAttach` and `User LainRender` events, `b:lain_view` dispatch, and the
 `lain*` highlight groups.
