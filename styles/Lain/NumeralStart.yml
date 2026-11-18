@@ -1,0 +1,8 @@
+extends: existence
+message: "Do not open a sentence with the numeral '%s': write the number out or reword."
+level: error
+scope: '~table.cell'
+nonword: true
+tokens:
+  - '\A\d[\d,]*(?= [A-Za-z`])'
+  - '(?<=[a-z`)][.!?]\s)\d[\d,]*(?=\s[A-Za-z`])'

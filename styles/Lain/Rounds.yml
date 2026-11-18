@@ -1,0 +1,5 @@
+extends: existence
+message: "'%s' cites a QA round: keep the fact and drop the reference."
+level: warning
+tokens:
+  - '(?:QA )?[Rr]ound \d+'

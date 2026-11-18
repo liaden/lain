@@ -1,0 +1,14 @@
+extends: existence
+message: "'%s' reads as a reframe: state the positive claim."
+level: warning
+ignorecase: true
+tokens:
+  - not only
+  - not just
+  - it is not about
+  - it isn't about
+  - the real (?:issue|problem|question|answer)
+  - what actually matters
+  - at first glance
+  - on the surface
+  - conventional wisdom

@@ -1,0 +1,15 @@
+extends: substitution
+message: "Use '%s' instead of '%s'."
+level: error
+ignorecase: true
+swap:
+  serves? as: is
+  stands? as: is
+  '(?<!the |these |those |its |of |which |what |all |no |pass |passes )functions? as': is
+  boasts? an?: has
+  '(?<!the |these |those |its |of |which |what |all |no |new )features an?': has
+  offers an?: has
+  plays? a role in: affects
+  helps? to: (the plain verb)
+  aims? to: (the plain verb)
+  seeks? to: (the plain verb)

@@ -1,0 +1,75 @@
+extends: existence
+message: "'%s' is on the banned list: use a plainer or more specific word."
+level: warning
+ignorecase: true
+# `harness`, `highlight`, `adaptive`, `dynamic`, `integrated`, `transparent`, `align` and
+# `accelerate` are left out: here they name real things (an agent harness, nvim highlight
+# groups, the adaptive-router arm, GPU acceleration).
+tokens:
+  - delve
+  - realm
+  - unlock
+  - tapestry
+  - paradigm
+  - cutting-edge
+  - revolutionize
+  - intricate
+  - intricacies
+  - showcas(?:e|es|ing)
+  - crucial
+  - pivotal
+  - surpass
+  - meticulous(?:ly)?
+  - vibrant
+  - unparalleled
+  - leverag(?:e|es|ing)
+  - synergy
+  - innovative
+  - game-changer
+  - testament
+  - commendable
+  - emphasi[sz]e
+  - groundbreaking
+  - foster
+  - enhance
+  - holistic
+  - garner
+  - accentuate
+  - pioneering
+  - trailblazing
+  - unleash
+  - versatile
+  - transformative
+  - redefine
+  - seamless(?:ly)?
+  - optimi[sz]e
+  - scalable
+  - robust
+  - breakthrough
+  - empower
+  - streamline
+  - frictionless
+  - elevate
+  - effortless
+  - data-driven
+  - insightful
+  - proactive
+  - mission-critical
+  - visionary
+  - disruptive
+  - reimagine
+  - unprecedented
+  - intuitive
+  - leading-edge
+  - democratize
+  - state-of-the-art
+  - immersive
+  - plug-and-play
+  - turnkey
+  - future-proof
+  - supercharge
+  - enduring
+  - interplay
+  - captivate
+  - load-bearing
+  - footgun

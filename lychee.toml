@@ -1,0 +1,7 @@
+# Link checking for the living docs. Run by the lychee pre-commit hook, which
+# names the files; planning/ and references/ are records and stay unchecked.
+
+# Local files and heading anchors only: a commit must not fail on someone else's server.
+offline = true
+include_fragments = "anchor-only"
+no_progress = true

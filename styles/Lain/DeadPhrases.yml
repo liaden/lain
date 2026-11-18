@@ -1,0 +1,36 @@
+extends: existence
+message: "Cut '%s': say the thing directly."
+level: error
+ignorecase: true
+tokens:
+  - in today's
+  - it is important to note
+  - it is worth noting
+  - it's worth noting
+  - in order to
+  - let's dive in
+  - let's explore
+  - let's unpack
+  - at the end of the day
+  - moving forward
+  - to put this in perspective
+  - what makes this particularly interesting
+  - the implications here are
+  - in other words
+  - it goes without saying
+  - furthermore
+  - additionally
+  - moreover
+  - 'that said(?=,)'
+  - that being said
+  - with that in mind
+  - it is also worth mentioning
+  - on top of that
+  - let that sink in
+  - read that again
+  - full stop
+  - this changes everything
+  - in this section
+  - this article will cover
+  - let me walk you through
+  - a comprehensive overview

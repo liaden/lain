@@ -28,6 +28,43 @@ repos:
     hooks:
       - id: actionlint
 
+  # Relative links and heading anchors in the living docs (lychee.toml: offline, so
+  # no commit waits on a network). The inputs are named here and not passed by
+  # pre-commit: a renamed heading breaks links in files the commit did not touch.
+  # Left out on purpose: planning/ and references/ (records), CHANGELOG.md,
+  # CODE_OF_CONDUCT.md (not our text), and the prompt templates under lib/ and
+  # dogfood/ (prompts, not docs).
+  - repo: https://github.com/lycheeverse/lychee
+    rev: lychee-v0.24.2
+    hooks:
+      - id: lychee
+        files: '\.md$'
+        pass_filenames: false
+        args: [--config, lychee.toml, README.md, CLAUDE.md, CONTRIBUTING.md, DEBUGGING.md, ROADMAP.md,
+               IDEAS.md, docs, examples, "crates/*/README.md", "plugin/*/README.md", "apps/*/README.md",
+               "apps/*/CLAUDE.md", ext/lain/README.md, ext/lain/CLAUDE.md, ext/lain/mutants-survivors.md,
+               lib/lain/provider/http/VENDOR.md]
+
+  # The house writing style as prose rules (.vale.ini, styles/Lain/). An error
+  # fails the commit; verbose is what lets a warning print on a passing run.
+  # Every page is checked on any docs or rule change, because a rule edit can
+  # fail a page the commit did not touch. The rule books (CLAUDE.md), ROADMAP.md
+  # and IDEAS.md are link-checked above but are not held to the prose rules.
+  # agent-state-machine.md is generated. language: golang, so pre-commit builds
+  # vale itself.
+  - repo: https://github.com/errata-ai/vale
+    rev: v3.27.0
+    hooks:
+      - id: vale
+        files: '^(\.vale\.ini|styles/.*|(README|CONTRIBUTING|DEBUGGING)\.md|(docs|examples)/.*\.md|(crates|plugin|apps)/[^/]+/README\.md|ext/lain/README\.md)$'
+        pass_filenames: false
+        verbose: true
+        args: ["--glob=!docs/devs/agent-state-machine.md", README.md, CONTRIBUTING.md, DEBUGGING.md,
+               docs, examples, crates/lain-daemon/README.md, crates/lain-fence/README.md,
+               crates/lain-rpc/README.md, crates/lain-wire/README.md, plugin/herdr/README.md,
+               plugin/nvim/README.md, plugin/tmux/README.md, apps/lain-remote/README.md,
+               ext/lain/README.md]
+
   - repo: local
     hooks:
       - id: shellcheck

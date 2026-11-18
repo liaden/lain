@@ -1,0 +1,15 @@
+extends: existence
+message: "'%s' sets up an analogy: write it literally unless it passes the permission test."
+level: warning
+ignorecase: true
+tokens:
+  - think of it as
+  - kind of like
+  - as though
+  - works like
+  - acts like
+  - a bridge between
+  - a lens for
+  - the backbone of
+  - the foundation of
+  - the glue that

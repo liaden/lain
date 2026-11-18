@@ -1,0 +1,9 @@
+extends: existence
+message: "Use digits for '%s'."
+level: warning
+ignorecase: true
+nonword: true
+# A number that opens a sentence or a heading stays a word (Lain.NumeralStart),
+# so this matches only one with a word before it.
+tokens:
+  - '(?<=[^.!?:|\s]\s)(?:two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)\b'
