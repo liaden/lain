@@ -157,6 +157,14 @@ was worth removing.
   - headless runs (an epic, the review poll, chores) that park and route their asks to you with
     `--human remote`, only where bash is sandboxed;
   - a warmed Ruby spawner that forks runs, after the exec cost is measured.
+- **Repo scaffolding cleanup (2026-11-18).** `[planned]` `planning/specs/repo-scaffolding-cleanup.md`, 17 cards,
+  from `planning/repo-scaffolding-research-2026-11.md`:
+  - root junk removed, merged card worktrees archived then pruned, finished `bin/` scripts deleted;
+  - CI bash moved into `bin/ci/`, Ruby read from `.ruby-version`, upstream hooks and gitleaks added;
+  - 5 lint-style specs moved into custom RuboCop cops or hooks;
+  - the confinement probe tests the bwrap argv and binary the sandbox runs, and bootsnap stops caching
+    tmpdir copies (83G at the audit);
+  - a Lima template that runs lain on the Mac with every Linux confinement layer.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
