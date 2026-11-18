@@ -343,8 +343,10 @@ So `exe/lain` sets bootsnap up itself, under `$XDG_CACHE_HOME/lain/bootsnap` (or
 `LAIN_BOOTSNAP_CACHE`), unless the process already ran `Bootsnap.setup`. Spec workers
 and the children they spawn share one warm cache through `LAIN_BOOTSNAP_CACHE`
 (`spec/support/child_boot.rb`), because a child given a fresh cache per example would be
-slower than one with none. A mutation harness sets `LAIN_BOOTSNAP=0`: bootsnap keys a
-cache entry on (mtime-seconds, size), so a same-size mutant runs against stale bytecode.
+slower than one with none. Only repo and gem sources are cached, because bootsnap never
+evicts and a tmpdir copy of the tree would add entries nothing reads again. A mutation
+harness sets `LAIN_BOOTSNAP=0`: bootsnap keys a cache entry on (mtime-seconds, size), so a
+same-size mutant runs against stale bytecode.
 
 Reline waits 0.5s for a cursor report nobody sends. Reline 0.7.0 writes `\e[6n` and
 waits up to 0.5s for a reply whenever input and output are both TTYs, which every

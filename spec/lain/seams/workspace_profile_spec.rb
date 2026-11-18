@@ -27,7 +27,8 @@ RSpec.describe "A project's own tests inside the workspace profile", :seam do
   # The target dir exists before the call because the profile runs only a target/ that is already there.
   let(:env) do
     ENV.to_h.merge("TMPDIR" => File.join(@lease, "tmp"), "CARGO_TARGET_DIR" => File.join(@lease, "target"),
-                   "CARGO_NET_OFFLINE" => "true", "LAIN_ENV_PASS" => "CARGO_TARGET_DIR,CARGO_NET_OFFLINE")
+                   "CARGO_NET_OFFLINE" => "true", "LAIN_ENV_PASS" => "CARGO_TARGET_DIR,CARGO_NET_OFFLINE",
+                   "LAIN_BOOTSNAP_CACHE" => File.join(@lease, "tmp", "cache"))
   end
 
   before do
