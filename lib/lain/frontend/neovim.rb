@@ -25,7 +25,7 @@ module Lain
       # has to remember to bump is a number somebody forgets. A digest of the
       # runtime cannot be forgotten on a change, because a change IS the digest
       # moving. The fifteen entries it replaced say what each bump bought and are
-      # kept in docs/neovim-protocol-history.md; git has the diffs.
+      # kept in docs/devs/neovim-protocol-history.md; git has the diffs.
       #
       # METHODS rather than a constant: {Lain::Ext} owns blake3, and a digest
       # frozen into a constant at class-body time would be one taken before the
