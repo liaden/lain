@@ -1,5 +1,8 @@
 # frozen_string_literal: true
 
+require "fileutils"
+require "tmpdir"
+
 RSpec.describe Lain::Confine::Probe do
   let(:journal) { [] }
   let(:answers) do
@@ -8,9 +11,10 @@ RSpec.describe Lain::Confine::Probe do
   end
   let(:runner) { ->(argv) { answers.fetch(File.basename(argv.first)) } }
   let(:scope) { -> { "1\n" } }
+  let(:bwrap) { Lain::Confine::Bwrap.new(fence: "/x/lain-fence", bwrap: "/x/bwrap") }
 
   def probe
-    described_class.new(fence: "/x/lain-fence", runner:, ptrace_scope: scope, journal:)
+    described_class.new(fence: "/x/lain-fence", bwrap:, runner:, ptrace_scope: scope, journal:)
   end
 
   describe "#supports?" do
@@ -32,13 +36,13 @@ RSpec.describe Lain::Confine::Probe do
     it "refuses the trace when ptrace_scope forbids tracing a child" do
       %W[2\n 3\n].each do |value|
         j = []
-        refused = described_class.new(fence: "/x/lain-fence", runner:, ptrace_scope: -> { value }, journal: j)
+        refused = described_class.new(fence: "/x/lain-fence", bwrap:, runner:, ptrace_scope: -> { value }, journal: j)
         expect([refused.supports?(:trace), j.map(&:capability)]).to eq([false, [:trace]])
       end
     end
 
     it "allows the trace when the yama file is absent" do
-      absent = described_class.new(fence: "/x/lain-fence", runner:, ptrace_scope: -> {}, journal:)
+      absent = described_class.new(fence: "/x/lain-fence", bwrap:, runner:, ptrace_scope: -> {}, journal:)
       expect(absent.supports?(:trace)).to be(true)
     end
 
@@ -52,17 +56,69 @@ RSpec.describe Lain::Confine::Probe do
     end
 
     it "treats a binary that cannot start, or a fence that prints nothing, as absent" do
-      broken = described_class.new(fence: "/x/lain-fence", runner: lambda { |argv|
+      broken = described_class.new(fence: "/x/lain-fence", bwrap:, runner: lambda { |argv|
         raise Errno::ENOENT, argv.first if File.basename(argv.first) == "bwrap"
 
         File.basename(argv.first) == "lain-fence" ? ["", true] : ["ok", true]
       }, ptrace_scope: scope, journal:)
 
       expect([broken.supports?(:bwrap), broken.supports?(:landlock)]).to eq([false, false])
+      expect(journal.find { _1.capability == :bwrap }.provider)
+        .to eq("bwrap cannot build the reader namespace: No such file or directory - /x/bwrap")
     end
 
     it "raises on a layer it does not know" do
       expect { probe.supports?(:gvisor) }.to raise_error(KeyError)
+    end
+  end
+
+  describe "the bwrap it probes" do
+    let(:seen) { [] }
+    let(:true_on_path) { Lain::Shell::Path.find("true", path: ENV.fetch("PATH", "")) }
+    let(:recording) do
+      lambda do |argv|
+        seen << argv
+        runner.call(argv)
+      end
+    end
+
+    def recorded(layer)
+      described_class.new(fence: "/x/lain-fence", bwrap:, runner: recording, ptrace_scope: scope, journal:)
+                     .supports?(layer)
+      seen.select { _1.first == "/x/bwrap" }
+    end
+
+    it "tries the namespace a confined call runs under" do
+      expect(recorded(:bwrap)).to eq([[*bwrap.namespace_argv(private_net: false), true_on_path]])
+      expect(seen.first.each_cons(2).to_a).to include(%w[--proc /proc], %w[--unshare-pid --die-with-parent])
+    end
+
+    it "tries a private network with --unshare-net in the namespace a confined call runs under" do
+      answers["lain-fence"] = ['{"abi":9,"private_net":true,"reap":true,"rights":{},"skipped":[]}', true]
+
+      expect(recorded(:private_net)).to eq([[*bwrap.namespace_argv(private_net: true), true_on_path]])
+    end
+
+    it "reports a bwrap missing from PATH without running anything for it" do
+      Dir.mktmpdir("lain-probe-empty") do |dir|
+        absent = Lain::Confine::Bwrap.on_path(fence: "/x/lain-fence", env: { "PATH" => dir })
+        subject = described_class.new(fence: "/x/lain-fence", bwrap: absent, runner: recording, ptrace_scope: scope,
+                                      journal:)
+
+        expect([subject.supports?(:bwrap), seen.map { File.basename(_1.first) }]).to eq([false, %w[lain-fence]])
+        expect(journal.first.provider).to include("bwrap is not on PATH")
+      end
+    end
+
+    it "journals bwrap's own refusal" do
+      refusal = "bwrap: Creating new namespace failed: Operation not permitted\nmore\n"
+      refusing = ->(argv) { argv.include?("--proc") ? [refusal, false] : runner.call(argv) }
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: refusing, ptrace_scope: scope, journal:)
+
+      expect(subject.supports?(:bwrap)).to be(false)
+      expect(journal.map { [_1.capability, _1.provider] }).to eq(
+        [[:bwrap, "bwrap cannot build the reader namespace: Creating new namespace failed: Operation not permitted"]]
+      )
     end
   end
 
@@ -79,7 +135,7 @@ RSpec.describe Lain::Confine::Probe do
 
     it "tells a fence that cannot start from one that runs and offers nothing" do
       answers["lain-fence"] = ["", false]
-      refused = described_class.new(fence: "/x/lain-fence", ptrace_scope: scope, journal:,
+      refused = described_class.new(fence: "/x/lain-fence", bwrap:, ptrace_scope: scope, journal:,
                                     runner: lambda { |argv|
                                       argv.first == "/x/lain-fence" ? raise(Errno::ENOENT) : ["", true]
                                     })
@@ -94,6 +150,53 @@ RSpec.describe Lain::Confine::Probe do
 
       expect(real.supports?(:landlock)).to be(false)
       expect(journal.map(&:capability)).to include(:landlock)
+    end
+
+    it "runs the true on PATH, never a failing one in the cwd through an empty PATH entry", :seam do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("bwrap cannot build a pid namespace with its own /proc on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--unshare-pid", "--", "/usr/bin/true",
+               %i[out err] => File::NULL)
+      Dir.mktmpdir("lain-probe-cwd-true") do |dir|
+        FileUtils.mkdir_p(File.join(dir, "empty"))
+        File.write(File.join(dir, "true"), "#!/bin/sh\nexit 1\n")
+        File.chmod(0o755, File.join(dir, "true"))
+
+        answers = with_env("PATH" => "#{dir}/empty::/usr/bin:/bin") do
+          Dir.chdir(dir) do
+            real = described_class.new(fence: "/nonexistent/lain-fence", journal:, ptrace_scope: scope)
+            [real.supports?(:bwrap), real.supports?(:trace)]
+          end
+        end
+
+        expect(answers).to eq([true, true])
+      end
+    end
+
+    it "answers that strace is not on PATH, never running one in the cwd through an empty PATH entry", :seam do
+      Dir.mktmpdir("lain-probe-cwd-strace") do |dir|
+        %w[empty bin].each { FileUtils.mkdir_p(File.join(dir, _1)) }
+        File.symlink(Lain::Shell::Path.find("true", path: ENV.fetch("PATH", "")), File.join(dir, "bin", "true"))
+        File.write(File.join(dir, "strace"), "#!/bin/sh\nexit 0\n")
+        File.chmod(0o755, File.join(dir, "strace"))
+
+        traced = with_env("PATH" => "#{dir}/empty::#{dir}/bin") do
+          Dir.chdir(dir) do
+            described_class.new(fence: "/nonexistent/lain-fence", journal:, ptrace_scope: scope).supports?(:trace)
+          end
+        end
+
+        expect([traced, journal.find { _1.capability == :trace }&.provider]).to eq([false, "strace is not on PATH"])
+      end
+    end
+
+    it "finds bwrap working on a box where the namespace can be built", :seam do
+      skip("/usr/bin/bwrap is not installed") unless File.executable?("/usr/bin/bwrap")
+      skip("bwrap cannot build a pid namespace with its own /proc on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--proc", "/proc", "--unshare-pid", "--", "true",
+               %i[out err] => File::NULL)
+
+      expect(described_class.new(fence: Lain::Confine::Bwrap.fence_binary, journal:).supports?(:bwrap)).to be(true)
     end
   end
 
@@ -110,28 +213,33 @@ RSpec.describe Lain::Confine::Probe do
 
     ["", "garbage", "1.5"].each do |text|
       it "treats ptrace_scope #{text.inspect} as a gap" do
-        unreadable = described_class.new(fence: "/x/lain-fence", runner:, ptrace_scope: -> { text }, journal:)
+        unreadable = described_class.new(fence: "/x/lain-fence", bwrap:, runner:, ptrace_scope: -> { text }, journal:)
         expect(unreadable.supports?(:trace)).to be(false)
       end
     end
 
     it "treats an unreadable ptrace_scope file as a gap and a missing one as allowed" do
       allow(File).to receive(:read).with(described_class::PTRACE_SCOPE).and_raise(Errno::EACCES)
-      expect(described_class.new(fence: "/x/lain-fence", runner:, journal:).supports?(:trace)).to be(false)
+      expect(described_class.new(fence: "/x/lain-fence", bwrap:, runner:, journal:).supports?(:trace)).to be(false)
 
       allow(File).to receive(:read).with(described_class::PTRACE_SCOPE).and_raise(Errno::ENOENT)
-      expect(described_class.new(fence: "/x/lain-fence", runner:, journal: []).supports?(:trace)).to be(true)
+      expect(described_class.new(fence: "/x/lain-fence", bwrap:, runner:, journal: []).supports?(:trace)).to be(true)
     end
 
-    it "judges the trace by an actual traced run" do
-      seen = []
-      spy = lambda { |argv|
-        seen << argv
-        answers.fetch(File.basename(argv.first))
-      }
-      described_class.new(fence: "/x/lain-fence", runner: spy, ptrace_scope: scope, journal:).supports?(:trace)
+    it "judges the trace by an actual traced run of the true on PATH" do
+      Dir.mktmpdir("lain-probe-true") do |dir|
+        File.write(File.join(dir, "true"), "#!/bin/sh\n")
+        File.chmod(0o755, File.join(dir, "true"))
+        seen = []
+        spy = lambda { |argv|
+          seen << argv
+          answers.fetch(File.basename(argv.first))
+        }
+        described_class.new(fence: "/x/lain-fence", bwrap:, env: { "PATH" => ":#{dir}" }, runner: spy,
+                            ptrace_scope: scope, journal:).supports?(:trace)
 
-      expect(seen).to include(%w[strace -f -o /dev/null true])
+        expect(seen).to include([bwrap.strace, "-f", "-o", "/dev/null", File.join(dir, "true")])
+      end
     end
 
     it "names the fence path in the reason when the fence cannot start" do
@@ -140,7 +248,8 @@ RSpec.describe Lain::Confine::Probe do
 
         ["", true]
       }
-      described_class.new(fence: "/x/lain-fence", runner: starter, ptrace_scope: scope, journal:).supports?(:landlock)
+      described_class.new(fence: "/x/lain-fence", bwrap:, runner: starter, ptrace_scope: scope, journal:)
+                     .supports?(:landlock)
 
       expect(journal.first.provider).to include("cannot start /x/lain-fence")
     end
@@ -189,11 +298,11 @@ RSpec.describe Lain::Confine::Probe do
       netless = lambda do |argv|
         argv.include?("--unshare-net") ? ["bwrap: No permissions to create new namespace", false] : runner.call(argv)
       end
-      subject = described_class.new(fence: "/x/lain-fence", runner: netless, ptrace_scope: scope, journal:)
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: netless, ptrace_scope: scope, journal:)
 
       expect([subject.supports?(:private_net), subject.supports?(:bwrap)]).to eq([false, true])
       expect(journal.map(&:capability)).to eq([:private_net])
-      expect(journal.first.provider).to include("bwrap cannot unshare a network namespace")
+      expect(journal.first.provider).to include("bwrap cannot build a private-network namespace")
     end
 
     # A fence built before the flag rejects it and exits 125, which would fail every workspace call.
@@ -216,7 +325,7 @@ RSpec.describe Lain::Confine::Probe do
         sleep 0.05
         ["bwrap: No permissions to create new namespace", false]
       end
-      subject = described_class.new(fence: "/x/lain-fence", runner: slow, ptrace_scope: scope, journal:)
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: slow, ptrace_scope: scope, journal:)
       subject.fence_gap
 
       answers = Array.new(8) { Thread.new { subject.supports?(:private_net) } }.map(&:value)

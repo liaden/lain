@@ -318,6 +318,51 @@ RSpec.describe Lain::Confine::Bwrap do
     end
   end
 
+  describe ".on_path" do
+    def executable(dir, name) = File.join(dir, name).tap { File.write(_1, "#!/bin/sh\n") }.tap { File.chmod(0o755, _1) }
+
+    it "resolves bwrap and strace on PATH and launches the ones it found" do
+      Dir.mktmpdir("lain-bwrap-path") do |dir|
+        found = %w[bwrap strace].map { executable(dir, _1) }
+        traced = Lain::Confine::Profile.new(name: :reader, trace: true)
+        launcher = described_class.on_path(fence: "/f/lain-fence", env: { "PATH" => dir })
+        argv = argv_of(launcher.wrap(term, traced, trace_fd: 3))
+
+        expect([argv.first, argv[argv.index("--") + 1]]).to eq(found)
+      end
+    end
+
+    it "answers nil for a bwrap that is only in the cwd through an empty PATH entry" do
+      Dir.mktmpdir("lain-bwrap-cwd") do |dir|
+        executable(dir, "bwrap")
+
+        launcher = Dir.chdir(dir) { described_class.on_path(fence: "/f/lain-fence", env: { "PATH" => "::" }) }
+
+        expect(launcher.bwrap).to be_nil
+      end
+    end
+  end
+
+  describe "#namespace_argv" do
+    it "is the namespace a confined reader call runs under, through its closing separator" do
+      bare = Lain::Confine::Profile.new(name: :reader, trace: false)
+      argv = argv_of(launcher.wrap(term, bare, trace_fd: 3))
+
+      expect(launcher.namespace_argv(private_net: false)).to eq(argv[0..argv.index("--")])
+    end
+
+    it "unshares the network only when asked to" do
+      unshared = [false, true].map { launcher.namespace_argv(private_net: _1).include?("--unshare-net") }
+
+      expect(unshared).to eq([false, true])
+    end
+
+    it "starts with the bwrap it launches" do
+      expect(described_class.new(fence: "/f/lain-fence", bwrap: "/b/bwrap").namespace_argv(private_net: false).first)
+        .to eq("/b/bwrap")
+    end
+  end
+
   describe "a reader call on this box", :seam do
     let(:fence) { described_class.fence_binary }
 

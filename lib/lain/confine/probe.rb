@@ -10,15 +10,22 @@ module Lain
     class Probe
       PTRACE_SCOPE = "/proc/sys/kernel/yama/ptrace_scope"
       START_FAILED = "\0start-failed:"
+      # A bare `true` is looked up by bwrap and strace, which take an empty PATH entry as the cwd.
+      NO_TRUE = "true is not on PATH"
       FenceReport = Data.define(:abi, :gap, :unstartable, :reaps, :private_net)
       private_constant :FenceReport
 
       # @param fence [String] path to the lain-fence binary
+      # @param env [Hash] where PATH is read from
+      # @param bwrap [Bwrap] the launcher a Sandbox on this box would build
       # @param runner [#call] takes an argv, returns [output, success]
       # @param ptrace_scope [#call] returns the yama file's text, or nil when the file is absent
       # @param journal [#<<] receives a Telemetry::CapabilityDegraded per missing layer
-      def initialize(fence:, journal:, runner: method(:run), ptrace_scope: method(:read_ptrace_scope))
+      def initialize(fence:, journal:, env: ENV, bwrap: Bwrap.on_path(fence:, env:), runner: method(:run),
+                     ptrace_scope: method(:read_ptrace_scope))
         @fence = fence
+        @bwrap = bwrap
+        @true = Shell::Path.find("true", path: env.fetch("PATH", ""))
         @journal = journal
         @runner = runner
         @ptrace_scope = ptrace_scope
@@ -90,21 +97,32 @@ module Lain
         return "#{@fence} cannot give a call a private network: rebuild it with bundle exec rake compile" unless
           fence_report.private_net
 
-        _, ok = attempt(%w[bwrap --unshare-user --unshare-net --ro-bind / / true])
-        "bwrap cannot unshare a network namespace" unless ok
+        namespace_gap(private_net: true, reason: "bwrap cannot build a private-network namespace")
       end
 
       def verdicts
         { bwrap: bwrap_gap, landlock: fence_gap, trace: trace_gap }
       end
 
-      def bwrap_gap
-        _, ok = attempt(%w[bwrap --unshare-user --ro-bind / / true])
-        "bwrap cannot unshare a user namespace" unless ok
+      def bwrap_gap = namespace_gap(private_net: false, reason: "bwrap cannot build the reader namespace")
+
+      # bwrap's first line names what the kernel refused, which the journal keeps beside the reason.
+      def namespace_gap(private_net:, reason:)
+        return "bwrap is not on PATH" unless @bwrap.bwrap
+        return NO_TRUE unless @true
+
+        out, ok = attempt([*@bwrap.namespace_argv(private_net:), @true])
+        return if ok
+
+        detail = out.delete_prefix(START_FAILED).lines.first.to_s.strip.delete_prefix("bwrap: ")
+        detail.empty? ? reason : "#{reason}: #{detail}"
       end
 
       def trace_gap
-        _, ok = attempt(%w[strace -f -o /dev/null true])
+        return "strace is not on PATH" unless @bwrap.strace
+        return NO_TRUE unless @true
+
+        _, ok = attempt([@bwrap.strace, "-f", "-o", "/dev/null", @true])
         return "strace cannot trace a child here" unless ok
 
         "ptrace_scope forbids tracing a child" unless ptrace_allowed?

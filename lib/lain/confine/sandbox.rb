@@ -262,10 +262,7 @@ module Lain
         Exec::Sandboxed.new(inner: bare, launcher:, profiles: Unsandboxed, journal: @journal)
       end
 
-      # The probe finds both programs on PATH, so the launcher runs the ones it found.
-      def launcher = Bwrap.new(fence: @fence, bwrap: on_path("bwrap"), strace: on_path("strace"))
-
-      def on_path(program) = Shell::Path.find(program, path: ENV.fetch("PATH", ""))
+      def launcher = Bwrap.on_path(fence: @fence)
     end
   end
 end

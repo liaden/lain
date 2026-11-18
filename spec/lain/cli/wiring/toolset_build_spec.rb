@@ -1435,7 +1435,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     context "when Landlock works and bwrap does not" do
-      let(:runner) { ->(argv) { argv.first == "bwrap" ? ["", false] : full_box.call(argv) } }
+      let(:runner) { ->(argv) { File.basename(argv.first) == "bwrap" ? ["", false] : full_box.call(argv) } }
 
       it "falls back to Exec::Local and says the sandbox is unavailable" do
         expect(bash_exec(opened(reader))).to be_a(Lain::Exec::Local)

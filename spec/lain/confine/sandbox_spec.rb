@@ -37,6 +37,28 @@ RSpec.describe Lain::Confine::Sandbox do
       end
     end
 
+    it "launches the bwrap its probe tried, never one in the cwd through an empty PATH entry" do
+      Dir.mktmpdir("lain-sandbox-probe") do |dir|
+        on_path = File.join(dir, "bin", "bwrap")
+        FileUtils.mkdir_p(File.dirname(on_path))
+        [on_path, File.join(dir, "bwrap")].each do |fake|
+          File.write(fake, "#!/bin/sh\n")
+          File.chmod(0o755, fake)
+        end
+        stub_const("ENV", ENV.to_h.merge("PATH" => "#{dir}/bin::/usr/bin:/bin"))
+        tried = []
+        recording = ->(argv) { runner.call(argv.tap { tried << _1 }) }
+
+        launcher = Dir.chdir(dir) do
+          probing = Lain::Confine::Probe.new(fence:, journal:, runner: recording, ptrace_scope: -> { "0" })
+          described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: probing, fence:, journal:)
+                         .wrap(inner, requirer: "Spec").instance_variable_get(:@launcher)
+        end
+
+        expect([launcher.bwrap, tried.map(&:first).grep(/bwrap/).uniq]).to eq([on_path, [on_path]])
+      end
+    end
+
     it "hands the profiles the mask list it was given and the home" do
       profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles)
 

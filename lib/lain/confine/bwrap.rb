@@ -23,9 +23,25 @@ module Lain
       # @return [String] where `rake compile` writes the fence
       def self.fence_binary(env: ENV) = File.join(Paths::Shipped.cargo_target(env:), "release", "lain-fence")
 
+      # The one place bwrap is found, so a probe never tries a different binary from the one a call runs.
+      #
       # @param fence [String] the lain-fence binary
-      # @param bwrap [String]
-      # @param strace [String]
+      # @param env [Hash] where PATH is read from
+      # @return [Bwrap] with bwrap and strace resolved on PATH, nil where absent
+      def self.on_path(fence:, env: ENV)
+        path = env.fetch("PATH", "")
+        new(fence:, bwrap: Shell::Path.find("bwrap", path:), strace: Shell::Path.find("strace", path:))
+      end
+
+      # @return [String, nil] the bwrap a call runs under, nil when PATH has none
+      attr_reader :bwrap
+
+      # @return [String, nil] the strace a traced call runs under, nil when PATH has none
+      attr_reader :strace
+
+      # @param fence [String] the lain-fence binary
+      # @param bwrap [String, nil]
+      # @param strace [String, nil]
       def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace")
         @fence = fence
         @bwrap = bwrap
@@ -46,6 +62,10 @@ module Lain
           end)
         end)
       end
+
+      # @param private_net [Boolean]
+      # @return [Array<String>] the bwrap argv a confined call runs under, through its closing "--"
+      def namespace_argv(private_net:) = namespace(Profile.new(name: :reader, trace: false, private_net:))
 
       private
 
@@ -142,7 +162,7 @@ module Lain
       # between a write and a seal bound over itself, then each present seal
       # read-only. Walking each seal's path costs about 0.5 ms a call, so the
       # binds are kept per seal set and the writes that hold a seal. The set
-      # is the value {Profiles} rebuilds once a seal's path changes on disk, so
+      # is the value `Confine::Profiles` rebuilds once a seal's path changes on disk, so
       # a changed set, root or holding write is a new key, never a stale bind.
       class SealBinds
         KEPT = 64
