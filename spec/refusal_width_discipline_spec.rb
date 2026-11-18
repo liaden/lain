@@ -5,9 +5,8 @@ require "pathname"
 require "tmpdir"
 
 # Mechanical enforcement of the width of every sentence that rides the echo
-# rail, and deliberately the same shape {DesktopDiscipline} and
-# {ApprovalConsumerDiscipline} are: read `lib/`, derive the subject set from
-# the code, fail naming the violation.
+# rail, and deliberately the same shape {DesktopDiscipline} was: read `lib/`,
+# derive the subject set from the code, fail naming the violation.
 #
 # THE RAIL. `_G.__lain.review_refused` (`runtime/65_review.lua:36`) is a single
 # `nvim_echo` with a `"lain: "` prefix, and Ruby reaches it three ways.

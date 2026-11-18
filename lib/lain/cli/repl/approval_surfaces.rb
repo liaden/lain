@@ -105,7 +105,7 @@ module Lain
         #
         # It OBSERVES the parked set rather than draining the arrival queue,
         # because {Frontend::ApprovalPolicy} is the one consumer that queue may
-        # have (`spec/approval_consumer_discipline_spec.rb`), and it POLLS for the
+        # have (the `Lain/ApprovalConsumer` cop), and it POLLS for the
         # reason {Frontend::Neovim::ApprovalView} does: a sibling fiber on the
         # reactor, woken by its own tick, needs nothing from the queue to find a
         # pending.

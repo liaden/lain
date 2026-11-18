@@ -618,3 +618,46 @@ Lain/SdkRequire:
     # Its heredoc fixtures name the SDK on purpose, and requiring the 33.6MB gem here
     # would load it in every worker that runs this file.
     - "spec/rubocop/cops/lain/sdk_require_spec.rb"
+
+# The approval arrival queue hands each parked call to exactly one #dequeue caller, so
+# every dequeue site in lib/ is ruled on here by file and receiver, with what it drains.
+# spec/rubocop/cops/lain/approval_consumer_spec.rb pins this map.
+Lain/ApprovalConsumer:
+  Include:
+    - "lib/**/*.rb"
+  AllowedReceivers:
+    # The queue's own arrival buffer; this IS the seam.
+    lib/lain/approval/parked/queue.rb: ["@arrivals"]
+    # THE approval consumer: the surface that can ask a person.
+    lib/lain/frontend/approval_policy.rb: [queue]
+    # @questions is ask_human's own queue, not an approval queue; queue is ask_human's
+    # own queue too, drained non-blockingly by Pending#gather.
+    lib/lain/cli/human_replies.rb: ["@questions", queue]
+    # An approval replay's own queue, built per session inside the replay with no human
+    # surface on it, so the replay's approver is its one consumer.
+    lib/lain/bench/approval_replay/stack.rb: ["@replay_queue"]
+
+# Project memory and compaction never read each other. Each side lists the files it
+# covers and the names, read from code and never from comments, that it may not use.
+Lain/MemoryCompactionSeparation:
+  Include:
+    - "lib/**/*.rb"
+  Sides:
+    compaction:
+      Holds: a derived view of one chain
+      Files:
+        - "lib/lain/compaction.rb"
+        - "lib/lain/compaction/**/*"
+      # The durable store, the 2 tools that reach it, and the 3 record types a session
+      # file carries for it.
+      Forbidden: [ProjectStore, MemoryRead, MemoryWrite, memory_loaded, memory_root, memory_write]
+    the consolidation pass:
+      Holds: durable project fact
+      Files:
+        - "lib/lain/consolidation.rb"
+        - "lib/lain/consolidation/**/*"
+        - "lib/lain/cli/consolidate.rb"
+        - "lib/lain/cli/improve.rb"
+      # Compaction's namespace, its cut carrier, and the record type a session file
+      # carries for one.
+      Forbidden: [Compaction, CompactionCut, compaction_cut]

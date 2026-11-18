@@ -578,10 +578,10 @@ They are named apart on purpose, and neither reads the other.
 | records | `memory_loaded`, `memory_root`, `memory_write` tool turns | `compaction_cut` (`advance`, `collapse`, `handoff`) |
 
 A handoff state document is never written to project memory, and the consolidation clerk never
-reads a compaction replacement. Both directions are pinned structurally by
-`spec/memory_compaction_separation_discipline_spec.rb`: nothing under `lib/lain/compaction/`
-names `Memory::ProjectStore`, and a consolidation scaffold never carries a cut's replacement
-text.
+reads a compaction replacement. Both directions are pinned structurally by the
+`Lain/MemoryCompactionSeparation` cop (`.rubocop/cops/lain/memory_compaction_separation.rb`):
+nothing under `lib/lain/compaction/` names `Memory::ProjectStore`, and a consolidation scaffold
+never carries a cut's replacement text.
 
 ## Effects, handlers, Gate, and Middleware
 

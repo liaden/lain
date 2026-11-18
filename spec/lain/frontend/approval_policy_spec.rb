@@ -462,7 +462,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
   # arrival after it, went to a surface that could not answer at the terminal.
   #
   # That second consumer is gone twice over: the desktop surface was deleted,
-  # and `spec/approval_consumer_discipline_spec.rb` refuses a new `#dequeue` in
+  # and the `Lain/ApprovalConsumer` cop refuses a new `#dequeue` in
   # `lib/` structurally. What stays here is the behaviour the defect took away
   # -- TWO gated calls in one turn, because one cannot see this at all, which is
   # exactly why a green suite shipped it. The streamed {Telemetry::ToolOutput}

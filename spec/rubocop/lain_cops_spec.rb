@@ -14,7 +14,9 @@ module LainCops
   EXEMPTIONS = {
     "Lain/TerminalOutput" => ["lib/lain/frontend/**/*", "lib/lain/daemon/spawner.rb"],
     "Lain/GitFixtureScrub" => [],
-    "Lain/SdkRequire" => ["spec/rubocop/cops/lain/sdk_require_spec.rb"]
+    "Lain/SdkRequire" => ["spec/rubocop/cops/lain/sdk_require_spec.rb"],
+    "Lain/ApprovalConsumer" => [],
+    "Lain/MemoryCompactionSeparation" => []
   }.freeze
 
   # An inline directive naming a Lain cop, the whole department, or every cop.
