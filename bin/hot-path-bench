@@ -63,7 +63,9 @@ module HotPathBench
     "credential_scan_assignment" => 37.7,
     "credential_scan_gated" => 63.7,
     "mask_list_warm" => 4.45,
-    "spawn_exec" => 879
+    "spawn_exec" => 879,
+    "spawn_fork" => 52.0,
+    "spawn_fork_private_mb" => 11.5
   }.freeze
 
   SCAN_SIZE = 100_000
