@@ -27,7 +27,7 @@ module Lain
         # and 0.34.4 -- undercutting llama.cpp's own default of 2048, and it
         # exposes no server-side setting to raise it, so the request is the ONLY
         # place it can be corrected. Measured on this box at 1.31x prefill
-        # (docs/providers/ollama.md, "Serving performance").
+        # (docs/users/providers/ollama.md, "Serving performance").
         #
         # `temperature`, `seed` and `num_ctx` are strictly opt-in: defaulting
         # one on would be a wire change for a caller that asked for nothing,
@@ -51,7 +51,7 @@ module Lain
         # {THINK_KEY}'s reason. Forwarded with its JSON TYPE intact and
         # converted NEITHER way: `-1` and `"-1"` are a pin and an HTTP 400, and
         # {Lain::CLI::Backend} is the one place that decides which a flag
-        # becomes (docs/providers/ollama.md, "Serving performance").
+        # becomes (docs/users/providers/ollama.md, "Serving performance").
         KEEP_ALIVE_KEY = "keep_alive"
 
         # extra key => wire key, for the fields that ride #extra verbatim.

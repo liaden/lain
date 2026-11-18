@@ -163,7 +163,7 @@ module Lain
     # Store, whose Monitor is a yield point when contended, so two gathered
     # siblings may both journal a line; that costs a duplicate record and
     # never a downgrade, since nothing is ever removed. The claim carries
-    # ToolRunner's gathered dispatch (docs/concurrency.md, "parallel tools")
+    # ToolRunner's gathered dispatch (docs/devs/concurrency.md, "parallel tools")
     # and is pinned by spec/lain/session_concurrency_spec.rb.
     #
     # A line is journaled only when the read adds lines the counted reads of

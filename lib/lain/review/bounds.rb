@@ -16,7 +16,7 @@ module Lain
     # either the whole changeset is handled or {TooLarge} names the measurement,
     # the ceiling, and what to do instead.
     #
-    # Two arguments live in `docs/review.md` under "Where the review ceilings
+    # Two arguments live in `docs/devs/review.md` under "Where the review ceilings
     # come from": where the bound is NOT (never on parse cost), and why nothing
     # here reads a hunk -- the DECISION to refuse is reached on a file count
     # alone, and the line ceiling asks a FILE what it costs rather than summing
@@ -48,7 +48,7 @@ module Lain
       # against a context window rather than a reader. ~99k tokens at a measured
       # 49.6 bytes per rendered line -- half the smallest window a bench arm
       # might run. The full derivation, and why the first cut at 4,000 was wrong,
-      # is in `docs/review.md` under "Where the review ceilings come from".
+      # is in `docs/devs/review.md` under "Where the review ceilings come from".
       DEFAULT_MAX_CRITIQUE_LINES = 7_000
 
       # The scope vocabulary, read off {Partition::STRATEGIES} rather than

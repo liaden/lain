@@ -12,7 +12,7 @@ module Lain
     #
     # The three signals it carries, what coverage does NOT guarantee (the `time`
     # sweep), and the four argv caveats an executing layer inherits are argued in
-    # ARCHITECTURE.md's "Triaging a bash command". Two of those consequences are
+    # docs/devs/architecture.md's "Triaging a bash command". Two of those consequences are
     # load-bearing in this file:
     #
     # * A refusal -- over the length cap, or anything raising out of the ext --

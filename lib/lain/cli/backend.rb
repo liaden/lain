@@ -50,7 +50,7 @@ module Lain
       # `seed` would move its answers.
       #
       # `keep_alive` is not here either: a request carrying none leaves an
-      # existing pin alone (probed -- docs/providers/ollama.md), so a tier
+      # existing pin alone (probed -- docs/users/providers/ollama.md), so a tier
       # repeating it could only CHANGE the residency, never preserve it.
       RUNNER_KEYS = %w[num_batch num_ctx].freeze
 
@@ -553,7 +553,7 @@ module Lain
       # `--keep-alive`, COERCED here because its two legal spellings are two
       # JSON types: an integer becomes an Integer (seconds, -1 forever), a
       # duration stays the String Go will parse. Sending `"-1"` instead is an
-      # HTTP 400 on every turn -- docs/providers/ollama.md has the probe.
+      # HTTP 400 on every turn -- docs/users/providers/ollama.md has the probe.
       #
       # Base 10 is PINNED: `Integer()` guesses one from the prefix, so `060` --
       # a plausible minute -- read as octal 48. The other literal forms fall to

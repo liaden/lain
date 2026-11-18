@@ -315,8 +315,8 @@ module Lain
       # A CALLER THAT SENDS num_ctx OWNS THE MIN of this and its own, because
       # this method cannot see the request. Asked per turn rather than memoized,
       # which is what staying correct across a runner reload requires -- both
-      # rules, the measurements behind them, and what the probe costs against a
-      # black-holed host are in docs/providers/ollama.md.
+      # rules are in docs/users/providers/ollama.md; the measurements, and what the
+      # probe costs against a black-holed host, are in docs/devs/debugging-ollama.md.
       #
       # == The second rescue arm, and why it re-raises
       #

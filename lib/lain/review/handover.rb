@@ -10,7 +10,7 @@ module Lain
     # the line -> row index a gesture resolves through, and this is the join
     # between them and the place the baton is settled.
     #
-    # Two arguments behind this rail live in `docs/review.md` under "The review
+    # Two arguments behind this rail live in `docs/devs/review.md` under "The review
     # handover": why {#wrote_annotation}/{#wrote_verdict} are ANSWERED and
     # {#open}/{#mark}/{#ask} ACKED -- and what may therefore never raise on
     # either -- and why a gesture that changed a row draws that row again,
@@ -346,7 +346,7 @@ module Lain
       # at settle time. {AnnotationPlaced} gives it no default for that reason: a
       # note nobody measured must not be recorded as one that did not drift.
       #
-      # The note's SHAPE was already judged at the boundary ({ReviewWrite}), so
+      # The note's SHAPE was already judged at the boundary ({Frontend::Neovim::ReviewWrite}), so
       # what is left here is whether THIS review can take it, which only the
       # session holding the changeset knows.
       #
@@ -375,7 +375,7 @@ module Lain
       # uuid, a change to {Anchor}'s identity. An example pins it, so the trade
       # cannot move in silence.
       #
-      # @param note [Hash{String=>Object}] {ReviewWrite::KEYS}, normalized
+      # @param note [Hash{String=>Object}] {Frontend::Neovim::ReviewWrite::KEYS}, normalized
       # @return [String, nil] a refusal in words, or nothing when it landed
       def wrote_annotation(note)
         placed = anchor(note)

@@ -344,7 +344,7 @@ module Lain
       # does because `/undo` must read the log the Agent's deliveries feed.
       #
       # `sensitivity` is the same argument about the OTHER half of that command:
-      # it walks a tree, and ARCHITECTURE.md's "The secret boundary" says why
+      # it walks a tree, and docs/devs/architecture.md's "The secret boundary" says why
       # "the same rules" is not the claim -- the claim is the same OBJECT. It is
       # SNAPSHOTTED here, on the terms {ToolGuard.path_filter} states for its
       # own snapshot, including what has to change should the slot ever become

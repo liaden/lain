@@ -36,7 +36,7 @@ module Lain
       # state that holds VRAM after lain exits. A profile field is what a
       # `--resume` RESOLVES from, so recording it would re-pin with no flag
       # typed -- and replaying it buys nothing, since a request carrying none
-      # leaves an existing pin alone (docs/providers/ollama.md).
+      # leaves an existing pin alone (docs/users/providers/ollama.md).
       #
       # The header's transport `extra` does still carry the value, being a
       # verbatim copy of what was sent. That is a record, not a resolution:

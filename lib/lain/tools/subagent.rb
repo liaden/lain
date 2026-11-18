@@ -641,7 +641,7 @@ module Lain
     # spawn a child Agent whose only trace in the parent's Timeline is its final
     # result, returned as an ordinary `tool_result`. The lineage events, the
     # shared-Store/separate-Timeline split and the transitive ceiling are in
-    # ARCHITECTURE.md, "Subagent, Supervisor, and isolation".
+    # docs/devs/architecture.md, "Subagent, Supervisor, and isolation".
     #
     # `Seam#parent` is a live HANDLE (a Timeline, or a `-> Timeline` thunk since
     # the toolset is built before the Agent) -- the one collaborator the render

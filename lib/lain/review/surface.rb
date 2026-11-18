@@ -25,7 +25,7 @@ module Lain
     # `spec/support/shared_examples/review_surface.rb` holds every adapter to
     # the same law; read its own doc for what it does and does NOT prove.
     #
-    # Three arguments this port settled live in `docs/review.md` under "The
+    # Three arguments this port settled live in `docs/devs/review.md` under "The
     # surface port": why `focus` is not part of `present`, why `verdict` and
     # `settle` are two messages, and what `present`'s `changeset` argument
     # answers (`#files`, `#partitions`, `#sides`, and why the session builds it).

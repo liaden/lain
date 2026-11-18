@@ -290,7 +290,7 @@ module Lain
     # The cooperative halt: the harness deciding to stop rather than a model
     # outcome, so it sits beside the ceilings' raise and not inside them.
     #
-    # `Async::Task#stop`, not `Thread#kill`, per docs/concurrency.md:
+    # `Async::Task#stop`, not `Thread#kill`, per docs/devs/concurrency.md:
     # structured cancellation raises `Async::Stop` only at a
     # scheduler-controlled yield point, so `ensure` blocks run and the
     # immutable Timeline is only ever stopped BETWEEN whole commits. The task

@@ -26,7 +26,7 @@ module Lain
     #
     # The three detection tiers -- node kinds, program names, and WORD TEXT,
     # the tier a designer forgets -- and the fourth thing that has to be COUNTED
-    # rather than read (a newline has no node) are argued in ARCHITECTURE.md's
+    # rather than read (a newline has no node) are argued in docs/devs/architecture.md's
     # "Triaging a bash command"; the constants below carry the per-family
     # reasoning. Three consequences live here:
     #
@@ -78,7 +78,7 @@ module Lain
         ["", "&>"] => %i[stdout stderr]
       }.freeze
 
-      # The families, and the rule that puts a name in one, are in {Programs}.
+      # The families, and the rule that puts a name in one, are in {Shell::Programs}.
       PROGRAM_RUNNERS = Programs::RUNNERS
 
       # Bash's reserved words, minus the two that also EXECUTE and so live in

@@ -29,7 +29,7 @@ module Lain
     # {Agent.interrupt} -- `Async::Task#stop`, structured cancellation
     # that raises `Async::Stop` only at a scheduler yield point, so the Agent's
     # own `defer_stop` shield lets the commit+journal atom complete and the
-    # Timeline is only ever left BETWEEN whole commits (docs/concurrency.md's
+    # Timeline is only ever left BETWEEN whole commits (docs/devs/concurrency.md's
     # worked supervisor, which this is the production caller for). The task
     # must be the `task.async` wrapper HOSTING the run, never the run's own
     # fiber.

@@ -5,7 +5,7 @@ module Lain
     # Which sensitive regions this RUN has released, and the one question that
     # follows: given the regions this file holds NOW, which has nobody agreed to
     # send yet? The (path, digest) keying argument, the absolute-path rule and
-    # the reconcile-on-read containment are all in ARCHITECTURE.md's "The secret
+    # the reconcile-on-read containment are all in docs/devs/architecture.md's "The secret
     # boundary"; what stays here is what binds a caller.
     #
     # NOT {Lain::Ledger}, which is the COST ledger, and not

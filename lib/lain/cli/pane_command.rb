@@ -138,7 +138,7 @@ module Lain
       # carve-out changes is who else is exposed: a spec is a client, so a
       # pane opened from the suite inherits the RUNNER's PATH and can find a
       # binary production never sees. That trap has its own entry in
-      # docs/toolchain-traps.md, because it makes a pane spec pass over a
+      # docs/devs/toolchain-traps.md, because it makes a pane spec pass over a
       # defect.
       #
       # UNquoted and Shellwords-escaped rather than wrapped in double quotes:

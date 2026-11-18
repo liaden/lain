@@ -33,7 +33,7 @@ module Lain
         # tree, and a defaulted {Lain::Sensitivity::Ledger} lets a forgotten
         # injection become a SECOND ledger whose releases nobody ever sees, so
         # `/survey` would mask regions this run has already released -- and the
-        # path boundary is that same argument one boundary over (ARCHITECTURE.md,
+        # path boundary is that same argument one boundary over (docs/devs/architecture.md,
         # "The secret boundary"). A defaulted snapshot slot would answer
         # "nothing to undo" for a session that has changed files. And `window:`
         # is the run's window book, which `/critique` over a held round sizes

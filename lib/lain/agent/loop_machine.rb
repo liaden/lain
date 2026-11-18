@@ -5,7 +5,7 @@ require "state_machines"
 module Lain
   class Agent
     # The loop's states and its legal moves, declared once and mixed into the
-    # {Agent}. The diagram in docs/agent-state-machine.md is generated from this
+    # {Agent}. The diagram in docs/devs/agent-state-machine.md is generated from this
     # declaration, and a spec fails the build when the two drift.
     #
     # Two invariants ride on this being a real machine and not a bag of

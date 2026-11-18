@@ -17,7 +17,7 @@ module Lain
       # variables are exactly its four collaborators, and a spec asserts that
       # by name rather than by inspection of what happens to be in them.
       #
-      # Six arguments behind this adapter live in `docs/review.md` under "The
+      # Six arguments behind this adapter live in `docs/devs/review.md` under "The
       # editor's review surface": which rail each message rides and why
       # `annotate` and `thread` share one, what a message answers and why
       # {#verdict} alone cannot carry a refusal, where `drifted:` is measured and

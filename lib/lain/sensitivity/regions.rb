@@ -13,7 +13,7 @@ module Lain
     #
     # The gate's measured false-positive rates, the residual imprecision, the
     # recall list, the JWT-is-three-regions consequence and the ~0.27ms/KB linear
-    # cost are all in ARCHITECTURE.md's "The secret boundary". Two things a
+    # cost are all in docs/devs/architecture.md's "The secret boundary". Two things a
     # reader editing this file needs in front of them:
     #
     # * A region is its VALUE, not its whole assignment. `API_KEY=sk-...` yields

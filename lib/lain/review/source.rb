@@ -26,7 +26,7 @@ module Lain
     # marks, the session's address -- reads only the seven, so none of them knows
     # which source it has.
     #
-    # Six arguments behind this port live in `docs/review.md` under "The
+    # Six arguments behind this port live in `docs/devs/review.md` under "The
     # changeset-source port": why {#sides} is the SOURCE's question and not a
     # file's, why the port hands down model values rather than bytes, why the
     # laws split into universal and diff-bearing halves, why `#file_at` exists

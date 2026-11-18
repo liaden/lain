@@ -80,7 +80,7 @@ module Lain
         # @param sensitivity [#classify] the run's path boundary -- the board's
         #   own {Lain::Sensitivity::Policy}, whose table was compiled once at
         #   startup. REQUIRED for the ledger's reason one boundary over
-        #   (ARCHITECTURE.md, "The secret boundary"), and it is the reason the
+        #   (docs/devs/architecture.md, "The secret boundary"), and it is the reason the
         #   project root is no longer a parameter here.
         # @param cwd [String] where this chat is STANDING, a different question
         #   from the project ROOT the board was built at ({Lain::Project}
