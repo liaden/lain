@@ -13,7 +13,7 @@ require "state_machines-mermaid" # DEV-only: the diagram never renders at runtim
 # Regenerate after an intended machine change:
 #   LAIN_REGENERATE=1 bundle exec rspec spec/lain/agent_state_machine_diagram_spec.rb
 RSpec.describe "Agent state-machine diagram" do
-  diagram_path = File.expand_path("../../docs/agent-state-machine.md", __dir__)
+  diagram_path = File.expand_path("../../docs/devs/agent-state-machine.md", __dir__)
 
   # The mermaid *source* text, captured from the renderer's injected IO. Nothing
   # here touches a terminal: the renderer writes into a StringIO we own.

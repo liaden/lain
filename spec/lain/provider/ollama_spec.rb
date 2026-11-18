@@ -1233,7 +1233,7 @@ RSpec.describe Lain::Provider::Ollama do
   # `ollama ps`'s CONTEXT column prints -- is the only place the API states it.
   # See references/ollama/api-show-and-context.md for the full trace.
   describe "#context_window_tokens" do
-    # 32,768 is what this box actually serves (DEBUGGING_OLLAMA.md:43,
+    # 32,768 is what this box actually serves (docs/devs/debugging-ollama.md:43,
     # `OLLAMA_CONTEXT_LENGTH=32768`); 262,144 is qwen3-coder:30b's trained
     # ceiling. Any answer of 262,144 is an 8x over-estimate of occupancy,
     # which silently disables compaction.

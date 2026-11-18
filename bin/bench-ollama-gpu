@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Serving-stack benchmarks for the local ollama arm.
 #
-# Every finding in DEBUGGING_OLLAMA.md's 2026-08-14 entry came from these subcommands. Read that
+# Every finding in docs/devs/debugging-ollama.md's 2026-08-14 entry came from these subcommands. Read that
 # entry's "How these were measured" section before trusting or extending output: the prompt cache
 # fakes prefill rates, blocked sweeps lie, and "offloaded N/N layers" does not mean resident.
 #

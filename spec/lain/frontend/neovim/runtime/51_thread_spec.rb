@@ -24,7 +24,7 @@ require "tmpdir"
 # because `described_class` is a live dependency there. By that rule this file
 # should be a string subject -- it drives the chunk directly and names
 # `described_class` nowhere. It is not, for a reason outside the rule:
-# `docs/toolchain-traps.md`'s flake ledger keys an entry on the FULL description
+# `docs/devs/toolchain-traps.md`'s flake ledger keys an entry on the FULL description
 # `Lain::Frontend::Neovim the review thread pane following the cursor ...`, and a
 # spec's full description begins with its subject. Renaming the subject would
 # leave that entry matching nothing -- and an entry that matches nothing reads as

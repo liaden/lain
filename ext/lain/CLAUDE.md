@@ -1,7 +1,7 @@
 # Working on `ext/lain` (the in-process Rust extension)
 
 This crate is **pure and synchronous**. It exists for Rust's *data model* — ownership, cheap
-immutability, structural sharing — not for speed. See `docs/rust-bindings.md` for the five tests
+immutability, structural sharing — not for speed. See `docs/devs/rust-bindings.md` for the five tests
 a capability must pass before it gets a binding at all.
 
 Anything **async, I/O-bound, or isolation-relevant** belongs in `crates/lain-daemon` (tokio,

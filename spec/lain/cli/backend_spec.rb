@@ -3200,7 +3200,7 @@ RSpec.describe Lain::CLI::Backend do
   # `stream`, not a member of `options`) and is not defaulted the way num_batch
   # is: silence has to leave ollama's own timer alone rather than pick a
   # residency nobody asked for. What pinning buys, and the probes behind these
-  # examples, are in docs/providers/ollama.md, "Serving performance".
+  # examples, are in docs/users/providers/ollama.md, "Serving performance".
   #
   # The subject of this describe is the wire TYPE: one knob, two JSON types,
   # decided once in {Lain::CLI::Backend} and forwarded unconverted from there.

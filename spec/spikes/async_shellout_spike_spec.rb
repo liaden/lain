@@ -7,14 +7,14 @@ require "async"
 # Ruby's fiber scheduler hook those calls so other tasks keep making progress?
 # The question was first measured against a gem runner that has since been
 # replaced; the scenarios below now pin the runner the code base uses. This is measured, not assumed -- see
-# docs/concurrency.md for the reasoning that made the question load-bearing.
+# docs/devs/concurrency.md for the reasoning that made the question load-bearing.
 #
 # Both scenarios below run the SAME workload: one task shells out to `sleep
 # 1s`, a second task ticks a monotonic timestamp into an array every 50ms.
 # Only one can be true of a given (ruby, async) pair, so
 # only one scenario is committed passing; see the pinned versions below.
 RSpec.describe "Async x Shell::Out", :spike do
-  # Pinned at measurement time (see docs/concurrency.md for the dated entry):
+  # Pinned at measurement time (see docs/devs/concurrency.md for the dated entry):
   #   ruby 4.0.5, async 2.42.0 with the gem runner (2026-07-13); ported to
   #   Shell::Out and re-run on ruby 4.0.6, async 2.42.0 (2026-10-02)
   let(:tick_interval) { 0.05 }
@@ -72,12 +72,12 @@ RSpec.describe "Async x Shell::Out", :spike do
   # observed 51.4ms -- no gap resembling the full 1s window). That is the
   # cooperative outcome, so the starvation scenario below did not occur and
   # is skipped as the documented, empirically-rejected alternative. See
-  # docs/concurrency.md's dated 5-0.1 entry for the full measurement.
+  # docs/devs/concurrency.md's 2026-07-13 entry for the full measurement.
   it "starves the ticker while the shellout blocks the reactor's one OS thread",
      skip: "measured cooperative, not starved: ruby 4.0.5 + async 2.42.0 " \
            "with the gem runner (2026-07-13), ported to Shell::Out 2026-10-02 -- ticker recorded ~20/20 ticks " \
            "throughout the shellout window across 5 runs, no stall observed; " \
-           "see docs/concurrency.md" do
+           "see docs/devs/concurrency.md" do
     ticks, window = run_workload
     start, finish = window
     ticks_during_window = ticks.count { |t| t.between?(start, finish) }

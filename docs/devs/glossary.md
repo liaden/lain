@@ -1,0 +1,779 @@
+# Glossary
+
+The math and CS vocabulary that [`README.md`](../../README.md) and [`docs/devs/architecture.md`](architecture.md)
+use without defining. Each entry gives the general definition first, then what the concept does
+in this codebase.
+
+## Algebra and order theory
+
+### Monoid
+
+> A set with an associative binary operation and an identity element.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Monoid))
+
+Four operations in lain are monoids, and each one's own spec holds it to the same shared example
+group in `spec/support/shared_examples/monoid.rb`.
+
+- The `Context` combinator chain composes with `>>`, with `Context::Identity` as its unit.
+- `Usage` adds token counts and is also commutative, so the order you fold a session's turns in
+  cannot change the total.
+- `Compaction::Strategy::Base#|` composes 2 strategies over one span with `Strategy::Identity` as
+  its unit. It is commutative too, because the derivation folds ranges in ascending index order
+  whichever operand was written first.
+- `Mode::LayerSet#|` is set union over the layers a human enabled, with the empty set as its unit.
+  It is commutative and idempotent, so the order layers were switched on in cannot matter.
+
+A `Middleware::Stack` is not on the list. A stack is an ordered list of layers, composed by
+membership and not by an operator, so there is no bracketing for the law to rule out.
+
+The laws matter operationally. If `Context` composition were not associative, the prompt you get
+would depend on how you bracketed the combinators, which is the class of bug that ordinary
+example-based tests miss.
+
+### Free monoid
+
+> The monoid whose elements are all finite sequences of elements from a set, with concatenation as
+> the operation. ([Wikipedia](https://en.wikipedia.org/wiki/Free_monoid))
+
+Because `Context` composition is associative, a strategy description is determined by its
+sequence of combinators and not by how they are bracketed, so the descriptions form the free
+monoid on the combinator set. Distinct descriptions can name the same strategy (composing with the
+identity, pruning twice), so the strategy space proper is that monoid's image under evaluation.
+Descriptions are what is enumerable: a bench can walk the words over a fixed generator list
+instead of curating a hand-written menu of named strategies. `--context-pipeline` takes one such
+word, `+`-joined over 5 stages; no command walks them yet.
+
+There is a second instance one level down. A compaction strategy's `#blocks` maps a span of messages
+into the free monoid on content blocks: concatenation, with the empty block list as `ε`. The
+image of that unit is `Compaction::Strategy::DROP`. `Replacement.of([])` answers `DROP` and mints
+no empty replacement, so a range whose collapse answers no blocks contributes no replacement event
+at all. Vanishing is what a unit does, and it keeps a blank message the provider would reject from
+ever being built. The homomorphism group's "maps the empty span to the unit" law (below) holds this.
+
+### Monoid homomorphism
+
+> A map between monoids that preserves the operation and the identity: `f(a · b) = f(a) · f(b)` and
+> `f(e) = e'`. ([Wikipedia](https://en.wikipedia.org/wiki/Monoid#Monoid_homomorphisms))
+
+`spec/support/shared_examples/monoid_homomorphism.rb` checks both halves: "maps the empty
+span to the unit" and "maps a concatenation of spans to the concatenation of their collapses".
+`Compaction::Strategy::Elide` is held to it. `Compaction::Strategy::Summarizing` is held to the
+group's negative reading, because summarizing a concatenation is not the concatenation of
+summaries. Both readings run in the subject's own spec: `elide_spec.rb` includes the positive,
+`summarizing_spec.rb` the negative.
+
+The universal property of the free monoid makes this the same condition as being
+elementwise. A map out of a free monoid is determined by its action on generators, so a
+span-collapse that is a homomorphism is exactly one that is a per-message map concatenated, and
+conversely. `Elide` writes its whole-span method by hand as `span.flat_map { attested(_1) }`,
+and `spec/support/shared_examples/elementwise.rb` holds that one line to the property. One law
+catches the whole-span method drifting from the per-element map it names, and another catches a
+per-element map that consults position or state.
+
+The negative is an ordinary example that runs the same laws as a battery and requires the named
+one to fail. `Context::PurgeFailedInputs` gives 2 equal messages 2 different images in one call.
+A law that raised confirms nothing, so the example also requires that none did.
+
+The plain law above is false on purpose for a combinator that hands every element an analysis of
+the whole span (splitting the span splits the analysis). That family, `Context::DedupeToolCalls`,
+is judged by the conditional law in `elementwise.rb` instead.
+
+### Incremental fold
+
+> A fold that consumes its input one element at a time and carries a state forward, so the state after
+> a prefix of the input is a value that can be kept, handed on, and continued.
+
+`Journal::Projection` is one, over a session's records. `.unit` is the starting state, `#step`
+answers the next projection without touching the receiver, and `.over(records)` is the `inject`.
+The same projection folds a closed file, a file followed live through `Journal::Tail`, and a
+Channel, which is why `lain watch` and a read-back of the finished file agree.
+
+The shared group `"an incremental fold"` holds each one to 3 laws:
+
+- persistence: a step leaves its receiver as it was,
+- chunked equals whole: a file cut at any byte folds as the whole lines do,
+- for a projection that declares `#combine`, the monoid homomorphism law.
+
+A monoid action (`act([], s) == s`, `act(L + R, s) == act(R, act(L, s))`) is the textbook name
+for this shape, and lain has no law group for it. Both equations hold for `inject` over any step,
+so the group could never fail.
+
+`Journal::Projection` and `EventLog::Projection` share a word and nothing else. `EventLog::Projection`
+(`lib/lain/event_log/projection.rb`) is a read-only view over a log of `Ext::Event`s: one pure
+question per method (a workspace at a turn, a causal walk), recomputed from the log each time, with
+no step and no carried state. `Journal::Projection` folds the records of a session file and exists
+to be stepped. Neither is a subclass of the other.
+
+### Round trip
+
+> A pair of functions where the second undoes the first: `parse(render(x)) == x`.
+
+The 1 law, held by `spec/support/shared_examples/round_trip.rb` as `"a round trip"`. It is what
+`Telemetry.read` owes the Journal: every claimed record, written through the Journal and read back
+by its type, comes out equal to the value it was written from, with every String-versus-Symbol
+field under the law. A writer that drops a field, or a reader that reshapes one, fails it, and a
+spec shows a lossy pair by reading the group's battery directly.
+
+### Endomorphism
+
+> A homomorphism from a mathematical object to itself.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Endomorphism))
+
+Every `Context` combinator maps a message list to a message list. Prune, Compact, CacheBreakpoints,
+Reminder, and the rest all share that shape, which lets them compose in any order and form
+the monoid above. A combinator that returned something other than a message list would break the
+composition.
+
+A compaction `Strategy` is not one. A bare `#call(messages) -> messages` would lose
+the preimage (which source turns each replacement stands for), so the seam answers a `Replacement`
+and the derivation records the preimage as `causal_parents`. See [Fiber](#fiber-preimage).
+
+### Functor
+
+> A structure-preserving map between categories: it sends objects to objects and arrows to arrows,
+> preserving identities and composition. Over 2 partial orders, that is simply a monotone map:
+> `a <= b` implies `f(a) <= f(b)`. ([Wikipedia](https://en.wikipedia.org/wiki/Functor))
+
+lain's instance is a negative, and a spec asserts it.
+Timelines are partially ordered by prefix, and compaction is a map from a timeline to a derived one,
+so the obvious guess is that the map is monotone: extend the source by a turn and the derived chain
+should extend too. It does not. `T1 <= T2` does not imply `derive(T1) <= derive(T2)`, for 2
+independent reasons:
+
+- `Event#payload` folds `render_parent`, so a retained turn re-committed under a different parent
+  chain gets a different digest.
+- The `keep_last` window slides, so a later derivation collapses a different span.
+
+`spec/lain/compaction/derivation_spec.rb` ("is not a functor on the prefix order: T1 <= T2 does not
+imply derive(T1) <= derive(T2)") and `spec/lain/compaction/source_spec.rb` ("is not a functor on the
+prefix order") each pin it, the second through the live `Compaction::Source`.
+
+Those 2 specs prevent a wrong model: "derivation is incremental", meaning that a compacting
+turn extends the previous derived chain and shares its prefix, the way the session timeline extends
+itself. A turn that collapses a new range derives fully, from the source root, and the specs go red
+if someone "fixes" it.
+
+The one exception is narrow. A turn that holds a cut and collapses nothing new may extend the last
+derived chain (`Derivation::Resume`), and only when the held seam and the source's digest where
+that chain ended both match, so the result is byte for byte the full derivation's. There is still
+no `#extend` method; the resume rides on `#derive`.
+
+Failed structural sharing and failed functoriality are the same fact stated twice. Full
+re-derivation is affordable because the derived chain is bounded by `keep_last`, not by history
+length (`spec/lain/compaction/derivation_spec.rb` pins 21 events and 22 store objects at 50, 200 and
+800 source turns alike).
+
+The negative applies to a derivation taken with no compaction cut held. A committed compaction
+records a cut (`Telemetry::CompactionCut`: a source digest, the turn the committing render stood
+on, and the replacement of each range it newly collapsed). Later derivations on a chain
+containing that commit head hold it: still from the source root (or extending the last held
+chain, under the exception above), with the ranges at or before the cut written from the record.
+
+The commit head is the render's own footing and not the prompt it was asked with, so a prompt
+withdrawn before any model saw it leaves the cut standing. Between 2 advances of a held cut
+the map is monotone, since the replacement's bytes and parent chain do not move. That is the
+point of holding one: the prefix a provider caches stops changing.
+
+Once more than one cut is held they re-collapse: one `collapse` cut supersedes them, written from
+what they render between them, so the summaries do not accumulate one per advance. Monotonicity is
+given up exactly there, for the same reason a first compaction gives it up. The derivation spec's
+"extends its derived chain as the source extends, while the cut holds and nothing new collapses" and
+the source spec's "extends the derived chain turn by turn while a committed cut holds and nothing new
+collapses" pin the positive beside the 2 negatives.
+
+### Fiber (preimage)
+
+> The fiber of a map `f` over a point `y` is `f⁻¹(y)`, the set of inputs that map to it. The fibers
+> partition the domain. ([Wikipedia](https://en.wikipedia.org/wiki/Fiber_(mathematics)))
+
+A replacement event's `causal_parents` is the fiber of the collapse: the set of source turns
+that map to it. Nothing else needs storing. There is no side table of "what became what", because the
+derived chain is the mapping, read backwards along its causal edges. That is what makes
+re-deriving an edge and comparing it possible, and it would be lost if the strategy
+seam were a bare endomorphism on message arrays.
+
+This works because `Timeline#to_a` follows `render_parent` only, so a fan-in on `causal_parents`
+never drags the subsumed turns back into the render, and `Ledger#unique_turns` walks render ancestry,
+so it never double-counts their tokens.
+
+A retained turn's causal set is stored empty: its fiber is the singleton recoverable from the event
+itself, so only the replacements' fibers need recording. Replacements' fibers plus retained turns
+still cover the source span exactly once.
+
+`Arm::Synthesis` is the older writer of the same shape, and both share its discipline: a causal
+parent the `Store` has not seen raises and is never quietly dropped, so a fiber is never silently
+incomplete.
+
+### Interval partition
+
+> A partition of a totally ordered set into contiguous blocks. Choosing one is choosing where to cut:
+> for `n` elements there are `n-1` gaps, each independently a cut or not, so the interval partitions
+> form a Boolean lattice of size `2^(n-1)` ordered by refinement.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Partition_of_an_interval))
+
+`Lain::IntervalPartition` (`lib/lain/interval_partition.rb`) is the value: a frozen
+`(owner, span, ranges)` triple that cannot be held in an invalid state. Seven conditions are checked at
+construction, and each is refused on its own terms:
+
+- a proposal that is not an `Array` at all,
+- a member that is not a `Range`,
+- endpoints that are not Integer message indices,
+- an empty range,
+- one outside the span,
+- Two out of ascending order,
+- Two that overlap.
+
+The order of the checks is deliberate. Ranges out of order would also trip the overlap check, so
+being told about an overlap when the fault is the ordering sends a reader to the wrong line. The
+refusals run against the proposal as proposed, before the ranges are normalized to their canonical
+inclusive spelling, so a message never quotes ranges its author did not write. `owner` and the
+constructor's `provenance` are diagnosis only and no part of identity: 2 partitions of one span
+into the same intervals are the same partition, whoever asked for them.
+
+What a compaction strategy answers from `#ranges` is one of these over the collapsible span, with the
+gaps between the ranges retained verbatim. The conditions are well-formedness and not style,
+because the derivation folds the ranges straight into writes (one replacement per range, retained
+turns in the gaps) with no per-index membership test to catch a bad answer.
+`spec/lain/interval_partition_spec.rb` pins each refusal on the value itself, and
+`spec/lain/compaction/strategy_spec.rb` and `spec/lain/compaction/derivation_spec.rb` keep pinning
+them from the seat where the damage was felt.
+
+The value sits at lib level and not inside `Compaction::Strategy` because it has 3 callers
+and only 1 of them is a strategy:
+
+- `Strategy::Base#ranges` validates whatever the `#propose_ranges` hook answered (`.of`), and a
+  refusal cites that hook by name.
+- `Source::Derived::PinCuts` builds the runs a set of cut points leaves (`.covering`). A pin is
+  therefore a cut point and shields nothing: the span splits into one sub-span per contiguous
+  run of unpinned messages, so the pinned turn falls in no range at all and the derivation retains
+  it, in position, between the 2 replacements either side. That is `keep_last + 3` rendered
+  messages where the old projection gave `keep_last + 2`, pinned in
+  `spec/lain/compaction/source_spec.rb`.
+- `Compaction::Strategy::Composed` asks 2 proposals for their common refinement.
+
+`Agent::ToolRunner#contiguous_runs` (`lib/lain/agent/tool_runner.rb`) builds the same shape and does
+not adopt the value. Its `chunk_while` runs over tool_use objects and their parallel-safety
+answers, not over indices, so routing it through the value would be change for symmetry's sake. The
+`chunk_while` makes well-formedness structural anyway: the runs are generated and never proposed and
+checked, so there is no bad answer for a check to catch.
+
+The refinement meet is built. It is the pairwise intersection of the 2 operands'
+ranges, and the union of their cut points would be wrong. These partitions are partial (a gap is a
+stretch no range claims), so a cut-point reading fills the gaps and proposes a collapse neither
+operand asked for. It would also cost the operation the 2 properties it exists for: meeting with the
+uncut partition would stop answering the other operand, and the result would stop refining its own
+operands. Under the refinement order `#refines?` names, the intersection is the greatest lower bound.
+
+`spec/lain/interval_partition_spec.rb` holds it to the shared semilattice group over an exhaustive
+population, all 34 partial interval partitions of `0..3`. The group samples 10 draws per law and
+would miss a hard case among 34, so the spec also checks every pair and triple.
+
+`Compaction::Strategy::Composed` (`elide | summarize`) is the consumer that made the extraction pay.
+Two strategies compose only over disjoint stretches, which is exactly "their meet is empty", and
+an overlap refuses naming both owners and the indices they both claimed
+(`spec/lain/compaction/strategy/composed_spec.rb`).
+
+### Idempotence
+
+> An operation that can be applied multiple times without changing the result beyond the first
+> application. ([Wikipedia](https://en.wikipedia.org/wiki/Idempotence))
+
+One of the 4 laws checked by `spec/support/shared_examples/meet_semilattice.rb`, alongside
+commutativity, associativity and "a meet sits below both operands". `Ext::Dag::RenderAncestry.meet(timeline, timeline)` must return the same
+timeline.
+
+### Meet-semilattice
+
+> A partially ordered set in which any 2 elements have a greatest lower bound, called their meet.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Semilattice))
+
+One Store's event DAG carries 3 orders, and Timelines are their elements.
+
+- Render ancestry (`Lain::Ext::Dag::RenderAncestry`, Rust, over the first-parent edge) is a
+  meet-semilattice: the chain is linear, so the deepest common ancestor is unique.
+- Dominance over the union of both parent edges (`Lain::Ext::Dag::Dominance`, Rust) is one too,
+  because a node's dominators are totally ordered and so the deepest common dominator is unique.
+- Causal ancestry (`Lain::Ext::Dag::CausalAncestry`, Rust) is not one. The causal DAG admits no
+  unique greatest lower bound, so `causal_meets` returns the set of maximal common ancestors, the
+  way `git merge-base` does.
+
+Only the semilattice orders obey the laws that `meet_semilattice.rb` checks, so it matters which of
+the 3 you hold. In Rust the difference is a type. The 2 semilattice orders implement
+a sealed `MeetSemilattice` trait whose impl can only be written by a macro that states the laws in
+the same expansion. Causal ancestry implements `MaximalLowerBounds` instead, so a function that
+needs a unique meet cannot be handed it.
+
+`Lain::IntervalPartition#meet` is the third instance held to the group and the only one outside the
+DAG: the common refinement of 2 partitions of one span, greatest under the refinement order
+`#refines?` names (see [interval partition](#interval-partition)). Its bottom is prose and not a
+value, as with the DAG orders. A partition carries its span, so "the empty partition" is a
+different value for every span, which makes the bottom a fact about the structure and no member of it.
+
+### Regular type
+
+> A type whose equality, copying, and assignment behave consistently with one another, so that
+> copies are indistinguishable and equal values stay equal. From Stepanov's *Elements of Programming*.
+
+`spec/support/shared_examples/regular.rb` holds lain's value objects to this. It is why
+`Timeline#==` is defined as naming the same head digest, and why `Event` values are deeply frozen.
+The mechanical statement of "no reachable mutable state" is `Ractor.shareable?(event)` staying
+`true`, and there is a spec for it.
+
+## Graphs and hashing
+
+### Directed acyclic graph (DAG)
+
+> A directed graph with no directed cycles.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Directed_acyclic_graph))
+
+The conversation history is one. A check does not enforce acyclicity; it follows from content
+addressing. An event's digest covers its parent's digest, so an event can only ever name digests
+that already existed. That is also why the union graph the dominance order is taken over needs no
+cycle check before a dominator algorithm runs on it.
+
+### Merkle tree
+
+> A tree in which every leaf is labelled with the hash of a data block, and every non-leaf node is
+> labelled with the hash of its children's labels.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Merkle_tree))
+
+`Event` plus `Store` plus `Timeline` form a Merkle DAG, the generalization of this to multiple
+parents. Comparing 2 histories is comparing 2 digests, and branches automatically share storage for
+their common prefix. This follows from the direction of the edges: each node
+points further back in history.
+
+**Note:** it is a persistent, append-only DAG and is not copy-on-write. Copy-on-write
+simulates immutability over a structure that is mutable: there is one logical
+object, and a write copies the nodes it touches (in a CoW B-tree, every node on the path up to the
+root), so existing readers keep seeing the old version.
+
+Here nothing is copied because nothing is ever overwritten:
+
+- `Store#put` is `||=` over a digest key, so storing the same event twice is a no-op.
+- `Timeline#commit` leaves the receiver alone and returns a new Timeline naming a new event whose
+  parent is the old head.
+- `Timeline#fork` is `self`, because a frozen value nobody can write to needs no copy to be safe to
+  share.
+
+Ancestors are shared by naming the same digests, and growth happens at the head with no rebuilt
+path to a root. See [persistent data structure](#persistent-data-structure-structural-sharing).
+lain would be copy-on-write in the latent HAMT binding, since a persistent map does path-copy its
+spine on update.
+
+### Content-addressable storage
+
+> Storing information so it can be retrieved based on its content rather than its name or location.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Content-addressable_storage))
+
+`Store` is an append-only map from digest to event. The digest is a derived name, so equal content
+has equal names and deduplication needs no special-casing. It also makes token accounting
+correct: aggregating over the set of unique reachable digests cannot double-count a shared prefix,
+where naive summation along a branched timeline would.
+
+### BLAKE3
+
+> A cryptographic hash function that is faster than MD5, SHA-1, SHA-2, SHA-3, and BLAKE2, and is
+> internally a Merkle tree, which is what makes it parallelizable.
+> ([BLAKE3](https://github.com/BLAKE3-team/BLAKE3))
+
+`Canonical` serializes deterministically (sorted keys, stable array order) and hashes the result
+with BLAKE3. Those bytes serve 2 invariants at once: event identity, and prompt-cache stability,
+since an unstable serialization would break the cache prefix without changing meaning.
+
+### Dominator, immediate dominator, dominator tree
+
+> Node `d` dominates node `n` if every path from the entry node to `n` passes through `d`. The
+> immediate dominator is the unique strict dominator closest to `n`, and the dominator tree links
+> each node to its immediate dominator.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Dominator_(graph_theory)))
+
+This is the structure behind `dominator_meet`, the checkpoint primitive, which lives only in Rust
+(`Lain::Ext::Dag::Dominance`, `Ext::Timeline#dominator_meet`) and is specified but not yet called
+from `lib/`. The deepest common dominator of 2 heads is the latest event every path to both must
+pass through. That makes it the latest point no in-flight branch can bypass, and therefore the safe
+place to synchronize or compact.
+
+`ext/lain/src/graph.rs` builds the union graph under a virtual root and hands it to `petgraph`'s
+`simple_fast`, which is Cooper, Harvey, and Kennedy's algorithm: immediate dominators by
+intersect-walks over a postorder numbering, after which any meet is a nearest-common-ancestor
+query on the dominator tree.
+([A Simple, Fast Dominance Algorithm](https://www.cs.tufts.edu/~nr/cs257/archive/keith-cooper/dom14.pdf))
+
+### Topological order
+
+> A linear ordering of a directed acyclic graph's vertices such that every edge points forward in the
+> ordering. ([Wikipedia](https://en.wikipedia.org/wiki/Topological_sorting))
+
+lain's load order was once one, and a dominator algorithm still is one. `lib/lain.rb` used to list
+every unit after the units it references. Zeitwerk now loads a unit from its path, so the load order
+is no longer written down, and `bin/zeitwerk-census` is what surfaces a cycle: it boots `lib/` in
+sorted, reverse sorted and shuffled order and reports what stops resolving.
+
+A dominator algorithm ranks nodes in topological order for a plain reason: every
+predecessor must be processed before its successors.
+
+## Data structures
+
+### Persistent data structure, structural sharing
+
+> A data structure that preserves its previous version when modified, so operations yield new
+> versions rather than updating in place. Versions share the unchanged parts of their representation
+> rather than copying them.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Persistent_data_structure))
+
+This is the argument for binding Rust at all. Ruby's `Hash#dup` is O(n), so a speculative branch that
+snapshots state pays a full copy, where a persistent map forks in O(1) with the untouched structure
+shared between versions. That asymptotic gap earns an FFI boundary; speed alone does not. The
+Timeline therefore shipped as pure Ruby first behind the same interface, until the Ruby
+DAG was deleted on 2026-10-20.
+
+### HAMT (hash array mapped trie)
+
+> A trie indexed by successive slices of a key's hash, giving near-constant-time lookup and insert
+> with cheap structural sharing between versions.
+> ([Ideal Hash Trees, Bagwell](https://lampwww.epfl.ch/papers/idealhashtrees.pdf))
+
+The concrete persistent map lain would bind (`im` or `rpds`) once speculative branching needs to
+snapshot the store. It is latent today: the current O(1) `fork` comes from the `(head_digest, store)`
+handle plus content addressing, not from a HAMT.
+
+### BM25, recall@k
+
+> BM25 is a probabilistic ranking function scoring a document against a query by term frequency,
+> inverse document frequency, and document length. Recall@k is the fraction of the relevant
+> documents that appear in the top k results.
+> ([The Probabilistic Relevance Framework: BM25 and Beyond](https://www.staff.city.ac.uk/~sbrp622/papers/foundations_bm25_review.pdf))
+
+`Lain::Ext::Bm25` wraps the `bm25` crate in-process, since it is pure in-memory data-structure work
+with no I/O. It is deterministic (fxhash, no parallelism feature), and equal-score ties
+break by build-batch insertion order. `qa-lain bench sweep` scores retrieval by recall@k over a gold
+corpus, and `Grader::Recall` is the grader behind it.
+
+## Program structure
+
+### Pure function
+
+> A routine where identical inputs always produce identical outputs, with no side effects.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Pure_function))
+
+`Context#render` is `(Timeline, Toolset, Workspace) -> Request` with no `Time.now`, no session ids,
+and no `Dir.pwd`. Prompt caching imposes the same constraint on the encoded request, so
+purity and cache-hit-ability are 1 requirement. Purity also makes dry replay
+possible: re-rendering a recorded timeline under a different strategy is free and byte-diffable.
+
+### Null object pattern
+
+> An object implementing the expected interface with neutral behavior, so callers need no nil checks.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Null_object_pattern))
+
+- `Sink::Null` sends bytes nowhere.
+- `Channel::Null` accepts and discards events.
+- `Supervisor::Null` is the wired-nothing default.
+- `Isolation::Null` leases the shared process environment.
+
+Each removes an `if sink` guard that would otherwise be repeated at every call site. A nil check
+repeated 3 times is an object waiting to be named.
+
+### Chain of responsibility
+
+> A behavioral pattern where each handler either processes a request or passes it to the next handler
+> in the chain. ([Wikipedia](https://en.wikipedia.org/wiki/Chain-of-responsibility_pattern))
+
+A `Middleware::Stack` is one. Each layer's `#call(env, &app)` either answers the call (a refusal
+or a masked result) or passes it on through `#downstream`.
+
+An agent's tool phase is 8 such layers built in one place (`CLI::ToolGuard`), in this order:
+
+1. scope confinement,
+2. the secret-write, secret-read, path-listing, test-layout and automatic-output guards,
+3. `Middleware::Sensitivity`, which refuses a denied path,
+4. `Middleware::Gate`, which asks about what a human may still allow.
+
+Middleware a user's `config.rb` registers for the tool phase runs outermost, ahead of all 8. A
+`handler_union` child gets a ninth, `Middleware::RefuseUnpermitted`, inserted just ahead of
+`Sensitivity`. The order is the posture, and `Middleware::Gate.closes!` refuses a stack that does not
+end with those last 2.
+
+The chain ends in an interpreter and never in another link: `Effect::Handler::Live` runs the tool and
+`Effect::Handler::Mock` answers a canned result, and neither delegates to anything. Handlers once
+composed by decoration too, and a chain of partial interpreters resolves 2 claims on one effect to
+whichever is outermost, silently. Keeping every refusal in the stack and exactly one interpreter at
+its end removes the question.
+
+### Anti-corruption layer
+
+> A translation layer between subsystems that do not share semantics, so one subsystem's model does
+> not leak into the other's design. From Evans, *Domain-Driven Design*.
+> ([Microsoft Learn](https://learn.microsoft.com/en-us/azure/architecture/patterns/anti-corruption-layer))
+
+`Lain::Request` and `Lain::Response` are provider-neutral, and every provider translates to and from
+them. Cross-provider comparison therefore compares one wire vocabulary against another with no
+leakage. It is also why `ruby_llm`'s `Message` was rejected: it joins text blocks and keeps
+only the first thinking signature, so the original content array cannot be recovered.
+
+### Lens
+
+> In functional programming, a lens is a first-class accessor into a structure: a getter and a setter
+> that compose, so reading a nested field is a value and no path is respelled at every call site.
+> ([Profunctor optics, Pickering, Gibbons and Wu](https://arxiv.org/abs/1703.10857))
+
+lain's lenses are read-only and shallow. The rule is stated in the header of
+`context/message_envelope.rb`: the string-keyed shape is the pipeline primitive, and a
+value is a lens onto it. Four classes follow the pattern.
+
+| Lens | Over | File |
+|---|---|---|
+| `Middleware::Env` | one middleware environment | `lib/lain/middleware/env.rb` |
+| `Context::MessageEnvelope` | one canonical message hash | `lib/lain/context/message_envelope.rb` |
+| `Response::ToolUse` | one `tool_use` block | `lib/lain/response/tool_use.rb` |
+| `Tool::ResultBlock` | one `tool_result` block | `lib/lain/tool/result_block.rb` |
+
+All 4 share the same core:
+
+- an idempotent `.wrap`,
+- a frozen instance,
+- named readers that are `fetch`es, so an absent key raises where it is read,
+- a delegated `#to_json`,
+- a `#to_h` that hands back the original object by identity, which makes "no committed digest moves
+  because a caller wrapped" provable.
+
+The 2 block lenses go further than the 2 whole-value ones, because they sit closer to model-supplied
+bytes:
+
+- `new` is private, so wrapping a lens cannot nest one and `#to_h` cannot answer a lens where
+  `Canonical` was promised a Hash.
+- `.wrap` refuses a non-Hash by class, where it would otherwise fail 3 different ways downstream.
+- A `KeyError` quotes a length-capped `inspect`, since a `read_file`-shaped block would otherwise put
+  a whole file into an exception message and from there into the logs.
+
+Both keep a Hash-duck `#[]`/`#fetch` ramp for callers still reading raw keys.
+
+`Tool::ResultBlock.of` is the write side, and the sole builder of a string-keyed `tool_result` block
+in `lib/`. Two correctness gates are constructor invariants there and no longer lines in a
+dispatcher: a block without a `tool_use_id` is unbuildable, and `is_error` is read off the
+`Tool::Result` and never inferred from the shape of the content. Specs:
+`spec/lain/response/tool_use_spec.rb` and `spec/lain/tool/result_block_spec.rb`, with
+`spec/lain/agent/tool_runner_spec.rb` passing unchanged on either side of the migration.
+
+The hash stays the identity-bearing form, and the reason was measured. A `Hash`
+subclass survives construction, comparison, `Canonical.dump` and `Ractor.shareable?`, and then
+`Canonical.normalize` rebuilds plain hashes, so the subclass is erased at the first commit. A `Data`
+block cannot enter the `Store` at all, because `normalize` raises `UnsupportedType` on any non-Hash.
+Both doors are shut, which makes a view the safe move.
+
+`JSON` is the one door a lens leaves open, so every lens delegates `#to_json`. Inherited, a lens
+serializes as the `to_s` of its own object header: valid JSON carrying a debug string. The NDJSON
+[Journal](#ndjson) accepts that in silence where a raise would be caught, and `Tool::ResultBlock`
+sits one hop from the Journal's `JSON.generate`.
+
+Adoption is partial. `Context::DedupeToolCalls`, `Context::PurgeFailedInputs`,
+`Grader::ToolCallIndex` and `Plan::Closure` read through the lenses. `EventLog::Projection` does not,
+and its comment says why: 2 of the 3 `tool_result` blocks in its own spec fixtures carry no
+`is_error`, because a causal walk has never needed to ask, so a `fetch` reader would raise on the
+project's own test data. The `fetch` readers are sound where `ResultBlock.of` built the
+block, and blocks a projection observes were not built here.
+
+### Object capability, attenuation
+
+> A security model where holding an unforgeable reference to an object is the authorization to use
+> it. Attenuation is deriving a weaker reference from a stronger one.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Object-capability_model))
+
+Tools are capabilities. A subagent holds what it was handed, attenuated at
+construction with `toolset.only(:read_file, :grep)`. There is no permission layer to consult, so the
+answer to "what can this subagent do" is 1 line of code you can read. `Role` packages an
+attenuation with a prompt slot and a spawn posture.
+
+Attenuation is also a law group, `spec/support/shared_examples/attenuation.rb`, which
+`spec/lain/toolset_spec.rb` includes over `#only` with `#except` as its dual. The dual rides on the one
+inclusion, because `except(x)` is `only(names - x)` and that equation is one of the laws.
+
+There are 7 laws:
+
+- idempotence,
+- composition inside the request,
+- duality,
+- identity,
+- monotonicity,
+- Two raises: chaining `except` over the same names, and attenuating outside the previous request.
+
+The partiality is the structure, so the raises are laws and no edge cases. Without them the
+operation would look total and the no-join reading would rest on nothing.
+
+Monotonicity is stated against the request and not against the receiver, and that is where the
+security value is. Bounding a result by the receiver's names certifies almost nothing, since `only`
+fetches out of the receiver's own index and can fail only by inventing a tool. The law is
+`observed(only(s, r)) ⊆ r`, probed with the dropped names as well as the kept ones.
+
+A `Toolset` that was correct in `#names`, `#each`, `#to_schema` and `#digest` and wrong in
+`#include?` and `#fetch` passed every other law while a dropped tool executed end to end.
+`#fetch` is the message `Agent::ToolRunner` resolves a call with. `spec/lain/toolset_spec.rb` holds
+that set and runs it through the real runner and `Effect::Handler::Live`, so the escape is a spec.
+
+The rendered schema's names are inside `observed`, so a dropped capability cannot come back through
+`#to_schema` either. The stronger reading of that, that attenuating then rendering equals rendering
+then filtering entry for entry, is not pinned.
+
+There is no join, and no negative example for one either, since a law group no
+operation is held to would be a claim with no consumer. A join would let a holder recover a
+capability it had dropped. Union exists only at construction, below the
+trust boundary, where `Tools::Subagent#child_union` assembles a child's set out of tools the parent
+already holds.
+
+The claim covers the model-facing surface (the rendered schema, plus the `#include?`/`#fetch` pair)
+and says nothing about the Ruby object graph:
+`only(:subagent).fetch("subagent").attenuates_from` hands back the whole un-attenuated union, and a
+spec pins both halves so neither reading drifts.
+
+The laws needed an equality, and `Toolset`'s is the canonical schema bytes: `#digest` is
+`Canonical.digest(to_schema)`, computed eagerly in `#initialize` because the object freezes itself on
+the next line. It is schema equality and not behavioral equality: 2 tools with identical schemas
+and completely different `#perform` bodies compare equal. Prompt caching already uses that equality.
+
+The guard is `instance_of?` where `ContentAddressed` and `Capability::DegradedSet` write `is_a?`.
+The divergence is on purpose (`is_a?` plus a class-embedding `hash` is an `==`/`hash` contract
+violation waiting for the first subclass), and converging the other 2 is owed.
+
+The postures break one reading: under `:handler_union` the rendered schema does not determine the
+capability set. Two children with different `only` sets render byte-identical tools blocks. That is
+the point, since sibling cache sharing is what the cache-sharing experiment measures.
+`Middleware::RefuseUnpermitted`, placed in the child's tool stack just outside the path refusal,
+refuses a disallowed call and journals a `refused` record.
+
+Under `:schema` the name is absent from the rendered tools and `Toolset#fetch` raises with nothing
+journaled. That is the only designed divergence:
+`spec/lain/tools/subagent_posture_equivalence_spec.rb` pins the 2 postures as extensionally equal
+over every allowed call.
+
+### Total function
+
+> A function defined for every input in its domain.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Partial_function))
+
+The agent is a `state_machines` machine whose states make `stop_reason` handling total: refusals,
+token exhaustion, paused turns, and context-window-exceeded are transitions and no branch
+someone might forget to write. The provider enum is non-exhaustive, so there is always an `else`.
+`docs/devs/agent-state-machine.md` is generated from the machine by a spec that fails the build on drift.
+
+## Concurrency
+
+### Fiber, thread, Ractor, GVL
+
+> A fiber is a cooperatively scheduled unit of execution, yielding control at explicit suspension
+> points. Ruby's Global VM Lock (GVL) permits only 1 thread to execute Ruby code at a time. A Ractor
+> is an isolated execution context that can run truly in parallel, at the cost of only being able to
+> share deeply immutable objects.
+
+lain's concurrency posture is `async` fibers. `Supervisor` owns the reactor task that outlives
+any single `Agent#ask`, because a `mode: :actor` subagent spawns its fiber on whatever task is
+current at launch. `Ractor.shareable?` doubles as the mechanical test that a value object has no
+reachable mutable state.
+
+Driving an async runtime from inside an FFI call while holding the GVL is the hazard that keeps
+`ext/lain` pure and synchronous. The full argument is in [`concurrency.md`](concurrency.md).
+
+## Formats and protocols
+
+### NDJSON
+
+> Newline-delimited JSON: one JSON value per line, for streaming.
+> ([Specification](https://github.com/ndjson/ndjson-spec))
+
+The `Journal` format. A stray `puts` cannot reach this stream: the `Journal` holds its own
+descriptor, opened on the session file and never on a terminal stream, so a terminal write lands
+on fd 2 (`spec/lain/journal_spec.rb` pins it).
+
+Output discipline is enforced anyway, to protect the cockpit and not the record.
+`spec/output_discipline_spec.rb` parses the AST of every file in `lib/` and fails on
+`puts`/`print`/`warn`/`$stdout`/`$stderr` outside the frontend, and the Rust
+side denies `clippy::print_stdout` and `clippy::print_stderr` at the crate root.
+
+### Write-ahead log (WAL)
+
+> Recording a change to a durable log before applying it, so a crash can be recovered from the log.
+> ([Wikipedia](https://en.wikipedia.org/wiki/Write-ahead_logging))
+
+`Provider::ResponseWal` frames each round trip's raw wire bytes between an RS-delimited header and
+terminator. If the process dies mid-turn, `SessionRecord::Salvage` re-parses exactly what the
+provider sent, so a response you already paid for is not lost. `Paths.wal_for` derives the `.wal`
+path from the session file, so writer and reader cannot name different files.
+
+### MessagePack-RPC
+
+> RPC over MessagePack, a binary serialization format that is more compact and faster to parse than
+> JSON. ([MessagePack](https://msgpack.org/))
+
+The transport for both out-of-process boundaries, which is why they look symmetric in the topology
+diagram. `Frontend::Neovim` injects its whole runtime into a bare `nvim --listen` over it, and
+`crates/lain-daemon` speaks it over a Unix socket. `Core::Client` runs 1 reader-loop fiber demuxing an
+`msgid -> Promise` map, because completions arrive out of order.
+
+### CloudEvents
+
+> A CNCF specification for describing event data in a common envelope across systems.
+> ([cloudevents.io](https://cloudevents.io/))
+
+`Lain::Ext::Event` is shaped after it, with a closed kind set of `turn spawn message snapshot`
+(`EventLog::Kinds::KINDS`). The closed set makes an unknown kind fail loudly and never be silently
+ignored.
+
+## Method
+
+### Property-based testing
+
+> Testing that a property holds across many generated inputs, rather than asserting an output for
+> specific inputs.
+
+lain states its laws as RSpec shared example groups and runs them against every implementation:
+`monoid.rb`, `meet_semilattice.rb`, `elementwise.rb`, `pure.rb`, `attenuation.rb`,
+`monoid_homomorphism.rb`, `regular.rb`, `store_laws.rb`, `canonical_laws.rb`, `memory_index_laws.rb`,
+and `provider_parity.rb`. An operation is held to a law in its own spec, which includes the group
+with a population drawn for that operation, so the claim and its proof sit where a reader of the
+operation will look.
+
+A Rust port passes the same unchanged group through its binding. Since the Ruby DAG was deleted on
+2026-10-20, a port needs no Ruby twin passing beside it: a frozen corpus of the old
+implementation's answers and a `cargo-mutants` baseline take that place
+(`docs/devs/rust-bindings.md`, rule 5). That is how a port is known to be a swap and no rewrite.
+
+`monoid_homomorphism.rb` is the first group whose negative form is asserted too. It ships 2
+readings of one law set from one object, "a monoid homomorphism" and "not a monoid homomorphism",
+because 2 transcriptions of a law drift, and a drifted negative stops recording anything while
+staying green.
+
+The negative exists for maintenance. Non-compositionality is intended for a model-backed collapse,
+and without an example saying so a later reader tidies it toward a shape it cannot have. Its failure
+message names the witness pair, so a negative that has quietly become true says which spans stopped
+distinguishing it.
+
+The same posture holds for `elementwise.rb` and `pure.rb`, whose group and battery are one object.
+A spec showing an operation is not the structure runs the battery through `AlgebraLaws.outcomes`
+(`spec/support/shared_examples/law_outcomes.rb`). Each law answers `:holds`, `:fails`, or the
+exception it raised. The negative is confirmed only by the named law answering `:fails` with nothing
+raised, because a law that raised was never evaluated and can neither confirm nor deny anything.
+
+A population is where a law can pass without testing anything. Over an empty one, "every draw
+satisfies the law" is true of nothing, and a population built with the operation under test bends
+along with any bug in it. A group therefore guards its population where it can, and a spec whose
+population sampling would miss a hard case says so and checks it exhaustively beside the group.
+
+### CRDT, causal stability
+
+> A conflict-free replicated data type merges concurrent updates without coordination. Causal
+> stability is knowing that no further events can arrive before a given point.
+> ([crdt.tech](https://crdt.tech/))
+
+`dominator_meet` (the Rust dominance order's meet, not yet called from `lib/`) inherits the standard
+causal-stability caveat: 1 quiet participant stalls the frontier. A subagent branch that has spawned
+but not folded back pins the answer at or before its spawn point however far the parent advances.
+This is documented and not fixed, and the operational mitigation is an actor's explicit stop.
+
+### Distribution, variance
+
+> A distribution describes how a metric's values are spread across repeated runs. Variance measures
+> that spread.
+
+`Compare` folds n runs into a per-metric distribution and raises on fewer than 2, with the message
+"one run is not a distribution". A single A/B cannot show whether an observed difference
+is the tactic or the noise, which is why the bench reports distributions and `qa-lain bench variance`
+exists at all. A score is reportable only when every run in the comparison was graded.

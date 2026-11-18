@@ -6,7 +6,7 @@
 # of one produces a directory whose git admin data still belongs to the
 # ORIGINAL. Every spec that drives real git then drives it against the original
 # -- and one full-suite run from such a copy deleted the copy. Nothing warns
-# you, because the pointer file looks inert; `docs/toolchain-traps.md` carries
+# you, because the pointer file looks inert; `docs/devs/toolchain-traps.md` carries
 # the account, and the copied-submodule entry beside it.
 #
 # Working IN a linked worktree is normal and correct, so the question is never
@@ -24,7 +24,7 @@ class WorktreeIdentity
   # This tree cannot be shown to own the git admin directory its `.git` names.
   class Foreign < RuntimeError; end
 
-  REMEDY = "Delete the `.git` pointer file -- see the `rm .git` trap in docs/toolchain-traps.md -- or run " \
+  REMEDY = "Delete the `.git` pointer file -- see the `rm .git` trap in docs/devs/toolchain-traps.md -- or run " \
            "the suite from a checkout of its own."
   private_constant :REMEDY
 

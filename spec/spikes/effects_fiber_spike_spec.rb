@@ -5,7 +5,7 @@
 # surface -- and what does routing a tool's own code through a Fiber cost when that
 # tool raises? The plan's open question ("Effects via Fiber vs plain handler objects")
 # claims fibers make multi-shot resumption (speculative branching, 3c-5.6) natural but
-# wreck stack traces; both halves are measured here, not assumed. See docs/concurrency.md
+# wreck stack traces; both halves are measured here, not assumed. See docs/devs/concurrency.md
 # for the recorded backtraces and the recommendation this spike produced.
 #
 # Both prototypes below are adapted into the IDENTICAL public shape
@@ -95,7 +95,7 @@ RSpec.describe "Effects via Fiber vs handler objects", :spike do
       e.backtrace
     end
 
-    it "captures a backtrace from each prototype for docs/concurrency.md" do
+    it "captures a backtrace from each prototype for docs/devs/concurrency.md" do
       handler_backtrace = capture_backtrace(handler_object_app, boom)
       fiber_backtrace = capture_backtrace(fiber_app, boom)
 

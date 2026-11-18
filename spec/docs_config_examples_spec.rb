@@ -2,14 +2,14 @@
 
 require "pathname"
 
-# The config.rb section of docs/commands.md is the only place a user learns
+# docs/users/configuration.md is the only place a user learns
 # the DSL, and Ruby in prose rots silently: a renamed verb or a refused key
 # leaves an example that no one runs. Each block is evaluated as the user's
 # file would be, against every verb the project file accepts.
-RSpec.describe "docs/commands.md Configuration (config.rb) examples" do
-  doc = Pathname.new(File.expand_path("..", __dir__)).join("docs/commands.md").read
-  section = doc[/^## Configuration \(config\.rb\)\n(.*?)(?=^## |\z)/m, 1].to_s
-  theme = section[/^### theme\n(.*?)(?=^### |\z)/m, 1].to_s
+RSpec.describe "docs/users/configuration.md examples" do
+  doc = Pathname.new(File.expand_path("..", __dir__)).join("docs/users/configuration.md").read
+  section = doc
+  theme = section[/^### theme\n(.*?)(?=^\#{2,3} |\z)/m, 1].to_s
   user_blocks = theme.scan(/^```ruby\n(.*?)^```$/m).flatten
   blocks = section.scan(/^```ruby\n(.*?)^```$/m).flatten - user_blocks
 
@@ -19,7 +19,7 @@ RSpec.describe "docs/commands.md Configuration (config.rb) examples" do
 
   blocks.each_with_index do |source, index|
     it "evaluates example #{index + 1} without raising" do
-      expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md") }.not_to raise_error
+      expect { Lain::Config::Builder.evaluate(source, path: "docs/users/configuration.md") }.not_to raise_error
     end
   end
 
@@ -29,12 +29,12 @@ RSpec.describe "docs/commands.md Configuration (config.rb) examples" do
 
   user_blocks.each_with_index do |source, index|
     it "evaluates theme example #{index + 1} as the user's config.rb" do
-      expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md", verbs: Lain::Config::Builder::USER_VERBS) }
+      expect { Lain::Config::Builder.evaluate(source, path: "docs/users/configuration.md", verbs: Lain::Config::Builder::USER_VERBS) }
         .not_to raise_error
     end
 
     it "refuses theme example #{index + 1} in a project's config.rb" do
-      expect { Lain::Config::Builder.evaluate(source, path: "docs/commands.md") }
+      expect { Lain::Config::Builder.evaluate(source, path: "docs/users/configuration.md") }
         .to raise_error(Lain::Config::Refusal, /belongs in the user's config\.rb/)
     end
   end

@@ -247,7 +247,7 @@ RSpec.describe Lain::Project::Resolver do
 
     it "refuses the shared temp directories, wherever TMPDIR happens to point" do
       # Anchored on the literal directories rather than on `Dir.mktmpdir`'s
-      # default: `TMPDIR=/dev/shm` is a setting docs/spec-suite-performance.md
+      # default: `TMPDIR=/dev/shm` is a setting docs/devs/spec-suite-performance.md
       # records having tried for suite speed, and it would otherwise silently
       # move this example's
       # subject out from under it.

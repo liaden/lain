@@ -7,12 +7,12 @@ human.
 
 The pieces, all on 1 machine except the phone:
 
-- **`lain-daemon`**, 1 per user. Every chat registers with it. It runs the phone relay as a
+- `lain-daemon`, 1 per user. Every chat registers with it. It runs the phone relay as a
   confined worker, sends the ntfy notice, supervises headless runs and runs the review poll.
-  [ARCHITECTURE.md](../ARCHITECTURE.md#lain-daemon-the-per-user-daemon) has the internals.
-- **The relay**, a TCP listener on this machine's tailscale address. The phone app (`apps/lain-remote`,
+  [docs/devs/architecture.md](../devs/architecture.md#lain-daemon-the-per-user-daemon) has the internals.
+- The relay, a TCP listener on this machine's tailscale address. The phone app (`apps/lain-remote`,
   labelled `lain` on the phone) connects to it with a paired token.
-- **ntfy**, a push service. It tells the phone that an item has waited 60 seconds. The notice carries
+- ntfy, a push service. It tells the phone that an item has waited 60 seconds. The notice carries
   a title and a link and nothing of the item.
 
 Linux and macOS both run the daemon. The relay confines itself with Landlock and refuses to start
@@ -74,16 +74,16 @@ posts to a server you own (iOS needs one outside call, see step 5). These are th
    WantedBy=default.target
    ```
 
-   `Restart=on-failure` matters: at login `tailscale0` may not have its address yet, and the first
+   `Restart=on-failure` matters. At login `tailscale0` may not have its address yet, and the first
    start then fails. Enable it with `systemctl --user enable --now ntfy-local.service`.
 
 5. In the ntfy app on the phone, add your server's address as a server and subscribe to a topic of
    your choosing.
 
-   - **Android:** turn on the app's instant delivery option when you subscribe to a topic on another
+   - Android: turn on the app's instant delivery option when you subscribe to a topic on another
      server. It keeps a connection to your server open, so notices arrive at once and nothing
      leaves the tailnet.
-   - **iOS:** the app cannot hold that connection, so a self-hosted server needs
+   - iOS: the app cannot hold that connection, so a self-hosted server needs
      `upstream-base-url: "https://ntfy.sh"` in `server.yml` to wake it. ntfy.sh then receives a poll
      request for each message: no title and no body, but the timing and an id derived from the
      topic. This is the one thing on the iOS path that leaves your tailnet.
@@ -193,7 +193,7 @@ confines it. It also needs `--non-interactive`. A run the daemon starts outlives
 Between the phone and the relay, over plain TCP that tailscale encrypts:
 
 - the device token, in the phone's first message, which the relay checks against its stored digest;
-- each waiting item, **masked**. A parked call shows the tool, its input, the working directory,
+- each waiting item, masked. A parked call shows the tool, its input, the working directory,
   why it was parked and the requester. A question shows its text and options. A gate question shows
   its epic, stage, issues and question. Each item also carries its session id and the project's root
   path. Values the board knows are secrets, and every region the secret detector finds, are replaced
@@ -234,7 +234,7 @@ needs a confining sandbox.
 
 ### A phone approval runs traced
 
-A bash call you approve from the phone runs **traced**, exactly like a call you approve at the
+A bash call you approve from the phone runs traced, exactly like a call you approve at the
 terminal: outside the confining sandbox, under the tracer. This is a ruling (2026-11-17), and it is
 the one place a headless run's bash leaves its sandbox. Still refused under `--human remote`: a traced
 call no human approved, the `none` profile, and any confined call when the sandbox layer is missing at
@@ -245,7 +245,7 @@ call time.
 The daemon starts with a short allowlist: `PATH`, `HOME`, `USER`, `LOGNAME`, `LANG`, `LC_ALL`, `TZ`,
 `TMPDIR`, `GEM_HOME`, `GEM_PATH`, `SSL_CERT_FILE`, `SSL_CERT_DIR`, the proxy variables and the 4 XDG
 homes. Runs it starts get more: the `LAIN_*` names a launch needs, `SHELL`, `OLLAMA_HOST`, `LC_*`,
-and **`ANTHROPIC_API_KEY`**. That is the only secret-shaped name passed. It goes from the lain that
+and `ANTHROPIC_API_KEY`. That is the only secret-shaped name passed. It goes from the lain that
 started the daemon, to the daemon, to its runs, and never to the relay worker, which starts with an
 empty environment. A daemon started by a lain with no key has none, and
 `lain daemon ensure` from a lain that has one replaces it when no chat or run is live.
@@ -265,36 +265,36 @@ the steps above.
 
 These are known and have no fix yet.
 
-- **A tripwire for the relay.** Nothing refuses a traced call that writes the devices file under
+- A tripwire for the relay. Nothing refuses a traced call that writes the devices file under
   `$XDG_STATE_HOME/lain/remote/` or connects to the relay port. Because a phone approval runs traced,
   a prompt-injected run could ask you to approve a call that pairs itself. A rule is planned.
-- **The `grant` profile can reach ports 80 and 443.** A relay configured on a granted port is not
+- The `grant` profile can reach ports 80 and 443. A relay configured on a granted port is not
   refused.
-- **The relay worker is not restarted** after it exits. `lain daemon status` then shows
+- The relay worker is not restarted after it exits. `lain daemon status` then shows
   `relay: unavailable` without the reason, which is in the daemon's trace under
   `$XDG_RUNTIME_DIR/lain/daemon/daemon.trace`. A seccomp deny of unix `socket()` in the worker after
   setup would close the one thing Landlock cannot, a connect to a pathname socket.
-- **A relay that dies mid-run** leaves that run's parked calls waiting with no surface. They stay
+- A relay that dies mid-run leaves that run's parked calls waiting with no surface. They stay
   refused until the relay is back.
-- **Notice links on Android and Linux.** The `lain-remote://` scheme is registered on iOS and macOS
+- Notice links on Android and Linux. The `lain-remote://` scheme is registered on iOS and macOS
   only once the bundle declares it, and not at all on Android or Linux yet. The notice arrives and the
   app opens from it by hand.
-- **A stale link after a daemon restart.** Phone ids are minted per daemon process, and a restart mints
+- A stale link after a daemon restart. Phone ids are minted per daemon process, and a restart mints
   new ones, so a link in an old notice can open a different item, and an item still waiting after a
   restart is announced again.
-- **`ask_human` under `--human remote`** still starts the terminal answer loop, which prints to a
+- `ask_human` under `--human remote` still starts the terminal answer loop, which prints to a
   headless terminal.
-- **Ended runs and their logs are not pruned.** The review poll alone adds 288 a day under
+- Ended runs and their logs are not pruned. The review poll alone adds 288 a day under
   `$XDG_STATE_HOME/lain/daemon/runs/`.
-- **`lain daemon restart` checks for live runs, then stops,** from the client, so a run that starts
+- `lain daemon restart` checks for live runs, then stops, from the client, so a run that starts
   in between is not seen.
-- **`herdr`.** The daemon passes no `HERDR_SOCKET_PATH` or `HERDR_BIN_PATH` to the sync command, a
+- `herdr`. The daemon passes no `HERDR_SOCKET_PATH` or `HERDR_BIN_PATH` to the sync command, a
   daemon that dies leaves its runs token stale in herdr, and your herdr row template must name
   `$runs`.
-- **No end-to-end example yet** of a phone-approved bash call running traced. It is proven in 2 halves.
-- **An inherited descriptor.** A `lain-daemon` started by anything other than `Daemon.ensure` can pass an
+- No end-to-end example yet of a phone-approved bash call running traced. It is proven in 2 halves.
+- An inherited descriptor. A `lain-daemon` started by anything other than `Daemon.ensure` can pass an
   open descriptor of its own to the spawner and to every run.
-- **Keyless and keyed callers swap an idle daemon.** The launch digest includes whether
+- Keyless and keyed callers swap an idle daemon. The launch digest includes whether
   `ANTHROPIC_API_KEY` is set, so an idle daemon is replaced each time a lain without the key and a lain
   with it alternate, and each swap restarts the relay.
-- **The mac.** Its launchd steps are by hand, and the relay does not run there.
+- The mac. Its launchd steps are by hand, and the relay does not run there.

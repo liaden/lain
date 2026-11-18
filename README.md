@@ -1,965 +1,194 @@
 # Lain
 
-Lain is an agent harness built for experiments on LLM orchestration, tool design, and the agent
-life-cycle. It runs its own agentic loop, and the parts of that loop you would normally hard-code
-sit behind seams instead.
+Lain is a coding agent for the terminal. It runs its own agent loop against Claude or Ollama, shows
+its work in a tmux and Neovim cockpit, and asks before it runs anything risky. You can answer those
+questions at the prompt, in the editor, or from your phone.
 
-**Swappable.** An orchestration topology, a provider, a context strategy, an isolation backend, an
-oracle, and a grader are each one interface with several shipped implementations. Substituting one
-is a constructor argument.
+Every session is recorded, so you can rewind it, fork it, undo its file changes and export it.
 
-**Observable.** Every turn, tool call, degradation, and dollar lands in an
-[NDJSON](docs/GLOSSARY.md#ndjson) journal on its own fd. Both frontends and the bench are
-projections of that one stream, and the agent knows about none of them.
+## Requirements
 
-**Comparable.** `Compare` folds n runs into a per-metric
-[distribution](docs/GLOSSARY.md#distribution-variance) and refuses to run on fewer than 2, because
-one run of each tells you nothing about whether a difference is the tactic or the variance.
+- Linux or macOS. CI runs on Linux only, and the phone relay and confined `bash` calls need Linux.
+- Ruby 4.0 or newer.
+- A Rust toolchain and clang, to build the native extension.
+- git 2.44 or newer. Older git ignores the `GIT_NO_LAZY_FETCH` that lain's own git runs under.
+- `ANTHROPIC_API_KEY` for Claude, or a running [Ollama](docs/users/providers/ollama.md).
 
-## Scope
+Optional, and lain runs without any of them:
 
-Lain is built to make the *strategies behind* a task into first-class objects you can substitute,
-journal, replay, and diff. If the agent itself is only mediocre, but you can
-demonstrate which tool description raised the correct-call rate, or which context strategy
-survived a provider swap, the project has done its job.
+| Tool | What it adds |
+|---|---|
+| tmux | `lain up`, the status HUD, `/fork` into a sibling window, `/btw` popups, subagent viewer windows. |
+| Neovim 0.11+ | The editor pane: live `lain://` buffers, approvals and reviews in the editor. |
+| Ollama | A free local model, and local summaries for compaction on any provider. |
+| bubblewrap | Confined `bash` calls on Linux. The sandbox is built from what the machine offers. |
+| herdr | lain reports each chat's state to [herdr](#herdr) and opens forks as herdr tabs. |
+| tailscale and ntfy | [Phone approvals](#phone-approvals). |
 
-Feature parity with Claude Code is not a goal. Lain also skips both provider SDKs' built-in
-agentic loops (`tool_runner`, `Chat#complete`). Those loops work fine, and they own the loop. The
-loop is the object of study, so Lain owns its own and every turn passes through seams it can
-measure.
+## Installation
 
-Ruby development is the target domain because I can already judge correctness in it by eye, which
-makes the mechanical numbers beside that judgement trustworthy. The intent is that the intuition
-transfers to a domain where correctness cannot be eyeballed: LLM tool-call systems that synthesize
-medical literature.
-
-## Setup
-
-Required:
-
-- Ruby `>= 3.2.0`.
-- git `>= 2.44`. Older git ignores the `GIT_NO_LAZY_FETCH` that lain's own git runs under, so a
-  partial clone's lazy fetch could still run the program its remote config names.
-- `ANTHROPIC_API_KEY` for anything that talks to the Claude API.
+Lain installs from a checkout.
 
 ```bash
 git clone https://github.com/joeljohnson/lain && cd lain
-bin/setup                 # bundle install
-bundle exec rake compile  # builds ext/lain into lib/lain/lain.so
+bin/setup                        # bundle install
+bundle exec rake compile         # builds ext/lain into lib/lain/lain.so
+bundle exec rake daemon:build    # optional: the per-user daemon
+bin/install-shim                 # writes a `lain` launcher to ~/.local/bin
 export ANTHROPIC_API_KEY=sk-...
-exe/lain                  # or `lain` once installed
 ```
 
-Everything below is optional, and lain runs without any of it.
+`bin/install-shim` records the Ruby on your `PATH` when you run it, so run it from a shell where
+`ruby` is the one you built with. It writes to `~/.local/bin`, which must be on your `PATH`; pass
+another directory as its argument to write there. Without the shim, run `exe/lain` from the
+checkout.
 
-| Optional | What you get without it | What it adds |
-|---|---|---|
-| **tmux** | A plain TTY chat in your terminal. | `lain up`, the status HUD, `/fork` into a sibling window, `/btw` popups, `--windows` subagent viewers. |
-| **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
-| **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
-| **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
-| **`rake daemon:build`** | No daemon: no phone approvals, no headless runs, no review poll. | `crates/lain-daemon`, the per-user daemon (see [The daemon and phone approvals](#the-daemon-and-phone-approvals)), and the `:core` and `:daemon` specs that drive it. |
+Without `rake daemon:build` there is no daemon, so no phone approvals and no headless runs.
 
-Without an API key the offline paths still run: dry replay, the sweeps, `qa-lain friction`,
-`qa-lain bench variance`, and local Ollama.
-
-## Usage
-
-`lain` is one Ruby process that owns the loop, and it runs tmux-native. `lain up` creates (or
-reattaches to) a tmux session with a `chat` window and a session-scoped status HUD, and lays that
-window out as three panes: an `nvim --listen` pane beside a `chat` transcript, with an **input
-pane** under the transcript. All of them are pinned to one cwd and one deterministic socket, so
-the editor and the chat that attaches to it can never diverge.
+## Quick start
 
 ```bash
-lain up                       # the cockpit: editor | transcript over input pane
-lain up ~/dev/other-project   # ...in that one instead
-lain up --no-nvim             # no editor pane; still a transcript over an input pane
-lain                          # just the chat, no tmux
+lain up                       # the cockpit: editor, transcript and input pane
+lain up ~/dev/other-project   # the same, in that project
+lain up --no-nvim             # no editor pane
+lain                          # only the chat, no tmux
+lain up -- --provider ollama  # flags after -- go to the chat
 ```
 
-You drive a conversation from the `you>` prompt. Prose, a `@role/skill` line, or a `/command` all
-go in there.
+`lain up` needs tmux, and plain `lain` does not. Type at the `you>` prompt. Prose goes to the model, `/command` runs a session command without a
+model turn, and `@role/skill` starts a skill. `/help` lists both.
 
-### Session commands
+## Commands
 
-Typed at `you>`. Each dispatches lib-side, ahead of the skill middleware, with zero model turns.
+A few session commands, typed at `you>`:
 
-* [/help](docs/commands.md#help): list the registered commands and loaded skills.
-* [/status](docs/commands.md#status): cache warmth, fleet size, inbox count.
-* [/sessions](docs/commands.md#sessions): recorded sessions, newest first.
-* [/model](docs/commands.md#model): show the model in force, or switch the next turn's model.
-* [/mode](docs/commands.md#mode): show or move the mode — scope (`checkout`/`plan`) × approval (`ask`/`auto`/`bypass`; `auto`, the default, has a model judge the call first), plus layers.
-* [/stop](docs/commands.md#stop): stop the ask in flight and keep the session.
-* [/rewind](docs/commands.md#rewind): move back N turns, or to a recorded digest.
-* [/undo](docs/commands.md#undo): put back the files the last file-changing turn wrote; `/undo skip` drops that turn instead.
-* [/implement-epic](docs/commands.md#implement-epic): work the mounted epic's approved issues to its working branch.
-* [/fork](docs/commands.md#fork): branch this session at its head into a new tmux window.
-* [/btw](docs/commands.md#btw): ask an ephemeral side-question in a popup, journalled then reaped.
-* [/keep](docs/commands.md#keep): promote the ephemeral `--btw` session into a durable one.
-* [/inbox](docs/commands.md#inbox): list and answer pending human questions.
-* [/approve](docs/commands.md#approve): answer each pending tool approval.
-* [/goal](docs/commands.md#goal): drive the agent toward a standing goal until it signals done.
-* [/ruby](docs/commands.md#ruby): inspect live state, as a console, an expression, or a file.
-* [/meta](docs/commands.md#meta): generate a customized harness script, then run it by slug.
-* [/quit](docs/commands.md#quit): end the session.
-
-### Shell commands
-
-Offline and deterministic unless noted.
-
-* [lain chat](docs/commands.md#lain-chat): start an interactive session. The default subcommand.
-* [lain up](docs/commands.md#lain-up): create or reattach to the tmux cockpit.
-* [lain sessions](docs/commands.md#lain-sessions): this project's recorded sessions, newest first.
-* [lain watch](docs/commands.md#lain-watch): read-only live tail of one actor's lineage.
-* [qa-lain friction](docs/commands.md#qa-lain-friction): knob guidance from a session's friction signals.
-* [lain trust](docs/commands.md#lain-trust): let lain run this project's `.lain/*.rb`, once you have read them.
-* [lain consolidate](docs/commands.md#lain-consolidate): distill completed subagent lineages into memory.
-* [lain improve](docs/commands.md#lain-improve): record what would make lain itself better.
-* [lain improvements](docs/commands.md#lain-improvements): the accumulated cross-project dogfood queue.
-* [lain epic](docs/commands.md#lain-epic): the epic tier: artifact home, issue graph, sign-off queue, landing and `show` to read a document.
-* [lain land](docs/commands.md#lain-land): queue a commit for the merge coordinator, wait on it, see who is draining.
-* [lain worktrees gc](docs/commands.md#lain-worktrees-gc): reap worker checkouts and anchors whose work is safe elsewhere.
-* [qa-lain bench variance](docs/commands.md#qa-lain-bench-variance): determinism and divergence across recorded runs.
-* [qa-lain bench sweep](docs/commands.md#qa-lain-bench-sweep): 5-arm retrieval eval, [recall@k](docs/GLOSSARY.md#bm25-recallk) over the gold corpus.
-* [qa-lain bench plan-sweep](docs/commands.md#qa-lain-bench-plan-sweep): shape x density sweep over a fixture plan.
-* [qa-lain bench record](docs/commands.md#qa-lain-bench-record): N live runs of a task file. Spends real API money.
-
-### The turn lifecycle
-
-One turn, end to end. `Context#render` is pure, the Provider is a single round trip, and the loop
-lives in `Agent`.
-
-```mermaid
-flowchart TB
-  IN(["you&gt; input"]) --> DISP{"slash command<br/>or @role/skill?"}
-  DISP -->|"/command · 0 model turns"| CMD["Command::Registry<br/>lib-side dispatch"] --> IN
-  DISP -->|prose| TL
-
-  TL["Timeline.commit<br/>content-addressed"] --> CTX
-  WS["Workspace<br/><b>sent, not stored</b>"] --> CTX
-  TS["Toolset<br/>capabilities, attenuated"] --> CTX
-  CTX["Context#render → Request<br/><b>pure</b> · prune · compact · cache breakpoints"] --> MW
-  MW["model middleware<br/>retry · cost · cache instrumentation"] --> P
-  P["Provider#complete → Response<br/>one round trip, no loop, full block list"] --> SR{"stop_reason"}
-  P -->|"text · thinking · tool_use"| TL
-
-  SR -->|"end_turn · stop_sequence"| DONE([done])
-  SR -->|"max_tokens · refusal · unknown · malformed"| FAIL([failed])
-  SR -->|tool_use| GATE{"tier-3?"}
-  GATE -->|yes| APR["Approval::Parked::Queue<br/>you&gt; · nvim"] --> EXEC
-  GATE -->|no| EXEC["ToolRunner → tool middleware → Effect::Handler<br/>parallel_safe? tools gather, everything else is a barrier"]
-  EXEC -->|"ONE user turn, all tool_results"| TL
-  EXEC --> SUM["Oracle::Eager<br/>local summary on its own fiber, off the critical path"]
-
-  TL -.-> J
-  P -.-> J
-  EXEC -.->|every turn, tool call, and dollar| J[("Journal · NDJSON<br/>own fd, fsync'd")]
-  J -.->|projection| UI["TTY · Neovim · StatusFeed · bench"]
-```
-
-Tool results come back as **one** user turn carrying every `tool_result`, then the loop returns to
-`Context#render`. The agent is an explicit `state_machines` machine, so every `stop_reason` is a
-transition rather than a branch someone might forget to write. The full state diagram is in
-[`docs/agent-state-machine.md`](docs/agent-state-machine.md).
-
-### Compaction and summarizer tiers
-
-Compaction is on by default in `lain chat`. It runs in three tiers, and only one of them costs a
-model call. Each tier only sees what the one before it declined.
-
-**Tier 0, yours, free.** Summarizers you declare in `.lain/summarizers.rb` — pure Ruby, no provider,
-no IO, so they cost neither tokens nor latency. Each one answers two questions about **one** tool
-result: `suitable?` and `compact`. They live in one object because "can I compress this" and "how"
-are the same knowledge.
-
-```ruby
-# .lain/summarizers.rb
-summarizer "rspec" do
-  def suitable?(result) = result.tool_name == "bash" && result.text.include?("examples,")
-
-  def compact(result) = result.text.lines.grep(/examples,|^rspec /).join
-end
-```
-
-A `Summarizer::Result` carries `tool_name` and `text`, because some kinds are distinguishable by
-tool and some only by content (a coverage report and a build log are both `bash`). Declaration order
-decides between two suitable summarizers — the first declared wins, which is a lever you can see in
-your own file. A typo'd verb, a duplicate name, and a bodyless declaration are each refused by name
-at load. A summarizer that raises falls through to tier 1 rather than losing the summary — including
-the half-written states, a `NotImplementedError` from a method you have not got to yet or a
-`SystemStackError` from a predicate that calls itself — and one returning blank is refused loudly. An
-absent file is an empty catalog, never an error.
-
-The one failure nothing contains is a predicate that never **returns**: your `suitable?` runs on the
-fiber that observed the tool result, so a loop there blocks that turn, with no timeout, once per tool
-result. Keep predicates finite and cheap — they are consulted for *every* result, not just the large
-ones. `Lain::Summarizer`'s own docstring has the mechanism.
-
-`/meta summarizer <prompt>` will draft one for you into `.lain/summarizers/` for review. Nothing
-loads that directory — copy the declaration into `.lain/summarizers.rb` yourself once you have read
-it.
-
-**Tier 1, eager and model-backed.** When a tool result lands and no tier-0 summarizer claimed it,
-`Oracle::Eager` fires a summary on its own `Async` task and holds the answer against the result's
-content address. It fires once per distinct result, off the turn's critical path — but it only
-**asks a model** above 4 KiB, because that gate is a cost policy and tier 0 has no cost to gate. A
-smaller unclaimed result is simply left unsummarized, and renders as the same attested elision a
-summary still in flight does. The
-summarizer is a **tier chosen independently of the chat**: `--summarizer-provider`,
-`--summarizer-model`, `--summarizer-max-tokens`. It follows the chat's provider by default;
-`--summarizer-provider ollama` keeps a local Ollama `qwen3:4b`, because
-paying frontier-model tokens to compress a tool result usually costs more than resending the result.
-When it is a paid tier, its spend lands on the record as a `Telemetry::OracleAnswer` carrying the
-model and real usage — a summarizer that spends silently would make the whole ledger a fiction.
-
-**Tier 2, the compacting turn, pure.** When the head grows past the threshold, the run materializes
-a **derived context timeline** and collapses the head's span into it, reading the summaries the
-tiers above already produced out of a frozen `Compaction::SummarySnapshot`. No model call, no
-network, deterministic bytes. A result with no held summary renders as an honest elision line. What
-that derived lineage *is* — and why it is a second timeline rather than a rewritten array — is the
-next section.
-
-To turn the local tier 1 on:
-
-```bash
-ollama serve            # http://localhost:11434
-ollama pull qwen3:4b    # Provider::Ollama::DEFAULT_MODEL
-```
-
-With Ollama absent or the model unpulled, the fire fails inside its task boundary and nothing
-raises. You get elision lines instead of summaries, which is a less useful compaction rather than
-an error. `--api-base` moves whichever of the chat and the summarizer is on Ollama.
-
-**Pinned history.** [`/pin`](docs/commands.md#pin) marks a turn the compactor may not touch, and
-`/goal`'s objective is pinned automatically once it enters the timeline. A pin is a turn digest
-recorded on the `Session`, journalled, and replayed on `--resume`. Both halves of the pipeline honor
-the same pin set: the candidate head excludes pinned turns, and the derivation treats a pin as a
-**cut point** rather than a shield, so the pinned turn is retained verbatim *in position*, between
-the collapses of what preceded and what followed it. Pinning enough can leave a compaction with
-nothing worth removing, which the journal records as a decision that would not shrink rather than a
-compaction that did nothing.
-
-Compaction prices every decision from its own `PriceBook`, which degrades to zero for a model with
-no list price rather than crashing a local chat mid-conversation. `Telemetry::Compaction` records
-the model those figures are quoted in, so a zero beside `qwen3:4b` reads as the fallback it is — and
-when a run switches models mid-session, the cost fields are **absent** rather than repriced, since a
-figure quoted against a model that did not run is worse than no figure. The record still names the
-model the compaction actually ran under.
-
-Knobs: `--no-compact`, `--compact-bytes` (default 262144, roughly 64k tokens), `--compact-cap`
-(1048576, forces a compaction even while the cache is warm), `--compact-keep` (20 trailing messages
-left verbatim), and `--compact-strategy` (below — it swaps the collapse policy, not compaction
-itself). The window that triggers a compaction follows the live model, re-derived each turn, so
-switching to a larger-window model mid-session widens the runway instead of leaving the old ceiling
-in force. `qa-lain friction SESSION` reads a finished journal back and tells you which of these the run
-was fighting.
-
-### Two lineages, one render path
-
-Compaction is not a rewrite of the message array. Every compacting turn of every `lain chat` —
-flagged or not — builds a **derived context timeline**: a second lineage of `Event`s, materialized in
-the session's own content-addressed `Store`, whose replacement events name the source turns they
-subsume via `causal_parents`. That derived chain's projection is substituted as the rendered
-messages, and it is what the provider sees.
-
-The session timeline stays the **lossless record**. Its head advances only by committed turns; the
-derivation never touches it. `Timeline#to_a` follows `render_parent` only, so a replacement can name
-every digest it subsumes without the render walking the turns it replaced — and `Ledger` aggregates
-over render ancestry, so the causal fan-in double-counts no tokens.
-
-That turns compaction from a behavior into a **comparable artifact**: it has a content address, it is
-diffable, and one `context_derived` journal edge per derivation carries `source_head`, `derived_head`,
-`strategy`, `spans`, `cut`, `moved` and `keep_last` — enough for `Compaction::DerivationAudit` to
-**re-derive** the chain rather than diff a copy of it.
-
-Which edges are re-derivable is narrower than that sounds, and worth knowing before you reach for the
-audit. It re-derives an **unpinned `--compact-strategy elide`** run: deterministic, and the edge names
-a strategy you can hand it a builder for. It does **not** re-derive the un-flagged default — that edge
-names `Source::Derived::Held`, a `private_constant` whose collapse reads a per-turn `SummarySnapshot`
-that is never journalled, so nothing shipped can build it. And `ContextDerived` carries no pin set, so
-a **pinned** run re-derives different ranges and the audit reports drift that nobody introduced. The
-audit is also a library reader today, with no `lain` subcommand in front of it.
-
-**What `--compact-strategy` selects is which policy collapses a span, not whether the derivation
-runs.** Unset, the policy is the run's own eager tool-result tier: the tier-1 summaries, read back
-through the per-turn `SummarySnapshot`. With nothing pinned it emits the same `user` message, with the
-same text, that `Context::Compact` produced through that same snapshot — moving the render onto the
-derived chain did not retire the tool-result summarizer ladder. Naming a strategy substitutes an
-operator-chosen policy instead. The eager tier is the **control arm**; the flag is the arm under
-test. The flag deliberately carries **no Thor default** — a default would materialize the key, so the
-reader could never see that no strategy was named, and the control arm would be selectable by nobody.
-
-`Context::Compact` is still in the tree and is now a **bench-only combinator**: nothing on the chat
-render path composes it. Its two remaining production callers are `Bench::PlanSweep::Driver` and
-`Plan::CompactRewrite`, and those are one caller wearing two names — the rewrite is built only by
-`Plan::LinearRewrite`, which is built only by that same driver. It is an arm to compare against, not
-the shipped path.
-
-**Pins behave differently on the two**, and the difference is worth knowing before you pin across a
-tool call:
-
-| | `Context::Compact` (bench arm) | derived chain (every chat) |
-|---|---|---|
-| pinned `tool_use` whose answer is collapsed | **ships the 400** — the projection strands a `tool_result`, characterized in `spec/lain/context/compact_spec.rb` as a known defect | **refuses** — validates its own projection through `Context::Conversation`, raises `Derivation::Invalid`, renders the full uncompacted history, journals `derivation_refused`. The chain is judged from the pending writes, so a refusal touches neither the provider nor the `Store`. |
-| placement of a pinned turn | one summary, with the pin kept in position around it | pins are **cut points** — one range per contiguous unpinned run, so the pin sits *between* two replacements: `keep_last + 3` messages where `Compact` gave `keep_last + 2` |
-
-Refusing is **not the repair**. A session pinned across a tool pair stops compacting for as long as
-the pin stands, which is exactly what the `consecutive` streak on `derivation_refused` is there to
-make visible. The real repair is a decision about what a pin *means* — drag the counterpart along, or
-drop it with the pin — and that is not a compaction-path fix.
-
-**What a turn costs.** A derivation writes ~22 store objects, constant in history length: the derived
-chain is bounded by `keep_last` plus the number of ranges, never by how long the session is. Time is
-O(n) — it walks the chain and projects every message before it can find the span — but with a much
-smaller constant than the projection it replaced, because it never `Canonical.dump`s the whole
-history. Measured on this branch at `keep_last: 20`, it crosses under that projection somewhere
-between 100 and 150 messages (1.6 ms vs 1.0 ms at 100; 2.5 ms vs 10.2 ms at 800), with 22 objects at
-every size. A **deferring** turn — no signal, bad timing, an empty head — writes zero store objects,
-journals no edge, asks the strategy nothing, and returns the base `Context` itself. Two defers are not
-free, and both are reached only after the strategy has been asked: a `refused` decision, where the
-derivation has already run and journalled its edge by the time the rewrite is measured and declined,
-and a **refusal**, which under `--compact-strategy summarizing` has already paid a live model call for
-a summary it then throws away.
-
-**The failure modes you will actually meet.**
-
-| On the record | What it means |
+| Command | Does |
 |---|---|
-| `derivation_refused` | This turn rendered **uncompacted**. One is an awkward history. |
-| a rising `consecutive` on it | The session has **stopped compacting**. A deterministic strategy over a stable history refuses identically every turn, so the streak is the only thing that tells one awkward turn from forty. Under `--compact-strategy summarizing` it is also a **running bill**: the memo is keyed by span content address, so a session that keeps chatting asks for — and discards — a fresh summary every turn. Watch the `oracle_answer` records beside it. |
-| `compaction_decision` with `refused: "inflates"` | The rewrite was declined because it would not have made the prompt strictly smaller. A byte-neutral rewrite is declined too — it buys nothing and still breaks the cache prefix. |
-| `compaction_decision` with `refused: "below_floor"` or `"cache_break_unpaid"` | The rewrite would have saved under 10% of its own size, or, on a warm cache with a live plan, less than the cache break costs over the plan's remaining requests. An approaching window or the hard cap skips both. |
-| a `stderr` line attributed to `lain:compaction` | A `--compact-strategy summarizing` tier was unreachable, so that span was left **uncollapsed**. It costs the span, never the turn. The id is namespaced so a journal or nvim reader can filter it from real tool output. |
+| `/mode` | Show or change what the agent may do without asking. |
+| `/approve`, `/deny` | Answer a pending tool call. |
+| `/stop` | Stop the running ask and keep the session. |
+| `/rewind`, `/undo` | Move back N turns, or put back the files the last turn changed. |
+| `/fork`, `/btw` | Branch the session into a new window, or ask a side question in a popup. |
+| `/model` | Show or switch the model. |
+| `/review`, `/survey` | Review a changeset or read a codebase with the agent, in the editor. |
 
-**What is deliberately not here.** Derivation is **non-recursive**: every chain is a function of the
-session timeline alone, never of a previous derived chain, which is what keeps the derived head a pure
-content address of (source head, strategy). There is no incremental extension and no `Derivation#extend`
-— the derivation is *not* a functor on the prefix order (`T1 <= T2` does not imply
-`derive(T1) <= derive(T2)`, because `Event#payload` folds `render_parent` and the `keep_last` window
-slides), and a characterization spec fails if someone "fixes" that. Hierarchical derivation, the
-deterministic plan-step collapse, exchange-level grouping, and retiring `Context::Compact` are all
-designed and **not built**.
+A few shell commands:
 
-### Slow middleware blocks the reactor
+| Command | Does |
+|---|---|
+| `lain up` | Create or reattach to the cockpit. |
+| `lain sessions` | List this project's recorded sessions. |
+| `lain export SESSION` | Write a session as 1 HTML page. |
+| `lain trust` | Let lain run this project's `.lain/*.rb`, after you have read them. |
+| `lain daemon status` | Show the per-user daemon, its sessions and its runs. |
+| `lain queue` | List what to review next. |
 
-The whole loop runs on one `async` reactor, on one OS thread. Middleware runs inside the fiber
-doing the work. A fiber yields only at an IO boundary the scheduler controls, which is what makes
-the parallel-tool fan-out safe without a single lock. It is also the constraint on what you may put
-in a middleware.
+[docs/users/commands.md](docs/users/commands.md) documents every command and flag. `lain help
+<command>` prints the same flags.
 
-A middleware that does not yield stalls **everything**: sibling tool fibers, the compaction
-summarizer, and the fiber draining the `Channel` to the frontend. The symptom is a frozen HUD, a
-`lain watch` window that stops updating, and a tool fan-out that quietly serializes. Three things
-cause it:
+## Approvals
 
-- a tight CPU loop (a big regex over a whole file, a JSON round trip of a huge result),
-- an FFI or native call that blocks without the fiber scheduler's hooks,
-- blocking IO not routed through a scheduler-aware call.
+A mode is a scope and an approval level, and `/mode` shows or changes both.
 
-Shelling out is not one of them. Ruby's fiber scheduler hooks `Lain::Shell::Out`'s `IO.select` and
-`Process.waitpid2`, measured under a 10MB stdout flood, so `bash` runs as an ordinary task.
+Scope says where a named write or command may land: `checkout` (the project) or `plan` (a spike
+checkout apart from it). Approval says who answers a gated call. `ask` asks you. `auto`, the
+default, asks a model judge first and asks you only when the judge cannot settle it. `bypass`
+approves what your rules allow.
 
-**No middleware here can interrupt what runs inside it.** Interrupting arbitrary Ruby would need a
-watchdog thread, which the no-threads constraint rules out, so a middleware wanting to bound how
-long a downstream takes can only publish a value into `env` (a monotonic deadline, say) for a
-cooperative downstream to honor, and check afterward whether it was -- bounding reporting, never
-execution. A middleware that hangs is not stopped by any of this, and `/quit` or Ctrl-C cannot stop
-it either, since cancellation lands only at the next scheduler yield point.
+Rules live in the `approval` verb of `.lain/config.rb`.
+[docs/users/commands.md](docs/users/commands.md#mode) has the details.
 
-So: keep middleware cheap and non-blocking, and route IO through async-aware calls. The fiber
-posture and its measurements are in [`docs/concurrency.md`](docs/concurrency.md).
+## Cockpit
 
-### The cockpit
-
-`lain up --nvim` is the full setup. One tmux window, **three panes** — an editor pane, a chat
-transcript beside it, and an input pane under the transcript — all pinned to the same cwd and
-the same socket, with a status HUD along the bottom.
-
-**Requires nvim 0.11+.** Below that, lain does not degrade gracefully: the review rail's refusal
-delivery reads `'messagesopt'`, an option that does not exist yet, and a refusal either arrives as
-nvim's own `stack traceback:` or does not arrive at all.
+`lain up` opens 1 tmux window with 3 panes: Neovim, the chat transcript, and an input pane under
+the transcript. A status line shows cache warmth, running subagents and questions waiting on you.
 
 ```
 ┌─ nvim ──────────────────┬─ chat (transcript) ─────┐
 │ lain://journal          │ you> refactor the Store │
 │  [a3f grep] 12 matches  │                         │
-│  [a3f read] store.rb    │ ● read_file store.rb    │
-│                         │ ● grep "def fetch"      │
-├─ lain://timeline ───────┤ ! docent asks to run    │
-│  user   refactor the... │   bash(..) -- answer in │
-│  asst   tool_use ×2     │   lain://approval       │
+│                         │ ● read_file store.rb    │
+├─ lain://timeline ───────┤ ● grep "def fetch"      │
+│  user   refactor the... │                         │
 ├─ lain://inbox ──────────┼─ input ─────────────────┤
 │  2m  which Store impl?  │ 🔥 fleet:2 inbox:1      │
-├─ lain://request ────────┤ you> _                  │
-│  system: You are...     │                         │
-│                         │                         │
+│                         │ you> _                  │
 └─────────────────────────┴─────────────────────────┘
-  🔥 fleet:2 inbox:1                          14:32
 ```
 
-**The input pane is where you type**, and it is a separate pane because the chat pane is a
-scrolling transcript: a prompt drawn into it scrolls away, and a HUD drawn into it cannot be
-refreshed in place. So `lain up` runs `lain input` in a pane beneath the transcript, which draws
-the HUD on 1 line above the prompt, refreshes it in place without a keypress, and feeds each
-line back to the chat over a Unix socket. The HUD's `fleet:N` is the count; the tree itself is
-read in [`lain://status`](#the-cockpit) and `lain watch`, so a child starting or ending never
-reprints the pane. It is seated at a **floor** of 6 rows rather than a fixed height: grow it and
-it stays grown, and only a layout change that drove it under the floor puts it back. Every
-gesture works there — `[y/N]`, `human>`, `↑`/`↓` history, `C-g`, `C-x`, `Tab`, Ctrl-C's countdown and
-its `s` key — and the HUD stays live while an ask runs and while you type.
-
-`lain input` is an ordinary command, so a pane that dies can be restarted by hand:
-`lain input --name <tmux session>` derives the same socket `lain up` did.
-
-**The HUD** is the `🔥 fleet:2 inbox:1` segment, drawn both in the input pane and along the
-bottom of the window. 🔥 means the provider's cached prefix was inside
-its sliding TTL **at the last publish** and ❄ means it was not, `fleet` is how many subagents are running,
-and `inbox` is how many questions are waiting on you. It reads the state file `Lain::StatusFeed`
-publishes — under `$XDG_STATE_HOME/lain/status/`, keyed by project rather than written into your
-source tree — so it describes the project the active pane is sitting in. `lain up` prints the
-resolved path when it starts. The line is composed once, in Ruby, and published as a field, so
-every surface shows the same string and none of them needs a JSON filter. It is never blank and
-never an error.
-
-**The marker is as fresh as the last publish, and a publish happens on an event.** Sit idle past
-the provider's cache window and the HUD still shows the marker your last turn earned — which is
-wrong in the optimistic direction, 🔥 where the truth is ❄. The prompt's own ●/○ is re-derived at
-every turn boundary and no more often. The input pane redraws its header without a keypress,
-which is a redraw and not a new reading: the figure behind it still only moves on an event, so
-no surface updates during a long idle. `elapsed`,
-`idle` and `since_compaction` in the state file have always had the same property. Treat the
-marker as "how the cache stood when lain last did something", not as a live reading.
-
-**The editor pane** needs nothing installed. `lain chat --nvim` injects its whole runtime into a
-bare `nvim --listen` at attach time, so the gem and the editor cannot drift out of sync. Seven
-runtime buffers exist from attach, `lain://approval` is primed beside them (8 in all), and an epic document gets one more of its own when it is written:
-
-| Buffer | What it shows | Editable |
-|---|---|---|
-| `lain://journal` | live tool output, attributed `[id stream]` per run | no |
-| `lain://timeline` | one line per turn, folded per turn | no |
-| `lain://inbox` | pending human questions, newest age first | answer in place |
-| `lain://request` | the exact prompt about to be sent | **yes** |
-| `lain://workspace` | the workspace projection, on demand | no |
-| `lain://diff` | pending edits, in nvim's own diff filetype | no |
-| `lain://status` | the mounted epic's issue graph, as a list and as mermaid, over the live fleet — drawn as a **tree**, one row per child, nested under the parent it was spawned from | no |
-| `lain://epic/<slug>/<doc>` | an epic document the chat just wrote (`research.md`, `epic.md`, an issue or a plan), opened in a split below your window without taking focus. Created on the first write, so it is not among the buffers primed at attach; closing its window is respected on later writes | no |
-
-**The fleet is a tree in `lain://status`.** One row per child — its role, whether it is running,
-how many turns it has committed, and the first line of the task it was given — indented under the
-parent it was spawned from, so a grandchild reads as one, with the child's age beside it. A drawn
-row is clamped to 80 terminal columns, measured by display width, not by character count, so a
-long task line cannot wrap out of its row. The input pane shows only the HUD's `fleet:N` count.
-
-A task line is text a model wrote, so it is scrubbed before any terminal sees it: newlines and
-tabs become spaces, then whole ANSI escape sequences are removed, then the control and format
-characters. A task of `clean\e[1A\e[2KPWNED` was measured putting its own words on the HUD line
-before that landed.
-
-`:LainStart` lays them out: journal down the left, timeline over inbox over request on the right.
-
-`lain://request` is the one editable buffer, and it is the gesture that matters most: change the
-prompt by hand, then `:LainResend` sends *your* bytes to the provider instead of the rendered ones.
-That is the fastest way to test whether a context tactic was the thing that mattered.
-
-**Keys.** Everything below is bound by the injected runtime, so it works with the plugin
-uninstalled. `:help lain-runtime-commands` is the full contract; this is the index.
-
-At `you>` — in the input pane under the cockpit, or in the terminal itself for a plain `lain
-chat`:
-
-| Key | Does |
-|---|---|
-| `↑` / `↓` | walk **this session's** lines. The durable file at `$XDG_STATE_HOME/lain/history` is still appended per accepted line, but it is never read back: it is one pool shared by every project and every concurrent `lain up` pane, so recalling from it merged panes you were not sitting in |
-| `C-g` | hand the draft to `lain://compose` in the editor; `:w` there puts the composed text back at the prompt, where you press `<CR>` to send it |
-| `C-x` / `Tab` | completion menu for a `/` or `@` token under the cursor |
-| `Shift+Enter` / `Alt+Enter` | insert a newline instead of submitting, at every prompt. A hint row above the prompt says so once per `you>`. Under the cockpit, Shift+Enter needs tmux's `extended-keys`, which `lain up` turns on |
-| `\` at end of line | continue onto another line instead of submitting. Emacs and vi *insert* mode only — vi command mode submits on `<CR>` regardless, a Reline limitation |
-| `C-c` | open the grace window; a second `C-c` interrupts now |
-| `c` / `w` / `r` / `s` | inside that window: cancel, extend, wait for responses, or **stop the running ask** and keep the session. An idle `you>` countdown offers only `c` and `w`, since there is no ask to stop |
-| `C-d` | EOF — end the session |
-
-With the cockpit's tmux mouse on, the wheel scrolls the chat pane's history and your terminal's
-native text selection needs Shift held while you drag.
-
-`C-g`, `C-i` (Tab) and `C-x` are the only control keys free across all three keymaps lain binds
-(emacs, vi_insert, vi_command); Tab is free because lain sets no Reline completion of its own.
-
-In the editor, one key is global, because a survey grows from whatever file you are reading and
-there is no buffer name to scope it to:
-
-| Key | Runs | Where |
-|---|---|---|
-| `<leader>Lsa` | `:LainSurveyAdd` | any real file buffer — adds it to the survey open in this chat. Refuses from an unnamed buffer or one of lain's own |
-
-`<leader>L` is the prefix every *global* lain key hangs off, and `vim.g.lain_prefix` moves it. Only
-global keys wear it: they fire in your own editable file, where every bare letter is already yours.
-
-Every other key is buffer-local, bound on `BufEnter` in that view's own augroup. The ones on
-buffers lain built and holds `nomodifiable` are bare letters — `x` on a sidebar row can collide with
-nothing. The ones on a **review diff** wear the prefix, because its new side is your real editable
-file, and they are bound off the review stamp rather than a buffer name, so they exist exactly where
-a note may be left:
-
-| Buffer | Key | Does |
-|---|---|---|
-| any record view (`journal`, `timeline`, `inbox`, `question`, `approval`, a review thread) | `]]` / `[[` | next / previous record. `lain://diff` and `lain://workspace` have neither: they are projections of live state, not logs of records |
-| `lain://inbox` | `r`, `<CR>` | `:LainOpen` — open the question set under the cursor in `lain://question` |
-| `lain://question` | `x` | tick the option under the cursor; on any other line it is still vim's `x` |
-| `lain://question` | `:w` | submit the set. `:w!` declines the whole set. After the last set the buffer is marked `answered at HH:MM`, made read-only and its window closed, with your answers still readable under `:buffer lain://question` |
-| `lain://compose` | `:w` | send the draft back to the prompt |
-| `lain://timeline` | `p` | `:LainPin` — pin the turn under the cursor so compaction may not elide it |
-| `lain://approval` | `y` / `n` | `:LainApprove [note]` / `:LainDeny [reason]` / `:LainHold [note]` for the call under the cursor. The `y` and `n` keys answer without words; `:LainDeny` takes the words after it as the reason, and the model reads them in the tool result; `:LainHold` postpones the call and tells the agent a human will answer later. At the `[y/N]` prompt in a plain chat, `n <why>` does the same |
-| `lain://review` (the sidebar) | `<CR>` | `:LainReviewOpen` — open the file under the cursor at its first hunk |
-| `lain://review` (the sidebar) | `x` / `u` | `:LainReviewMark reviewed` / `unreviewed`. Two keys and never a toggle: a toggle would have to be computed from rows that may already have moved |
-| a review thread | `:w` | send what you typed under the conversation to the docent as a question |
-| a review diff (either side) | `<leader>Ln` / `<leader>Lq` / `<leader>Lb` | pre-fill `:LainNote note ` / `question ` / `blocker ` on the cmdline — type your words, press `<CR>` |
-| a review diff (either side) | `<leader>LN` | `:LainNoteDone` — hand every note back, in placement order |
-| a review diff (either side) | `<leader>Lt` | `:LainThread` — open the thread on this line |
-
-The rest are commands with no key on them. All are global, and each refuses outside the buffer it is
-about rather than acting on whatever sits on that line somewhere else:
-
-| Command | Does |
-|---|---|
-| `:LainResend` | send `lain://request` as *you* edited it, instead of the rendered bytes |
-| `:LainReply {answer}` | answer the *oldest* pending question as a one-liner, from anywhere |
-| `:LainNote {kind} {text}` | in a changeset diff, place a note on the line under the cursor. `{kind}` is `note`, `question` or `blocker` |
-| `:LainNoteDone` | hand every note back, in placement order |
-| `:LainThread` | open the thread on the line under the cursor |
-| `:LainReviewVerdict {verdict}` | conclude a changeset review or a survey. Reads no cursor, so there is no wrong window to type it in |
-| `:LainAnnotate` | in an epic review document, prompt for a note and attach it to the current line |
-| `:LainReviewDone` | hand an epic review document back. Refuses while the buffer is modified |
-| `:LainVersion` | the runtime protocol version |
-| `:LainStart` | (the plugin, not the runtime) switch to the session tab of lain buffers, or rebuild it if you closed it |
-
-In tmux, the [plugin](plugin/tmux/README.md) binds `prefix + b` for a `/btw` popup and `prefix + F`
-to fork the session into a new window — `@lain_btw_key` and `@lain_fork_key` change them.
-
-For your own config, the plugin fires `User LainAttach` and `User LainRender`, marks every buffer
-with `b:lain_view`, and ships `lain*` highlight groups. `:help lain` has the full contract.
-
-**Without `lain up`.** The [tmux plugin](plugin/tmux/README.md) puts the same `#{lain_status}`
-segment in any status bar and binds the two prefix keys above, with no managed session involved.
-The [Neovim plugin](plugin/nvim/README.md) owns only the per-project socket convention
-(`$XDG_RUNTIME_DIR/lain/nvim-<hash>.sock`, or `.lain/nvim.sock` when the project has a `.lain/`)
-and the `:LainStart` layout.
-
-**Watching subagents.** `lain chat --windows` opens a tmux window per subagent spawn, each running
-a read-only [`lain watch`](docs/commands.md#lain-watch) on that actor's lineage. It needs `$TMUX`
-and a journal.
-
-### The daemon and phone approvals
-
-`lain-daemon` is 1 background process per user. Every chat registers with it, and it does four things
-for them. Once `remote relay:` is set it runs the phone relay, so a call or question that waits on you also
-shows on your phone, and once `remote ntfy:` is set it sends the notice that tells the phone something has
-waited 60 seconds; it supervises headless runs
-(`lain daemon run epic SLUG`, `lain chat --non-interactive --human remote`) and parks their questions
-for the phone; and it runs the review poll every 5 minutes.
-
-Build it once with `bundle exec rake daemon:build`. Any chat starts it when it is missing. To have it
-up before the first chat, run `lain daemon ensure` from a login hook (a user service on Linux, a launchd
-agent on macOS). `lain daemon status` shows its pid, build, relay state, sessions and runs.
-
-[docs/remote.md](docs/remote.md) walks through the setup: the tailscale address, a self-hosted ntfy,
-pairing the phone, `remote relay:` and `remote ntfy:` in `~/.config/lain/config.rb`, `lain trust --user`,
-and what crosses the tailnet. [docs/commands.md](docs/commands.md#lain-daemon) lists the commands.
-
-### When something looks wrong
-
-| Symptom | Cause |
-|---|---|
-| Cache-hit ratio stays near zero on Claude | Anthropic's minimum cacheable prefix is **4096 tokens**. A short system prompt silently will not cache, with no error and nothing on the wire to tell you. Check the prefix length before anything else. |
-| Compaction leaves elision lines instead of summaries | With `--summarizer-provider ollama`, the local summarizer had nothing to answer it. `ollama serve` and `ollama pull qwen3:4b`. The fire fails inside its task boundary, so nothing raises. |
-| HUD prints `lain: no state yet` | No session has published a state file for this project yet, or the file was written by a `lain` too old to publish the rendered line — `lain up` prints the path it is watching. A degraded state by design, never an error. |
-| lain refuses to start, `$HOME is "" ... not an absolute path` | `$HOME` is **empty or relative** — a systemd unit with `Environment=HOME=`, an `env -i` cron job, or a container that sets it to something odd. (Genuinely *unset* is fine: lain asks the passwd database.) Every XDG fallback is built on `$HOME`, so a relative one would write lain's state into whatever directory you happen to be in. Export an absolute `HOME`. Setting `XDG_STATE_HOME`/`XDG_CONFIG_HOME`/`XDG_CACHE_HOME` fixes the *paths* but not the refusal: the secret-path classifier anchors on `$HOME` directly, and a relative anchor mis-classifies in silence, which is worse than stopping. |
-| `--windows` opens no subagent viewers | It needs `$TMUX` and a session journal. It is incompatible with `--no-journal`. |
-| HUD freezes, `lain watch` stops updating, tools stop overlapping | Something is blocking the reactor. See [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor). |
-| Ollama output differs run to run at `--temperature 0` | On the **local** arm this is a defect worth chasing — and on this repo's own reference box it currently REPRODUCES, measured 2026-08-24 at HEAD and at the pre-chunk commit alike, so it is open rather than hypothetical: greedy decoding is necessary, not sufficient, and first-run-after-load divergence and GPU float non-associativity both perturb it; see [docs/providers/ollama.md](docs/providers/ollama.md#determinism-the-honest-version). On **`--provider ollama-cloud` it is expected** — measured 2026-08-24, three warm same-seed runs gave three distinct completions ([references/ollama/cloud.md](references/ollama/cloud.md)). Nothing is wrong; the arm is not reproducible. |
-
-`qa-lain friction SESSION` reads a finished session back and reports which knobs the run was fighting.
-It is offline, deterministic, and needs no API key.
-
-## Components
-
-Each row is one interface with several implementations behind it. **[`ARCHITECTURE.md`](ARCHITECTURE.md)**
-maps every one of them to the files that implement it, and it wins wherever this prose disagrees
-with it. [`docs/GLOSSARY.md`](docs/GLOSSARY.md) defines the math and CS vocabulary.
-
-| Component | What it is | Why it exists |
-|---|---|---|
-| `Canonical` | Deterministic bytes, [BLAKE3](docs/GLOSSARY.md#blake3) over a sorted-key serialization. | Event hashing and prompt-cache stability are the same problem. One function, two invariants. |
-| `Event` / `Store` / `Timeline` | A lossless [content-addressed](docs/GLOSSARY.md#content-addressable-storage) [Merkle DAG](docs/GLOSSARY.md#merkle-tree) of the conversation. | `fork` is O(1), `diverge_at` localizes a cache break, and usage aggregates over unique reachable digests instead of double-counting a shared prefix. |
-| `Request` / `Response` / `Usage` | Provider-neutral value objects. `Usage` is a property-tested commutative [monoid](docs/GLOSSARY.md#monoid). | The [anti-corruption layer](docs/GLOSSARY.md#anti-corruption-layer) that makes dry replay and cross-provider comparison honest. |
-| `Provider` / `Capability` | One HTTP round trip, no loop. `Anthropic` (default), `AnthropicReference` (SDK oracle), `Ollama`, `Mock`. | Lain owns the loop, because the loop is the object of study. `Capability::Policy` resolves a combinator/provider mismatch loudly. |
-| `Context` / `Workspace` | A composable pipeline of message transformations. `#render` is pure. | Purity and cache-hit are the same constraint. `Workspace` is sent, never stored. |
-| `Tool` / `Toolset` / `Tool::Input` | 23 tool classes, 20 of them in the live chat toolset. `Tool::Input` (ActiveModel) declares the JSON Schema and the local validation once. | Capabilities, not permissions: a subagent holds what it was handed, and the schema cannot drift from the validation. |
-| `Effect` / `Effect::Handler` / `Gate` / `Middleware` | An ordered `Middleware::Stack` of guards and the approval gate, ending in one interpreter. | `Live` runs a tool, `Mock` answers canned results; `Gate` is where tier-3 approval lives, and it must be the last layer before the interpreter. |
-| `Agent` / `Budget` / `ToolRunner` / `Supervisor` | An explicit `state_machines` machine plus its collaborators. | Every `stop_reason` is a transition, so refusals and ceilings cannot be forgotten. Cancellation is structured, never `Thread#kill`. |
-| `Arm` / `Compare` / `Ledger` / `PriceBook` | 4 orchestration topologies on one seam, scored by distribution and priced from the Journal. | Comparing topologies should not mean editing the loop. |
-| `Grader` | `Fixture` (deterministic assertions) and `Rubric` (LLM judge in a separate window) behind one `Grade`. | Mechanical metrics say nothing about whether the agent was right. |
-| `Memory` / `Embedder` | Content-addressed index with a manifest, a graph, and BM25 retrieval. | Recall is a retrieval problem with a measurable recall@k, so it gets swept like any other axis. |
-| `Journal` / `Channel` / `StatusFeed` / `SessionRecord` | One NDJSON file per session on its own fd, crash-resumable via a `.wal`. | The experiment record. Everything a frontend shows is a projection of it. |
-| `Skill` / `Role` / `Plan` / `Gherkin` / `Oracle` | Config values, not behavior. | A role is an attenuation plus a prompt slot; `Gherkin` is a content-addressed IR a grader can attest against. |
-| `Frontend::TTY` / `Frontend::Neovim` | Two subscribers to the same stream. | Editor code never reaches into the agent. |
-| `ext/lain` | In-process Rust (`lain.so`): Canonical/digest, the persistent DAG, in-memory BM25, AST search. | Data-structure work Ruby's object model makes asymptotically worse. Pure, synchronous, no tokio. |
-| `crates/lain-daemon` | Out-of-process [msgpack-RPC](docs/GLOSSARY.md#messagepack-rpc) per-user daemon: the chat registry, the phone relay worker, ntfy, headless runs and the review poll. Builds only under `rake daemon:build`. See [docs/remote.md](docs/remote.md). | Async and isolation-relevant work belongs out of process. An in-process sandbox is not a sandbox. |
-
-## Configuration
-
-There are no config files to write before the first run. Everything below has a working default.
-
-**Project-local, under `.lain/`.** These are project artifacts, like `.git/`, not XDG state.
-
-| Path | What it holds |
-|---|---|
-| `.lain/slots/*.md` | Prompt slot fills. What lands in the system prompt for this project. |
-| `.lain/slots/role/*.md` | Per-role prompt fills, over the shipped role templates. `auto_approver.md`, `gate_adjudicator.md` and `evidence_researcher.md` are refused at launch: those roles decide approvals, and a project must not rewrite the prompt that judges its own calls. A project's `system.md` fill still reaches every role, these included. |
-| `.lain/slots/skill/<skill>/<hole>.md` | Per-skill prompt fills, one file per hole. |
-| `.lain/skills/<name>/skill.md` | Your skills, merged over the shipped catalog. Reachable as `@role/skill` at the prompt. |
-| `.lain/config.rb` | Your per-project settings: the `epics`, `approval`, `isolation`, `sensitivity`, `shell`, `tests` and `middleware` verbs. See [Configuration](docs/commands.md#configuration-configrb). |
-| `.lain/services.rb` | The isolation services DSL: the per-worker `postgres` databases and `compose` stacks a worker's lease provisions. Read by the `DbIndex` and `Compose` decorators, which layer over whatever `--isolation` resolved. |
-| `.lain/summarizers.rb` | Your deterministic tier-0 summarizers, tried before any model call. See [Compaction and summarizer tiers](#compaction-and-summarizer-tiers). |
-| `.lain/summarizers/` | Drafts written by `/meta summarizer`, for you to read and copy into `summarizers.rb`. **Nothing loads this directory.** |
-| `.lain/meta/` | Scripts generated by [`/meta`](docs/commands.md#meta). |
-
-**Ruby you write runs only after you trust it.** `.lain/config.rb`, `.lain/services.rb` and
-`.lain/summarizers.rb` are evaluated as Ruby. A launch that finds any top-level `.lain/*.rb`
-untrusted, or a `config.rb` that will not load, is refused before anything starts; the message
-names the file and line, and for an untrusted file it names [`lain trust`](docs/commands.md#lain-trust).
-Trust covers the top-level `.lain/*.rb` files only, not the files they `require` or `load`, and is
-keyed on the project root and those bytes: a changed byte, or the same files under another root,
-needs a new decision, while a linked worktree that inherits the main checkout's `.lain/` shares it.
-Your user-level `$XDG_CONFIG_HOME/lain/config.rb`, which may declare `middleware` for every project,
-is trusted separately with `lain trust --user`.
-
-**Durable state, under XDG.** `Lain::Paths` resolves `$XDG_STATE_HOME` (falling back to
-`~/.local/state`), `$XDG_CONFIG_HOME`, `$XDG_CACHE_HOME`, and `$XDG_RUNTIME_DIR`. A non-absolute
-`$XDG_*` value is invalid per the spec and is ignored, so the `$HOME` fallback takes over.
-
-**`$HOME` itself must be absolute, and lain refuses to start if it is not.** Every fallback above
-is built on it, and a relative `$HOME` makes every one of those paths relative — which resolves
-against whatever directory you happen to be in, writing lain's machine state into your project.
-There is nothing to fall back to, so lain says so and stops rather than guessing.
-
-| Path | What it holds |
-|---|---|
-| `$XDG_STATE_HOME/lain/sessions/<project-hash>/` | Session NDJSON and its `.wal`. One directory per project. |
-| `$XDG_STATE_HOME/lain/improvements.ndjson` | The cross-project dogfood queue. |
-| `$XDG_STATE_HOME/lain/history` | The TTY prompt's history. |
-| `$XDG_STATE_HOME/lain/status/<project-hash>/state.json` | The status HUD's state, read by the tmux and nvim plugins. Rewritten every turn, which is what makes it machine state rather than a project artifact — it used to sit in `.lain/` and dirtied your `git status` on every turn. |
-
-**Environment.**
-
-| Var | Read by | Meaning |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | `Provider::AnthropicRaw`, `Provider::Anthropic` | Required for the Claude path. Refused before construction if unset. |
-| `OLLAMA_API_KEY` | `Provider::Ollama` on its cloud deployment | Required for `--provider ollama-cloud`. Create one at [ollama.com/settings/keys](https://ollama.com/settings/keys). Refused before construction if unset, and the refusal names the variable without quoting its value. Four guards (`#inspect`, `#pretty_print`, and both `#instance_variables`) keep the key out of a rendered deployment or configuration; they do **not** cover a header Hash once it has left the object, which is documented where that Hash is built. |
-| `LAIN_PROVIDER_CONCURRENCY` | the admission gate, every provider | How many requests may be in flight to one endpoint; `0` removes the limit. Unset, a local ollama runs 1 at a time and ollama cloud runs **3**; a typo raises rather than degrading. A concurrency 429 from the server narrows the width to the plan's limit for the rest of the process (see [Providers](#providers)), and a cloud launch prints the width at startup. |
-| `LAIN_PROVIDER`, `LAIN_MODEL`, `LAIN_API_BASE`, `LAIN_NUM_CTX`, `LAIN_NUM_BATCH` | `lain chat` and the other commands taking the run-profile flags | Defaults for `--provider`, `--model`, `--api-base`, `--num-ctx` and `--num-batch`, so a project can pin them in a direnv `.envrc`. A typed flag wins, a malformed number refuses by name, and an empty variable counts as unset. |
-| `LAIN_STREAM_STALL_TIMEOUT` | the provider's stall watch | Seconds of silence on an open stream before lain reports `stalled_stream` and stops. Defaults to **30**, except on `--provider ollama` and `ollama-cloud`, which default to 5 seconds under their request timeout: **295** for a local ollama (request timeout 300) and **115** for ollama cloud (120). Ollama sends a tool call's arguments whole, after a silence that grows with their size, so a long `epic_write` needs the room. A set variable wins on every provider, and `0` turns the check off. A stalled ask names this variable in the message that ends it. |
-| `LAIN_CONNECT_TIMEOUT` | the provider's connect watch | Seconds to wait for a connection before giving up; defaults to **5**, and `0` folds connect time back into the request timeout. |
-| `LAIN_STREAM_DEBUG` | the SSE engine | Dumps raw stream frames while debugging a provider. |
-| `LAIN_INTEGRATION`, `LAIN_OLLAMA`, `LAIN_OLLAMA_CLOUD`, `LAIN_SPIKE` | the test suite | Opt in to the specs that cost money, need a local Ollama, spend Ollama Cloud quota, or run a spike. |
-
-The library does **not** read `OLLAMA_API_BASE`. The Ollama base is a constructor argument or the
-`--api-base` flag; the env var is a convenience for the specs only. `OLLAMA_API_KEY` is the
-exception — the cloud deployment reads it, because a key is not something a flag should carry.
-Everything else, sampling and summarizer settings included, is a CLI flag, documented in [`docs/commands.md`](docs/commands.md).
-
-## Architecture
-
-`Canonical` gives deterministic bytes, which serve event hashing *and* prompt-cache stability: one
-function, two invariants. `Event`, `Store`, and `Timeline` form a lossless content-addressed Merkle
-DAG, so `fork` is O(1) and `diverge_at` localizes a cache break. `Context#render` is a **pure**
-function `(Timeline, Toolset, Workspace) -> Request`; purity and cache-hit are the same constraint.
-Tool calls are `Effect`s interpreted by an `Effect::Handler`, and `Middleware` is the Rack-idiom
-public API in front of it: an ordered stack of layers, ending in the approval gate. The operations
-that do compose are held to their [laws](docs/GLOSSARY.md#property-based-testing) in their own
-specs. Tools are capabilities, not permissions. `Provider` is one round trip with no loop, because
-Lain owns the loop and the loop is the object of study.
-
-`Workspace` is **sent, not stored**: it renders into the Request and is never appended to the
-Timeline. Subagents get a fresh Timeline root whose `meta["spawned_from"]` names the parent's head,
-so causal lineage survives while the child never inherits the parent's prompt.
-
-For the process topology and the render-path data flow, see the diagrams in
-[`ARCHITECTURE.md`](ARCHITECTURE.md#process-topology).
-
-## Design
-
-Tool design, context management, and orchestration interlock. A tool's result shape *is* context,
-because the result lands in the message log and is then cached, pruned, and compacted. A context
-strategy decides which tool results survive, which changes what the model believes it has already
-done. A subagent is a tool whose result is a compressed context, which makes orchestration a form
-of context management.
-
-Lain treats these as 3 views of one [pure function](docs/GLOSSARY.md#pure-function) that renders a
-`Context`, a `Timeline`, and a toolset into a provider request. Making that function a first-class
-object is what lets a recorded session replay under a different strategy and be diffed.
-
-### History is stored the way git stores commits
-
-Each turn is a frozen node naming its parent by digest, and its own name is BLAKE3 over its
-content. Nothing is ever discarded or overwritten.
-
-That is why [`/fork`](docs/commands.md#fork) and [`/rewind`](docs/commands.md#rewind) are instant
-and safe: a fork copies a `(head_digest, store)` pair, and a rewind moves a pointer. The old head
-stays reachable, branches share one copy of their common prefix, and a prompt-cache break is
-located by walking 2 chains to the first differing digest.
-
-It also makes cost reporting correct on a branched session. Summing usage along the branches
-double-counts the shared prefix; aggregating over *unique reachable digests* collapses the
-duplicates before the sum runs.
-
-### Tool calls run through a middleware stack
-
-A tool call is an `Effect`, interpreted by an `Effect::Handler` — `Live`, or `Mock` in specs. The
-public API in front of that is the Rack idiom, `#call(env) { |env| ... }`, and every refusal, mask
-and approval is a layer of the stack rather than a handler.
-
-Four stacks, one protocol:
-
-- **model**, wrapping each provider completion: retry, cost accounting, cache instrumentation,
-  request logging,
-- **tool**, wrapping each tool call: approval gate, timeout, contract checking, result truncation,
-  journaling,
-- **turn**, wrapping each agent turn: budget, iteration ceiling, interrupt, speculative fork,
-- **repl**, wrapping each REPL command.
-
-Ordering is the classic Rack footgun, so the stacks are inspectable and mutable Sidekiq-style with
-`to_a`, `insert_before`, and `insert_after`. What you may safely put inside one is bounded by the
-fiber model: see [Slow middleware blocks the reactor](#slow-middleware-blocks-the-reactor).
-
-Your own middleware goes in a `middleware` block in `config.rb`, per area, and runs outermost in its
-phase. See [middleware](docs/commands.md#middleware).
-
-### Context strategies compose
-
-Pruning, compaction, cache-breakpoint placement, and reminder injection are each a transformation
-of the message list, and they compose:
+The editor needs no plugin: lain loads its runtime into a bare `nvim --listen` when it attaches.
+[docs/users/cockpit.md](docs/users/cockpit.md) lists the buffers, keys and editor commands. The
+[tmux plugin](plugin/tmux/README.md) and the [Neovim plugin](plugin/nvim/README.md) add the status
+segment and key bindings outside `lain up`.
+
+## Phone approvals
+
+`lain-daemon` is 1 background process per user, and every chat registers with it. With a relay
+address set, a call or question that waits on you also shows in the phone app
+([apps/lain-remote](apps/lain-remote/README.md)), and you answer it there. The phone reaches the
+relay over tailscale. With an ntfy topic set, the daemon sends a notice when an item has waited 60
+seconds.
 
 ```ruby
-Context.new(
-  system: prelude,
-  pipeline: Context::Prune.new(keep_last: 3) >>
-            Context::Compact.new(threshold: 150_000, keep_last: 6, summarizer:) >>
-            Context::CacheBreakpoints.new
-)
+# ~/.config/lain/config.rb
+remote relay: "100.64.0.7:7820", ntfy: "http://100.64.0.7:2586/lain-your-long-random-topic"
 ```
 
-Composition is associative and property-tested, so a strategy is determined by the sequence of
-combinators and not by how you bracket them. The search space is then every sequence over the
-combinator set, which the bench can enumerate, instead of a fixed menu of hand-written strategies.
-A combinator that broke associativity would silently produce different prompts depending on
-composition order, which is the class of bug ordinary unit tests miss.
+The daemon also supervises headless runs (`lain daemon run epic SLUG`), which have no terminal and
+take their answers from the phone.
 
-`Context::Compact` appears above as a combinator, which is what it is — but no chat composes it any
-more. A compacting `lain chat` substitutes the derived chain's projection instead, and `Compact`
-survives as a bench arm to compare that against. See
-[Two lineages, one render path](#two-lineages-one-render-path).
+[docs/users/remote.md](docs/users/remote.md) walks through the setup: the tailscale address, a
+self-hosted ntfy, pairing the phone with `lain remote pair`, and what crosses the tailnet.
 
-### Tools are capabilities, not permissions
+## herdr
 
-A subagent holds the tools it was handed, attenuated at construction, for example
-`toolset.only(:read_file, :grep)`. The answer to "what can this subagent do" is one line of code
-you can read. There is no permission layer to consult, and possession of the tool *is* the
-authorization. A `Role` packages that attenuation with a prompt slot and a spawn posture.
-
-### Workers can be isolated, and their commits survive the isolation
-
-Isolation is one seam — `acquire(worker_id) -> Lease` — and a `Lease` carries the `WorkerEnv` a
-worker resolves its paths against. `--isolation worktree` resolves an `Isolation::Clone` behind it,
-decorated by whatever `.lain/services.rb` declares, so a worker can get its own checkout and its own
-`postgres` without the topology knowing that happened.
-
-Each checkout is a `git clone --shared` of the repository: a repository of its own that reads
-upstream's objects through alternates. Its whole git dir is under the lease, so the sandbox lets a
-worker commit, delete branches and finish merges there, while no upstream byte is writable. The
-clone is cut **detached** at the working branch's tip, as a SHA, and keeps no branch or remote ref,
-so a re-acquire after a crash is always a clean checkout of the base and never a dead worker's
-tip. Upstream pins the base under `refs/lain/lease/` while the clone exists, so an upstream prune
-cannot take history the clone reads. The clone runs upstream's hooks, from a config the sandbox
-seals.
-
-A worker's commits live in its clone's own store, and they reach upstream **only at the fold-back
-fetch**: before any ref names one, lain fetches it from the clone by SHA, fsck'd. Then
-`Worktree::Handback` writes the worker's `HEAD` to `refs/lain/worker/<id>` — outside `refs/heads/`,
-so it is not a branch — and queues that ref for the merge coordinator. The parent checkout is never
-merged into. The coordinator builds each batch as a candidate commit no checkout holds, runs the
-project's verify command on it in a scratch worktree, and moves the branch only on green, by
-fast-forward where a worktree holds it. A conflict is reported with its paths, and the work stays
-on its ref. The worker's tool result names the entry, and `lain land wait <id>` says whether it
-landed ([`docs/commands.md`](docs/commands.md#lain-land)). Handback never raises past its caller and
-never removes a checkout.
-
-**A worker brings itself current before it hands back.** It runs its fast checks, then anchors its
-`HEAD` and rebases onto the working branch it was cut from, and verifies with `git cherry` that
-every patch survived — so a sibling that landed first cannot silently swallow this worker's
-commits. The checks are its changed specs and the mirror specs of its changed sources, then the
-lint. One drainer per branch lands the queue, and `lain epic land` takes turns with it on the same
-lock, so the full suite runs once per batch rather than once per worker. The retry count, the merge
-strategy, the verify and check commands and the batch size are the `isolation` verb of
-`.lain/config.rb`.
-
-Nothing is destroyed while it might still hold work. A dirty clone is kept rather than released,
-and `lain worktrees gc` reaps clones as it reaps worktrees: it fetches and anchors a committed
-`HEAD` — plus a snapshot of any dirty state — under `refs/lain/worker/*` before it removes a clone
-and its pin. A clone whose git dir holds a name that redirects git (`commondir`, `config.worktree`,
-`worktrees`, `modules`), which a sandboxed call may have planted, gets no git run in it at all: it
-is kept for a human, and `lain worktrees gc` says why.
-
-One limit stands: the worktree root is keyed on the repository, so one concurrent isolated run per
-project is a precondition, not a bug.
-
-### Orchestration topologies are values
-
-The way an agent decomposes work is usually structural: the orchestrator-worker shape is written
-into the loop, and comparing it against a flat run means editing the loop. `Lain::Arm` makes the
-topology a value instead, returning a graded trajectory: the recorded Timeline, the
-`Grader::Grade`, wall-clock seconds, and the journal-priced `Ledger`.
-
-Four arms ship. **Single-thread** is the control every richer topology has to beat.
-**Orchestrator-worker** adds a synthesis pass over its workers' results. **Dual-ledger** carries a
-Task and a Progress ledger. **Adaptive-router** chooses at spawn time.
-
-### The Journal is the experiment record
-
-One NDJSON file per session, one event per line, on its own fd, fsync'd, crash-resumable through a
-`.wal`. Nothing else in `lib/` may write to `$stdout` or `$stderr`, and a spec parses the AST of
-every file to enforce it, because one stray warning interleaved into the stream makes `JSON.parse`
-fail on that line.
-
-The record is typed: `Telemetry` declares roughly 20 event kinds (`TurnUsage`, `RequestSent`,
-`Compaction`, `ContextDerived`, `IsolationLease`, `OracleAnswer`, `GradeRecord`, `SeamDecision`, and
-so on), so a reader matches on a kind rather than pattern-matching loose hashes.
-
-Cost reporting reads back out of this file, never out of the turns themselves. `Ledger` aggregates
-usage over the turns reachable from a set of heads and `PriceBook` prices the 4 token classes in
-`BigDecimal`, never Float, because a cost metric that drifts is worse than none.
+herdr is a terminal multiplexer that shows each coding agent's state. A chat started in a herdr
+pane reports whether it is working, blocked or idle. Run `lain herdr link` once and `/fork`,
+`/btw` and the subagent windows open as herdr tabs. [plugin/herdr](plugin/herdr/README.md) has the
+details.
 
 ## Providers
 
-The seam between Lain and any provider is a single HTTP round trip with no loop. A provider declares
-its `capabilities`, encodes a provider-neutral request into a wire payload (so the payload can be
-byte-diffed and reasoned about for caching), and completes a request into a provider-neutral
-response. `Lain::Request` and `Lain::Response` are the value objects each provider translates to and
-from.
-
-Three live backends ship on that seam, plus `Provider::Mock` for specs. They are reachable as the
-three `--provider` values below — the two ollama rows are one backend under two deployments. Each doc covers setup, that
-provider's capability mask, and the wire quirks that cost real debugging.
-
-| Provider | `--provider` | Default model | Doc |
+| Provider | `--provider` | Default model | Needs |
 |---|---|---|---|
-| Anthropic | `anthropic` | `claude-opus-4-8` | [docs/providers/anthropic.md](docs/providers/anthropic.md) |
-| Ollama (local) | `ollama` | `qwen3:4b` | [docs/providers/ollama.md](docs/providers/ollama.md) |
-| Ollama Cloud | `ollama-cloud` | `gpt-oss:20b-cloud` | [references/ollama/cloud.md](references/ollama/cloud.md) |
+| Anthropic | `anthropic` | `claude-opus-4-8` | `ANTHROPIC_API_KEY` |
+| Ollama, local | `ollama` | `qwen3:4b` | `ollama serve` and the model pulled |
+| Ollama Cloud | `ollama-cloud` | `gpt-oss:20b-cloud` | `OLLAMA_API_KEY` |
 
-The two ollama rows are **one backend with two deployments**, not two providers. `ollama.com`
-serves the same native `/api/chat` a local `ollama serve` does, so `Provider::Ollama` picks a
-`Deployment` and the encoder, decoder and wire format stay byte-identical across the pair. That is
-what makes them the cleanest cut on the [provider axis](#the-bench): only hosted-ness and model
-class vary.
+[docs/users/providers/](docs/users/providers/README.md) covers setup and each provider's limits.
 
-Running the cloud arm needs a key:
+## Configuration
 
-```bash
-export OLLAMA_API_KEY=...                  # create one at https://ollama.com/settings/keys
-exe/lain chat --provider ollama-cloud      # defaults to gpt-oss:20b-cloud
-bin/qa-lain bench arms --provider ollama-cloud FIXTURE
-```
+Lain runs with no config file. To change its behavior:
 
-With `OLLAMA_API_KEY` unset the arm refuses before it constructs anything, and the refusal names
-the variable, the flag that asked for it, and where a key comes from. `--api-base` still moves the
-arm, but the cloud deployment **requires https** — it will not send a bearer token in plaintext.
-Concurrency starts at 3 requests at once; `LAIN_PROVIDER_CONCURRENCY` sets another width.
-When the server answers a request with a concurrency 429 that carries `x-ratelimit-max-concurrent`,
-the gate narrows to that number and the narrowing is journaled. It only lowers, never raises. A plan
-with no server queue can fail the requests already in flight past its limit before the narrowing
-lands; later requests run at the narrowed width. A cloud launch prints the width in force and the
-variable that changes it.
+- `.lain/config.rb` in a project: approval rules, isolation, secret paths, test layout, middleware.
+- `~/.config/lain/config.rb` for yourself: theme, keys, the phone relay.
+- `.lain/slots/` and `.lain/skills/`: prompt text and your own skills.
 
-> **The cloud arm is not a reproducible bench arm.** Measured against a live subscription on
-> 2026-08-24: `temperature 0`, a fixed seed and warm runs returned **three distinct completions
-> from three measured runs** — run deliberately as the same protocol the local determinism probe
-> uses, so the two are comparable. The cause is **not established**. Treat a cloud comparison as
-> being over samples rather than points — `n > 1` and a variance treatment — and do not carry the
-> local arm's reproducibility (itself high-probability, not guaranteed) over to it. The full
-> measurement, including the hypothesis it rules out, is in
-> [references/ollama/cloud.md](references/ollama/cloud.md).
+Config files are Ruby, and lain runs them only after `lain trust` has recorded their bytes.
+[docs/users/configuration.md](docs/users/configuration.md) is the reference, and
+[examples/](examples/README.md) has files to copy.
 
-The Anthropic doc covers both implementations behind `anthropic`: `Provider::AnthropicRaw` on
-Lain's vendored Faraday transport, which is the default path, and `Provider::Anthropic` on the
-official SDK, which stays mounted as the **correctness oracle**. The vendored path is byte-diffed
-against `Provider::Anthropic#encode`, and one live differential run must produce an identical
-`Lain::Response`. The SDK is retired only once the vendored path has held.
+Long sessions compact on their own. [docs/users/compaction.md](docs/users/compaction.md) explains
+the tiers and how to write your own summarizer.
 
-Ollama is worth installing if you want free local summaries: `--summarizer-provider ollama`
-runs the compaction summarizer there. See [Compaction and summarizer
-tiers](#compaction-and-summarizer-tiers).
+## Debugging
 
-Porting a fourth provider is documented in
-[`docs/porting-providers.md`](docs/porting-providers.md): the 4 wire protocols, the 11 leak sites,
-and what would force a redesign.
+[DEBUGGING.md](DEBUGGING.md) lists where lain keeps its records and the common symptoms.
 
-The default Claude transport is vendored from `ruby_llm`'s HTTP layer (MIT, © 2025 Carmine
-Paolino) rather than depending on the gem. Why, and what was stripped, is in
-[docs/providers/anthropic.md](docs/providers/anthropic.md#the-vendored-transport).
+## Documentation
 
-### Capability asymmetry between providers
-
-Providers do not offer the same capabilities, and that matters more than it might first appear. If
-you A/B a prompt across 2 providers and half your context tactics silently became no-ops on one of
-them, the comparison would be a lie.
-
-So capabilities are machine-checked. `Provider::CAPABILITIES` is a closed list of 9 (`streaming`,
-`prompt_caching`, `strict_tools`, `thinking`, `parallel_tool_use`, `server_compaction`,
-`server_context_editing`, `server_tools`, `structured_output`). A context combinator declares what
-it requires, a provider declares what it has, and `Capability::Policy` resolves a mismatch under
-one of 2 policies you set per run:
-
-- `:strict` raises. Anything real defaults to this.
-- `:degrade` no-ops the tactic, records the degradation in the Journal, and reports what the run
-  lost. Bench runs default to this, so a sweep never dies mid-flight.
-
-`Capability::Guard` then refuses to compare 2 runs whose degraded sets differ unless you opt in.
-That turns "which of my context tactics survive a provider swap" into a question the bench answers,
-which is why the provider is a swept axis alongside context.
-
-## The bench
-
-The bench replays your own recorded sessions under different strategies and reports distributions
-rather than anecdotes. Every chat you have is a recording, because a bench session and a live chat
-are byte-compatible on purpose.
-
-Two replay modes, and conflating them is the mistake to avoid:
-
-- **Dry replay** re-renders requests under a different context strategy or provider encoding from a
-  recorded timeline. Free, instant, deterministic, byte-diffable. This is the unit test for context
-  strategies.
-- **Live replay** re-runs against the API. It costs money and is nondeterministic. This is the
-  experiment, and [`qa-lain bench variance`](docs/commands.md#qa-lain-bench-variance) is how you tell a
-  real difference from noise.
-
-Five sweeps ship: retrieval (recall@k over a gold corpus), arm, decider, disclosure, and plan.
-
-The grader is the part that matters. Tokens, cache-hit ratio, turn count, wall time, and cost say
-nothing about whether the agent was *right*. Two graders ship behind one `Grade` of `score`,
-`pass`, and `why`: `Fixture` is deterministic assertions with no model in the loop, and `Rubric` is
-an LLM judge in a separate context window against explicit criteria. A `Grade` with a blank `why`
-raises at construction, because a judgment you cannot read the reason for is unusable.
+- [docs/users/](docs/users/README.md): commands, configuration, the cockpit, compaction, providers
+  and phone approvals.
+- [docs/devs/](docs/devs/README.md): architecture, design, the toolchain and the test suite, for
+  people changing lain.
 
 ## Contributing
 
 Bug reports and pull requests are welcome at https://github.com/joeljohnson/lain.
-[`CONTRIBUTING.md`](CONTRIBUTING.md) has the setup, the test-tag opt-ins, the toolchain version
-this needs, and the handful of things that will bite you. Contributors are expected to follow the
-[code of conduct](CODE_OF_CONDUCT.md).
+[CONTRIBUTING.md](CONTRIBUTING.md) has the setup and the rules. Contributors are expected to follow
+the [code of conduct](CODE_OF_CONDUCT.md).
 
 ## License
 
-The gem is available as open source under the terms of the [MIT
-License](https://opensource.org/licenses/MIT).
+MIT. See [LICENSE.txt](LICENSE.txt).

@@ -17,7 +17,7 @@ require "pathname"
 #
 # == Why the retired name is not simply banned
 #
-# `ARCHITECTURE.md` says "There is no standalone `Turn` class in the current
+# `docs/devs/architecture.md` says "There is no standalone `Turn` class in the current
 # tree", which is the most useful sentence about `Turn` anyone could write, and
 # a guard that forbade the word would delete it. So the rule is CONTEXTUAL: a
 # mention of the retired name must sit beside the name that replaced it. That
@@ -34,7 +34,7 @@ module DocsNaming
   # The docs a reader is expected to trust. `references/` and `planning/` are
   # deliberately out: the first is imported third-party material and the second
   # is a record of what was decided when, which must keep saying what it said.
-  DOCS = [ROOT.join("README.md"), ROOT.join("CLAUDE.md"), ROOT.join("ARCHITECTURE.md"),
+  DOCS = [*%w[README.md CLAUDE.md CONTRIBUTING.md DEBUGGING.md].map { |name| ROOT.join(name) },
           *ROOT.glob("docs/**/*.md").sort].freeze
 
   # Whole-word and case-sensitive, so `TurnUsage` (a live record type), `turns`
@@ -89,8 +89,8 @@ RSpec.describe "the living docs" do
   # a flag the code reads and no command declares; this refuses a VALUE the docs
   # offer and no resolver accepts -- the same drift one level in, and the reason
   # the list is read off the constant rather than transcribed.
-  describe "the compaction strategies docs/commands.md offers" do
-    let(:doc) { DocsNaming::ROOT.join("docs/commands.md").read }
+  describe "the compaction strategies docs/users/commands.md offers" do
+    let(:doc) { DocsNaming::ROOT.join("docs/users/commands.md").read }
     let(:shipped) { Lain::CLI::CompactionStrategy::STRATEGIES }
 
     it "names every strategy the resolver builds" do
@@ -109,14 +109,14 @@ RSpec.describe "the living docs" do
   # find, and a default restated in prose is the one that drifts from the
   # constant it copies -- so both the keys and their defaults are read off the
   # readers rather than transcribed here.
-  describe "the config tables docs/commands.md documents" do
-    let(:doc) { DocsNaming::ROOT.join("docs/commands.md").read }
+  describe "the config tables docs/users/configuration.md documents" do
+    let(:doc) { DocsNaming::ROOT.join("docs/users/configuration.md").read }
 
     it "names every [isolation] key beside the default the reader falls back to" do
       Lain::Config::Isolation::DEFAULTS.each do |key, default|
-        expect(doc).to include("`#{key}`"), "docs/commands.md never names the [isolation] key #{key}"
+        expect(doc).to include("`#{key}`"), "docs/users/configuration.md never names the [isolation] key #{key}"
         expect(doc).to include("`#{default}`"),
-                       "docs/commands.md names #{key} without its default, #{default}"
+                       "docs/users/configuration.md names #{key} without its default, #{default}"
       end
     end
 
@@ -127,11 +127,11 @@ RSpec.describe "the living docs" do
     # preset or a key added to the code goes red here until the doc offers it.
     it "names every [tests] key and every preset the table accepts" do
       Lain::TestLayout.members.each do |key|
-        expect(doc).to include("`#{key}`"), "docs/commands.md never names the [tests] key #{key}"
+        expect(doc).to include("`#{key}`"), "docs/users/configuration.md never names the [tests] key #{key}"
       end
 
       Lain::TestLayout::PRESETS.each_key do |preset|
-        expect(doc).to include("`#{preset}`"), "docs/commands.md never names the #{preset} preset"
+        expect(doc).to include("`#{preset}`"), "docs/users/configuration.md never names the #{preset} preset"
       end
     end
 
@@ -144,15 +144,15 @@ RSpec.describe "the living docs" do
     end
   end
 
-  describe "the commands docs/commands.md documents" do
-    let(:doc) { DocsNaming::ROOT.join("docs/commands.md").read }
+  describe "the commands docs/users/commands.md documents" do
+    let(:doc) { DocsNaming::ROOT.join("docs/users/commands.md").read }
 
     # Derived from the command objects the registry actually holds, so a rename
     # goes red here rather than leaving a section nobody can reach by typing it.
     it "gives each session command this chunk registered its own section" do
       [Lain::CLI::Command::Undo.new, Lain::CLI::Command::ImplementEpic.new].each do |command|
         expect(doc).to include("### /#{command.name}"),
-                       "docs/commands.md has no section for /#{command.name}"
+                       "docs/users/commands.md has no section for /#{command.name}"
       end
     end
 
@@ -164,7 +164,7 @@ RSpec.describe "the living docs" do
        "lain epic land", "lain epic finish", "--mermaid", "--into", "--as",
        "--discovered-from", "--width"].each do |named|
         expect(doc).to include("`#{named}`").or(include(named)),
-                       "docs/commands.md never names #{named}"
+                       "docs/users/commands.md never names #{named}"
       end
     end
 
@@ -187,14 +187,14 @@ RSpec.describe "the living docs" do
   # session reading and the request digest. Each is read off the constant, so a rename
   # goes red here instead of leaving a sentence that points at nothing.
   describe "the journal folds and the session format the docs describe" do
-    let(:architecture) { DocsNaming::ROOT.join("ARCHITECTURE.md").read }
-    let(:glossary) { DocsNaming::ROOT.join("docs/GLOSSARY.md").read }
+    let(:architecture) { DocsNaming::ROOT.join("docs/devs/architecture.md").read }
+    let(:glossary) { DocsNaming::ROOT.join("docs/devs/glossary.md").read }
 
     [Lain::Journal::Projection, Lain::Journal::Projections, Lain::Journal::Projection::Lineage,
      Lain::Journal::Projection::Redactions, Lain::Journal::Projection::SessionRow, Lain::Journal::Tail,
      Lain::Telemetry::Untyped, Lain::Request::PrefixChain, Lain::Canonical::Equality,
      Lain::Sensitivity::Roots, Lain::EventLog::Projection].each do |constant|
-      it "names #{constant.name} in ARCHITECTURE.md or the glossary" do
+      it "names #{constant.name} in docs/devs/architecture.md or the glossary" do
         short = constant.name.delete_prefix("Lain::")
         docs = architecture + glossary
         named = [short, short.delete_prefix("Journal::")].any? { |name| docs.match?(/`#{Regexp.escape(name)}[`.]/) }

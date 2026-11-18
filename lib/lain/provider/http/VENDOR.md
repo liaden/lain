@@ -6,7 +6,7 @@ Paolino, **MIT** (see `LICENSE` in this directory — the full text, unmodified,
 per the license's own condition).
 
 Every file below carries its own provenance header naming the exact upstream
-path and what changed. This file is the map; `docs/porting-providers.md` (at
+path and what changed. This file is the map; `docs/devs/porting-providers.md` (at
 the repo root) is the reasoning, written so the next provider (openai,
 gemini, ...) can be ported the same way without rediscovering it.
 
@@ -22,7 +22,7 @@ loss Lain's correctness gates cannot tolerate, and no configuration option
 undoes it. Forking the four files below it that made the HTTP round trip
 (at the time: `provider.rb`, `connection.rb`, `stream_accumulator.rb`, the
 Anthropic wire format) and taking ownership of the response mapping was
-cheaper and more honest than fighting the gem's own abstraction. See `ARCHITECTURE.md`'s Provider
+cheaper and more honest than fighting the gem's own abstraction. See `docs/devs/architecture.md`'s Provider
 boundary section for why the Anthropic official SDK stays mounted as a
 correctness oracle rather than the primary path once the fork lands.
 
@@ -82,7 +82,7 @@ file's header for the specific reasoning.
 Resolved as directed by the porting brief; each is named in the relevant
 file's provenance header, plus one further site the brief didn't enumerate
 (`Configuration#log_regexp_timeout=`'s `RubyLLM.logger.warn` call — see
-`configuration.rb`). Full trace: `docs/porting-providers.md`.
+`configuration.rb`). Full trace: `docs/devs/porting-providers.md`.
 
 ## Streaming
 

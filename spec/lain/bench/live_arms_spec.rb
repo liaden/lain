@@ -413,8 +413,8 @@ END", model: "claude-sonnet-4",
   # each of `.build`'s arms is one class in one file named for it. `.altitude`'s
   # two epic entries are both `arm/epic.rb`, which is exactly why this is scoped
   # to `.build` rather than to every arm the module can name.
-  describe "the four-arm claim ARCHITECTURE.md makes" do
-    def architecture = File.read(File.expand_path("../../../ARCHITECTURE.md", __dir__))
+  describe "the four-arm claim docs/devs/architecture.md makes" do
+    def architecture = File.read(File.expand_path("../../../docs/devs/architecture.md", __dir__))
 
     it "lists exactly the files .build's arms are classes in" do
       # Anchored on the sentence, not on the document's first brace list: the

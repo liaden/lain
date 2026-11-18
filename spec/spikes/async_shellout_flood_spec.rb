@@ -11,7 +11,7 @@ require "rbconfig"
 # heartbeat fiber ticks every 50ms, and we assert the heartbeat's latency stays
 # under a PINNED bound rather than stalling for the flood's duration.
 #
-# The bound, and its rationale (see docs/concurrency.md's dated 5-0.3 entry):
+# The bound, and its rationale (see docs/devs/concurrency.md's 2026-07-15 adoption entry):
 # the ticker's baseline period is 50ms (the 5-0.1 interval). A cooperative
 # reactor delivers ticks at ~50ms throughout the flood; a reactor STARVED by a
 # non-yielding read loop delivers one tick, then a single gap the size of the
@@ -21,7 +21,7 @@ require "rbconfig"
 # reactor would show. So it fails loudly on a real stall without flaking on
 # jitter. "Bounded" is thus a number, not a mood.
 RSpec.describe "Async x Shell::Out under stdout flood", :spike do
-  # Pinned at measurement time (see docs/concurrency.md's 5-0.3 entry):
+  # Pinned at measurement time (see docs/devs/concurrency.md's 2026-07-15 adoption entry):
   #   ruby 4.0.5, async 2.42.0 with the gem runner (2026-07-13); ported to
   #   Shell::Out and re-run on ruby 4.0.6, async 2.42.0 (2026-10-02)
   let(:tick_interval) { 0.05 }
@@ -36,7 +36,7 @@ RSpec.describe "Async x Shell::Out under stdout flood", :spike do
   # write drains in ~30ms, shorter than a single tick, so it could not tell a
   # cooperative reactor from a starved one; the trickle is what makes the bound
   # non-vacuous, and it also mirrors how real `bash` output arrives (a trickle
-  # over a pipe -- see docs/concurrency.md's opening).
+  # over a pipe -- see docs/devs/concurrency.md's opening).
   def flood_argv
     [RbConfig.ruby, "-e", %(200.times { STDOUT.write("x" * 50_000); sleep 0.005 })]
   end

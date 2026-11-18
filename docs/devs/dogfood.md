@@ -4,11 +4,11 @@
 isolation verifier and lets the bash tool run exactly that command.
 
 `bin/dogfood-setup` links `.lain` to `dogfood/lain` and prints the `lain trust` command. Read the config,
-then run it: a config does not run until its bytes are trusted.
+then run the command: a config does not run until its bytes are trusted.
 
 `.lain/` stays ignored (`/.lain/` in `.gitignore`). It holds per-checkout state, such as the status line
-the cockpit republishes each turn, and the decision to version it is still open. The committed copy lives in
-`dogfood/lain/` so every clone gets the same bytes meanwhile. The setup script adds the `.lain` symlink to the
+the cockpit republishes each turn, and whether to version it is still open. Until then the committed copy lives in
+`dogfood/lain/`, so every clone gets the same bytes. The setup script adds the `.lain` symlink to the
 checkout's git exclude file, since the ignore rule matches a directory only.
 
 `bin/verify` rebuilds the toolchain (mise ruby 4.0.9, `LD_LIBRARY_PATH`) because the fence scrubs the
@@ -17,10 +17,10 @@ environment, compiles the extension, and runs `rake pspec`. It exits with the su
 ## Draining a chore file overnight
 
 `lain todos drain` takes the open lines of the project's chore file (`TODOS.md`, or the file the
-[`todos` verb](commands.md#todos) names) one at a time. Each runs a headless `lain chat` in its own
+[`todos` verb](../users/configuration.md#todos) names) one at a time. Each runs a headless `lain chat` in its own
 clone lease and lands what the chat committed through `lain land`. `lain todos status` counts the
 lines and names who holds each claim, and `lain todos add 'tidy the README'` appends a line. The
-full flags are under [`lain todos`](commands.md#lain-todos).
+full flags are under [`lain todos`](../users/commands.md#lain-todos).
 
 The chore file stays out of git. The lease is a `git clone --shared` of the checkout, so a file git
 does not track never reaches it, and the lease holds no copy of the queue. Add the line to
@@ -36,24 +36,23 @@ it from upstream.
 
 ### What runs unattended
 
-- **The chat runs confined, in a clone lease.** Its working copy is a `git clone --shared` cut at the
+- The chat runs confined, in a clone lease. Its working copy is a `git clone --shared` cut at the
   branch tip. Its file tools and its `bash` calls are refused when they land outside the lease, and
   the `bash` sandbox cannot write a byte of upstream. It runs `--approval auto --confirm-price-tier
   refuse --max-cost N`, so the judge answers first and parks what it cannot settle, and a
   run that outspends N stops. `--max-cost` defaults to 5 dollars per item.
-- **`bin/verify` runs the model's commit unconfined.** The merge coordinator checks the commit out
+- `bin/verify` runs the model's commit unconfined. The merge coordinator checks the commit out
   in the verify checkout and runs the suite as a plain subprocess of the drainer: your user, no
   sandbox, the whole network. Whatever the commit puts in the suite runs with your rights. Every
-  `lain land` landing does the same, so an overnight drain adds no new exposure, only no human
+  `lain land` landing does the same, so an overnight drain adds no new exposure beyond having no human
   reading the diff first.
-- **A landing fast-forwards the branch** only when the suite passed. A line ends `[x]` with the sha
+- A landing fast-forwards the branch only when the suite passed. A line ends `[x]` with the sha
   and the session path, or `[!]` with why. A failed landing keeps its lease for a human; a lease
   holding uncommitted work is kept too, and `lain worktrees gc` reaps the rest.
 
 ### Scheduling it
 
-A `Persistent=true` timer fires once on the next start when the machine was off at the hour, which
-a crontab line would silently skip. A user unit inherits almost no environment, so the unit sets
+A `Persistent=true` timer fires once on the next start when the machine was off at the hour; a crontab line would silently skip it. A user unit inherits almost no environment, so the unit sets
 `PATH` and `HOME`. Put the units in `~/.config/systemd/user/`, replace `/path/to/lain`
 and `/path/to/checkout` with absolute paths, then `systemctl --user enable --now lain-todos.timer`.
 

@@ -7,7 +7,7 @@ require "async/queue"
 # interrupt (Ctrl-C, a supervising timeout) is *structured* cancellation --
 # Async::Task#stop raises Async::Stop at the task's next scheduler yield, not
 # at an arbitrary bytecode boundary the way Thread#kill would. Two properties
-# are asserted here, and both are load-bearing (see docs/concurrency.md):
+# are asserted here, and both are load-bearing (see docs/devs/concurrency.md):
 #
 #   1. Outside a reactor, behaviour is unchanged -- Agent#run wraps its loop in
 #      `Sync`, which spins up a reactor transparently for non-reactor callers

@@ -11,14 +11,14 @@ code, follow the code.
 
 `lain` is one Ruby process that owns the loop, and it runs tmux-native. `lain up` creates (or
 reattaches to) a tmux session with a `chat` window and a session-scoped status HUD. The window
-is **three panes**: `lain up --nvim` (the default) cuts an `nvim --listen` pane, splits a `chat`
-pane beside it, and splits an **input pane** beneath that chat pane. `--no-nvim` drops only the
+has 3 panes: `lain up --nvim` (the default) cuts an `nvim --listen` pane, splits a `chat`
+pane beside it, and splits an input pane beneath that chat pane. `--no-nvim` drops only the
 editor; the chat is still a transcript over an input pane. All of them are pinned to one cwd and
 one deterministic nvim socket, so the editor and the chat that attaches to it can never diverge.
 The window layer is a multiplexer concern, so the same tmux session renders under iTerm2's `tmux
 -CC` on macOS.
 
-The split exists because the chat pane is a **scrolling transcript**: anything drawn into it
+The split exists because the chat pane is a scrolling transcript: anything drawn into it
 scrolls away, so a prompt and a live HUD cannot share it. The input pane runs `lain input`
 (`Frontend::InputPane`, `lib/lain/frontend/input_pane.rb`), which draws the HUD line above the prompt
 and refreshes it without a keypress, and feeds what the human types back
@@ -26,7 +26,7 @@ to `lain chat --input socket:NAME` over a Unix socket (`CLI::InputSocket`,
 `lib/lain/cli/input_socket.rb`) at
 `${XDG_RUNTIME_DIR:-/tmp}/lain/input-<project-hash>-<name>.sock`. Both panes derive that path
 identically before either process starts, so it carries no pid. `Up::INPUT_PANE_HEIGHT` is 6
-rows and is a **floor rather than a fixed height**: a `window-layout-changed` hook re-seats the
+rows and is a minimum height: a `window-layout-changed` hook re-seats the
 pane only when something drove it under the floor, so a human who grows it keeps the larger size.
 Below `Up::SEATED_WINDOW_HEIGHT` (13 rows) the hook backs off and lets tmux's own arithmetic run.
 
@@ -40,8 +40,12 @@ Subagent spawns can open read-only viewer windows (`chat --windows`, each runnin
 `crates/lain-daemon` and Neovim talk to `lain` over the same transport, msgpack-RPC on a Unix
 socket, which is why they look symmetric below. Both paths are live: every chat registers with
 the per-user daemon, which hosts the phone relay worker (`crates/lain-daemon/src/relay.rs`, with
-`crates/lain-wire` defining the phone types) and ntfy. `crates/lain-fence` is a separate binary that bash confinement execs per call (Landlock
-and seccomp, no socket). `ext/lain` is in-process and built.
+`crates/lain-wire` defining the phone types) and posts the ntfy notice.
+
+Headless runs are forked by `lain daemon spawner`, a Ruby process the daemon drives
+(`crates/lain-daemon/src/spawner.rs`). Inside a herdr pane the chat also reports its state to herdr
+(`lib/lain/herdr/reporter.rb`). `crates/lain-fence` is a separate binary that bash confinement execs
+per call (Landlock and seccomp, no socket). `ext/lain` is in-process and built.
 
 ```mermaid
 flowchart LR
@@ -55,7 +59,13 @@ flowchart LR
   TTY <-->|msgpack-RPC · unix socket<br/>runtime injected at attach| NVIM
   TTY -->|read-only journal tail| WATCH
   TTY -->|in-process FFI · magnus| EXT["ext/lain (Rust) · built<br/>pure · synchronous<br/>BLAKE3 · Rust canonical encoder for the DAG<br/>persistent DAG · BM25 · AST search"]
-  TTY -.->|msgpack-RPC · unix socket| CORE["crates/lain-daemon (Rust · tokio)<br/>per-user daemon<br/>registry, agenda, the phone relay worker, ntfy"]
+TTY -.->|msgpack-RPC · unix socket<br/>crates/lain-rpc| DAEMON["crates/lain-daemon (Rust · tokio)<br/>per-user daemon<br/>registry, agenda, run supervisor, timers"]
+  DAEMON -->|socket pair| RELAY["relay worker<br/>same binary, Landlock-confined<br/>TCP on the tailscale address"]
+  PHONE["phone app<br/>apps/lain-remote"] -->|paired token<br/>crates/lain-wire types| RELAY
+  DAEMON -->|HTTP or HTTPS notice<br/>after an item waits 60s| NTFY["ntfy topic"]
+  NTFY -.->|push| PHONE
+  DAEMON -->|JSON lines| SPAWN["lain daemon spawner (Ruby)<br/>forks each headless run"]
+  TTY -.->|pane report-agent<br/>only inside a herdr pane| HERDR["herdr"]
   TTY -->|bwrap, strace, then lain-fence per confined bash call| FENCE["crates/lain-fence (Rust)<br/>Landlock + seccomp<br/>runs one command, then exits"]
   TTY -->|HTTPS| ANTH["api.anthropic.com (default: vendored transport)"]
   TTY -->|HTTP| OLL["local Ollama (--provider ollama)"]
@@ -63,10 +73,9 @@ flowchart LR
   TTY -->|own fd, append-only| J[("$XDG_STATE_HOME/lain/sessions/&lt;hash&gt;/*.ndjson")]
 ```
 
-### Runtime boundaries: which language, which scheduler
+### Runtime boundaries
 
-The diagram above is about processes and panes. This one is about *where your code actually
-runs*, which is the question that decides whether a change of yours is allowed to block.
+The diagram below shows where your code runs, which decides whether a change of yours may block.
 
 ```mermaid
 flowchart TB
@@ -86,8 +95,8 @@ flowchart TB
   end
 
   subgraph RUST["Rust"]
-    EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread, holding the GVL<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · unsafe only at the FFI boundary"]
-    CORE["<b>crates/lain-daemon</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>registry · agenda · phone relay worker · ntfy<br/>forbid(unsafe_code)"]
+    EXT["<b>ext/lain</b> · in-process · magnus FFI<br/><i>pure · synchronous · NO tokio</i><br/>runs on the calling Ruby thread<br/>holds the GVL for a small job, releases it for a large one<br/>canonical · digest · dag · bm25 · astgrep<br/>deny print_stdout/stderr · unsafe only at the FFI boundary"]
+    DAEMON["<b>crates/lain-daemon</b> · separate OS process<br/><i>tokio rt-multi-thread</i><br/>registry · agenda · run supervisor · ntfy<br/>relay worker is a confined child process<br/>forbid(unsafe_code)"]
     FENCE["<b>crates/lain-fence</b> · short-lived process per confined call<br/>Landlock + seccomp, then execs the command<br/>isolation, not pure work"]
   end
 
@@ -95,7 +104,7 @@ flowchart TB
   LOOP --> EAGER
   LOOP --> SUP
   REACTOR -->|"in-process FFI call<br/>blocks the reactor by design:<br/>must stay fast and batched"| EXT
-  REACTOR -.->|"msgpack-RPC · unix socket<br/>async boundary crossed as IO,<br/>so the reactor yields"| CORE
+  REACTOR -.->|"msgpack-RPC · unix socket<br/>async boundary crossed as IO,<br/>so the reactor yields"| DAEMON
   REACTOR --> LOCKS
   REACTOR -->|"Channel · SizedQueue"| THREADS
 
@@ -109,44 +118,46 @@ flowchart TB
   class RACTOR note
 ```
 
-Four consequences worth internalizing before you write code on either side:
+Four consequences for code on either side:
 
-- **Everything the agent does shares one OS thread.** Fibers yield only at IO boundaries the
+- Everything the agent does shares one OS thread. Fibers yield only at IO boundaries the
   scheduler controls, which is what makes the parallel-tool fan-out safe with no lock anywhere.
   It also means a non-yielding call anywhere on that reactor stalls all of it, including the
   drain feeding the frontend.
-- **An `ext/lain` call blocks the reactor and that is the design.** It is synchronous by the
+- An `ext/lain` call blocks the reactor by design. It is synchronous by the
   placement rule, so it must stay fast and cross the FFI boundary in batches. A per-element call
   inside a DAG walk loses to plain Ruby and stalls the loop while losing.
-- **A `lain-daemon` call does not**, because it is IO. The msgpack-RPC round trip is a socket read
+- A `lain-daemon` call does not block it, because it is IO. The msgpack-RPC round trip is a socket read
   the scheduler hooks, so the reactor yields to other fibers while the daemon works. That
   asymmetry is the placement rule restated at runtime.
-- **The 2 real threads are frontend drains.** Neither runs agent work. Both exist because a
+- The 2 real threads are frontend drains. Neither runs agent work. Both exist because a
   renderer that falls behind must not block the render path, which is also why `Channel` and
   `Channel::DropOldest` have different overflow policies (below).
 
-Why the posture is `async` fibers rather than threads or Ractors, and the measurements behind
-the shellout and flood decisions, are argued in [`docs/concurrency.md`](docs/concurrency.md).
+The case for `async` fibers over threads or Ractors, and the measurements behind
+the shellout and flood decisions, are in [`docs/devs/concurrency.md`](concurrency.md).
 
 ## Data flow
 
-What is *sent* to the model versus what is *stored* in the Timeline is the distinction the whole
-design turns on. `Workspace` renders into the `Request` and is never appended to the Timeline.
+The design turns on the difference between what is sent to the model and what is stored in the
+Timeline. `Workspace` renders into the `Request` and is never appended to the Timeline.
 
 A subagent's chain lives in the shared `Store` and starts at a fresh root by default, so the child's
 prompt chain never includes the parent's conversation; the `inherit` prefix arm is the exception,
 starting the child on the parent's head to share its cached prefix. Such a child renders the
 parent's held compaction cuts as they stood at spawn, through a Source of its own, while its chain
 stays the raw fork. The cuts are a snapshot taken at spawn, so a later parent cut never reaches it;
-the child then compacts on its own, and its own cuts are not journaled. Causal lineage is not on any
-turn: a `:spawn` event names the parent's head as `spawned_from`, the completion `:message` names
+the child then compacts on its own, and its own cuts are not journaled.
+
+Causal lineage is not on any turn: a `:spawn` event names the parent's head as `spawned_from`, the completion `:message` names
 that spawn and the child's final turn, and the session file records each child turn as a
-`child_turn` record, once per digest -- a turn equal to one already written gets none, which is why
-a reader walks the Store rather than the records. `Bench::Session::Lineages` reads a file's
+`child_turn` record, once per digest (a turn equal to one already written gets none), so
+a reader walks the Store, not the records.
+
+`Bench::Session::Lineages` reads a file's
 completed lineages back from the rebuilt Store for `lain consolidate`, `lain improve` and
 friction's `Grader::ToolCallIndex`; `lain watch`'s `LineageFilter` follows the same message records
-live, and the fleet surfaces key on the spawn digest.
-Only the child's final result re-enters the parent's Timeline, as an ordinary `tool_result`.
+live, and the fleet surfaces key on the spawn digest. Only the child's final result re-enters the parent's Timeline, as an ordinary `tool_result`.
 
 ```mermaid
 flowchart TB
@@ -181,8 +192,8 @@ The sections below name the files behind each box.
 | Deep immutability | `lib/lain/freezable.rb` |
 
 `Lain::Canonical` produces deterministic bytes: sorted keys, stable array order, BLAKE3 digest.
-Those bytes carry two invariants at once, event identity and prompt-cache stability. That is
-the "one function, two invariants" claim in `CLAUDE.md`. `Lain::Canonical` is Ruby; the Rust
+Those bytes carry 2 invariants at once, event identity and prompt-cache stability. That is
+the claim in `CLAUDE.md` that one function serves 2 invariants. `Lain::Canonical` is Ruby; the Rust
 extension holds BLAKE3 and a separate canonical encoder the DAG uses. It keeps a weak,
 process-wide set of the Arrays it has returned, so normalizing one again hands back the same
 object without walking it; off the main Ractor it always normalizes in full.
@@ -215,7 +226,7 @@ order belongs to the Store the Timelines point into, so it answers questions abo
 than living on either. Two Timelines over different Stores share no DAG, and every order refuses
 them by name (`Ext::Timeline::CrossStore`) rather than answering the bottom.
 
-**The render order** is `Ext::Dag::RenderAncestry`; its Ruby module, `Dag::RenderAncestry`, went
+The render order is `Ext::Dag::RenderAncestry`; its Ruby module, `Dag::RenderAncestry`, went
 with the Ruby DAG. `.meet` is the deepest common ancestor along the first-parent walk, returned as a
 `Timeline`; `Timeline#diverge_at` is its head digest, which is all cache-break localization needs;
 `.below?` is `Timeline#ancestor_of?`, which stays on the Timeline because a chain walk is the
@@ -223,14 +234,16 @@ Timeline's own vocabulary. They stay render-only deliberately, so their answers 
 causal edges land. Nothing in `lib/` calls `.meet` or `.diverge_at` yet: cache-break localization is
 specified here and not wired.
 
-**Dominance and causal ancestry are Rust types**, and have been Rust-only since 2026-09-14, by ruling.
+Dominance and causal ancestry are Rust types, and have been Rust-only since 2026-09-14, by ruling.
 `ext/lain/src/algebra.rs` names the 3 orders as zero-sized types. `RenderAncestry` and `Dominance`
 implement a `MeetSemilattice` trait whose private supertrait nothing outside `algebra.rs` can name,
 and which that file writes only through the `declare_meet_semilattice!` macro, in the same expansion
-that emits the four law tests over the type, so no type can claim the structure without the laws
+that emits the 4 law tests over the type, so no type can claim the structure without the laws
 being stated over it. `CausalAncestry` implements
 `MaximalLowerBounds` instead, so "not a semilattice" is a fact the compiler holds: a function generic
-over the trait cannot be instantiated at it. Ruby reaches the orders by name as
+over the trait cannot be instantiated at it.
+
+Ruby reaches the orders by name as
 `Lain::Ext::Dag::RenderAncestry.meet`/`.below?`, `Lain::Ext::Dag::Dominance.meet`/`.below?` and
 `Lain::Ext::Dag::CausalAncestry.meets`, and as `Ext::Timeline#meet`, `#dominator_meet`,
 `#dominates?` and `#causal_meets`. The `Ext::Dag` classes register the very functions those
@@ -240,25 +253,25 @@ names: `Lain::Dag` is the Ruby module holding `Dag::Factory` and `Lain::Ext::Dag
 a bare `Dag::` written lexically inside `module Ext` resolves to the Rust one.
 
 `causal_meets` is reachability over *both* edges, git's "all parents". The causal DAG admits no
-unique greatest lower bound, so it returns the **set** of maximal common ancestors, in digest
+unique greatest lower bound, so it returns the set of maximal common ancestors, in digest
 order, the way `git merge-base` does.
 
-`dominator_meet` is the **checkpoint primitive**: the deepest common dominator of the 2 heads over
+`dominator_meet` is the checkpoint primitive: the deepest common dominator of the 2 heads over
 the union graph, under a virtual root. That is the latest event every path from the root to both
 heads must pass through, so it is the latest point no in-flight branch can bypass, which makes it
 the answer for synchronization and safe compaction. A node's dominators are totally ordered, so
-unlike `causal_meets` this one is a genuine meet-semilattice. **It is specified and unwired**:
+unlike `causal_meets` this one is a genuine meet-semilattice. It is specified and unwired:
 nothing in `lib/` calls it, and a caller would have to hold `Ext::Timeline`s, which the production
 path does not build. `ext/lain/src/graph.rs` builds the union graph scoped to the closure of the pair
 it is asked about and hands it to `petgraph`'s `simple_fast`, which is Cooper, Harvey, and Kennedy's
 "A Simple, Fast Dominance Algorithm", so the crate builds the graph and never the solver.
 
-The known caveat is inherent to causal stability rather than a defect: one quiet participant
+The caveat is inherent to causal stability, and is not a defect: one quiet participant
 stalls the frontier. An open subagent branch, spawned but not yet folded back, pins
 `dominator_meet` at or before its spawn point however far the parent advances, until that branch
 speaks or closes. Actors' explicit stop is the operational mitigation.
 
-## `Context#render` is a pure function
+## `Context#render`
 
 `Context#render` (`lib/lain/context.rb`, `lib/lain/context/base.rb`) is the pure function
 `(Timeline, Toolset, Workspace) -> Request` that `CLAUDE.md` names. Purity means no `Time.now`,
@@ -288,16 +301,18 @@ the algebra section below). There is no constant snapshot of its capabilities: `
 is derived from whichever pipeline is actually in effect, injected or default, so a capability
 declaration cannot drift from what `#render` runs.
 
-**The pipeline has a name.** `lain chat --context-pipeline <name>` selects one from
+The pipeline has a name. `lain chat --context-pipeline <name>` selects one from
 `CLI::ContextPipeline::PIPELINES` (`lib/lain/cli/context_pipeline.rb`): `default` (which is
 `reminder+cache-breakpoints`), `reminder`, `cache-breakpoints`, `prune`, `dedupe-tool-calls` and
 `purge-failed-inputs`, joined by `+` and folded with `>>` left to right, so order is a semantic. A
-word **replaces** the default rather than adding to it — `prune` alone sends no reminders and marks
-no cache breakpoints — and an unknown, empty or repeated part refuses by name. Combinators needing a
+word replaces the default instead of adding to it (`prune` alone sends no reminders and marks
+no cache breakpoints), and an unknown, empty or repeated part refuses by name.
+
+Combinators needing a
 collaborator only a run can supply (`Recall`, `Compact`, `Mailbox`, `PinnedMessages`) are not words.
 The name is resolved once, in `CLI::Backend#context`, into the pipeline a `Context` is built with;
 `#render` reads nothing new, so purity holds. The `Context` carries `pipeline_name`, and the session
-header records it as `context_pipeline` **only when one was named**: an unset flag writes no key,
+header records it as `context_pipeline` only when one was named: an unset flag writes no key,
 so every header already on disk stays byte-identical, while an explicit `default` is recorded and so
 can be told apart from an unset flag.
 
@@ -314,13 +329,15 @@ ledger, budget countdown. `Reminder` folds it into the request tail. It is never
 the `Timeline`, and that omission is the whole mechanism behind `CLAUDE.md`'s "Workspace is
 sent, not stored".
 
-**The request digest is the last state of a prefix chain.** `Request#digest` is computed 1 time, in
+The request digest is the last state of a prefix chain. `Request#digest` is computed 1 time, in
 `Request.new`, by walking `Request::PrefixChain`. The seed state digests model, tools and system;
 each message then digests `[previous state, marker-stripped message]` into the next state; and the
 request's digest is the digest of the last state together with `max_tokens`, `reasoning`, `effort`
 and the cache markers the walk stripped. So the digest extends the seed with the fields that are
 not messages, and 2 requests that differ only in where a cache marker sits share every state and
-differ in the final digest. The chain a caller passes is a memo, never a member: a position hits
+differ in the final digest.
+
+The chain a caller passes is a memo, never a member: a position hits
 when the previous state is equal and the message is `Canonical::Equality.same?` (equal dumps; Ruby's
 `==` would hold `1` and `1.0` alike), and the digest is the same whichever chain built it.
 `Request::PrefixChain::NONE` is the Null Object for a caller with no memo. A walk that comes out
@@ -329,13 +346,13 @@ messages it has not seen.
 
 ## Compaction, oracles, and memory
 
-Compaction is **on by default** on the live chat path, and it splits across 2 tiers that fail
+Compaction is on by default on the live chat path, and it splits across 2 tiers that fail
 independently.
 
 **The eager tier is a live model call, off the critical path.** `Oracle::Eager`
 (`lib/lain/oracle/eager.rb`) fires one summary per large tool result on its own transient
-`Async` task and holds the answer keyed by the result's **source digest**. An immutable source
-can never go stale, so the digest is the correct key. The tier is always a **local** model,
+`Async` task and holds the answer keyed by the result's source digest. An immutable source
+can never go stale, so the digest is the correct key. The tier is always a local model,
 never the chat's provider (`CLI::Backend#summary_oracle` wires `Provider::Ollama`
 unconditionally): a fire happens per large result, and paying frontier tokens to compress one
 would cost more than resending it. Containment is the point of the task boundary. A fire that
@@ -352,8 +369,8 @@ turn. It must be a snapshot rather than the live Eager for 2 reasons. The Eager 
 fires land, so a `Compact` referencing one is not `Ractor.shareable?` and `Scheduler::COMPOSE`'s
 `Ractor.make_shareable` raises on the first compacting turn. And cutting the reference makes the
 render deterministic: a fire landing mid-turn cannot change the bytes this turn's prompt is
-built from. A digest with no held summary renders an elision line. **Always build one with
-`.take`**. A hand-built map passes the content-address validator while missing every lookup,
+built from. A digest with no held summary renders an elision line. Always build one with
+`.take`. A hand-built map passes the content-address validator while missing every lookup,
 silently and permanently, and `#hits`/`#misses` report 0/0, which is indistinguishable from a
 snapshot over no messages.
 
@@ -369,34 +386,36 @@ The decision machinery is 4 collaborators, split because they answer different q
 `Head` exists because that question had 2 answers: `Compact#call` derived its own drop set from
 `keep_last` while `Need` measured a head its caller supplied, and a one-message disagreement is
 invisible (Need raises the flag over a window Compact declines to drop, every turn, with no
-error anywhere). Both now receive the same object. A `Head` paired with a `Compact` **must** keep
+error anywhere). Both now receive the same object. A `Head` paired with a `Compact` must keep
 `protected_patterns` at `ProtectedPatterns::NONE`; a real policy makes the head a superset of
 what is removed and reintroduces exactly that silent disagreement.
 
-**A committed compaction is held, not re-decided.** The Timeline is never rewritten: a compacting
-turn renders a derived chain, and what it commits is **policy state**, a `Telemetry::CompactionCut`
+A committed compaction is held, not re-decided. The Timeline is never rewritten: a compacting
+turn renders a derived chain, and what it commits is policy state, a `Telemetry::CompactionCut`
 (`lib/lain/telemetry/compaction_cut.rb`) over
 `digest, head, strategy, kind, parent, supersedes, collapses, plan_step_completions`: the source
 `digest` it collapsed up to, the `head` it was committed at, the `strategy` arm that collapsed it,
-and the ranges this cut *newly* collapsed with their replacements. Earlier ranges are its
+and the ranges this cut *newly* collapsed with their replacements.
+
+Earlier ranges are its
 `parent`'s, linked by the parent record's content address, so a record's size stays flat however
 many advances precede it. A cut is addressed by its own content rather than by its source digest,
 because a re-collapse can share a digest with the last cut it replaces.
 `Session#record_compaction_cut` keeps and journals it beside the pin-set, refusing a cut whose
 parent it never recorded, and `SessionRecord::Replay` folds it back.
 
-**`head` is the turn the committing render STOOD ON**, `EventLog::Guards.stands_on`: the model's own turn at
+`head` is the turn the committing render stood on, `EventLog::Guards.stands_on`: the model's own turn at
 the head, or, where the render added a user turn that was refused before any model saw it, the
 turn *beneath* that withdrawn prompt. Pinning it to the asked prompt instead made every withdrawn
 ask re-commit the same cut, because the prompt it named left the chain with it.
 
-**`kind` is one of `advance`, `collapse` and `handoff`**, and `supersedes` is what tells them
+`kind` is one of `advance`, `collapse` and `handoff`, and `supersedes` is what tells them
 apart structurally. An `advance` carries only the newly collapsed ranges and supersedes nothing.
-A `collapse` names at least two cut addresses in `supersedes` and re-summarizes what they render
+A `collapse` names at least 2 cut addresses in `supersedes` and re-summarizes what they render
 between them. A `handoff` supersedes every cut that held. Both validations are on the record, so
 an `advance` with a non-empty `supersedes` is not writable.
 
-Every later turn, `Compaction::Source::HeldCut` picks the latest recorded cut that meets three
+Every later turn, `Compaction::Source::HeldCut` picks the latest recorded cut that meets 3
 conditions: its commit head is on the head's chain, it was committed by this run's arm, and its
 seam falls short of the keep_last boundary. The Source then derives from the source root with that
 cut's lineage held. Its ranges are written from the records, the strategy is offered only the span
@@ -404,33 +423,35 @@ after it, and `Head` measures only that span. So a signal that clears renders th
 bytes rather than the full history, a summary is paid for once and survives `--resume` (the
 strategy's memo does not), and the cached prefix stops moving.
 
-The cut **advances** only when a later compaction's pipeline is chosen past it; a summary that
-failed collapses nothing, cannot shrink the render, and commits nothing. It **retreats** when
+The cut advances only when a later compaction's pipeline is chosen past it; a summary that
+failed collapses nothing, cannot shrink the render, and commits nothing. It retreats when
 `/rewind`, `/fork`, a resend or a resume moves the head below its commit head. Such a head is a
 forward run from there, so it renders what that forward run sent, and the next `context_derived`
 names no cut, or the one that does hold. A cut freezes the replacement it committed, so an eager
 summary landing later inside its range changes nothing already sent.
 
-A completed plan step stays **pending** until a compaction commits. `Session#plan_step_completed?`
+A completed plan step stays pending until a compaction commits. `Session#plan_step_completed?`
 is a level that stays up until the next `todo_write`, and the render right after that write is
 usually warm and defers. So a step fires on every render until a commit consumes it: a timing
 defer keeps it pending and the first cold render compacts. The commit records the
 `Session#plan_step_completions` it consumed on its cut, which is how a resume sees a consumed step
 as consumed.
 
-**Held cuts re-collapse.** Once more than one cut is held, a signal with nothing newly droppable
+Held cuts re-collapse. Once more than one cut is held, a signal with nothing newly droppable
 past them used to have nowhere to go, and the summaries accumulated one per advance forever. Now
-`HeldCut#collapsible?` is true at two held cuts, `Source#movable?` admits a move on it alone, and
-`Source::Derived#collapsed` offers the strategy the `HeldCut::Stretch` — the held replacements
-plus whatever was retained between them, as this chain renders it — and commits one `collapse`
-superseding them all. Readers fold the superseded cuts out; a `collapse` that would not shrink is
+`HeldCut#collapsible?` is true at 2 held cuts, `Source#movable?` admits a move on it alone, and
+`Source::Derived#collapsed` offers the strategy the `HeldCut::Stretch` (the held replacements
+plus whatever was retained between them, as this chain renders it) and commits one `collapse`
+superseding them all.
+
+Readers fold the superseded cuts out; a `collapse` that would not shrink is
 declined and journaled as `refused: inflates` like any other; and replay refuses a `collapse`
 naming an address its file lacks. A pin placed inside a range a held cut already collapsed still
 does not bring that turn back, and that one remains an open decision.
 Every cut keeps the running ask's prompt as well. Once that ask ends, a later cut may fold the
 prompt, and a prompt that sits before the first held range stays verbatim until a handoff.
 
-**A rewrite must pay for itself.** `Compaction::Worth` refuses one that drops less than a tenth of
+A rewrite must pay for itself. `Compaction::Worth` refuses one that drops less than a tenth of
 what it measures (`below_floor`). When the cache is warm, a live plan gives a horizon, and the
 model's price list charges for a cache write, it also refuses one whose read saving over that
 horizon does not cover the cache write it breaks (`cache_break_unpaid`). The horizon is the open
@@ -440,17 +461,19 @@ warm cache, or no priced cache write. An approaching window or the hard cap skip
 because the over-window request a cut prevents costs more than any rewrite. Each refusal is
 journaled in the decision's `refused` field as `inflates`, `below_floor` or `cache_break_unpaid`.
 
-**When no cut can make room at all, the fallback is a handoff.** `Compaction::Source::Fallback`
+When no cut can make room at all, the fallback is a handoff. `Compaction::Source::Fallback`
 (`lib/lain/compaction/source/fallback.rb`) fires only after a provider has refused a prompt whole
-(`WindowExceeded`) *and* the source is stuck — nothing droppable, or the refused render already
-held the newest cut. It spends exactly one summarizer call, through `Oracle::Handoff`
-(`lib/lain/oracle/handoff.rb`), whose schema is five required strings: `goal`, `progress`,
+(`WindowExceeded`) *and* the source is stuck: nothing droppable, or the refused render already
+held the newest cut. It spends exactly 1 summarizer call, through `Oracle::Handoff`
+(`lib/lain/oracle/handoff.rb`), whose schema is 5 required strings: `goal`, `progress`,
 `files_and_decisions`, `open_todos`, `next_step`, the last rendered under "Where the work stood" so
 the document defers to the human's newest message. The rendered state document replaces everything
-before the current ask and **keeps three things**: the ask itself, an unanswered `tool_use` /
-`tool_result` pair (the Messages API refuses a split pair), and the pins. It is recorded like any
-other cut — one record of `kind: handoff`, the document positioned where the replaced history
-began and the later ranges collapsing to empty content — and replayed like one, so `--resume`
+before the current ask and keeps 3 things: the ask itself, an unanswered `tool_use` /
+`tool_result` pair (the Messages API refuses a split pair), and the pins.
+
+It is recorded like any
+other cut (one record of `kind: handoff`, the document positioned where the replaced history
+began and the later ranges collapsing to empty content) and replayed like one, so `--resume`
 renders what the live run sent. `--compact-fallback` chooses between it and `Fallback::None`, and
 a chain that has handed off does not regain the `keep_last` tail by advancing past it.
 A handoff declines without its summarizer call when what it must keep (the ask, an unanswered tool round
@@ -464,13 +487,15 @@ verbatim beside collapsed stretches (the opening one included), and the handoff 
 too. The turn is shown in its place among the earlier summaries, oldest first, so a directive a
 later stretch overrode never reads as the newest word.
 
-**An idle chat can compact before the next line.** With `--compact-schedule idle` (the default), a
+An idle chat can compact before the next line. With `--compact-schedule idle` (the default), a
 fresh chat ticks every 5 seconds (`Repl::IdleCompaction`) and calls `Agent#prepare_idle`, which
 runs `Compaction::Source#prepare` under the dispatch lock and declines when that lock is already
 held, so a prepare never races a reply. `Source::IdleGate` decides whether the chat has waited long
 enough: past the provider's cache TTL, or at least 120 seconds where there is none, with 1
 judgement per head. Idle past the gate is read as cold even though no response confirmed it, so
-the cut journals `cache_state: presumed_cold`; a confirmed one journals `cold`. The cut it commits
+the cut journals `cache_state: presumed_cold`; a confirmed one journals `cold`.
+
+The cut it commits
 is an ordinary `compaction_cut`; the private `Preparation` inside `Compaction::Source` (`source.rb`) adds the 2 records around it,
 `compaction_prepared` when the cut lands and `compaction_applied` on the render that sends it. The
 cut consumes the last-turn usage reading by value, so the render that follows does not re-fire the
@@ -478,11 +503,11 @@ summarizer on a reading the cut just made stale. `--compact-schedule turn` keeps
 where the cut waits for the next ask. When the provider's context window is only guessed (provenance `:guessed`), the window-approach signal is withdrawn, so an idle chat prepares only past `--compact-bytes` and says nothing about it. The schedule is a bench arm: it is recorded in the header and
 `Bench::Variance` refuses to pool different ones.
 
-**The wiring is where this gets subtle.** `CLI::CompactionMount`
+`CLI::CompactionMount`
 (`lib/lain/cli/compaction_mount.rb`) plugs 3 things into one `Agent.new`, and the third is the
 reason it is an object rather than 3 keywords: `Compaction::Source#context_for` is handed the
 last turn's input tokens as an Integer, but `Compaction::Cold` needs `cache_read_input_tokens`,
-which exists only on a model **response**. So the Source is *also* a `#<<` sink and rides the
+which exists only on a model response. So the Source is *also* a `#<<` sink and rides the
 Agent's turn-usage journal through a `CLI::JournalTee`. Skip that tee and nothing fails: the
 byte threshold and hard cap still fire, but `Cold` is never fed, the `:cold` path is dead, and
 every compaction journals `cache_state: forced`, quietly turning a bench comparison arm into an
@@ -491,26 +516,26 @@ arm that measures nothing.
 `CLI::Backend#pipeline_source` is memoized for the same class of reason and raises
 `Backend::Rebound` on a second call with different arguments, because the Source accumulates run
 state (`Cold`'s observed warmth, `Eager`'s fired summaries) and a rebuilt one would reset both
-every turn while nothing raised. Compaction also gets its **own** `PriceBook` degrading to zero,
+every turn while nothing raised. Compaction also gets its own `PriceBook` degrading to zero,
 so a local model with no list price cannot crash a chat mid-conversation;
 `Telemetry::Compaction` carries the model those figures are quoted in, so a zero beside
 `qwen3:4b` reads as the fallback it is.
 
-**The oracle tiers generalize this.** An `Oracle::Definition` (template + schema + tier) is
+The oracle tiers generalize this. An `Oracle::Definition` (template + schema + tier) is
 content-addressed, so a heuristic answer and a model answer to the same question are 2 different
 oracles at 2 different addresses. `Heuristic` is deterministic Ruby, `Model` is a live call,
 `Recorded` replays journaled answers, and `Recorded::Journaling` decorates any tier so every Q&A
 rides the existing `Telemetry::OracleAnswer` path. `Summarize`, `PruneScoring`, and `MemorySave`
 are the 3 shipped questions.
 
-**Memory** (`lib/lain/memory/`) is a content-addressed index with a `manifest`, a `graph`, and
+Memory (`lib/lain/memory/`) is a content-addressed index with a `manifest`, a `graph`, and
 `bm25`/`hybrid` retrieval, written through `memory/recorder.rb` and read back by
-`Context::Recall`, which injects **after the last cache breakpoint** so a recall cannot break the
+`Context::Recall`, which injects after the last cache breakpoint so a recall cannot break the
 cached prefix. `Embedder` (`lib/lain/embedder/`) is the batched seam for a real embedding backend
 against a deterministic PHI-free one. Each `hybrid` arm truncates to `Hybrid::CANDIDATES` hits
 before RRF sees a rank, a bound whose reason does not depend on any corpus.
 
-**Memory is durable and project-wide.** `Memory::ProjectStore`
+Memory is durable and project-wide. `Memory::ProjectStore`
 (`lib/lain/memory/project_store.rb`) is one append-only `store.ndjson` per project, under
 `$XDG_STATE_HOME/lain/memory/<project-hash>/`, written under a sibling lock file so concurrent
 chats and `lain consolidate` can all append. `ProjectStore::Loaded` folds it last-write-wins by
@@ -518,10 +543,12 @@ id and derives a `version` from the folded digests. `#view` opens a fresh chat o
 fold, so a new chat sees what earlier chats and the consolidation clerk wrote; `#resumed`
 re-addresses a replayed recorder's own items instead of re-reading the file, so a resume
 reproduces the roots its own file recorded rather than inheriting what other chats wrote
-meanwhile. A session's view is its `Memory::Recorder`: the items the store resolved at load time,
+meanwhile.
+
+A session's view is its `Memory::Recorder`: the items the store resolved at load time,
 plus this chain's own writes, re-folded by `#follow` on a `/rewind`. Two records carry it into the
 session file, and they are not the same quantity: `memory_loaded` is written once and names the
-**store version** this session opened on, with the item bodies, so the file is self-contained;
+store version this session opened on, with the item bodies, so the file is self-contained;
 `memory_root` is written once per committed turn and names the live index's content address at
 that turn.
 
@@ -529,10 +556,12 @@ that turn.
 than in-process. Its own journal lands under `$XDG_STATE_HOME/lain/consolidation/<project-hash>/`,
 a sibling of `sessions/`, so a clerk pass never appears in a chat listing. Each clerk sees, and may
 replace, only the items its own spawn wrote: its manifest and `memory_read` are a view over that
-slice alone, and `Memory::Ownership` refuses it any id the chat or another lineage holds. Twin
+slice alone, and `Memory::Ownership` refuses it any id the chat or another lineage holds.
+
+Twin
 spawns share a digest, so a repeat pass over the same lineage refines its own items; the price is
 that a clerk cannot de-duplicate against what the chat already knows. The scaffolds it builds are
-**masked fail-closed**: every rendered turn's text goes through `Sensitivity::Regions` and
+masked fail-closed: every rendered turn's text goes through `Sensitivity::Regions` and
 `Sensitivity::Masking` before it reaches a provider, because nobody is at a surface to release a
 region. Only the record's bytes are masked; the digests lain's own frame wraps them in stay
 intact, so the clerk can still cite what it read.
@@ -564,41 +593,50 @@ A tool call or model call is built as an `Effect`: frozen `Data` values in `lib/
 (`lib/lain/effect/handler/live.rb`) runs the tool for real, converting anything the tool raises
 into an `is_error` result at the one boundary the loop trusts; `Effect::Handler::Mock` answers
 canned results, which is what specs swap in. Same effects, 2 interpretations. A handler
-**terminates** the tool phase's `Middleware::Stack` and never decorates another handler: everything
+terminates the tool phase's `Middleware::Stack` and never decorates another handler: everything
 that may refuse, park or observe a call before it runs is a middleware in front of it, so the whole
 path a call takes is one inspectable list with the interpreter at the end.
 
-`Agent::ToolRunner#dispatch` is the one place the 2 meet, and it **resolves the tool once**. The
+`Agent::ToolRunner#dispatch` is the one place the 2 meet, and it resolves the tool once. The
 name is fetched from the runner's `Toolset`, and that object rides the env as `:tool` through every
 layer; a name the set does not hold arrives as `Toolset::Unheld`, a Null Object that refuses by
 name. At the interpreter end the runner reads the set again and calls the handler only if the name
-still resolves to the **very object** the stack judged, or was unheld at both reads (so `Live` refuses
-it by name, or `Mock` answers it canned). Approval can take as long as a human takes,
+still resolves to the very object the stack judged, or was unheld at both reads (so `Live` refuses
+it by name, or `Mock` answers it canned).
+
+Approval can take as long as a human takes,
 and a `/mode` flip in that window may withdraw the capability being asked about; the identity check
 refuses that call exactly as it refuses a name the set never held, and refuses a `:tool` some layer
 swapped in the same way. That covers the agent whose toolset the flip rebinds; a child's toolset is
 fixed when it is spawned, so a child's call parked across a flip is not withdrawn by it.
 
 `Middleware::Gate` (`lib/lain/middleware/gate.rb`) is the approval layer. It holds no `Toolset`: it
-judges the tool the env carries, on 2 axes OR'd together — the tier the tool declares
-(`#requires_approval?`) and the path this call names (`Sensitivity::Policy#gates?`) — and asks an
+judges the tool the env carries, on 2 axes OR'd together, the tier the tool declares
+(`#requires_approval?`) and the path this call names (`Sensitivity::Policy#gates?`), and asks an
 injected `policy` answering `#rule(effect, context) -> Ruling` (`ApproveAll`, `DenyAll`, or an
 `Approval::Escalation` ladder); a bare callable is adapted once, and only `true` or an allow Ruling
-approves, so a rung's deny Ruling is never read as a yes. Its guarantee is **positional**: what it
+approves, so a rung's deny Ruling is never read as a yes. Its guarantee is positional: what it
 approved is what runs only while it is the last layer before the interpreter, since a layer after it
 could rewrite the tool or the input. `Middleware::Sensitivity` sits just ahead of it and refuses a
 *denied* path outright, because a denied path is not approvable and no ruling should be asked for it.
 
-**One builder assembles every agent's tool stack.** `CLI::ToolGuard` (`lib/lain/cli/tool_guard.rb`)
-builds it for a chat's agent (`.stack`), for each of that chat's children (`ToolGuard::Spawned`, the
-builder the spawn seam carries, reading the parent's board when the child is built), and for a run
-with no chat (`.detached`, whose gate approves deliberately: nobody is at a surface to answer; a child
-leased a checkout, a bench arm under `--isolation worktree`, is held to it instead, and a call its path
-policy gates outside the lease is refused, saying no human is attached; a leased child with no chat also refuses any bash command
-whose paths cannot be read, and refuses a script the run wrote (`LeasedPolicy`, the freshness check, with the lease's own
-clock started when its checkout finished). The check covers the program a command runs, the files that program is known
-to run, and the regular files it hands an interpreter as an operand or a -r feature; it does not follow what those files
-load or require. A script that predates the run still runs, and its own writes are not confined). The
+**One builder assembles every agent's tool stack.** `CLI::ToolGuard` (`lib/lain/cli/tool_guard.rb`) builds the stack for 3 kinds of agent:
+
+- a chat's agent (`.stack`);
+- each of that chat's children (`ToolGuard::Spawned`, the builder the spawn seam carries, reading
+  the parent's board when the child is built);
+- a run with no chat (`.detached`), whose gate approves deliberately because nobody is at a surface
+  to answer.
+
+A child leased a checkout (a bench arm under `--isolation worktree`) is held to it instead. A call
+its path policy gates outside the lease is refused, saying no human is attached. A leased child with
+no chat also refuses any bash command whose paths cannot be read, and refuses a script the run wrote
+(`LeasedPolicy`, the freshness check, with the lease's own clock started when its checkout finished).
+The check covers the program a command runs, the files that program is known to run, and the regular
+files it hands an interpreter as an operand or a -r feature. It does not follow what those files
+load or require. A script that predates the run still runs, and its own writes are not confined.
+
+The
 layers, in order: the members a user's `config.rb` registered (see below), `ConfineToScope`,
 `RefuseSecretWrites`, `RedactSecretReads`, `WithholdSecretPaths`, `GuardTestLayout`,
 `WithholdAutomaticOutput`, then `Sensitivity`, then `Gate`. `Middleware::Gate.closes!` refuses any stack
@@ -608,92 +646,93 @@ tools can run. Under the `handler_union` spawn posture the child renders the sha
 `Middleware::RefuseUnpermitted` is inserted just outside `Sensitivity` to refuse a tool the child
 was not attenuated to, before a human is ever asked about it.
 
-**A user's middleware is outermost, and read once.** `middleware do ... end` in
+A user's middleware is outermost, and read once. `middleware do ... end` in
 `$XDG_CONFIG_HOME/lain/config.rb` (gated by `lain trust --user`) and in a project's
 `.lain/config.rb` registers members for the `model`, `tool`, `turn` and `repl` phases and, for
 `http`, Faraday entries on the provider's connection. `Config.middleware` returns the user's
 registrations then the project's, `CLI::ChatLaunch` reads it once before the session record opens
 and hands it to `CLI::Backend`, which `CLI::Wiring` reads it back from, so a launch cannot see 2
-versions of one file. In every phase configured members sit outside lain's own, which keeps what
+versions of one file.
+
+In every phase configured members sit outside lain's own, which keeps what
 `Gate.closes!` pins: nothing a user writes can come between the gate and the interpreter. A
 registration is a recipe built fresh per stack, except `http`, which Faraday builds once per
 connection and every subagent shares. Commands without a chat (`bench`, `consolidate`, `improve`,
 `epic submit`) read no config. The env keys and the user-facing rules are in
-[`docs/commands.md`](docs/commands.md#middleware).
+[`docs/users/commands.md`](../users/configuration.md#middleware).
 
 `Lain::Middleware` (`lib/lain/middleware.rb`) is the Rack/Sidekiq/Faraday-idiom public API these
 layers are written against: `Middleware::Base#call(env, &app)` passes a call on through
-`#downstream` or answers it, and composition is **membership in a `Middleware::Stack`** — an ordered
-list with `#use`, `#insert_before`, `#insert_after` and `#to_a` — rather than an operator, because
-the ordering is the footgun and a list is the shape that stays inspectable.
+`#downstream` or answers it, and composition is membership in a `Middleware::Stack`, an ordered
+list with `#use`, `#insert_before`, `#insert_after` and `#to_a`. It is a list and not an operator
+because the ordering is where mistakes happen, and a list stays inspectable.
 
 Four middleware phases ride this API today: model, tool, turn, and repl.
 `lib/lain/middleware/journal_requests.rb` and `journal_turns.rb` are the model and turn phases
 that write into the session record (disk layout below). `refuse_secret_writes.rb` is a
-tool-phase middleware, the first of `CLI::ToolGuard`'s eight guards after `ConfineToScope`, that withholds a
+tool-phase middleware, the first of `CLI::ToolGuard`'s 8 guards after `ConfineToScope`, that withholds a
 credential-shaped `memory_write` before it reaches the recorder. `skill_dispatch.rb` is the
 repl-phase middleware a `@role/skill` line folds through.
 
-**Why the model phase exists at all**, rather than pushing instrumentation into Faraday: lain
-runs 2 transports that do not share an HTTP stack. `Provider::Anthropic` (the SDK oracle) is on
-`net/http` and `connection_pool`; `Provider::AnthropicRaw` (the default path) is Faraday-based.
+The model phase exists because lain runs 2 transports that do not share an HTTP stack. `Provider::Anthropic` (the default path) is Faraday-based;
+`AnthropicReference`, the SDK oracle the specs diff it against, is on `net/http` and `connection_pool`.
 Faraday middleware can wrap the second and not the first, so it cannot be where cross-transport
 instrumentation lives. The model phase is the one layer at which both transports look identical
 to the bench, which is why retries, cost accounting, and cache instrumentation live there.
 
-**No middleware here can interrupt what runs inside it.** Interrupting arbitrary Ruby needs a
+No middleware here can interrupt what runs inside it. Interrupting arbitrary Ruby needs a
 watchdog thread, which the no-threads posture rules out, so a middleware wanting to bound how long
 a downstream takes can only publish a value into `env` (a monotonic deadline, say) for a
 cooperative downstream to honor, and check afterward whether it was. Anything you write into a
 middleware runs inside the tool's own fiber, so a non-yielding middleware stalls the reactor and
-nothing can stop it: see [`docs/concurrency.md`](docs/concurrency.md).
+nothing can stop it: see [`docs/devs/concurrency.md`](concurrency.md).
 
 `Agent::ToolRunner` (`lib/lain/agent/tool_runner.rb`) is where the tool phase gets driven from the
 loop: `#dispatch` runs the stack with the handler as its innermost block.
 The loop itself, `Lain::Agent` (`lib/lain/agent.rb`) with `Agent::Budget` and
 `lib/lain/agent/loop_machine.rb`, is a `state_machines` state machine. A spec generates
-[`docs/agent-state-machine.md`](docs/agent-state-machine.md) from it and fails the build on
+[`docs/devs/agent-state-machine.md`](agent-state-machine.md) from it and fails the build on
 drift. That document covers the wire's `stop_reason` handling, which this one does not repeat;
-the harness's own typed reasons for a *stopped ask* are below.
+lain's own typed reasons for a *stopped ask* are below.
 
-### Why an ask stopped, and what happens to the prompt
+### Stopped asks and the prompt
 
 `Agent::StopReason` (`lib/lain/agent/stop_reason.rb`) classifies whatever the ask raised against
 its whole cause chain and answers one of `stopped`, `ceiling`, `over_window`, `stalled_stream`,
 `transport` and `rejected` (a status the request itself earned, kept beside it as `status`),
 defaulting to `torn` when nothing matches. That symbol is what `Telemetry::RunInterrupted` records, over the closed
-`REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn]`
-— the first two come from Ctrl-C and the shutdown window rather than from an ask. It is a
+`REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn]`.
+The first 2 come from Ctrl-C and the shutdown window, not from an ask. It is a
 different enum from `Lain::StopReason`, which is the model's own wire-level stop.
 
-**The prompt is withdrawn only for a provably pre-wire failure.** `Agent#withdrawing` retreats
+The prompt is withdrawn only for a provably pre-wire failure. `Agent#withdrawing` retreats
 the Timeline for `WindowExceeded` and `Lain::PreWire` alone, and only while that prompt is still
-the head. Everything else leaves the prompt **stranded**: unanswered at the head, and folded into
+the head. Everything else leaves the prompt stranded: unanswered at the head, and folded into
 the next ask. `Agent#prompted` cuts one user turn carrying both texts from the stranded turn's
 parent rather than stacking a second prompt, and the chat says so, naming `/rewind 1` as the way
 to leave the earlier one out.
 
-**A caller that wants text uses `Agent#ask!`**, which raises `Response::Failed` (a `Lain::Error`
+A caller that wants text uses `Agent#ask!`, which raises `Response::Failed` (a `Lain::Error`
 carrying the `Response::Failure` the pane prints) on any failed stop rather than returning a prose
 tool call or a cut-off sentence as the answer; an actor runs the same check through
 `Response::Failed.refusing` and dies with a `failed` note. It is a failed answer, not a stopped ask,
 so nothing records it as torn.
 
-**The `tool_use` turn settles before any tool runs.** `Middleware.settles!` refuses a turn-phase
-stack whose members answer only `#call`, and `Agent#account` calls `turn_middleware.settle` — so
-`Middleware::JournalTurns` writes the turn to the session file — before the usage record and
+The `tool_use` turn settles before any tool runs. `Middleware.settles!` refuses a turn-phase
+stack whose members answer only `#call`, and `Agent#account` calls `turn_middleware.settle`, so
+`Middleware::JournalTurns` writes the turn to the session file, before the usage record and
 before the round's first tool starts, all inside the same cancellation-shielded commit atom. A
 session killed while a tool runs therefore resumes, and no later record can cite a turn the file
 lacks. That is what retired the child-only settle handles and `Bench::Session::Lineages::InFlight`.
 
-**A tool can end the turn.** A result built with `Tool::Result.held` commits its round and settles the
+A tool can end the turn. A result built with `Tool::Result.held` commits its round and settles the
 run as `held` (`Lain::StopReason::HELD`), with the held text after the model's own, instead of asking
 the model again. Every middleware that rebuilds a result forwards the flag through `Result#replacing`,
 so a redaction or a withholding cannot turn a hold back into another request.
 
-## Modes: a mode is scope × approval
+## Modes
 
-`Lain::Mode` (`lib/lain/mode.rb`) is `Data.define(:scope, :approval, :layers)`, and the first two
+`Lain::Mode` (`lib/lain/mode.rb`) is `Data.define(:scope, :approval, :layers)`, and the first 2
 are the axes:
 
 | axis | values | what it decides |
@@ -707,16 +746,18 @@ path of a `bash` command, that falls outside the project root and its `related` 
 gated and noted `outside_project`, so the judge answers it under `auto`, a human under `ask`, and
 the rules under `bypass` (an unattended `ask` refuses it). The check is `Middleware::Gate`'s, made
 with the same symlink-aware containment the read side uses. Reads are unchanged, and so is the rest
-of the ladder. `plan` confines the paths a tool
-**names** — `write_file`/`edit_file`'s `path`, `bash`'s `cwd` — to a leased spike, refusing
+of the ladder.
+
+`plan` confines the paths a tool
+names (`write_file`/`edit_file`'s `path`, `bash`'s `cwd`) to a leased spike, refusing
 anything else by name and pointing at `/mode checkout`. `Isolation::Spike`
 (`lib/lain/isolation/spike.rb`) cuts that spike as a worktree on `lain/plan/<key>` from a commit
 of the checkout's tracked state, built through a temporary index so the real index, stash and
 reflog are untouched; outside a git repository `Isolation::Scratch` hands out an empty directory
-instead. **It is confinement, not a sandbox**: a human-approved shell command's own words can
+instead. It is confinement, not a sandbox: a human-approved shell command's own words can
 still write anywhere, because only the named location is checked.
 
-All three approval levels run one ladder, and a rung above the bottom refuses under every one:
+All 3 approval levels run one ladder, and a rung above the bottom refuses under every one:
 `Escalation::Triage` (argv words that name a denied path), then the rules. `Approval::Ladder` is the
 first-decisive fold behind both: `Escalation` builds one over its rungs per call, and the rules rung
 builds one over its rules; nesting is a monoid, and `Ladder::Poisoning` runs once at the edge of each,
@@ -724,7 +765,9 @@ so a fault suppresses a later automatic allow and never a human's. A rule's allo
 is suppressed into a faulted abstention, so the call reaches the bottom: a human under `ask`, and a
 refusal under `bypass`. Under `auto` the judge is still consulted, but the edge turns its approve
 into a refusal, so after a broken rule it can only deny or defer, and a defer reaches a human. They
-differ at the bottom. `ask` parks on `Approval::Surfaces`. `auto` puts `Approval::Judged` there: tier 0 first,
+differ at the bottom. `ask` parks on `Approval::Surfaces`.
+
+`auto` puts `Approval::Judged` there: tier 0 first,
 which sends a call barred from automatic approval, or one whose path is a credential, named,
 configured, protected or malformed, to the asking rung without a model; then `Approval::Judge`,
 a fresh-root `auto_approver` child bounded at 30 seconds that answers approve, deny or defer. Defer,
@@ -775,7 +818,7 @@ Layers (`mode/layer.rb`) are the orthogonal, non-exclusive third member: `goal`,
 The `auto_approve` layer and the racing `AutoSurface` it added are gone; asking a model first is
 approval `auto`.
 
-`Mode::Switch` (`mode/switch.rb`) is the live slot, and it journals **only a move**: switching to
+`Mode::Switch` (`mode/switch.rb`) is the live slot, and it journals only a move: switching to
 the mode already in force writes nothing. The posture table, `Permits::All`/`Only`, `READ_ONLY`,
 `ToolsetBuild::PosturePermits`, `Subagent::Seam#permits`, the `deny_all` gate-policy entry and
 the `manual` and `accept_edits` tokens are all gone; `/mode` refuses them, and `auto_approve`, as unknown.
@@ -786,11 +829,11 @@ A `Tool` (`lib/lain/tool.rb`, with 23 classes under `lib/lain/tools/`) declares 
 properties about itself, and both default to the conservative answer so a new tool must opt in
 deliberately.
 
-`#requires_approval?` is the **tier** axis, and the tiers are not a list the gate maintains. Tier
+`#requires_approval?` is the tier axis, and the tiers are not a list the gate maintains. Tier
 1 is direct Ruby with no subprocess. Tier 2 is an argv Array through `Lain::Shell::Out`. Neither
 has a model-controlled command string, so neither gates. Tier 3 is a String command through
-`sh -c`, and those override to `true`. The axis that predicts danger is **whether the model
-controls the command string**, not read-versus-write, which is why `write_file` does not gate and
+`sh -c`, and those override to `true`. The axis that predicts danger is whether the model
+controls the command string, not read-versus-write, which is why `write_file` does not gate and
 `bash` does.
 
 **Searches list what git would show, and run off the reactor.** `grep`, `glob`, `list_files` and
@@ -812,10 +855,12 @@ toolset exactly, so a new tool must choose or fail by name, and
 `spec/lain/tools/parallel_commutation_spec.rb` proves the claim those tools are making: every
 unordered pair of the 10 non-spawning safe tools runs in both orders, each order as 2 single-use
 responses back to back, and the `tool_result` content, the `is_error` flag, and the `Session`
-read-set all agree. Both orders are serial by construction, because a run of 1 is never gathered —
-comparing 2 gathered fan-outs would be a timing probe that proves nothing. The reasoning behind the
+read-set all agree.
+
+Both orders are serial by construction, because a run of 1 is never gathered.
+Comparing 2 gathered fan-outs would be a timing probe that proves nothing. The reasoning behind the
 barrier semantics, and the rejected subset-first alternative, is in
-[`docs/concurrency.md`](docs/concurrency.md).
+[`docs/devs/concurrency.md`](concurrency.md).
 
 `Toolset` (`lib/lain/toolset.rb`) is a frozen `Enumerable` whose `#only` and `#except` return new
 attenuated sets. That is the whole authorization model: possession is the authorization, and
@@ -827,25 +872,26 @@ Two Toolsets are `==` when their canonical schema bytes match. The digest is com
 `#initialize`, since the object freezes itself on the next line, and it is *schema* equality rather
 than behavioral equality: 2 tools with identical schemas and different `#perform` bodies compare
 equal, which is the equality prompt caching already lives by. That equality is what let the
-[attenuation](docs/GLOSSARY.md#object-capability-attenuation) laws be stated at all —
+[attenuation](glossary.md#object-capability-attenuation) laws be stated at all:
 `spec/lain/toolset_spec.rb` includes the `"an attenuation"` group over `#only` with `#except` as its
-dual. The security reading
+dual.
+
+The security reading
 sits in `toolset.rb`'s doc comment where a reader meets the operations: a capability once dropped
 cannot be regained by the holder, there is no join, and union exists only at construction, below the
 trust boundary, in `Tools::Subagent#child_union`. Monotonicity is what makes that checkable, and it
-is bounded by the **request** rather than by the receiver, over the surface that actually authorizes
+is bounded by the request rather than by the receiver, over the surface that actually authorizes
 a call (`#fetch`, the one message `Agent::ToolRunner` resolves a call with, and `#include?` beside it)
 rather than the surface a reader looks at.
 
-The 2 spawn postures are 2 enforcement semantics for one attenuation, and CE-4 compares their cache
-economics, which is honest only if they agree on everything else.
+The 2 spawn postures are 2 enforcement semantics for one attenuation, and a bench comparison of their
+cache economics is valid only if they agree on everything else.
 `spec/lain/tools/subagent_posture_equivalence_spec.rb` pins that: identical delivered `tool_result`
-blocks over allowed calls, and one designed divergence on a disallowed one — `:schema` never renders
+blocks over allowed calls, and one designed divergence on a disallowed one: `:schema` never renders
 the name, so `Toolset#fetch` raises with nothing journaled, while `:handler_union` renders the union
 and `Middleware::RefuseUnpermitted`, in the child's tool stack, answers an `is_error` result and
-journals a `refused` record. The
-consequence worth remembering is that **under `:handler_union` the rendered schema does not
-determine the capability set**: 2 children with different `only` sets render byte-identical tools
+journals a `refused` record. Under
+`:handler_union` the rendered schema does not determine the capability set: 2 children with different `only` sets render byte-identical tools
 blocks, which is what makes the sibling cache sharing the posture exists for possible.
 
 **A chat's child is told its own working directory**, at the end of its role tail, after the cache breakpoint.
@@ -853,17 +899,19 @@ Its segment 0 is the child form of the system render, whose environment block sa
 the role instructions, so 2 siblings in different leases or worktrees still share segment 0 byte for byte. The
 main agent's render is unchanged.
 
-**Every tool result has a static byte ceiling**, and they are one table rather than a constant
+Every tool result has a static byte ceiling, and they are one table rather than a constant
 per tool: `Tool::Bounds::CEILINGS` (`lib/lain/tool/bounds.rb`) maps all 16 result-returning tools
 to the same `RESULT_BYTES` of 16 KiB, measured on the bytes the model sees. The number is sized
 to the smallest local window, not to a model: at the worst measured density one result is about
-40% of a 32k window. The same file holds the five bound *shapes* a tool chooses between —
+40% of a 32k window.
+
+The same file holds the 5 bound *shapes* a tool chooses between:
 `Enumeration` (a row cap with an in-band notice), `Fill` (byte-bounded rows with a trailer),
 `Artifact` (refuses whole, no payload), `Handback` (hands the overrun back for a caller or a
 human to decide) and `Spilled` (keeps the whole in a file and hands back a head that says how
 much of how many bytes it shows and where the rest is). A clipped head alone reads as complete;
 one whose last line names the whole and its path cannot, so `Spilled` is the one shape that
-shows part of a whole artifact. `web_fetch` is measured on the **readable text** its nokogiri
+shows part of a whole artifact. `web_fetch` is measured on the readable text its nokogiri
 converter produces rather than on the markup; `raw: true` asks for the markup instead.
 
 `Tool::Spill` (`lib/lain/tool/spill.rb`) keeps those files under
@@ -884,7 +932,7 @@ record says `spilled` and gives the path. `BoardBuild` hands that dir, keyed by 
 `ToolGuard::Inputs#answers`, so a leased parent may read it. Only a spill that cannot be written
 falls back to the refusal floor.
 
-When an Agent is given one, a tool round's results are also bounded **as a whole**, by
+When an Agent is given one, a tool round's results are also bounded as a whole, by
 `Tool::RoundBudget` (`lib/lain/tool/round_budget.rb`): the policy builds a budget each round from a
 `Tool::Room` (the Agent's window, the last turn's usage and the reply ceiling), less
 the reply reserve. The reserve is `ReplyReserve.tokens`, `min(ceiling, max(min(4096, window / 4),
@@ -896,7 +944,7 @@ record names the turn and what was delivered, deduplicated and withheld.
 
 `Tool::Input` (`lib/lain/tool/input.rb`) is ActiveModel: one field declaration yields both the
 JSON Schema the model sees and the local validation, so they cannot diverge, and coercion is
-free. Its validations check **shape, not safety**; the file's header comment says so, because
+free. Its validations check shape, not safety; the file's header comment says so, because
 they read like security controls and are not.
 
 `Tool::Contracts` (`lib/lain/tool/contracts.rb`) is design-by-contract in the Eiffel sense, and
@@ -912,45 +960,47 @@ checks unskippable.
 
 `Shell::Parse` (`lib/lain/shell/parse.rb`) reports what tree-sitter's bash grammar saw, and just
 as importantly what it did not; `Shell::Verdict` (`lib/lain/shell/verdict.rb`) reads that report
-and answers one question — *is this command syntactically literal and fully understood?* — never
-*is it safe*. An allow hands over a **term** (`[["grep", "-r", "foo", "."], ["wc", "-l"]]`) and
+and answers one question: *is this command syntactically literal and fully understood?* It never
+answers *is it safe*. An allow hands over a term (`[["grep", "-r", "foo", "."], ["wc", "-l"]]`) and
 deliberately not the original string, because re-running an accepted string through `sh -c` turns
 every parser/shell disagreement into a live bypass. `Shell::Pipeline` runs that term through
 `Open3.pipeline_r` with no shell anywhere.
 
-Parse carries three independent signals, and the third is the one a designer forgets:
+Parse carries 3 independent signals:
 
-1. **Broken** — an ERROR *or* a MISSING node, in one query. `has_error()` alone was measured
+1. Broken: an ERROR *or* a MISSING node, in one query. `has_error()` alone was measured
    letting `")"`, `"def"`, `"1 +"` and `"[1,"` through as silent zero-matches.
-2. **Uncovered bytes** — every non-whitespace byte must sit inside a span the parser recognizes.
+2. Uncovered bytes: every non-whitespace byte must sit inside a span the parser recognizes.
    This is the signal that does not depend on the grammar admitting a mistake: tree-sitter-bash
    #315 parses `$FOO/$BAR/` into a corrupted `command_name` of `"$FOO/$"` with zero ERROR and zero
    MISSING nodes, and only the swallowed `$` at byte 5 gives it away.
-3. **Kinds and separators** — the vocabulary a verdict allowlists over.
+3. Kinds and separators: the vocabulary a verdict allowlists over.
 
-**Coverage is not a "compound syntax cannot hide here" guarantee.** tree-sitter-bash does not
+Coverage is not a "compound syntax cannot hide here" guarantee. tree-sitter-bash does not
 model `time` as a keyword, so a leading command word the grammar does not know degrades its whole
 tail to plain `word` nodes in an ordinary `command`: `time { echo PWNED; }`, `time if true; then
-ls; fi` and `time rm -rf /tmp/x` all reach FULL coverage with the blandest possible kind set, and
-the last of them execs faithfully. Swept as a leading token, twelve reserved words reach
+ls; fi` and `time rm -rf /tmp/x` all reach full coverage with the blandest possible kind set, and
+the last of them execs faithfully.
+
+Swept as a leading token, 12 reserved words reach
 covered-and-unbroken (`}`, `coproc`, `do`, `done`, `elif`, `else`, `esac`, `fi`, `in`, `then`,
 `time`, `]]`); `coproc` is benign only because no such binary exists, where `/usr/bin/time` does.
-Nor is it only the leading stage — `echo hi; time { rm x; }`, `ls | time rm x` and `true && time
-rm -rf /tmp/x` are all fully covered — so a name check reads EVERY stage's `argv.first`. The
+Nor is it only the leading stage (`echo hi; time { rm x; }`, `ls | time rm x` and `true && time
+rm -rf /tmp/x` are all fully covered), so a name check reads every stage's `argv.first`. The
 residual risk is therefore a *program name*, which is a judgement, and it lives in Verdict's
 `PROGRAM_RUNNERS` denylist rather than as a "suspicious leading word" heuristic in the parser.
 
-The reconstructed argv is the tree's word splitting and none of a shell's interpretation, so four
+The reconstructed argv is the tree's word splitting and none of a shell's interpretation, so 4
 things belong to whoever executes it: quotes survive verbatim (dequoting is interpretation); a
-redirection is an argv term inside the command node and is DROPPED outside it (`echo a >b c`
+redirection is an argv term inside the command node and is dropped outside it (`echo a >b c`
 yields `["echo", "a"]`, and only `kinds` reporting `redirected_statement` tells you `c` is gone);
 a heredoc body is blanketed rather than tokenised; and a NUL byte parses clean into an ordinary
 word, which `exec` then refuses.
 
-Verdict's three tiers are node kinds (an allowlist, never a metacharacter denylist), program
-names, and **word text** — a glob, a tilde, a brace and a backslash have no node kind at all, so
+Verdict's 3 tiers are node kinds (an allowlist, never a metacharacter denylist), program
+names, and word text: a glob, a tilde, a brace and a backslash have no node kind at all, so
 `rm *` parses identically to `ls -la`. There is a fourth thing to count: tree-sitter-bash lexes a
-newline as whitespace, so `echo hi\nrm -rf /tmp/x` arrives as two stages and an EMPTY separator
+newline as whitespace, so `echo hi\nrm -rf /tmp/x` arrives as 2 stages and an empty separator
 list. Reading separator texts cannot see it; N stages against N−1 pipes can.
 
 The one expansion a term performs itself is a word that is `~` or starts `~/` with nothing else
@@ -969,15 +1019,21 @@ than about its `cwd`; `Named.from` takes a parse a caller already holds. It name
 and each redirect target, but not `/dev/null` or a descriptor duplication. curl reads the
 file after an `@` in the value of `-d`, `--data`, `--data-ascii`, `--data-binary`, `--json`, `-H` and `--header`,
 after `name@` in `--data-urlencode`, and in `-F`/`--form` after `name=@` (more uploads follow each `,`) or
-`name=<`, and in a `headers=@` or `headers=<` parameter after a `;`. A form name ends at a `;`, and among `@`
+`name=<`, and in a `headers=@` or `headers=<` parameter after a `;`.
+
+A form name ends at a `;`, and among `@`
 uploads at a `,` too; curl trims the blanks around an unquoted name. Those files are named as reads and the rest
 of each value names nothing. `--data-raw`, `-X`, `--request`, `-A`, `--user-agent`, `-u`, `--user`, `-e`,
 `--referer`, `git commit -m`/`--message` and `gh api -f`/`--raw-field` are data only, and an `@` that starts
-their value is still named. A data value bash would glob, a glob beside a `$?` fill included, is opaque unless
-its one file runs to the word's end. A glob is named by its fixed
+their value is still named.
+
+A data value bash would glob, a glob beside a `$?` fill included, is opaque unless
+its one file runs to the word's end.
+A glob is named by its fixed
 directory and carries its absolute pattern. A recursive reader carries `<root>/**` on each root, or on the cwd
 when it names none: grep `-r`, rg, ag, ack, `cp -r`, `diff -r`, `tar c`, `zip -r`, find, and git's diff,
 log, show, grep, stash, blame and `add -A`. A git `<rev>:<path>` operand carries `<cwd>/**/<path>`.
+
 A `$?`, `$$` or `$#` inside double quotes is digits the shell fills in, so its word is named by its fixed
 directory and a pattern. A `for` loop over bare words, when it is the whole command and its body holds no
 comment and not both quote kinds, is read as its body once per word. `Named.stages` and `Named.directories`
@@ -1028,9 +1084,9 @@ lands where Named resolved it.
 
 A program name is not an identity: `PATH` is inherited, so a bare `cat` runs whatever `execvp` finds
 first, and a planted `<root>/bin/cat` ran under a `ComposedTerm` approval. A bash call is now bounded in
-three places, and each answers a different question. All three read one `Shell::Executable` per stage.
+3 places, and each answers a different question. All 3 read one `Shell::Executable` per stage.
 
-1. **Resolution** (`lib/lain/shell/executable/resolver.rb`) answers *what will run*. One `Resolver` per
+1. Resolution (`lib/lain/shell/executable/resolver.rb`) answers *what will run*. One `Resolver` per
    session turns each stage of the term, wrappers (`env`, `nice`, `timeout`, `bundle exec`) unwrapped, into a
    frozen `Shell::Executable`: the resolved path, its realpath and link chain, later `PATH` hits it shadows,
    the anomalies in the environment (`empty_path_entry`, `relative_path_entry`, `project_path_entry`,
@@ -1052,7 +1108,7 @@ three places, and each answers a different question. All three read one `Shell::
    in the image: the `PATH` directories' children, every link hop and every ancestor directory, cached per ID
    at `$XDG_CACHE_HOME/lain/exec-images/v1/<id>.json`. The inspect and the create get 5s each, the export 60s
    and the rm 5s; `#listing` has no deadline of its own, so the first call on a new ID can wait for all
-   three. Each ID journals one `exec_image` record (tag, ID, whether it was listed, why not).
+   3. Each ID journals one `exec_image` record (tag, ID, whether it was listed, why not).
 
    Docker mounts the project and the cwd's realpath at themselves and runs in that realpath. A path under a
    mount is answered by the host (`Shell::Executable::MountedStat`), any other by the listing (`ListedStat`),
@@ -1068,7 +1124,7 @@ three places, and each answers a different question. All three read one `Shell::
    remembered in the process, so its notice names the cache file to delete and says to relaunch. A refusal
    is remembered only in the process and has no file.
 
-2. **The ladder's class table** answers *may a machine approve it*. Under `--confine classes` or `reader`,
+2. The ladder's class table answers *may a machine approve it*. Under `--confine classes` or `reader`,
    `ComposedTerm` has a twelfth predicate: every stage, wrapper and run file must be `system`, or `user`,
    unchanged this lineage and shadowing nothing, with no anomaly. A `project` file, a fresh or shadowing one,
    or an `unresolved` stage abstains, so the call falls to the judge or a human; the abstain's note names the
@@ -1076,7 +1132,7 @@ three places, and each answers a different question. All three read one `Shell::
    `Shell::Executable.bar` then defers any judge approval over a `fresh` or `unresolved` stage or run file or
    an anomaly (the escalation record says `bar`, and carries the reasons); `--judge-facts request` also puts
    the human's last line in the judge's prompt. The bar never turns a deny into anything else. Under the default arms (`--judge-facts off`) the class table stops only machine approval: a judge or human approval of a project, fresh or shadowing program runs `traced` and unconfined, and only `--judge-facts facts` or a human refusal closes it.
-3. **The sandbox** answers *what can the call reach if it runs anyway*, and is the only place that holds
+3. The sandbox answers *what can the call reach if it runs anyway*, and is the only place that holds
    against a string the parser read wrongly. Under `--confine reader` or `workspace`, a call that `ComposedTerm` approved
    (and no other) runs as `Exec::Sandboxed` over `Exec::Local` in the `reader` profile (`Confine::Profiles`).
    `Confine::Bwrap` prefixes each stage with `bwrap` (read-only root, a private sized `/tmp`, the session's
@@ -1112,13 +1168,15 @@ a granted one, and an unsandboxed call writes no `exec_record`, so the tripwire 
 The tripwire (`lib/lain/tripwire/`) is a `Journal` observer, so it folds every record, teed or not. It counts
 signals per requester (strong: a `fresh` program or run file, read from `exec_resolution` under any profile, and
 under a confining (`reader`) profile only, a refused exec, an exec the call did not resolve, and a descriptor or
-loader exec; under `traced` the descriptor and loader exec count at medium and the other two not at all; medium: a final deny on a protected path, a re-ask after a human's deny; weak:
+loader exec; under `traced` the descriptor and loader exec count at medium and the other 2 not at all; medium: a final deny on a protected path, a re-ask after a human's deny; weak:
 the judge's own deny) and writes a `tripwire` record per signal. At a score of 10 the record says
-`would_stop`. Under `observe` nothing is stopped or paused. Under `stop` a requester whose score from the
+`would_stop`.
+
+Under `observe` nothing is stopped or paused. Under `stop` a requester whose score from the
 seeded signals (`Tripwire::Stops::STOPPING`, today `refused_exec` alone, seeded by design and not yet measured)
 reaches the hard stop is tripped in `Tripwire::Stops`: a subagent's first trip stops it and pauses main, and
 main's trip, a second trip or a trip no record attributes stops every requester. Each trip journals a
-`tripwire_stop` record. The stop fails closed: an honest refused exec trips it as surely as a plant. It
+`tripwire_stop` record. The stop fails closed: a legitimate refused exec trips it as surely as a plant. It
 records and journals only: nothing refuses a stopped requester's calls yet.
 
 The arms, recorded in the session header's `arms` key when on (`CLI::Arms`):
@@ -1140,7 +1198,7 @@ Resolution and the env scrub are not arms: they run in every session.
 ## The secret boundary
 
 The split is forced by *when the answer is available*: a path classifier can answer before a file
-is opened, a region detector cannot until it has the bytes. So there are three places, and
+is opened, a region detector cannot until it has the bytes. So there are 3 places, and
 tier-1 `read_file`/`grep`/`glob`/`list_files` check nothing themselves.
 
 A file, or a directory below the root, whose name names a secret is gated for every reader. The
@@ -1149,7 +1207,9 @@ words are `pass`, `passwd`, `passcode`, `token`, `private` and `auth`, each its 
 Four longer words, `secret`, `password`, `credential` and `apikey`, also match at the end of a longer
 name (`mysecrets.txt`, `1password`), since few ordinary words end in them. So `vault-pass.txt` and
 `api_keys.txt` gate, and `AUTHORS` does not. Source and markdown files are excepted, by extension
-(`.rb`, `.erb`, `.py`, `.ts`, `.vue`, `.go`, `.rs`, `.md` and the like). Known edges: `dbPasswordFile.txt`
+(`.rb`, `.erb`, `.py`, `.ts`, `.vue`, `.go`, `.rs`, `.md` and the like).
+
+Known edges: `dbPasswordFile.txt`
 passes, because `Password` is neither at the end nor alone, and `libsecret` gates; a bare `pass` also gates compiler-pass files such as `*_pass.mlir` and `hlo/pass/`, by ruling. With no root the base
 is cwd, and a call that runs in a checkout outside the root (a leased worker, `/mode plan`) also counts
 the names below that checkout. A survey counts the directory names below its own root, wherever that
@@ -1166,17 +1226,19 @@ base with it), and the stricter verdict wins. A link's name says nothing about w
 `notes.txt -> ~/.ssh/id_rsa` is refused like the key itself. A dangling link is judged where its
 target would be created (`Landing.eventual`), since a write through it creates that file, and is
 at least gated as malformed; a landing that cannot be resolved at all (a loop, an unreadable
-directory) is gated as malformed, never raised. The filter judges each listing row the same way,
+directory) is gated as malformed, never raised.
+
+The filter judges each listing row the same way,
 because a walk follows a linked base, and the oracle and the human prompt are shown
-`name -> landing` whenever the two differ. `Sensitivity` itself stays lexical: the filesystem is
+`name -> landing` whenever the 2 differ. `Sensitivity` itself stays lexical: the filesystem is
 asked by `Policy` and, for the links a survey walks, by `Survey::Walk`, which classifies a link's
 name and target itself.
 
 | where | object | question |
 |---|---|---|
-| gate on the effect | `Sensitivity::Policy` | may this CALL happen? |
+| gate on the effect | `Sensitivity::Policy` | may this call happen? |
 | filter on the result | `Middleware::WithholdSecretPaths` → `Sensitivity::Filter` | which rows may the model see? |
-| mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` over `Sensitivity::Spans` | which BYTES may leave? |
+| mask on the content | `Middleware::RedactSecretReads` → `Sensitivity::Masking` over `Sensitivity::Spans` | which bytes may leave? |
 
 `read_file`, `grep` and `ast_search` are the readers of the mask step. A `grep` or `ast_search` result
 is scanned row by row; a detected region the ledger has not released for that file is masked in place
@@ -1193,7 +1255,9 @@ parks, and a trailer says the item cannot be released; it counts the regions mas
 `<redacted:N>` placeholders, how many were already redacted, since masking a placeholder again is the identity. A whole `blake3:<64 hex>` token is lain's own lineage
 digest and stays unmasked. The clerk's read goes through the same mask. The session remembers each item it read
 masked, and `RefuseSecretWrites` refuses any `memory_write` to that id for the rest of the session, placeholder
-or not, so a masked read cannot overwrite the real values. A new item holding a `<redacted:N>` placeholder is
+or not, so a masked read cannot overwrite the real values.
+
+A new item holding a `<redacted:N>` placeholder is
 allowed: the placeholder is a slot whose bytes are already gone, so writing it loses nothing. The refusal is
 journaled as `decline:masked read`. `improvement_write` is append-only and not
 checked. Each masked memory read journals `source_masked` (kind `memory`, the item id and a region count, never bytes), and
@@ -1205,7 +1269,9 @@ replay reads.
 A `bash` result is masked by the same step, with no release. `Sensitivity::Literals` is where a literal is chosen:
 the values of secret-named variables, plus, for each variable `env pass:` hands the command, the regions
 `Sensitivity::Regions` finds in its value (a DSN gives its password, so the password is masked printed alone while
-`RAILS_ENV=development` lists nothing). A passed name ending `_URL`, `_URI` or `_DSN`, or holding `DATABASE`, or `CONN` or
+`RAILS_ENV=development` lists nothing).
+
+A passed name ending `_URL`, `_URI` or `_DSN`, or holding `DATABASE`, or `CONN` or
 `CONNECTION` followed by `_` or the end of the name, also lists each token `Sensitivity::Entropy.hinted?` accepts: 16 characters or more,
 lower, upper and a digit, 3.5 bits per character, or hex at 3.0. Nothing under 8 bytes is listed. Limits: a value the
 detector reads whole (`Password=pw;Database=x`) lists that run, so the password printed alone is not masked, and a
@@ -1241,70 +1307,69 @@ The loader refuses `/`, the home directory and its ancestors, an entry that is n
 an unclean path; the home-ancestor check is lexical, so a home reached through a symlinked parent can
 be related by its other spelling, which only suppresses prompts because masking still applies.
 
-The invariant is **one compiled `[sensitivity]` table per run, and one object that answers about
-a path**. The claim that stood here before — "`Policy` holds the only `Filter.new` in `lib/`" —
-was true and too narrow: a second FILTER was hard to build, but a second CLASSIFIER was not, and
+The invariant is one compiled `[sensitivity]` table per run, and one object that answers about
+a path. The claim that stood here before, "`Policy` holds the only `Filter.new` in `lib/`",
+was true and too narrow: a second filter was hard to build, but a second classifier was not, and
 `/survey` built one from its own later re-read of `.lain/config.rb`. A session outlives that
-file: a turn may rewrite it — `write_file` is tier-1, and `.lain/config.rb` classifies *ordinary*,
-because the table names secrets and not itself — and so may a human in the next pane. So the listing walked one table while the gate beside
-it held another — both halves working, nothing wrong to look at.
+file: a turn may rewrite it (`write_file` is tier-1, and `.lain/config.rb` classifies *ordinary*,
+because the table names secrets and not itself) and so may a human in the next pane. So the listing walked one table while the gate beside
+it held another; both halves working, nothing wrong to look at.
 
 `Wiring::BoardBuild` therefore compiles the table once and hands the classifier to `Policy`, and
-`Switchboard#surface_kwargs` hands `/survey` **the Policy itself**: it answers `gates?`,
-`denial`, `filter` and `classify`, four phrasings of one question, so the survey walks through
+`Switchboard#surface_kwargs` hands `/survey` the Policy itself: it answers `gates?`,
+`denial`, `filter` and `classify`, 4 phrasings of one question, so the survey walks through
 the gate rather than beside it. Two places still build a classifier of their own, both over that
-same compiled table and both deliberate: `BoardBuild::Classifiers` mints one **per gated bash
-call**, because a bash call names its own working directory and the triage rung must anchor the
-argv it reads on THAT one, and it holds an eager session-anchored one as the fallback for a `cwd`
-it cannot resolve — built eagerly so a wiring bug raises at startup rather than leaving the rung
+same compiled table and both deliberate: `BoardBuild::Classifiers` mints one per gated bash
+call, because a bash call names its own working directory and the triage rung must anchor the
+argv it reads on that one, and it holds an eager session-anchored one as the fallback for a `cwd`
+it cannot resolve; built eagerly so a wiring bug raises at startup rather than leaving the rung
 inert in silence.
 
 `Filter.new` happens in exactly one place in `lib/`, inside `Policy#initialize`, and every reader
-takes the filter that came with the gate. That is a discipline rather than an impossibility —
-`Filter` is a public constructor over anything answering `#classify` — and it is the discipline
-that keeps a gate from refusing a path the listing beside it enumerates.
+takes the filter that came with the gate. That is a convention: `Filter` is a public constructor over anything answering `#classify`, and
+the convention keeps a gate from refusing a path the listing beside it enumerates.
 
-Both gate and filter turn on **not ordinary**, never on `Verdict#gated?`, which is false for a
-DENIED path and would wave `~/.ssh/id_rsa` through while withholding `.env`.
+Both gate and filter turn on not ordinary, never on `Verdict#gated?`, which is false for a
+denied path and would wave `~/.ssh/id_rsa` through while withholding `.env`.
 
 **A `[sensitivity]` pattern can be anchored at the project root.** A leading `/` anchors there
 exactly as a leading `~/` anchors at home, and a bare pattern stays a basename glob; a
 path-shaped bare pattern is refused at load rather than silently matching nothing. An anchored
-pattern is a **literal, clean path** — no glob character, no empty, `.` or `..` segment — because
+pattern is a literal, clean path (no glob character, no empty, `.` or `..` segment), because
 the rule it states is subtree containment, not matching: under `denied` or `gated`, `/vault`
 covers `vault` and everything beneath it, with or without the trailing slash. Under `exempt` an
-anchored pattern names **exactly one file**, a directory is refused, and what the exemption lifts
+anchored pattern names exactly one file, a directory is refused, and what the exemption lifts
 is the human read prompt and nothing else: an ordinary-by-exemption verdict still fails the
 automatic shell approver's own test, so one fixture's exemption cannot approve `cat` of every
 `.env` in the tree.
 
-`Policy::PATH_FIELDS` is the whole of what the boundary knows about tools — which input field
+`Policy::PATH_FIELDS` is the whole of what the boundary knows about tools, which input field
 names a path, per tool. That coupling cannot be abolished (something must know `bash` names a
 directory in `cwd` while `read_file` names a file in `path`), so it is data in one place, pinned
-by a spec that fails BY NAME when a new path-taking tool ships. That spec has no allowlist:
-an earlier edition scoped out the three AST readers, which made a green suite state three
-bypasses as intended — and `ast_search path=.env pattern="$A = $B"` returns the captured values,
+by a spec that fails by name when a new path-taking tool ships. That spec has no allowlist:
+an earlier edition scoped out the 3 AST readers, which made a green suite state 3
+bypasses as intended, and `ast_search path=.env pattern="$A = $B"` returns the captured values,
 byte-for-byte what `read_file` returns.
 
-### Detection: measured, with the residual written down
+### Detection
 
-`Sensitivity::Regions` runs two detectors over the same bytes — the credential shapes from
+`Sensitivity::Regions` runs 2 detectors over the same bytes; the credential shapes from
 `CredentialPatterns.for(:content)`, and a Shannon-entropy run detector for tokens no issuer
-prefix names. Entropy is TRIAGE, not a verdict. A region is the assignment's **value alone**, so
+prefix names. Entropy is triage, not a verdict. A region is the assignment's value alone, so
 masking leaves a `.env` still legible as a `.env` and partial approval falls out for free.
 
-**A digest is not a secret unless a key says so.** A digest-width hex run (sha1, sha256, blake3 and their kin) is what `git log`, a lockfile, a `sha256sum` listing and a journal print by the thousand, so it is a region only when hinted: an `ALGORITHM_PREFIX` (`sha256:`, `blake3:`) marks it a digest outright, and otherwise `NearestKey` walks back at most `KEY_WINDOW` bytes over punctuation, earlier values and generic words to the nearest key, which must name a secret. The walk crosses a line break only when the gap also holds `:` or `=`, and a key holding `/` is a path, never a key. Over this repo the change took 4255 digest-width regions in a real journal to 0 and masked nothing new, so the walk runs only for digest-width tokens; anything else keeps the old rule. The residual, measured: a hint after the token, a key more than `KEY_WINDOW` bytes back, and a `value:` nested under a secret-named parent all stay raw.
+A digest is not a secret unless a key says so. A digest-width hex run (sha1, sha256, blake3 and their kin) is what `git log`, a lockfile, a `sha256sum` listing and a journal print by the thousand, so it is a region only when hinted: an `ALGORITHM_PREFIX` (`sha256:`, `blake3:`) marks it a digest outright, and otherwise `NearestKey` walks back at most `KEY_WINDOW` bytes over punctuation, earlier values and generic words to the nearest key, which must name a secret. The walk crosses a line break only when the gap also holds `:` or `=`, and a key holding `/` is a path, never a key. Over this repo the change took 4255 digest-width regions in a real journal to 0 and masked nothing new, so the walk runs only for digest-width tokens; anything else keeps the old rule. The residual, measured: a hint after the token, a key more than `KEY_WINDOW` bytes back, and a `value:` nested under a secret-named parent all stay raw.
 
 The gate exists because the patterns alone were unusable: measured over this repo before it
 (`**/*.md` less `references/repos/` and `.claude/`, plus `lib/**/*.rb` and `spec/**/*.rb`) they
-matched **70.9%, 86.0% and 95.4%** of files — `^ident = value` IS Ruby assignment syntax, so a
+matched 70.9%, 86.0% and 95.4% of files; `^ident = value` is Ruby assignment syntax, so a
 name-agnostic assignment shape matches source code by construction. An assignment now yields a
-region only when its NAME hints at a credential over a value with SUBSTANCE, or its VALUE is
-secret-SHAPED. The name is matched as a substring, because `DATABASE_PASSWORD` has no word
+region only when its name hints at a credential over a value with substance, or its value is
+secret-shaped. The name is matched as a substring, because `DATABASE_PASSWORD` has no word
 boundary before `PASSWORD`; a value-shape test alone would not do, because a named passphrase is
-low-entropy — exactly the secret a shape test structurally cannot see.
+low-entropy, exactly the secret a shape test structurally cannot see.
 
-With the gate, the substance floor, the thresholds and the shape rules below, over the same three
+With the gate, the substance floor, the thresholds and the shape rules below, over the same 3
 globs (re-measured on 2026-10-08, when the tree had grown to 284, 845 and 993 files):
 
 | corpus | files with a region | regions | pattern / entropy |
@@ -1316,7 +1381,7 @@ globs (re-measured on 2026-10-08, when the tree had grown to 284, 845 and 993 fi
 The floor sits at the recall-preserving end of its plausible range: at 8 rather than 6 it buys
 back 2, 4 and 20 regions of noise (mostly 6–7 byte fragments like `test")`) and pays for them
 with `hunter2`. What remains in `lib/` is Ruby whose variable happens to be named `token`,
-`session` or `pass` over a substantial value — not a credential among them; the entropy residual
+`session` or `pass` over a substantial value, not a credential among them; the entropy residual
 is hash-shaped fixtures in `spec/`, correctly so, plus URLs and paths in markdown that carry a
 mixed-case segment or a hex key, and hyphen-joined identifiers, because `/`, `-` and `_` are all
 base64url characters. Every region has a release path whose cost is one decision, held to one by
@@ -1332,15 +1397,15 @@ than half of it, like the base64 alphabet literal, is not a secret either. The a
 secret made only of lowercase slash-joined words; and about 3 git SHAs in URLs stay flagged as keys. Over
 2,423 files of this repo the entropy regions went from 857 to 634 with none gained.
 
-Note that `regions.rb` and its spec are IN that corpus. Measuring a change to the detector
+`regions.rb` and its spec are in that corpus. Measuring a change to the detector
 against a corpus containing the detector is how a review once produced a false finding: an edit
-that shortened the file by 11 bytes moved two region offsets by 11 and read as behaviour.
+that shortened the file by 11 bytes moved 2 region offsets by 11 and read as behaviour.
 
-A **JWT is three regions**, because `.` is not in the token charset — and the header of every
+A JWT is 3 regions, because `.` is not in the token charset, and the header of every
 HS256 JWT is the identical byte string `eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9`, so under
 content-addressed identity, releasing one JWT pre-releases that segment for every future JWT at
 that path. The payload and signature are unaffected. Joining `.`-separated runs into one region
-was measured and NOT taken: on its own it makes a JWT report ZERO regions, since the base64
+was measured and not taken: on its own it makes a JWT report 0 regions, since the base64
 shape test does not admit `.` either, and fixing that widens what counts as base64 everywhere.
 
 All the credential shapes are scanned in Rust (`Lain::Ext::Regions`, reached through
@@ -1350,11 +1415,11 @@ no Ruby scanner to fall back on.
 
 Rust's regex engine (fancy-regex) bounds its backtracking, so a shape can fail to finish. It is
 retried at 10 times the limit; what the retry still cannot finish is reported as a span, and the
-span is **over-masked**: the single-line shapes mask the lines they could not finish, any other
+span is over-masked: the single-line shapes mask the lines they could not finish, any other
 shape masks from its last finished match to the end of the text. The reason is that a partial
 list would under-mask without saying so. An over-masked region is named for the shape
 (`over-masked: <shape> could not be scanned to the end`) and can be released like any other.
-2 shapes, the openai-style api key and the credential literal assignment, still scan in
+Two shapes, the openai-style api key and the credential literal assignment, still scan in
 quadratic time on 1 long line without reaching a limit.
 
 Each `bash`, `read_file`, `grep` and `memory_read` result that held an over-masked region
@@ -1371,27 +1436,27 @@ UTF-16 text is found. A placeholder is spelled in the same encoding, and a span 
 
 ### The release ledger
 
-`Sensitivity::Ledger` holds what this RUN has released, keyed by **(path, digest)**, and the path
+`Sensitivity::Ledger` holds what this run has released, keyed by (path, digest), and the path
 half is the containment. A region is its value alone, so identical bytes in one file are one
-secret and one decision covers both — but across files they are not, and content addressing
+secret and one decision covers both, but across files they are not, and content addressing
 cannot tell them apart (the JWT header above is the proof). The trade is deliberate: a lockfile
 hash approved in one crate of a monorepo is asked about again in the next, which is the direction
-this boundary errs in everywhere — a spurious match costs one prompt, a release that travels
+this boundary errs in everywhere; a spurious match costs one prompt, a release that travels
 costs a secret.
 
-**A relative path raises rather than being normalized.** Nothing here opens or stats anything, so
+A relative path raises rather than being normalized. Nothing here opens or stats anything, so
 "any spelling is merely its own key" holds for absolute spellings (`/repo/./.env` and `/repo/.env`
-are two keys — fail-closed, one extra prompt, no merge) and is FALSE for a relative one:
-`config/.env` under a parent's cwd and under a child worktree's cwd are two files behind one key.
-Normalizing cannot fix it, because the ledger is per-RUN and reaches every child through the board
+are 2 keys; fail-closed, one extra prompt, no merge) and is false for a relative one:
+`config/.env` under a parent's cwd and under a child worktree's cwd are 2 files behind one key.
+Normalizing cannot fix it, because the ledger is per-run and reaches every child through the board
 thunk, so there is no single cwd to normalize against. Raising needs no cwd at all, and the arm
 holding the effect and the worker cwd can resolve before it calls.
 
-Reading **reconciles** in the same call: `#outstanding` drops the releases for digests the file no
+Reading reconciles in the same call: `#outstanding` drops the releases for digests the file no
 longer holds. Command-query separation would split that, and the failure mode of the second call
 being forgotten is that a secret deleted and later restored is sent without anyone being asked.
-Reconciling is sound only over a COMPLETE detection, so `complete:` is a stated precondition with
-its own keyword — and `complete: false` opts OUT of the containment: under it a deleted region
+Reconciling is sound only over a complete detection, so `complete:` is a stated precondition with
+its own keyword, and `complete: false` opts out of the containment: under it a deleted region
 stays released, so delete-then-restore at that path is re-sent unasked. That is unavoidable
 (nothing can reconcile what it did not look at) but it compounds, and a file read only ever under
 a size cap never reconciles at all.
@@ -1399,7 +1464,7 @@ a size cap never reconciles at all.
 The ledger is run-scoped, mutable, and owned beside the run's one `Approval::Parked::Queue` and one
 `Sensitivity::Policy`. There is deliberately no persistence path and no Null: remembering "yes,
 send `.env.local`" across runs would turn one approval into a standing one,
-and a Null would answer "nothing outstanding" forever — a release control that
+and a Null would answer "nothing outstanding" forever; a release control that
 releases everything, wearing the Null Object idiom as camouflage.
 
 
@@ -1425,25 +1490,25 @@ lives in `spec/support/provider_oracles/` rather than `lib/`. `Provider::Anthrop
 `Provider::Mock` is the deterministic test double.
 
 **The round trip is deployment-neutral, and `Provider::Ollama` is where that stops being an
-abstract claim.** It serves 2 arms — `--provider ollama` against a local `ollama serve`, and
-`--provider ollama-cloud` against `ollama.com` — as one class holding an
+abstract claim.** It serves 2 arms (`--provider ollama` against a local `ollama serve`, and
+`--provider ollama-cloud` against `ollama.com`) as one class holding an
 `Ollama::Deployment` (`Local` or `Cloud`), not as 2 provider classes. `ollama.com` speaks the same
 native `/api/chat`, so the encoder, the decoder and the wire bytes are identical across the pair
 and only the endpoint, the credential and the model class differ. What the deployment owns is
 exactly what locality used to answer for free: where to dial, whether a Bearer is carried, whether
 https is required, how wide admission may open, and whether a probe endpoint (`/api/ps` for a
 resident runner, `/api/show` for the weights' trained maximum) means anything on that host. The
-2 arms consequently differ at the bench in hosted-ness and model class and nothing else — but
-**they are not comparable on determinism**: measured 2026-08-24, `temperature 0` with a fixed seed
+2 arms consequently differ at the bench in hosted-ness and model class and nothing else, but
+they are not comparable on determinism: measured 2026-08-24, `temperature 0` with a fixed seed
 returns 3 distinct completions from 3 warm runs on the cloud host, so the local arm's
 reproducibility does not transfer (`references/ollama/cloud.md`).
 
 Provider-specific detail (setup, capability masks, wire quirks, local smoke-testing) lives in
 `docs/providers/` (one doc per provider), and the porting trace in
-`docs/porting-providers.md`. Read those rather than looking for it here. Two cross-provider
-transport records live there too: `docs/providers/stall-clock.md` (why the inter-chunk stall
-clock is split between a Faraday middleware and the `on_data` proc, and the five places its
-async raise can land) and `docs/providers/ollama.md`'s "Two context numbers" section.
+`docs/devs/porting-providers.md`. Read those rather than looking for it here. Two cross-provider
+transport records live there too: `docs/devs/stall-clock.md` (why the inter-chunk stall
+clock is split between a Faraday middleware and the `on_data` proc, and the 5 places its
+async raise can land) and `docs/users/providers/ollama.md`'s "2 context numbers" section.
 
 `Lain::Request` and `Lain::Response` are the provider-neutral value objects every provider
 translates to and from. `Lain::Usage` is a property-tested commutative monoid. `CacheProfile`
@@ -1455,12 +1520,12 @@ reads real TTL numbers from.
 `LainCLI#chat` (in `exe/lain`) is a 3-line delegation to `CLI::ChatLaunch`. The exe keeps only
 the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
 
-- **`ChatLaunch`** owns the lifecycle bracket and the order it guarantees: resolve `--resume`,
+- `ChatLaunch` owns the lifecycle bracket and the order it guarantees: resolve `--resume`,
   open the journal, run the conversation, always close. Resume resolves *before* the chronicle
   opens, so a refusal (nothing to resume, an ambiguous selector, a mid-tool head) never orphans
   a fresh journal file. Its collaborator factories are injected, so specs drive the bracket
   without a TTY, a network edge, or global `ENV` mutation.
-- **`Wiring`** assembles one chat's collaborators over an already-open `Chronicle`
+- `Wiring` assembles one chat's collaborators over an already-open `Chronicle`
   (`lib/lain/cli/chronicle.rb`): the toolset (`base_tools` plus a research `Tools::Subagent`, an
   `AskHuman` reply tool, and `RunSkill`), the agent over a bare `Effect::Handler::Live` with the
   tool stack `CLI::ToolGuard` builds over the run's `Switchboard` in front of it (`#agent_over`),
@@ -1468,20 +1533,20 @@ the Thor flag declarations and the `Lain::Error` to `Thor::Error` mapping.
   `Skill::RoleSpawn` seam (`lib/lain/skill/role_spawn.rb`) a `@role/skill` line folds through,
   and the `Approval::Parked::Queue` (`lib/lain/approval/parked/queue.rb`) that gates tool calls. It hands back
   a built `Agent` and exposes the `ask_human` and `questions` seams `Repl` needs.
-- **`Repl`** owns one conversation. It reads `you>` prompts through `CLI::Conductor`
+- `Repl` owns one conversation. It reads `you>` prompts through `CLI::Conductor`
   (`lib/lain/cli/conductor.rb`, the shutdown and signal bracket; see `lib/lain/cli/shutdown.rb`
   and `lib/lain/cli/signals.rb`), routes each line through the repl-phase `Middleware::Stack`
   (`CLI::ReplMiddleware.build`, `lib/lain/cli/repl_middleware.rb`), and runs the ask itself
   (`Agent#ask`) inside an `Async` `Sync` block alongside the approval-watch and human-reply
-  fibers. It hosts the `Supervisor`'s reactor task for the conversation's life (`OM-6`: an
+  fibers. It hosts the `Supervisor`'s reactor task for the conversation's life (an
   actor's fiber must outlive any single ask) and nests an optional `Frontend::Neovim`
   (`lib/lain/frontend/neovim.rb`) inside the `Frontend::TTY` (`lib/lain/frontend/tty.rb`) run.
-- **`Repl::ConversationScope`** (`lib/lain/cli/repl/conversation_scope.rb`) owns how long a
-  surface lives, and the answer is **the whole conversation**. It opens the reply surfaces and
+- `Repl::ConversationScope` (`lib/lain/cli/repl/conversation_scope.rb`) owns how long a
+  surface lives, and the answer is the whole conversation. It opens the reply surfaces and
   the approval watchers once, against the repl's own task rather than any ask's, and closes them
   on every exit path. The per-dispatched-line `Repl::LineScope` it replaced is deleted: a surface
   that lived for one line could not answer a question that outlived it.
-- **`HumanReplies`** is the `ask_human` reply surface: a TTY drain loop plus, when `--nvim` is
+- `HumanReplies` is the `ask_human` reply surface: a TTY drain loop plus, when `--nvim` is
   attached, an `:LainReply` consumer reading the editor's command inbox. `AskHuman`
   (`lib/lain/tools/ask_human.rb`), built with a `notify:` seam, is the tool both surfaces resolve.
   A `human>` read watches the set it asks about through `AskHuman::Directory#awaiting?`, so a withdrawn
@@ -1496,18 +1561,18 @@ Every line a human types reaches the chat through `Frontend::Intake`
 input` pane. nvim's replies, answers and approvals resolve what they answer directly and are not
 lines. The one line that bypasses the Intake is a C-g compose: `you>` reads only the compose
 marker, which is what history records, and `Compose#settle` dispatches the text written in nvim.
-`StdinPump` is **the one reader of
-stdin**: on a tty it drives the line editor, and off a tty it reads a private `dup` of fd 0 with
+`StdinPump` is the one reader of
+stdin: on a tty it drives the line editor, and off a tty it reads a private `dup` of fd 0 with
 `$stdin` reseated onto `/dev/null`, so a shelled-out child cannot move a shared file offset under
-it. The stdin-arbitration machinery this replaced — `Repl::LineScope`, `LineEditor::READS`,
-`Conductor#owning_stdin`, and the three typeahead special cases in `Frontend::TTY` — is gone.
+it. The stdin-arbitration machinery this replaced (`Repl::LineScope`, `LineEditor::READS`,
+`Conductor#owning_stdin`, and the 3 typeahead special cases in `Frontend::TTY`) is gone.
 
-Two rules live on the rail rather than in any surface. **Generation**: a line whose generation
+Two rules live on the rail rather than in any surface. Generation: a line whose generation
 predates the prompt it arrives at was begun before that prompt was drawn, so it is held and can
 never be the answer to a prompt a run is waiting on. That one rule replaced the typeahead special
-cases. **Order**: the rail is also the prompt *queue*, so an answer-kind prompt (`[y/N]`,
+cases. Order: the rail is also the prompt *queue*, so an answer-kind prompt (`[y/N]`,
 `human>`) is inserted ahead of a still-waiting `you>` and everything else joins the tail, with
-`#about` deduplicating the announcement when two readers ask about the same parked call. A prompt
+`#about` deduplicating the announcement when 2 readers ask about the same parked call. A prompt
 that has to wait says so, and one decided elsewhere before it ever drew says how it was decided.
 
 **History** is kept here too, because only the Intake sees which prompt a line finally answered
@@ -1519,12 +1584,12 @@ and hands the rest to `TTY#remember`. A cockpit's lines are kept by the chat whe
 kept, since the prose typed there is kept when `you>` takes it.
 
 `/stop` rides the same rail. A line reading exactly `/stop` is lifted off it as a stop signal
-**only** when an ask is in flight and the prompt is not an idle `you>`; otherwise it stays an
+only when an ask is in flight and the prompt is not an idle `you>`; otherwise it stays an
 ordinary line and the registered command answers it, saying that nothing is running. The
 countdown offers `s` for the same thing while a run is parked. Stopping interrupts the task
-hosting `Agent#ask`, records `run_interrupted` with reason `stopped`, writes **no**
+hosting `Agent#ask`, records `run_interrupted` with reason `stopped`, writes no
 `session_closed`, and returns to `you>` in the same session.
-- **`LiveViews`** builds the `--nvim` and `--journal` tee: a `Channel::DropOldest`
+- `LiveViews` builds the `--nvim` and `--journal` tee: a `Channel::DropOldest`
   (`lib/lain/channel/drop_oldest.rb`) for the editor and a `StatusFeed`
   (`lib/lain/status_feed.rb`) for the tmux HUD, fanned through one `CLI::JournalTee`
   (`lib/lain/cli/journal_tee.rb`). See the fan-out section below.
@@ -1538,7 +1603,7 @@ model-calling command shares.
 :num_ctx, :num_batch, :keep_alive, :effort, :typed)`, and `FIELDS` is every member but `typed`.
 The last member is the one that makes the rest work: `typed` names which of the `FIELDS` the
 human actually put on argv, which is only knowable because
-`exe/lain` declares them with **no Thor `default:`** — a default would materialize the key and
+`exe/lain` declares them with no Thor `default:`; a default would materialize the key and
 make a typed flag indistinguishable from an unset one.
 
 `ModelFlags` (in `exe/lain`) is the single band that declares those flags, with the sampling,
@@ -1549,11 +1614,11 @@ than carrying a provider default of its own.
 
 A chat writes its resolved profile into the session header (`#to_header`, over `HEADER_FIELDS`:
 every field but `model`, which the header already carries, `keep_alive` and `effort`). `#over` then lays a recorded profile under a typed
-one, so resolution is **typed → recorded → environment → built-in**: `--resume`, `--fork`, `/fork`
+one, so resolution is typed → recorded → environment → built-in: `--resume`, `--fork`, `/fork`
 and `/btw` default to the backend the header records, which is why a fork's pane command carries
-no backend flags and therefore no secret. **A flag the human types wins loudly**:
-`CLI::Resume::MismatchNotices` prints one line per disagreeing field — *"recorded with `<label>`
-`<recorded>`; continuing with `<current>` (the current flags win)"* — rather than switching
+no backend flags and therefore no secret. A flag the human types wins loudly:
+`CLI::Resume::MismatchNotices` prints one line per disagreeing field; *"recorded with `<label>`
+`<recorded>`; continuing with `<current>` (the current flags win)"* and never switches
 backends in silence.
 
 ## Channel, JournalTee, and StatusFeed fan-out
@@ -1580,26 +1645,26 @@ the others.
 (cache-warmth deadline, the fleet of live spawns as both a count and a tree, the human-inbox
 count) from the events it observes and republishes it for the tmux, TTY, and nvim renderers.
 
-### The fleet is a tree, and the spawn body is why it is built from two records
+### Fleet records
 
 `StatusFeed::Fleet` (`lib/lain/status_feed/fleet.rb`) folds every spawn the feed has carried into
-the tree `lain://status` draws; the input pane's header shows only the HUD's count. **The tree is not
-built from the `:spawn` event's body**, and that is the ruling the rest of it rests on: a spawn's
-digest is an *address* — a bench arm joins two runs on it, `lain watch` follows it, an actor is
-told by it — so growing its body by a prompt's first line would re-address every spawn in the
+the tree `lain://status` draws; the input pane's header shows only the HUD's count. The tree is not
+built from the `:spawn` event's body, and that is the ruling the rest of it rests on: a spawn's
+digest is an *address* (a bench arm joins 2 runs on it, `lain watch` follows it, an actor is
+told by it), so growing its body by a prompt's first line would re-address every spawn in the
 project for the sake of a status line. What a live view needs rides in
-`Telemetry::ChildProgress` (`lib/lain/telemetry/child_progress.rb`) **beside** the spawn, naming
+`Telemetry::ChildProgress` (`lib/lain/telemetry/child_progress.rb`) beside the spawn, naming
 it, and the spawn stays byte-identical.
 
-That record has **two shapes and one class**. The dispatch one carries what does not change —
+That record has 2 shapes and one class. The dispatch one carries what does not change:
 `role`, `task_line`, and the `worker` key its lease was cut under. Each later one carries only
-what moved, `turns` and `head`, so a fifteen-turn child costs one task line rather than fifteen.
+what moved, `turns` and `head`, so a 15-turn child costs one task line rather than 15.
 A reader folds them onto one row by `spawn`, which is what makes the omissions safe: a fold takes
 only the fields a record actually carries, because a turn record names no role and taking its nil
 would erase what the dispatch said. `Tools::Subagent::Progress`
 (`lib/lain/tools/subagent/progress.rb`) writes them, wrapping the child's turn observer so the
-durable promotion happens **first** — a row claiming three turns where the session record holds
-four is worse than a row with no count.
+durable promotion happens first; a row claiming 3 turns where the session record holds
+4 is worse than a row with no count.
 
 **`head` is the tree's parent edge.** A `:spawn` names the head it came from and not the spawn
 that owns that head, so a grandchild is placeable only against the heads its parent has reported;
@@ -1612,41 +1677,47 @@ between them; each keeps only its own lead, a bullet for the markdown buffer and
 header. A row's role cell carries the spawn's label when the parent gave one, as
 `asr-vad (researcher)`, so 2 researchers in flight read apart; an unnamed spawn shows its role alone.
 
-**Clamping is shared, not one surface's habit.** `Row#listed` is what both call, and it clamps
-the whole drawn line — the lead, the indent and every column — to 80 terminal columns, measured
+Clamping is shared, not one surface's habit. `Row#listed` is what both call, and it clamps
+the whole drawn line (the lead, the indent and every column) to 80 terminal columns, measured
 by grapheme cluster through `Ext::Prompt.width` rather than by character. A character bound on
 the task alone could not do it: 96 characters of CJK draw 214 columns, and only here is the
 whole line known.
 
-**Exactly one thing differs deliberately: the age.** `lain://status` shows it and the pane's
+Exactly one thing differs deliberately: the age. `lain://status` shows it and the pane's
 header does not. The header *is* the frame the chat publishes to the pane, and the pane redraws
-whenever the frame changes — so an age column would make the frame differ from itself once a
+whenever the frame changes, so an age column would make the frame differ from itself once a
 second and buy a redraw a second. The started instant is published either way, so a surface that
 can afford the redraw shows it; nvim rewrites the whole buffer regardless.
 
-Every cell of every row goes through `Tools::AskHuman::InboxRow.one_line` — line breaks and tabs
+Every cell of every row goes through `Tools::AskHuman::InboxRow.one_line`; line breaks and tabs
 to spaces, then whole ANSI sequences removed, then the control and format characters. The order
 is forced: strip the ESC first and `[1A` is left behind as visible junk. That is what stops a
 model-written task line from repainting the surface above it.
 
-**Where the published struct lives.** The state file `StatusFeed` writes used to sit in
-`.lain/`, argued as a project artifact next to `.git/`; it is machine state by behaviour — rewritten
-every turn, with nothing in `lib/` writing a `.gitignore` for it — so every session left permanent
-`git status` noise in the user's repository (F50). It now resolves to
+Where the published struct lives. The state file `StatusFeed` writes used to sit in
+`.lain/`, argued as a project artifact next to `.git/`; it is machine state by behaviour (rewritten
+every turn, with nothing in `lib/` writing a `.gitignore` for it), so every session left permanent
+`git status` noise in the user's repository.
+
+It now resolves to
 `$XDG_STATE_HOME/lain/status/<project-hash>/state.json`, the same `<state_home>/<kind>/<hash>` shape
 `Epic::Home.container` and `Paths#sessions_dir` already use, which puts `ProjectDir`
-(`lib/lain/project_dir.rb`) on both sides of the line it draws: it names the `.lain/` tree AND reads
+(`lib/lain/project_dir.rb`) on both sides of the line it draws: it names the `.lain/` tree and reads
 `Paths` for the one file that left it. `ProjectDir#state_path` is the
 one Ruby resolver *for that file*: `StatusFeed`, `CLI::Up`'s HUD and `Frontend::TTY`'s prompt all
 default through it, and `spec/lain/project_dir_spec.rb` parses every file in `lib/` with Ripper and
-fails on any expression that recomposes the path, in any spelling. It is now the authority for the
-whole `.lain/` tree too — `config.rb`, `prompt.toml`, the slot and skill directories, `epics/`,
-`/meta/`'s two destinations and both DSL files are named readers on it. The
+fails on any expression that recomposes the path, in any spelling.
+
+It is now the authority for the
+whole `.lain/` tree too; `config.rb`, `prompt.toml`, the slot and skill directories, `epics/`,
+`/meta/`'s 2 destinations and both DSL files are named readers on it. The
 `<state_home>/<kind>/<key>` recipe that names the sessions, status, epics, worktrees, workspace, gc
 and consent containers is `Paths#container`, one layer down beside the `state_home` and
 `project_hash` it composes; `ProjectDir#container` is the door for a caller holding a project root
-rather than a key, and supplies the key. The Ripper scan grew with all of it and watches every one
-of those names, plus `ProjectDir#dir` itself — the one reader that hands out the project directory
+rather than a key, and supplies the key.
+
+The Ripper scan grew with all of it and watches every one
+of those names, plus `ProjectDir#dir` itself; the one reader that hands out the project directory
 without spelling it. Neither owner file needs an exemption: the recipe, named once where its
 ingredients live, mentions only one of them. The shipped tmux and nvim plugins hold the same
 convention in shell and Lua and are the deliberate remaining consumers of the state path.
@@ -1658,12 +1729,14 @@ authorization to spawn a child `Agent`. The child runs a full, independent loop 
 *shared* `Store` but a *fresh* `Timeline` root, so the parent's prompt never inherits the
 child's turns.
 
-Two `Event`s record the causal lineage the render chain omits. A `:spawn` event names the parent
+2 `Event`s record the causal lineage the render chain omits. A `:spawn` event names the parent
 head the child was spawned from, and a `:message` event carries the child's result back.
 Neither is in any render chain, so the render order (`Ext::Dag::RenderAncestry`) and the first-parent
 walk are untouched by spawning. A child's tool stack is its parent's, built by the same
 `CLI::ToolGuard` over the parent's board, so a child is guarded and gated as its parent is, and a
-child's refused path lands in the same session journal. A child's token budget is attenuated from the room its parent has left,
+child's refused path lands in the same session journal.
+
+A child's token budget is attenuated from the room its parent has left,
 and its iteration ceiling is its role's own, whatever iterations the parent's ask has left.
 A one-shot `subagent` child stopped at its iteration ceiling, and only that stop, can be resumed by
 label (`subagent` with `resume:` and `iterations:`, capped at the role's ceiling): a new `:spawn`
@@ -1671,17 +1744,16 @@ starts at the stopped child's final head, names it in `spawned_from`, and cites 
 as `resumed_from`, so `Bench::Session::Lineages` and the fleet's row read it as the same child
 continuing.
 
-Those two events are the **record**, and they are deliberately not the whole of what a watching
+Those 2 events are the record, and they are deliberately not the whole of what a watching
 human needs. What a child is *for* and how far it has got ride beside them in
-`Telemetry::ChildProgress`, so the spawn's address never moves — the fleet-tree section above has
+`Telemetry::ChildProgress`, so the spawn's address never moves; the fleet records section above has
 the argument.
 
 `Skill::RoleSpawn` (`lib/lain/skill/role_spawn.rb`) is the sibling seam a `@role/skill` repl
 line folds through: same attenuated union, same spooled provider, chosen per call rather than
 per toolset.
 
-`Supervisor` (`lib/lain/supervisor.rb`) is the orchestration reactor *above* the `Agent`, and
-its doc comment labels this `OM-6`. A model-dispatched `mode: :actor` subagent spawns its fiber
+`Supervisor` (`lib/lain/supervisor.rb`) is the orchestration reactor *above* the `Agent`. A model-dispatched `mode: :actor` subagent spawns its fiber
 on whatever `Async::Task.current` is live at launch time, so it must be adopted under a task
 that outlives any single `Agent#ask`. The `Supervisor` owns that outliving task and is also the
 fleet's registry (role, state, and head digest per adoption), which is what a HUD or a graceful
@@ -1693,7 +1765,7 @@ comes back from its own session record, not from a re-run. The record replays th
 `Bench::Session::Loader`'s verified re-commit (every turn re-derives its content address against
 the recorded one, so there is never a second replay implementation), the workspace returns through
 `Workspace::Restore` from the last recorded `:snapshot`, and the revived actor is re-adopted.
-**Zero provider calls happen on that path**: replay is re-commit, restore is a blob fetch, and the
+Zero provider calls happen on that path: replay is re-commit, restore is a blob fetch, and the
 revival block only seeds an agent at the replayed head. The Store is in-memory, so snapshot blob
 bytes would otherwise die with the killed process; a sidecar carries them, since the `:snapshot`
 event only *names* each file's bytes by digest.
@@ -1706,7 +1778,7 @@ context a worker leases. One message, `acquire(worker_id) -> Lease`. A `Lease` c
 whatever the acquire provisioned. The 2 are separated so a strategy can enrich the leased
 `WorkerEnv` without reshaping the base.
 
-Three **backends** answer it directly:
+Three backends answer it directly:
 
 | Backend | What a lease is |
 |---|---|
@@ -1714,7 +1786,7 @@ Three **backends** answer it directly:
 | `Isolation::Worktree` | an isolated `git worktree` checkout per worker, with `GIT_CONTEXT_SCRUB` applied; what epic and plan leases use |
 | `Isolation::Clone` | a shared clone (`git clone --shared`) per worker, what chat and bench lease under `--isolation worktree` |
 
-Three **decorators** wrap any backend. They are decorators rather than `worker_env_for`
+Three decorators wrap any backend. They are decorators rather than `worker_env_for`
 overrides because each owns a `release` that must compose with the inner backend's own release:
 
 - `Isolation::DbIndex` provisions one database per declared service per worker, named from the worker key.
@@ -1730,18 +1802,20 @@ either: `Isolation::Gc` exempts them and nothing else reclaims them. Both live u
 `ConfineToScope` over its own checkout with the `LEASE` wording, and its toolset adds `bash` and
 `write_file` (`Role::Catalog`), so it runs commands and writes where it may and nowhere else. Under
 plan scope it is lent the board's spike instead. Cleanup is by hand and is in
-[`docs/commands.md`](docs/commands.md#where-a-researcher-works-and-how-to-clean-up).
+[`docs/users/commands.md`](../users/commands.md#where-a-researcher-works-and-how-to-clean-up).
 
 `Isolation::Services` (`lib/lain/isolation/services.rb`) is what they read: a `.lain/services.rb`
 Ruby DSL on the same `.lain/` convention as `Prompt::Slots` and `Skill::Catalog`, `instance_eval`'d
 with no sandbox once its bytes are trusted (below), whose surface is `postgres` and
 `compose`. A `redis` line is refused by name and pointed at a container: it was the one service
 that allocated its resource from state shared across a backend's workers rather than naming it
-from the worker key, so a second backend in one run handed out a colliding index. An absent file loads to an empty collection, which makes both decorators Null by empty
-enumeration rather than by a nil check: **no declared services means no docker or `createdb`
-command runs at all**, and the lease is simply the inner one. The loading half of that -- the
+from the worker key, so a second backend in one run handed out a colliding index.
+
+An absent file loads to an empty collection, which makes both decorators Null by empty
+enumeration rather than by a nil check: no declared services means no docker or `createdb`
+command runs at all, and the lease is simply the inner one. The loading half of that (the
 `ProjectDir`-relative `DSL_PATH`, the exist-guard, the `Builder.build(source, path)` dispatch and
-the frozen enumeration -- is `DslCatalog` (`lib/lain/dsl_catalog.rb`), shared with
+the frozen enumeration) is `DslCatalog` (`lib/lain/dsl_catalog.rb`), shared with
 `Summarizer::Catalog`; a subclass names only where its file is and who evaluates it.
 
 **A project's Ruby runs only once its bytes are trusted.** A cloned repository carries its
@@ -1760,16 +1834,16 @@ The loader evaluates the bytes `Trust` digested, not a second read of the file.
 `Isolation::Compose` is worth reading before you touch it, because 3 of its decisions are
 safety-critical:
 
-- **The stack is per worker; the services are per stack.** One `docker compose -p lain_<hash>
+- The stack is per worker; the services are per stack. One `docker compose -p lain_<hash>
   up -d` and one `down -v` per worker regardless of how many services are declared. Each
   declaration only discovers its own published host port.
-- **It never `down -v`s a stack it did not create.** `down -v` destroys volumes, so before `up`
+- It never `down -v`s a stack it did not create. `down -v` destroys volumes, so before `up`
   it probes `docker compose -p <project> ps -q`; a non-empty result means the namespaced name is
-  occupied and it **refuses loudly** rather than adopting a stack it cannot prove is its own.
+  occupied and it refuses loudly rather than adopting a stack it cannot prove is its own.
   Having proved the name empty, everything under it afterwards is ours, so teardown on a partial
   `up` and on release is always safe. It also scrubs `COMPOSE_PROJECT_NAME` and `COMPOSE_FILE`,
   which would otherwise redirect the explicit `-p`/`-f` into a destructive misfire.
-- **Credentials stay in the lease.** Discovered service URLs live only in the leased `WorkerEnv`
+- Credentials stay in the lease. Discovered service URLs live only in the leased `WorkerEnv`
   (sent-not-stored, exactly like `Workspace`) and never reach a turn's content or a digest. A
   provisioned service's journalable identity is its name plus the worker key, never its URL.
 
@@ -1781,31 +1855,31 @@ decorating by need. `lain chat` declares the flag at `exe/lain:378` and `CLI::Wi
 `qa-lain bench arms` declares it at `bin/qa-lain` and resolves through `Bench::CLI#arm_isolation`
 (`bench/cli.rb:247`).
 
-What is still short of a consumer is the **reach on the chat side**: only an actor-mode subagent
-leases, and no chat path constructs one, which `exe/lain:377-381` says in its own help text — so
+What is still short of a consumer is the reach on the chat side: only an actor-mode subagent
+leases, and no chat path constructs one, which `exe/lain:377-381` says in its own help text; so
 the flag resolves a real backend that nothing in chat asks for a lease from. The library
 defaults are unchanged, and describe the un-flagged caller rather than the CLI: `Supervisor`
 defaults to `Isolation::Null` (`supervisor.rb:44`), and `Arm#run` to `Arm::NoIsolation`
-(`arm/single_thread.rb:46` and its three siblings; `arm/driver.rb:39`).
+(`arm/single_thread.rb:46` and its 3 siblings; `arm/driver.rb:39`).
 
 Where the cancellation guarantees come from is covered in
-[`docs/concurrency.md`](docs/concurrency.md), alongside the fibers-not-threads argument.
+[`docs/devs/concurrency.md`](concurrency.md), alongside the fibers-not-threads argument.
 
 ## Session NDJSON and WAL disk layout
 
-`Paths` (`lib/lain/paths.rb`) is the one naming authority *for XDG-resolved session artifacts* —
-the project-relative `.lain/` tree is `ProjectDir`'s, and the two never overlap. A live session's
+`Paths` (`lib/lain/paths.rb`) is the one naming authority *for XDG-resolved session artifacts*;
+the project-relative `.lain/` tree is `ProjectDir`'s, and the 2 never overlap. A live session's
 NDJSON file lands
 under `$XDG_STATE_HOME/lain/sessions/<project-hash>/` (`Paths#sessions_dir`, where
 `project_hash` is the first 12 hex chars of `SHA256(realpath(project_dir))`) as a timestamped
 file that `Journal.open` creates.
 
 A chat started with `--root` files its session under the root's key, wherever it was launched
-from, and `Paths#filing_dir(root:)` names that directory. A reader folds two directories, the
+from, and `Paths#filing_dir(root:)` names that directory. A reader folds 2 directories, the
 root's sessions directory first and then the cwd's (`Paths#session_dirs`), so a session filed
 under the cwd's key by an earlier version stays visible, and `lain sessions` and `--resume` run
 inside the root find a chat launched from elsewhere. A chain parent is named by basename alone, so
-`Paths#chain_file` looks in those two directories and then across every project's sessions
+`Paths#chain_file` looks in those 2 directories and then across every project's sessions
 directory; the timestamp and pid make a basename unique among them. Epic writers still file under
 the cwd's key.
 
@@ -1833,7 +1907,9 @@ and rebuilds the record a type claims. A claimed type that will not rebuild is d
 of ours, so the resume refuses it as `Bench::Session::Corrupt`, where format 3 skipped it. A type
 nobody claims comes back whole as `Telemetry::Untyped`, a frozen `fields` Hash: the session's own
 grammars (`turn`, `session`, `rewound` and the like) and anything foreign or torn read this way and
-are never dropped. `Telemetry.read(hash, strict: false)` is the lenient reading, which answers
+are never dropped.
+
+`Telemetry.read(hash, strict: false)` is the lenient reading, which answers
 `Untyped` for a claimed type that will not rebuild. The same typed records feed the
 `Journal::Projection` folds (see the algebra section), whether the file is read whole or followed
 live. `Bench::Session::RequestReplay` rebuilds each recorded `request_sent` and raises `Corrupt`
@@ -1863,14 +1939,14 @@ base's, because a seam that grows every child's knobs stops being a seam. `Arm::
 (`arm/driver.rb`) runs a task list across arms and is where an `isolation:` backend is injected.
 
 `Ledger` (`lib/lain/ledger.rb`) is where the Merkle DAG pays for itself. It aggregates over
-**unique reachable digests** across the given Timelines, because summing along branches
+unique reachable digests across the given Timelines, because summing along branches
 double-counts a shared prefix. Two subtleties live in its doc comment: turns are deduplicated,
 but *payments* are not (one reachable digest may carry several `Index::Entry`s, e.g. a retry), and
 spend on a rewound branch no longer reachable from any head is genuinely off the books.
 `PriceBook` (`lib/lain/price_book.rb`) prices the 4 token classes in `BigDecimal`, never Float.
 
 `Compare` (`lib/lain/compare.rb`, `compare/table.rb`) folds n runs into a per-metric
-`Distribution` (n, mean, median, min, max) and **raises on fewer than 2 runs**, because one run of
+`Distribution` (n, mean, median, min, max) and raises on fewer than 2 runs, because one run of
 each is not a distribution. `Capability::Guard` (`lib/lain/guard.rb`) refuses a comparison whose
 runs degraded differently.
 
@@ -1899,13 +1975,13 @@ explicitly, holds each implementation to its structure's laws in that implementa
 and asserts the deliberate *violations* as examples that show the law failing.
 
 None of this needs math past what a working programmer already has. Each concept below links to
-[`docs/GLOSSARY.md`](docs/GLOSSARY.md), which gives the general definition before the
+[`docs/devs/glossary.md`](glossary.md), which gives the general definition before the
 lain-specific use. One prerequisite runs under everything here: laws are statements about
 *values*, so they are only checkable because `Event` and `Timeline` are
-[regular types](docs/GLOSSARY.md#regular-type): deeply frozen, equality by content,
+[regular types](glossary.md#regular-type): deeply frozen, equality by content,
 `Ractor.shareable?` as the mechanical no-mutable-state test.
 
-### Laws live in the subject's spec
+### Where laws live
 
 A law is stated once, as an RSpec shared example group under `spec/support/shared_examples/`, and
 an operation is held to it where a reader of that operation will find it: its own spec, at its
@@ -1927,29 +2003,29 @@ declaration in `lib/`: the claim *is* the inclusion, so an operation nobody hold
 claim, and deleting the operation deletes the spec that proved it.
 
 **The population is the part that can lie.** A law over an empty population is "true, of
-nothing", and a population built by the operation under test bends along with it —
+nothing", and a population built by the operation under test bends along with it:
 `spec/lain/context/base_spec.rb` draws single leaves rather than chains folded with `>>` for exactly
 that reason. So a group guards its own population where it can (the elementwise group requires a
 span the call genuinely rewrites, and one in which some element repeats), and where sampling would
 miss a hard case the spec says so and adds an exhaustive read beside it:
 `spec/lain/interval_partition_spec.rb` enumerates all 34 partial interval partitions of `0..3`
-and checks every pair and triple, because the shared group samples ten draws per law.
+and checks every pair and triple, because the shared group samples 10 draws per law.
 
 **A negative is an ordinary example.** RSpec has no "expect this group to fail", so the groups
 whose negative matters ship their laws as a *battery* the group itself runs (`AlgebraLaws::Pure`,
 `AlgebraLaws::Elementwise`, `AlgebraLaws::MonoidHomomorphism`, `AlgebraLaws::Attenuation`,
 `AlgebraLaws::IncrementalFold`, `AlgebraLaws::RoundTrip`), and a
-spec showing an operation is NOT the structure reads that battery directly, through
+spec showing an operation is not the structure reads that battery directly, through
 `AlgebraLaws.outcomes` (`spec/support/shared_examples/law_outcomes.rb`) wherever a law might raise. Each law answers `:holds`, `:fails`, or the
 exception it raised, kept apart: the example requires the law it turns on to be `:fails` and no law
 to have raised, because a negative confirmed by an *error* proves nothing. Where the group and the
 battery are one object with 2 readings, the positive and the negative cannot drift, since there is
-only one transcription. And the example **exhibits its witness**: `PurgeFailedInputs` is shown giving
+only one transcription. And the example exhibits its witness: `PurgeFailedInputs` is shown giving
 2 `==` messages 2 different images in one call.
 
-**An order in Rust carries its claim as a type** (the DAG section above): `MeetSemilattice` is sealed,
+An order in Rust carries its claim as a type (the DAG section above): `MeetSemilattice` is sealed,
 and `declare_meet_semilattice!` is the only way to write its impl, in the same expansion that
-emits the four law tests, named after the Ruby group's four laws. A set-valued order implements
+emits the 4 law tests, named after the Ruby group's 4 laws. A set-valued order implements
 `MaximalLowerBounds` instead, so its refutation is the impl that does not exist. The binding's
 specs under `spec/lain/rust/` then include the Ruby group against `Ext::Timeline`.
 
@@ -1965,18 +2041,18 @@ flowchart LR
   GROUPS --> BIND["spec/lain/rust/: the same groups<br/>against Ext::Timeline"]
 ```
 
-### Monoids: composition that cannot depend on bracketing
+### Monoids
 
-A [monoid](docs/GLOSSARY.md#monoid) is an associative operation with an identity: string
+A [monoid](glossary.md#monoid) is an associative operation with an identity: string
 concatenation with `""`, list append with `[]`, function composition with `id`. Associativity is
 the operationally interesting law: it says grouping is irrelevant, so a *pipeline is fully
-described by its sequence*. 4 operations in the table below are held to it, and 3 more after it, each in its own spec:
+described by its sequence*. Four operations in the table below are held to it, and 3 more after it, each in its own spec:
 
 | Where | Operation | Unit | The bug the law rules out |
 |---|---|---|---|
 | `Context::Combinator` (`context/base.rb`) | `>>` | `Context::Identity` | the rendered prompt depending on how the combinator chain was bracketed |
 | `Usage` (`usage.rb`) | `+` | `Usage.zero` | a session total depending on fold order (commutative as well, so *no* order dependence at all) |
-| `Compaction::Strategy::Base` (`compaction/strategy/base.rb`) | `\|` | `Strategy::Identity` | 2 policies over one span deriving differently depending on which was written first (commutative as well: ranges fold in ascending index order regardless of operand order) |
+| `Compaction::Strategy::Base` (`compaction/strategy/base.rb`) | `\|` | `Strategy::Identity` | Two policies over one span deriving differently depending on which was written first (commutative as well: ranges fold in ascending index order regardless of operand order) |
 | `Mode::LayerSet` (`mode/layer.rb`) | `\|` | `LayerSet.empty` | the layers a human enabled depending on the order they were enabled in (commutative as well) |
 
 `Sensitivity::Roots` (`sensitivity/roots.rb`) is held to the commutative group as well, with `|` as
@@ -1986,32 +2062,32 @@ agrees over a fixed set of paths. Its `<=` is a preorder only, since a root besi
 holds what the root alone does. `Budget::Spent` and `Sensitivity::Spans` are held to the same
 group in their own specs.
 
-`Middleware` is deliberately **not** in the table. A stack is composed by membership in a
+`Middleware` is deliberately not in the table. A stack is composed by membership in a
 `Middleware::Stack`, an ordered list, rather than by an operator, so there is no bracketing for a
 law to rule out.
 
-The payoff is the [free monoid](docs/GLOSSARY.md#free-monoid). Since bracketing is irrelevant, a
+The payoff is the [free monoid](glossary.md#free-monoid). Since bracketing is irrelevant, a
 strategy *description* is exactly its finite sequence of combinators, and the descriptions form
 the free monoid on the combinator set. Distinct descriptions can name the same strategy
 (compose with `Identity`; prune twice), so the strategy space proper is the image of the
 description space, but descriptions are what a bench *can* enumerate: fix a generator list,
 bound the length, and the words are walkable mechanically. `--context-pipeline` is the first door
-onto that space — a `+`-joined word over a fixed list of five stages — but **no command walks the
-words**. `qa-lain bench sweep` (`bench/sweep.rb`) is the offline recall@k *retrieval* eval over the
-committed gold corpus — five retrieval arms, no combinator. So the enumerable space is what the
-algebra buys the bench, and spending it is unwritten work rather than shipped work.
+onto that space, a `+`-joined word over a fixed list of 5 stages, but no command walks the
+words. `qa-lain bench sweep` (`bench/sweep.rb`) is the offline recall@k *retrieval* eval over the
+committed gold corpus; 5 retrieval arms, no combinator. So the enumerable space is what the
+algebra buys the bench, and spending it is unwritten work.
 
-### Homomorphisms: which collapses distribute, and which must not
+### Homomorphisms
 
 The next question, in plain terms: *does processing 2 adjacent spans separately give the same
 answer as processing them joined?* Symbolically `f(a · b) = f(a) · f(b)`, a
-[monoid homomorphism](docs/GLOSSARY.md#monoid-homomorphism). For compaction strategies this is
-the honest classifier:
+[monoid homomorphism](glossary.md#monoid-homomorphism). For compaction strategies this is
+the classifier:
 
-- `Compaction::Strategy::Elide` **is** one, held to both halves of the law (empty span to unit,
+- `Compaction::Strategy::Elide` is one, held to both halves of the law (empty span to unit,
   concatenation to concatenation of collapses) and to the elementwise group, which the theorem
   below makes equivalent, both in `spec/lain/compaction/strategy/elide_spec.rb`.
-- `Compaction::Strategy::Summarizing` is **not**: summarizing a concatenation is not the
+- `Compaction::Strategy::Summarizing` is not: summarizing a concatenation is not the
   concatenation of summaries, and 1 span answers 1 block where its halves answer 2.
   `spec/lain/compaction/strategy/summarizing_spec.rb` includes `"not a monoid homomorphism"` and
   shows the elementwise battery's concatenation law failing on it. The negative guards a real
@@ -2035,24 +2111,26 @@ refinements matter in practice:
   rather than a hole.
 - An `analysis:` names a whole-span *analysis* computed once and handed to every element
   (`DedupeToolCalls` is included with `each: :without_stale, analysis: :stale_tool_use_ids`). For
-  that family the plain homomorphism law is false even when the map is honest, because splitting
+  that family the plain homomorphism law is false even when the map is correct, because splitting
   the span splits the analysis, so the group judges it by the conditional law
   `call(S) == S.flat_map { each(_1, analysis(S)) }` instead.
 
 `Context::PurgeFailedInputs` is the true negative, shown in `purge_failed_inputs_spec.rb` by the
-elementwise battery's "gives two equal elements equal images within one call" law failing, and its
+elementwise battery's "gives 2 equal elements equal images within one call" law failing, and its
 witness is worth reading: a span
 `[m, error, m]` whose first and last messages are `==` gives them different images in 1 call, so no
 function of `(element, analysis)` can reproduce it, whatever the analysis.
 
 Related, 1 level down: what a strategy answers from `#ranges` is an
-[interval partition](docs/GLOSSARY.md#interval-partition) of the collapsible span: ascending,
+[interval partition](glossary.md#interval-partition) of the collapsible span: ascending,
 non-overlapping, non-empty ranges, with the gaps between them retained verbatim. Those
 conditions are well-formedness, refused in 1 place because the derivation folds the ranges straight
 into writes, with no per-index membership check downstream to catch a bad answer. That place is now
 `Lain::IntervalPartition` (`lib/lain/interval_partition.rb`), a public value carrying 7 refusals,
 each stated on its own terms so a message names the fault a reader has to fix rather than whichever
-later check tripped over it. It sits at lib level because it has 3 callers and only 1 is a strategy:
+later check tripped over it.
+
+It sits at lib level because it has 3 callers and only 1 is a strategy:
 `Strategy::Base#ranges` validates the hook's proposal, `Source::Derived::PinCuts` builds the runs a
 set of cut points leaves, and `Strategy::Composed` asks 2 proposals for their common refinement. The
 partition framing also settles what a pin is: a cut point. `PinCuts` splits the span around a pinned
@@ -2061,11 +2139,12 @@ turn rather than lifting it out, so the pin survives in place between the 2 repl
 Combining 2 strategies over one span was designed in `chunk-derived-context-timeline.md` and deferred
 as speculative generality; Joel un-deferred it on 2026-07-29 because building it is what proves the
 extraction, and `Compaction::Strategy::Composed` (`elide | summarize`) is that consumer. It is
-**partial** on purpose: 2 strategies compose only over disjoint stretches, and an overlap refuses
+partial on purpose: 2 strategies compose only over disjoint stretches, and an overlap refuses
 naming both operands and the shared indices, because collapsing one range twice writes 2 replacement
 events over 1 preimage. "Disjoint" is asked of the value: the 2 proposals' `#meet` has no ranges.
-The dispatch back is stateless, which it has to be — a strategy stays frozen and `Ractor.shareable?`
-— so each proposed range carries its proposer as a frozen `Range` subclass, `IntervalPartition`
+
+The dispatch back is stateless, which it has to be; a strategy stays frozen and `Ractor.shareable?`,
+so each proposed range carries its proposer as a frozen `Range` subclass, `IntervalPartition`
 answers an already-inclusive range by identity, and the fold hands back the very object it was given.
 `Base#blocks_for(messages, range)` is where the range enters, and `Source::Derived::PinCuts` forwards
 it, since PinCuts wraps every operator-supplied strategy and is the only path a strategy reaches in
@@ -2074,9 +2153,9 @@ message alone: a range is a parameter no elementwise map can use, and widening t
 put it in every one. `Elide`, `Summarizing` and `Identity` are untouched by the widening, which is
 the test of whether it was done at the right level.
 
-### Incremental folds: one answer whether the file is read whole or followed live
+### Incremental folds
 
-An [incremental fold](docs/GLOSSARY.md#incremental-fold) reads a session's records one at a time and
+An [incremental fold](glossary.md#incremental-fold) reads a session's records one at a time and
 carries a state forward. `Journal::Projection` (`lib/lain/journal/projection.rb`) is that shape as a
 frozen value: a subclass names its `.unit` and its `#step`, `.over(records)` is the `inject`, and a
 step answers a new projection and leaves the receiver as it was. `Journal::Projections` steps
@@ -2090,13 +2169,13 @@ read-back agree because they run 1 fold.
 `"an incremental fold"` (`incremental_fold.rb`) holds a projection to 2 laws that every projection
 carries and a third that only some do:
 
-- **Persistence.** A projection and the one its step answers are both `Ractor.shareable?`. Shareable
+- Persistence. A projection and the one its step answers are both `Ractor.shareable?`. Shareable
   means deeply frozen, so a step that moved its receiver would have had to find it unfrozen.
-- **Chunked equals whole.** The projection over a file's newline-terminated lines equals the one
+- Chunked equals whole. The projection over a file's newline-terminated lines equals the one
   stepped through a `Journal::Tail` fed the same bytes cut anywhere: byte by byte, at every 2-way
   cut, with a multibyte character split and the last line left unterminated. That is what a
   follower sees of a file still being written.
-- **Homomorphism, for a projection that declares `#combine`.** The group reuses `"a monoid
+- Homomorphism, for a projection that declares `#combine`. The group reuses `"a monoid
   homomorphism"`, taking record lists as spans: 2 halves folded apart and combined equal the whole.
   `Redactions` declares it (`+` on both counts). `Lineage` and `SessionRow` do not, and say why in
   their doc comments: a record joins a lineage through one that landed before it, and a rewind and
@@ -2113,14 +2192,14 @@ String that comes back a Symbol, fails there. Its negative reads the group's bat
 the other groups do: a lossy pair under a lenient parse gives `:fails`, because a strict parse would
 surface the loss as an exception instead.
 
-### Three orders, one lattice question
+### Meet-semilattices
 
-A [meet-semilattice](docs/GLOSSARY.md#meet-semilattice) is a partial order where any 2 elements
+A [meet-semilattice](glossary.md#meet-semilattice) is a partial order where any 2 elements
 have a greatest lower bound, their *meet* (necessarily unique when it exists; that is what
 "greatest" means in a partial order). `gcd` over integers is one, and so are `min` over numbers
 and longest-common-prefix over paths. The laws
 (`spec/support/shared_examples/meet_semilattice.rb`) are
-[idempotence](docs/GLOSSARY.md#idempotence), commutativity, associativity, and "a meet sits below
+[idempotence](glossary.md#idempotence), commutativity, associativity, and "a meet sits below
 both operands", and knowing whether an operation obeys them tells you whether "the" meeting point is
 even a coherent phrase.
 
@@ -2130,24 +2209,24 @@ and git's own `--all` flag is the confession: a criss-cross merge leaves several
 and no greatest one. One Store's DAG answers the question 3 ways, each an order of its own, and
 where each one's claim is held says which side of that line it falls on:
 
-- **Render ancestry**, `Lain::Ext::Dag::RenderAncestry` (Rust; its Ruby module went with the Ruby
+- Render ancestry, `Lain::Ext::Dag::RenderAncestry` (Rust; its Ruby module went with the Ruby
   DAG on 2026-10-20): first-parent render edges only. The chain is linear, so the meet exists and is
   unique. Held to the group through `Ext::Timeline#meet` in `spec/lain/rust/timeline_spec.rb`, by
   `declare_meet_semilattice!` in `cargo test`, and against `#meet` in `spec/lain/rust/dag_spec.rb`.
-- **Causal ancestry**, `Lain::Ext::Dag::CausalAncestry` (Rust): reachability over both edge kinds.
-  **Not a semilattice**: a criss-cross fan-in leaves incomparable maximal common ancestors, so no
-  greatest lower bound exists at all, and the honest answer is the *set* of maximal ones,
+- Causal ancestry, `Lain::Ext::Dag::CausalAncestry` (Rust): reachability over both edge kinds.
+  Not a semilattice: a criss-cross fan-in leaves incomparable maximal common ancestors, so no
+  greatest lower bound exists at all, and the answer is the *set* of maximal ones,
   `git merge-base --all`'s shape. The type implements `MaximalLowerBounds` and never
   `MeetSemilattice`, and `spec/lain/rust/causal_meets_spec.rb` includes no law group for the same
   reason.
-- **Dominance**, `Lain::Ext::Dag::Dominance` (Rust): the deepest common
-  [dominator](docs/GLOSSARY.md#dominator-immediate-dominator-dominator-tree) over the union graph.
+- Dominance, `Lain::Ext::Dag::Dominance` (Rust): the deepest common
+  [dominator](glossary.md#dominator-immediate-dominator-dominator-tree) over the union graph.
   A node's dominators are totally ordered, so uniqueness comes back, which is exactly what a
-  checkpoint primitive needs. Declared through the macro, so `cargo test` runs the four laws, and
+  checkpoint primitive needs. Declared through the macro, so `cargo test` runs the 4 laws, and
   `spec/lain/rust/dominator_meet_spec.rb` runs the Ruby group with dominance injected as the order.
 
 The criss-cross that separates them, arrows pointing to parents as the
-[DAG](docs/GLOSSARY.md#directed-acyclic-graph-dag)'s edges do:
+[DAG](glossary.md#directed-acyclic-graph-dag)'s edges do:
 
 ```mermaid
 flowchart BT
@@ -2163,39 +2242,39 @@ flowchart BT
 other, and any singleton answer would be arbitrary. `dominator_meet(C, D)` is `R`, the latest
 event *every* path to both heads passes through, and therefore the latest point no in-flight
 branch can bypass: the safe place to synchronize or compact. Same graph, different question,
-and only the lattice-lawful ones may be used where the code assumes a unique answer — which, for
+and only the lattice-lawful ones may be used where the code assumes a unique answer, which, for
 the 2 Rust orders, the compiler now enforces rather than a reader.
 
 A fourth meet lives outside the DAG. `IntervalPartition#meet` is the common refinement of 2
-partitions of one span, and it is the pairwise **intersection** of their ranges rather than the union
+partitions of one span, and it is the pairwise intersection of their ranges rather than the union
 of their cut points. The distinction is not pedantry: these partitions are partial, a gap is a
 stretch no range claims and the derivation retains verbatim, so a cut-point reading fills the gaps
 and proposes a collapse neither operand asked for. It also breaks both properties the meet exists
-for — meeting with the uncut partition stops answering the other operand, and the result stops
+for; meeting with the uncut partition stops answering the other operand, and the result stops
 refining its own operands. The order it is a meet of is `#refines?`, and its spec holds it to the
 group over an exhaustive population rather than a sampled one: all 34 partial interval partitions of
 `0..3`, small enough to enumerate outright, with every pair and triple checked beside the group's
 sampled draws.
 
-### Attenuation: an operation that only ever takes away
+### Attenuation
 
 `"an attenuation"` is the one law group whose motivation is a security property rather than a
 compositional one. `spec/lain/toolset_spec.rb` includes it over `Toolset#only`, with `#except` as its
 dual. The dual rides on the same inclusion instead of being a second one, because `except(x)` *is*
 `only(names - x)` and that equation is one of the laws.
 
-7 laws, and 2 of them are **raises**: chaining `except` over the same names, and attenuating outside
+Seven laws, and 2 of them are raises: chaining `except` over the same names, and attenuating outside
 the previous request. The partiality is the structure rather than a rough edge on it, and pinning the
 raises is what keeps the operation from looking total. The alternative reading of the chained
-`except` — "run it twice from the parent" — is `f(p) == f(p)`, determinism wearing idempotence's
+`except`, "run it twice from the parent", is `f(p) == f(p)`, determinism wearing idempotence's
 clothes, and it would hold no matter what the operation did.
 
 Monotonicity is where the absent join is checked, and the sentence to take away is that a capability
-the *receiver* lacked is not the security property, while a capability the **attenuation dropped**
+the *receiver* lacked is not the security property, while a capability the attenuation dropped
 is. Bounding a result by the receiver's names is nearly free and certifies nothing, since `only`
 fetches out of the receiver's own index. The law is `observed(only(s, r)) ⊆ r`, probed with the
 dropped names as well as the kept ones, and `observed` reaches the surface that authorizes rather
-than the surface that reads: a `Toolset` honest in `#names`, `#each`, `#to_schema` and `#digest` and
+than the surface that reads: a `Toolset` correct in `#names`, `#each`, `#to_schema` and `#digest` and
 lying in `#include?` and `#fetch` passed every other law in the group while a dropped tool dispatched
 end to end. That escape is now a spec, run through the real `Agent::ToolRunner` and
 `Effect::Handler::Live`.
@@ -2204,28 +2283,30 @@ There is no join, and no negative example for one either: a law group that no op
 would be a claim with no consumer, so the reading lives in `toolset.rb`'s doc comment and
 monotonicity is what holds it: union exists only at construction, below the trust boundary, where
 `Tools::Subagent#child_union` assembles a child's set out of tools the parent already holds. The
-claim covers the model-facing surface and says nothing about the Ruby object graph —
+claim covers the model-facing surface and says nothing about the Ruby object graph:
 `only(:subagent).fetch("subagent").attenuates_from` hands back the whole un-attenuated union, and a
 spec pins both halves so neither drifts into the other.
 
-### The negatives are design decisions
+### Deliberate negatives
 
 The pattern above (Summarizing's failing homomorphism, causal ancestry's missing semilattice impl)
 is deliberate policy: where a structure's *absence* is a design decision, that absence is asserted
-as executably as a presence — an example that makes the law fail, or a type that cannot take the
-impl — because a negative living only in a comment rots silently while the spec suite stays green.
+as executably as a presence (an example that makes the law fail, or a type that cannot take the
+impl), because a negative living only in a comment rots silently while the spec suite stays green.
 Two more instances shape the compaction design:
 
-**Derivation is not monotone.** Timelines are ordered by prefix, and the tempting model is that
+Derivation is not monotone. Timelines are ordered by prefix, and the tempting model is that
 compaction respects that order: extend the source, and the derived chain extends too, sharing
 its prefix. It does not (`derive(T1) <= derive(T2)` fails even when `T1 <= T2`), for 2
 independent reasons: a retained turn re-committed under a different parent chain gets a
 different digest, and the `keep_last` window slides. (In the glossary's categorical terms:
-derivation is not a [functor](docs/GLOSSARY.md#functor) between the prefix orders.) The wrong
+derivation is not a [functor](glossary.md#functor) between the prefix orders.) The wrong
 model is extending from the last derived head unconditionally, and 2 specs go red if anyone
 "fixes" the code toward it; `Derivation::Resume` extends only when the held seam and the
-prefix digests match what a full derivation would produce, and is otherwise refused. Full re-derivation stays affordable because the derived
-chain is bounded by `keep_last`, not by history length. A **held compaction cut** changes what
+prefix digests match what a full derivation would produce, and is otherwise refused.
+
+Full re-derivation stays affordable because the derived
+chain is bounded by `keep_last`, not by history length. A held compaction cut changes what
 the negative means without making it false: the cut is a source digest passed in, not a derived
 head held, and while it holds with nothing new collapsing the derived chain *does* extend as the
 source does, because the replacement's bytes and parent chain are identical turn to turn. That
@@ -2234,17 +2315,18 @@ monotonicity between advances is the cut's purpose, and `derivation_spec.rb` and
 by the held replacements plus the turns since the cut, not by `keep_last` alone; the
 content-addressed Store writes only the new ones.
 
-**The preimage is the record.** A compaction maps source turns to derived events, and a
+The preimage is the record. A compaction maps source turns to derived events, and a
 replacement's `causal_parents` records which source turns collapsed into it: the
-[fiber](docs/GLOSSARY.md#fiber-preimage) of the map over that replacement, in the glossary's
+[fiber](glossary.md#fiber-preimage) of the map over that replacement, in the glossary's
 vocabulary (no relation to Ruby's `Fiber`). A retained event's preimage is the singleton you
 can read off the event itself, so its causal set is stored empty: nothing collapsed here.
+
 Replacements' preimages plus retained turns cover the source span exactly once, and nothing
 else is stored: no side table of "what became what", because the derived chain *is* the mapping
 read backwards, which is what makes re-deriving an edge and comparing it possible at all.
 A causal parent the `Store` has not seen raises, so a preimage is never silently incomplete.
-This is also why a strategy is deliberately **not** an
-[endomorphism](docs/GLOSSARY.md#endomorphism) on message arrays: a bare
+This is also why a strategy is deliberately not an
+[endomorphism](glossary.md#endomorphism) on message arrays: a bare
 `#call(messages) -> messages` would compose beautifully and destroy the preimage.
 
 ```mermaid
@@ -2268,7 +2350,7 @@ which is precisely why re-deriving their edges needs the journalled answer rathe
 alone. The negative is a spec, not a runtime classification: nothing in `lib/` reads a purity
 claim back to classify a drifted edge.
 
-**A monoid action has no group, and the reason is a worked negative.** A fold looks like a monoid
+A monoid action has no group, and the reason is a worked negative. A fold looks like a monoid
 action: `act([], s) == s` and `act(L + R, s) == act(R, act(L, s))`, with a list of records
 acting on a state. There is no group for those 2 laws, because both are theorems of `inject`
 over any step function, mutating ones included. Folding
@@ -2279,7 +2361,7 @@ that a cut file folds as the whole file, and, for a projection that can combine,
 folded apart equal the whole. The same test applies to a new group proposal: find an operation
 that violates the law, or the group is a restatement of the language.
 
-### How to hold an operation to a law
+### Holding an operation to a law
 
 For a new operation with compositional shape (a `>>`, a `+`, a merge, a collapse), the
 checklist is short:
@@ -2287,15 +2369,15 @@ checklist is short:
 1. Find the law's group in `spec/support/shared_examples/`. If there is none, write one: named
    laws, and a battery the group runs if the structure's absence is ever going to matter.
 2. Write the `include_examples` in the operation's own spec, at its mirrored path, with the
-   population inline — a generator or a thunk over a list. Make it non-empty, include the draws
+   population inline; a generator or a thunk over a list. Make it non-empty, include the draws
    that bend the law hardest, and do not build it only through the operation under test.
 3. If the structure is deliberately absent, write an ordinary example instead: run the battery
    through `AlgebraLaws.outcomes`, require the law it turns on to be `:fails` and nothing to have
    raised, and exhibit the witness that shows why.
 4. For an order implemented in Rust, add it in `ext/lain/src/algebra.rs`: write its
    `impl MeetSemilattice` by hand and invoke `declare_meet_semilattice!(Order, tests: …, population: …)`
-   beside it, which writes the sealed marker and the four law tests over that population — or
-   implement `MaximalLowerBounds` for a set-valued one — then include the Ruby group in the binding's
+   beside it, which writes the sealed marker and the 4 law tests over that population, or
+   implement `MaximalLowerBounds` for a set-valued one, then include the Ruby group in the binding's
    spec under `spec/lain/rust/`.
 
 What the discipline buys, concretely: a strategy-description space the bench can enumerate
@@ -2371,47 +2453,47 @@ Subsystems without a section above, each self-documented in its own index file:
 | Structural search | `lib/lain/structural/` | the Ruby side of `ext/lain`'s AST/tree-sitter search |
 | Friction and dogfood | `lib/lain/friction/`, `lib/lain/improvement.rb`, `lib/lain/consolidation.rb` | offline passes that read a finished journal back into knob guidance, harness-improvement notes, and memory |
 | Session and worker env | `lib/lain/session.rb`, `lib/lain/worker_env.rb` | the read-set/write-set a tool resolves against, and the per-tool cwd that is never `Dir.chdir`'d |
-| Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Carriers` namespace, and `Telemetry.fixed_point`; one file per record holds 41 of the kinds that answer the duck, 30 of those with a construction contract — 28 named `Telemetry::Carriers` entries, each beside the record that checks it, plus 2 anonymous `declare` blocks. **This subtree is not the whole vocabulary** — see below |
+| Telemetry | `lib/lain/telemetry.rb`, `lib/lain/telemetry/` | the index holds the `Journalable` duck, the `Carriers` namespace, and `Telemetry.fixed_point`; one file per record holds 41 of the kinds that answer the duck, 30 of those with a construction contract; 28 named `Telemetry::Carriers` entries, each beside the record that checks it, plus 2 anonymous `declare` blocks. This subtree is not the whole vocabulary; see below |
 
 **How many journal record types there are, and how to re-derive it.** Two mechanisms produce
 NDJSON records, so any single number needs its criterion stated.
 
-*Classes answering `#to_journal` through `Telemetry::Journalable`* — the criterion is
-`klass < Lain::Telemetry::Journalable`, which counts inheritance and not just `include`
-(`Telemetry::RequestResent` subclasses the `RequestSent` **event** in `telemetry/request_sent.rb`
-and is the one a grep for `include` misses). That is **53** classes, each with a distinct
-`journal_type` string: 34 inside `lib/lain/telemetry/` and **19 defined elsewhere** — `Epic::GateDecision`,
+*Classes answering `#to_journal` through `Telemetry::Journalable`*; the criterion is
+`klass < Lain::Telemetry::Journalable`, which counts inheritance as well as `include`
+(`Telemetry::RequestResent` subclasses the `RequestSent` event in `telemetry/request_sent.rb`
+and is the one a grep for `include` misses). That is 53 classes, each with a distinct
+`journal_type` string: 34 inside `lib/lain/telemetry/` and 19 defined elsewhere; `Epic::GateDecision`,
 `Epic::Gate::Adjudicator::GateEvidence`, `Epic::IssueTransition`, `Epic::StageTransition`,
 `Compaction::Source::CompactionDecision`, `Compaction::Source::CompactionPrepared`,
 `Compaction::Source::CompactionApplied`, `Compaction::Source::DerivationRefused`,
 `Compaction::Cold::CacheColdConfirmed`, `Supervisor::DrainTimedOut`, `Supervisor::Restart::Restarted`,
 `Supervisor::Restart::WorkspaceBlob`, `Middleware::RefuseUnpermitted::Refused`,
 `Tools::Subagent::Stagger::{Dispatched,Released}`, `Arm::DualLedger::LedgerTransition`,
-`CLI::FleetWindows::WindowsCapped`, `Improvement`, and the two
+`CLI::FleetWindows::WindowsCapped`, `Improvement`, and the 2
 `Tool::SpawnPolicy::PrefixStrategy::SiblingTemplate` records. Re-derive with
 `ObjectSpace.each_object(Class).select { |k| k < Lain::Telemetry::Journalable }` after
 `require "lain"`.
 
-> ⚠️ **Those three figures are stale, and re-deriving is the point of the recipe above.** Run as
-> written on 2026-08-17 the tree answers **75 / 38 / 37**, not 53 / 34 / 19 — the enumerated list
+> ⚠️ Those 3 figures are stale, and re-deriving is the point of the recipe above. Run as
+> written on 2026-08-17 the tree answers 75 / 38 / 37, not 53 / 34 / 19; the enumerated list
 > is short by around eighteen classes that later cards added without re-counting. They are left as
 > found deliberately: incrementing a number known to be wrong by 21 would signal "verified" where
 > the truth is "inherited", and a full correction is a documentation audit rather than a line in
 > whichever card happens to add the next record type. Trust the recipe, not the digits.
-> Re-run on 2026-10-17, after `Compaction::Prepared` was deleted, it answers **114 / 66 / 48**.
-> `CompactionPrepared` and `CompactionApplied` add 2 to the total and to the third figure (re-run on 2026-10-17 after this plan's records: **116 / 66 / 50**, total / in `lib/lain/telemetry/` / elsewhere).
+> Re-run on 2026-10-17, after `Compaction::Prepared` was deleted, it answers 114 / 66 / 48.
+> `CompactionPrepared` and `CompactionApplied` add 2 to the total and to the third figure (re-run on 2026-10-17 after this plan's records: 116 / 66 / 50, total / in `lib/lain/telemetry/` / elsewhere).
 
-*Records written as plain Hashes, with no `Journalable` class behind them* — at least ten more:
+*Records written as plain Hashes, with no `Journalable` class behind them*; at least 10 more:
 `session` / `turn` / `rewound` (`session_record.rb:27-29`, and `bench/session.rb:67-68` writes the
-first two for the bench), `journal_error` (`journal.rb:276`, `approval/parked/queue.rb:364`),
+first 2 for the bench), `journal_error` (`journal.rb:276`, `approval/parked/queue.rb:364`),
 `approval_decision` (a hand-written `#to_journal` at `approval/parked/queue.rb:203`, over
-`tool_use_id`, `requester`, `tool`, `surface`, `verdict`, `timed_out` and `latency` — the
+`tool_use_id`, `requester`, `tool`, `surface`, `verdict`, `timed_out` and `latency`; the
 `tool_use_id` is what pairs a decision with its `awaiting_human`, and because one call can park
-twice, at the path gate and again at the release, records within an id pair **in order**),
+twice, at the path gate and again at the release, records within an id pair in order),
 `goal_iteration` / `goal_iteration_dropped` / `goal_pin` / `goal_pin_missed` (`cli/goal_driver.rb`;
 an iteration a late human line withdrew before dispatch writes a `goal_iteration_dropped`, so the
 iterations that really ran are the `goal_iteration` count minus the drops), and
-`live_replay` / `live_replay_turn` (`bench/live_replay.rb:101,90`). That list is a **floor**: it is
+`live_replay` / `live_replay_turn` (`bench/live_replay.rb:101,90`). That list is a floor: it is
 what a sweep of `"type" =>` literals in `lib/` turned up once content blocks and JSON Schema
 fragments were excluded, not a proof of completeness. A reader of the NDJSON should discriminate
 on the `type` string and always have an `else`.
@@ -2430,23 +2512,23 @@ caller that is not the daemon's user is refused.
 
 A launch whose digest differs from the running daemon's replaces it only when no chat is registered and
 no run is live; otherwise `Daemon.ensure` says what it waits for and keeps the old one.
-[docs/remote.md](docs/remote.md) is the user's side of the phone path.
+[docs/users/remote.md](../users/remote.md) is the user's side of the phone path.
 
-- **The registry** (`registry.rs`). Each chat calls `session.register` over its own connection, and
+- The registry (`registry.rs`). Each chat calls `session.register` over its own connection, and
   the daemon accepts it only when the peer pid is the pid the chat names. A session lives as long as
   its connection. The registry answers `session.list`, routes a review offer to the chat it is for
   (`offer.send`, with the chat's outcome returned through `offer.reply`) and finds the registered
   session a run's process descends from. A chat that loses the daemon reconnects and publishes
   everything again (`Daemon::Registration`).
-- **The relay worker** (`relay.rs`, `relay/agenda.rs`, `relay/devices.rs`, `crates/lain-wire`). With
+- The relay worker (`relay.rs`, `relay/agenda.rs`, `relay/devices.rs`, `crates/lain-wire`). With
   `--relay` the daemon starts its own binary as `lain-daemon relay`, a Landlock-confined child with an
   empty environment whose stdin is a socket pair to the daemon, and stamps each forwarded item with the
   publishing chat's registration. A worker that exits is not restarted today: `daemon.info` reports
   `relay: unavailable`. [The phone surface](#the-phone-surface-and-the-epic-gate) section has the rest.
-- **ntfy from the main daemon** (`agenda_watch.rs`, `ntfy.rs`). The worker has no network, so the
+- ntfy from the main daemon (`agenda_watch.rs`, `ntfy.rs`). The worker has no network, so the
   daemon, not the worker, posts the notice for an item still open after 60 seconds, with its topic read
   from `DAEMON_NTFY_TOPIC`. The same section has the notice's shape and bounds.
-- **The run supervisor** (`supervisor.rs`). `run.start` takes a kind from a closed set, `epic` (a
+- The run supervisor (`supervisor.rs`). `run.start` takes a kind from a closed set, `epic` (a
   headless `chat --non-interactive --approval auto --human remote` running `/implement-epic SLUG`),
   `chores` (`lain todos drain`) and the daemon's own `review-poll` (`lain queue poll`), and builds
   every argv itself from `--ruby` and `--lain`, so no caller supplies a command. A run is its own
@@ -2456,11 +2538,11 @@ no run is live; otherwise `Daemon.ensure` says what it waits for and keeps the o
   `lain daemon herdr-sync` shows in herdr. The run's environment is an allowlist
   (`Daemon::Launch::KEEP` and `RUN_ENV`). `ANTHROPIC_API_KEY` is the only secret-shaped name in it,
   and only the daemon and its runs have it; the relay worker has an empty environment.
-- **The periodic review poll** (`periodic.rs`). With `--poll-every` (300 seconds, set when the user
+- The periodic review poll (`periodic.rs`). With `--poll-every` (300 seconds, set when the user
   config has a `github` verb) the daemon starts a `review-poll` run at once and every 5 minutes after.
   A tick while the last poll still runs is skipped, and a tick the daemon was too busy to take is
   dropped, not repeated.
-- **The spawner** (`spawner.rs`, `lib/lain/daemon/spawner.rb`). The first run boots a `lain daemon
+- The spawner (`spawner.rs`, `lib/lain/daemon/spawner.rb`). The first run boots a `lain daemon
   spawner` Ruby process, which `require`s lain once and then forks each run from itself, reading JSON
   lines on its stdin. A fork answers in about 40 milliseconds against about 700 for a fresh `exe/lain`
   boot. It forks only while it has 1 thread. When lain's own files change it answers `stale`, the
@@ -2474,11 +2556,11 @@ Only a paired phone answers. A bash profile that confines gets no daemon socket.
 
 ## `ext/lain` vs `crates/lain-daemon`: the placement rule
 
-The rule, verbatim from `CLAUDE.md`: **anything async, I/O-bound, or isolation-relevant lives
+The rule, verbatim from `CLAUDE.md`: anything async, I/O-bound, or isolation-relevant lives
 out of process (`crates/lain-daemon`, msgpack-RPC over a Unix socket); data-structure work lives
-in-process (`ext/lain`, magnus, pure and synchronous).** `ext/lain/CLAUDE.md` restates the same
+in-process (`ext/lain`, magnus, pure and synchronous). `ext/lain/CLAUDE.md` restates the same
 line and adds the mechanical reason: driving an async runtime from inside an FFI call while
-holding the GVL is a known footgun, and an in-process sandbox is not a sandbox. Today
+holding the GVL is a known hazard, and an in-process sandbox is not a sandbox. Today
 `crates/lain-daemon` is the per-user daemon: it registers chats, holds the agenda, and runs the
 phone relay as a confined worker. The isolation work
 that exists lives in its sibling `crates/lain-fence`.
@@ -2492,26 +2574,26 @@ crate root alongside the same print denies.
 
 `ext/lain/src/` today holds `canonical.rs` and `digest.rs` (the Rust side of `Canonical`
 hashing); `dag.rs`, `event.rs` and `graph.rs` (the persistent Merkle DAG, and the union-graph
-queries over it — dominance and causal ancestry); `algebra.rs` (the three orders over one Store as
-types; the two semilattices behind the sealed `MeetSemilattice` trait); `bm25.rs`, `astgrep.rs`, `treesitter.rs`,
+queries over it; dominance and causal ancestry); `algebra.rs` (the 3 orders over one Store as
+types; the 2 semilattices behind the sealed `MeetSemilattice` trait); `bm25.rs`, `astgrep.rs`, `treesitter.rs`,
 `fuzzy.rs` and `prompt.rs` (pure, synchronous work: in-memory BM25, the AST/structural search
 backing `lib/lain/structural/`, completion's fuzzy matcher and the prompt format DSL);
 `read_text.rs`, the one string boundary every text-taking binding reads through; and `lib.rs`, the
 magnus bindings.
 
-**Which structures earn a binding**, and why `Timeline` is the honest first candidate: Ruby has
+**Which structures earn a binding**, and why `Timeline` is the first candidate: Ruby has
 no persistent map with structural sharing *between versions*, so a speculative branch that
 snapshots state pays `Hash#dup` at O(n) where a HAMT forks in O(1). That asymptotic gap is the
-argument, and "Rust is faster" is not. The gap is **latent today**: `Cargo.toml` says so
+argument, and "Rust is faster" is not. The gap is latent today: `Cargo.toml` says so
 explicitly, because the Store mutates one map in place and no Timeline retains a prior version,
 so the current O(1) `fork` comes from the handle plus content addressing rather than from the
-HAMT. The binding earns rule 2 of `docs/rust-bindings.md`'s five only once speculative branching
+HAMT. The binding earns rule 2 of `docs/devs/rust-bindings.md`'s 5 only once speculative branching
 snapshots
 the map. Until 2026-10-20 pure Ruby shipped first and stayed, because the property tests had to
 pass unchanged against both implementations. That day the Ruby `Event`, `Store` and `Timeline`
 were deleted, and a port is now held to its laws natively in `cargo test`, to the shared groups
 in `spec/lain/rust/`, to a frozen conformance corpus of the old implementation's answers
-(`ext/lain/corpus/`), and to a `cargo-mutants` baseline (`docs/rust-bindings.md`, rule 5).
+(`ext/lain/corpus/`), and to a `cargo-mutants` baseline (`docs/devs/rust-bindings.md`, rule 5).
 Dominance and causal ancestry have been Rust-only since 2026-09-14, held to written-down fixtures
 as well.
 

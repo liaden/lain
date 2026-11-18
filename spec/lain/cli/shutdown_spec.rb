@@ -5,7 +5,7 @@
 # installation lives elsewhere; the coordinator owns the pipe + the parked
 # reader), runs the policy `running -> grace(deadline) -> draining -> closed`,
 # and interrupts the run through `Agent#interrupt` exactly as
-# docs/concurrency.md's worked supervisor sketched. Cancellation is driven the
+# docs/devs/concurrency.md's worked supervisor sketched. Cancellation is driven the
 # same deterministic way spec/lain/agent_cancellation_spec.rb pins it: a
 # provider that PARKS inside a model call on an internal queue, so the reactor
 # is provably inside a model call -- no `sleep`, no timing race -- when the

@@ -30,8 +30,8 @@ RSpec.describe "the dogfood config tree" do
     expect([File.executable?(script), body]).to match([true, %r{ln -s.*dogfood/lain.*lain trust}m])
   end
 
-  it "explains in docs/dogfood.md why .lain stays ignored" do
-    expect(File.read(File.join(repo, "docs/dogfood.md"))).to match(/\.lain.*ignored/m)
+  it "explains in docs/devs/dogfood.md why .lain stays ignored" do
+    expect(File.read(File.join(repo, "docs/devs/dogfood.md"))).to match(/\.lain.*ignored/m)
   end
 
   describe "bin/dogfood-setup run in a copy of the tree" do
@@ -120,8 +120,8 @@ RSpec.describe "the dogfood config tree" do
     end
   end
 
-  it "names the real skill and slot paths in the README" do
-    readme = File.read(File.join(repo, "README.md"))
+  it "names the real skill and slot paths in the configuration doc" do
+    readme = File.read(File.join(repo, "docs/users/configuration.md"))
 
     expect(readme).to include(".lain/skills/<name>/skill.md", ".lain/slots/skill/<skill>/<hole>.md")
   end

@@ -922,7 +922,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     # pane can see, and the suite watches a bare `lain watch` work while the
     # real thing dies of status 127. The full measurement, the server/client
     # carve-out behind it and the rule for every future pane spec are in
-    # docs/toolchain-traps.md, "A tmux pane inherits the spec runner's PATH".
+    # docs/devs/toolchain-traps.md, "A tmux pane inherits the spec runner's PATH".
     # Dropped from BOTH the server's environment and, inside
     # {#as_a_pane_would}, this process's, because the two disagree.
     #

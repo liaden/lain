@@ -8,14 +8,13 @@ Gem::Specification.new do |spec|
   spec.authors = ["Joel Johnson"]
   spec.email = ["johnson.joel.b@gmail.com"]
 
-  spec.summary = "An agent harness built as a study bench for LLM orchestration and tool design."
+  spec.summary = "A terminal coding agent with a tmux and Neovim cockpit, approvals and recorded sessions."
   spec.description = <<~DESC
-    Lain is a hand-rolled agentic loop for Claude, built so that context strategies, tool
-    designs, and orchestration tactics are swappable, observable, and comparable. Conversations
-    are a content-addressed Merkle DAG, so forking and time-travel are cheap and prompt-cache
-    breaks are localizable. Tool calls are effects interpreted by a composable Rack-style
-    middleware stack, so deterministic replay is just a recorded handler. It ships a bench that
-    replays recorded sessions under different strategies and reports distributions, not anecdotes.
+    Lain is a coding agent for the terminal. It runs its own agent loop against Claude or Ollama,
+    shows its work in a tmux and Neovim cockpit, and asks before it runs anything risky, at the
+    prompt, in the editor or on a phone. Conversations are a content-addressed Merkle DAG, so
+    forking and rewinding are cheap. Tool calls run through a Rack-style middleware stack. Every
+    session is recorded, and a bench replays recorded sessions under different strategies.
   DESC
   spec.homepage = "https://github.com/joeljohnson/lain"
   spec.license = "MIT"

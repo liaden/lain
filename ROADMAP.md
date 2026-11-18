@@ -6,7 +6,7 @@
 > — so we can *prove* which choice moved the correct-call rate, and transfer that intuition to
 > medical-literature tool-call work where correctness cannot be eyeballed.
 >
-> **Sources of truth.** The approved architecture and its *why* live in `ARCHITECTURE.md`, and this
+> **Sources of truth.** The approved architecture and its *why* live in `docs/devs/architecture.md`, and this
 > ROADMAP's own `## Status` and `## Milestones` sections are the committed plan. Exploratory ideas
 > live in `planning/`; grounding sources in `references/`. This ROADMAP organizes them into a
 > sequenced plan and folds in the 2026 research scan and the TODO.md brainstorm.
@@ -225,7 +225,7 @@ Each milestone lists committed deliverables, then the research- and TODO-driven 
   `Mixlib::ShellOut`, `live_stdout/stderr` attributed at source).
 - `Handler::Approving` gating tier 3; `--yolo` to disable.
 - `Frontend::TTY` on the alternate screen; `exe/lain` on Thor.
-- README rewrite with topology + data-flow mermaid diagrams; `docs/concurrency.md`.
+- README rewrite with topology + data-flow mermaid diagrams; `docs/devs/concurrency.md`.
 - **Fold-in:** design `Tools::Bash`'s feedback by SWE-agent **ACI principles** — concise-but-informative
   output, guardrails that hasten recovery `[exp]`. Note that the "bash-without-pipes / allowlist"
   frustration (TODO 55–59) is *resolved later* by code-mode (M5), where a pipeline is a Ruby
@@ -1029,7 +1029,7 @@ XDG path relative, which put machine state back inside the user's repository)
    /ruby /meta), session forking with ephemeral journal-and-reap, the M4-2 provider
    round-trip of an edited `lain://request`, auto-approver wiring (`--auto-approve`),
    read-only per-subagent tmux windows (`lain watch`), `lain up` flag passthrough +
-   `--nvim` cockpit, ARCHITECTURE.md, and the README/xmonad cleanup.
+   `--nvim` cockpit, docs/devs/architecture.md, and the README/xmonad cleanup.
 
 13. **✅ Landed — planned 2026-07-25, panel-reviewed** — `planning/specs/chunk-live-wiring.md`: the
    live-wiring chunk, closing the gap between five chunks of landed bench machinery and a chat
@@ -1069,8 +1069,8 @@ XDG path relative, which put machine state back inside the user's repository)
    assigned to the orchestrator (`--isolation`, `--summarizer-provider`, `--summarizer-model`,
    `--summarizer-max-tokens`) had never landed, so tiers A and C were unreachable from the command
    line; `spec/lain/cli/chat_flags_spec.rb` now parses the CLI subtree and fails when a flag the
-   code reads is declared by no command, and the README, `docs/commands.md`, and
-   `docs/providers/ollama.md` describe three summarizer tiers, pins, and isolation's real reach.
+   code reads is declared by no command, and the README, `docs/users/commands.md`, and
+   `docs/users/providers/ollama.md` describe three summarizer tiers, pins, and isolation's real reach.
 
 15. **✅ Landed — planned 2026-07-27, panel-reviewed** —
    `planning/specs/chunk-algebra-vocabulary.md`: the algebra vocabulary. Lain already maintains a
@@ -2285,7 +2285,7 @@ XDG path relative, which put machine state back inside the user's repository)
 
 ## Map of the documents
 
-- **Architecture & why:** `ARCHITECTURE.md`, and this document's own `## Status`/`## Milestones`
+- **Architecture & why:** `docs/devs/architecture.md`, and this document's own `## Status`/`## Milestones`
   sections (approved).
 - **Remaining committed work** (task-level units, acceptance criteria, dependency map):
   `planning/remaining-work.md`.

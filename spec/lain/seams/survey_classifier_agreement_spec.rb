@@ -28,7 +28,7 @@ class ClassifierAgreementEditor
   def bind_changeset_review(review) = review
 end
 
-# The divergence ARCHITECTURE.md's "The secret boundary" describes, driven as a
+# The divergence docs/devs/architecture.md's "The secret boundary" describes, driven as a
 # session actually produces it: a turn legitimately rewrites the `[sensitivity]`
 # table the gate was built from, and the survey must still withhold what the
 # gate still refuses.

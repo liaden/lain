@@ -12,10 +12,10 @@ links to its own:
 
 | | |
 |---|---|
-| `ARCHITECTURE.md` | how the system is put together, subsystem by subsystem |
-| `docs/toolchain-traps.md` | failures that are not what they look like — read before believing a red suite |
-| `docs/spec-suite-performance.md` | worker counts, profiling, allocations; read before changing how the suite runs |
-| `docs/rust-bindings.md` | the five tests a capability passes before it earns a binding |
+| `docs/devs/architecture.md` | how the system is put together, subsystem by subsystem |
+| `docs/devs/toolchain-traps.md` | failures that are not what they look like — read before believing a red suite |
+| `docs/devs/spec-suite-performance.md` | worker counts, profiling, allocations; read before changing how the suite runs |
+| `docs/devs/rust-bindings.md` | the five tests a capability passes before it earns a binding |
 
 ## Toolchain
 
@@ -57,7 +57,7 @@ bundle exec rake daemon:build && bundle exec rspec --tag core   # :core -- the o
 Spec git reads a spec-owned global config (`spec/support/isolated_git_config.rb`); a lib site that
 reads the user's config on purpose sets its own `GIT_CONFIG_GLOBAL` in its spec.
 
-Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md):
+Rules, with the evidence in [`docs/devs/toolchain-traps.md`](docs/devs/toolchain-traps.md):
 
 - **Do NOT use `~/.rubies/ruby-4.0.6`** — dead `$LOAD_PATH`, and forcing it with `RUBYLIB` is
   worse than the breakage. **If the suite fails in a way you did not cause, check the
@@ -78,7 +78,7 @@ Rules, with the evidence in [`docs/toolchain-traps.md`](docs/toolchain-traps.md)
   and 53.1s at 16 (5 interleaved runs each); 2026-10-22 is 74s at 12, and 2026-11-04 is 121s at 12 (load 4 at the start). The wall is the larger of the
   slowest file (29s) and the total work divided by the workers (780s / n), plus about 10s of startup. The wall is a MAX over files, not a sum, so **never shard a spec to game the
   packer** — one spec file per public entry point, at its mirrored path. See
-  [`docs/spec-suite-performance.md`](docs/spec-suite-performance.md) before optimising anything
+  [`docs/devs/spec-suite-performance.md`](docs/devs/spec-suite-performance.md) before optimising anything
   here; profile first, and a cost inside the SUBJECT is an application finding, not a spec one.
 - **Check the example COUNT, not just the failure count.** `parallel_tests` reports only the
   examples that SURVIVED, so a dead worker, an OOM kill and a `SystemExit` all look like a pass.
@@ -307,7 +307,7 @@ this rule used to be about is gone; the disk-versus-`HEAD` gap is not.)
 
 ## Architecture, in one breath
 
-Full treatment in [`ARCHITECTURE.md`](ARCHITECTURE.md).
+Full treatment in [`docs/devs/architecture.md`](docs/devs/architecture.md).
 
 `Canonical` gives deterministic bytes, serving turn hashing *and* prompt-cache stability — one
 function, two invariants. `Ext::Event`/`Ext::Store`/`Ext::Timeline` form a lossless
@@ -365,13 +365,13 @@ speed.** The placement rule: **anything async, I/O-bound, or isolation-relevant 
 process (`crates/lain-daemon`, msgpack-RPC over a Unix socket); in-process work (`ext/lain`,
 magnus) must be pure, synchronous, and must not own the terminal.**
 
-Before binding anything, read [`docs/rust-bindings.md`](docs/rust-bindings.md) for the five
+Before binding anything, read [`docs/devs/rust-bindings.md`](docs/devs/rust-bindings.md) for the five
 tests it must pass, then `ext/lain/CLAUDE.md` before writing the code.
 
 ## Known traps
 
 Headlines only. Every one is verified, and the full account of each is in
-[`docs/toolchain-traps.md`](docs/toolchain-traps.md) — read it there before working around one.
+[`docs/devs/toolchain-traps.md`](docs/devs/toolchain-traps.md) — read it there before working around one.
 
 - Anthropic's stream accumulator is `accumulated_message`, **not** `get_final_message`.
 - On the **streaming** path with raw-hash tool schemas, `tool_use.input` arrives as a JSON
@@ -414,7 +414,7 @@ Headlines only. Every one is verified, and the full account of each is in
   `debug: true` to any Thor `.start` in a spec.
 - **Record a flaky spec by NAME, never by line number** — lines drift within days, and a stale
   entry reads as "not a known flake". The current list, and the retired ones, are in
-  `docs/toolchain-traps.md`.
+  `docs/devs/toolchain-traps.md`.
 - **Never name a `.toml` explicitly on a `rubocop` command line.** It gets parsed as Ruby and
   "corrected"; an `Exclude` entry does not save you. A bare `bundle exec rubocop` is safe.
 - **`rubocop -a`'s safe cops can still break parsing.** `Style/BlockDelimiters` rewrites a `{ }`

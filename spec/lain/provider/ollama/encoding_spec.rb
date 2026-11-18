@@ -132,7 +132,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
   # The two throughput knobs. `num_batch` is the one with a measured cost
   # -- ollama passes llama-server `-b 512`, overriding llama.cpp's own 2048, and
   # there is no server-side setting to undo it, so the only place it can be
-  # fixed is the request (docs/providers/ollama.md, "Serving performance").
+  # fixed is the request (docs/users/providers/ollama.md, "Serving performance").
   # `num_ctx` was already a SAMPLER_KEY with no caller putting it in extra.
   describe "the throughput sampler keys" do
     it "carries num_batch from Request#extra into options" do
@@ -164,7 +164,7 @@ RSpec.describe Lain::Provider::Ollama::Encoding do
   # `stream`/`tools`, the way it keeps `think`, so it is deliberately NOT a
   # SAMPLER_KEY -- inside `options` it is a field ollama does not define.
   # What pinning is worth, and the probe behind the type rule below, are in
-  # docs/providers/ollama.md, "Serving performance".
+  # docs/users/providers/ollama.md, "Serving performance".
   describe "the residency field" do
     it "carries keep_alive from Request#extra as a top-level field, not into options" do
       encoded = encoder.encode(request(extra: { "keep_alive" => -1 }))

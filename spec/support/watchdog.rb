@@ -33,7 +33,7 @@ require "etc"
 # stalling 61s+ under it -- STARVED, not stuck. Because {Sentry} is
 # deliberately the OUTERMOST `around` (below), that stall gets attributed to
 # whichever example is CURRENT, which can be one whose own body never touches
-# the code that actually stalled -- `docs/toolchain-traps.md` carries the two
+# the code that actually stalled -- `docs/devs/toolchain-traps.md` carries the two
 # names this happened to. {Sentry::Starvation} is the fix: CPU time consumed
 # across the watch window, against the box's own 1-minute load average, is the
 # cheap signal that tells "nobody scheduled this process" apart from "this
