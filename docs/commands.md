@@ -49,6 +49,7 @@ lain --fork 20260725-1a2b@blake3:9f3c  # branch a recorded session at a digest
 | `--prompt` | unset | Seed the first question, then read the terminal as usual. |
 | `--non-interactive` | off | Run `--prompt`'s question and stop, reading nothing from the terminal. A gated call has no human to park for: under the default `auto` the judge decides it and a call the judge is unsure of is **refused**; under `ask` every gated call is refused; under `bypass` it is approved. A run that named no approval used to get `ask`'s refusal and now gets `auto`, so a bench or compare arm that needs the old behaviour passes `--approval ask`. Needs `--prompt`. |
 | `--nvim SOCKET` | off | Attach a Neovim frontend to an `nvim --listen` socket. |
+| `--human remote` | unset | With `--non-interactive`: a gated call the judge leaves open parks for the phone instead of being refused, and `ask_human` waits for the phone's answer. Refused at launch without `--non-interactive`, without `remote relay:` in the user config, when the daemon's relay is not `running`, or when bash is not confined by a sandbox. A bash call you approve from the phone runs traced, as a terminal approval does. See [docs/remote.md](remote.md). |
 | `--input socket:NAME` | off | Read the human from a [`lain input`](#lain-input) pane instead of from this terminal. `NAME` is a name, not a path — the socket is derived from it under this project. Bare `socket:` means `chat`; `lain up` passes the tmux session's name, so two cockpits on one project do not collide. |
 | `--windows` | off | Open a tmux window running [`lain watch`](#lain-watch) per subagent spawn. Needs `$TMUX` and a journal. |
 | `--isolation` | `none` | `none` or `worktree`. Which backend actor-mode subagents lease workers from. **Inert in plain chat** — see [Isolation](#isolation-flag). |
@@ -244,7 +245,7 @@ port 7820, or `none` when the host has no such address). Enter the token and add
 settings of the phone app (`apps/lain-remote`, labelled `lain` on the phone). The token is not shown again. `lain remote revoke NAME` removes the
 device. The relay rereads the file on its own, so neither verb restarts it, and a revoked device's
 connection closes at that reread. Any other verb, or a missing `NAME`, is refused by name. The
-phone surface itself is switched on by the [`remote` config verb](#remote).
+phone surface itself is switched on by the [`remote` config verb](#configuration-configrb), and [docs/remote.md](remote.md) walks through the whole setup.
 
 ### lain input
 
@@ -591,7 +592,7 @@ renewed only after a spawn succeeds, and two simultaneous launches start one run
 
 ### lain daemon
 
-The per-user daemon that holds chat registrations, the phone relay and supervised runs.
+The per-user daemon that holds chat registrations, the phone relay, the ntfy notice and supervised runs. Every chat registers with it and starts it when none runs. [docs/remote.md](remote.md) covers the phone setup.
 
 ```bash
 lain daemon status            # pid, uptime, build, relay state, sessions and runs
@@ -603,7 +604,7 @@ lain daemon run epic SLUG     # start a headless epic run in the current project
 lain daemon run chores        # start a headless chores run in the current project
 ```
 
-A run's root is the current project, and the run outlives the terminal that started it. A run
+A run's root is the current project, and the run outlives the terminal that started it. `epic` runs a headless chat (`--non-interactive --approval auto --human remote`) on `/implement-epic SLUG`, and `chores` runs `lain todos drain`. The daemon also starts a review poll (`lain queue poll`) every 5 minutes when the user config has a `github` verb, and it shows in `runs`. A run
 answers its approvals from the phone (`--human remote`). With no built daemon binary, each command
 exits 1 naming `rake daemon:build`. `status` and `runs` never start a daemon: with none running they
 print "no daemon is running" and exit 0, while `stop RUN` exits 1 saying the same. `restart --force`
@@ -1502,7 +1503,8 @@ tests preset: :rspec
   surface off, which the chat says in a `phone surface off:` line and records as
   `capability_degraded`, never a refusal. Devices are admitted with [`lain remote pair`](#lain-remote).
   `ntfy:` is an `http` or `https` topic URL, such as
-  `"https://ntfy.sh/my-lain-topic"`; anything else is refused. It takes effect only with `relay:`,
+  `"http://100.64.0.7:2586/my-lain-topic"` on a self-hosted server (or `"https://ntfy.sh/my-lain-topic"` on the public one;
+  [docs/remote.md](remote.md) says what that sees); anything else is refused. It takes effect only with `relay:`,
   and the lain-daemon sends the notice, not the chat. An item that waits 60 seconds unanswered
   sends 1 notice to the topic, a title naming the kind and the requester plus an Open action into
   the phone app (`lain-remote://item/<phone id>`), and no item text, token or path. An item

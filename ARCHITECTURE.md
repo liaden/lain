@@ -2336,7 +2336,8 @@ is followed by 1 summary notice (`lain: N more items waiting`) with no link. The
 https topic are the system's as OpenSSL finds them: `SSL_CERT_FILE` replaces only the default file
 and `SSL_CERT_DIR` only the default directories (on macOS a set variable replaces the keychain).
 The proxy variables (`http_proxy`, `https_proxy`, `no_proxy`) are passed to the daemon, whose HTTP
-client picks the proxy as it does (`HTTPS_PROXY` before `HTTP_PROXY`, `NO_PROXY` respected).
+client picks the proxy as it does (`HTTPS_PROXY` before `HTTP_PROXY`, `NO_PROXY` respected). The daemon that hosts the worker is described under
+[lain-daemon](#lain-daemon-the-per-user-daemon).
 
 **Every reader of an epic gate reads one fold.** A `gate_decision` record carries an
 `Approval::Verdict` or, for a gate that parked, `Epic::GateDecision::Deferred`, and `Epic::Signoff`
@@ -2414,6 +2415,62 @@ iterations that really ran are the `goal_iteration` count minus the drops), and
 what a sweep of `"type" =>` literals in `lib/` turned up once content blocks and JSON Schema
 fragments were excluded, not a proof of completeness. A reader of the NDJSON should discriminate
 on the `type` string and always have an `else`.
+
+## lain-daemon: the per-user daemon
+
+One `lain-daemon` runs per user and runtime directory, started on demand by whichever lain needs it
+first (`Lain::Daemon.ensure`, under a lock beside the socket) and by `lain daemon ensure` at login.
+The Ruby side is `lib/lain/daemon.rb` (start, attach, replace, stop), `lib/lain/daemon/launch.rb` (the
+argv, the environment and the digest that says whether a running daemon is this launch's),
+`lib/lain/daemon/registration.rb` (a chat's connection to it) and `lib/lain/cli/daemon_command.rb`
+(`lain daemon`). The binary is `crates/lain-daemon`, with `main.rs` holding the method table. Its
+socket path, trace path and run settings arrive in argv and its ntfy topic and launch digest in the
+environment, because path policy stays in Ruby. Every call passes a uid check at dispatch, and a
+caller that is not the daemon's user is refused.
+
+A launch whose digest differs from the running daemon's replaces it only when no chat is registered and
+no run is live; otherwise `Daemon.ensure` says what it waits for and keeps the old one.
+[docs/remote.md](docs/remote.md) is the user's side of the phone path.
+
+- **The registry** (`registry.rs`). Each chat calls `session.register` over its own connection, and
+  the daemon accepts it only when the peer pid is the pid the chat names. A session lives as long as
+  its connection. The registry answers `session.list`, routes a review offer to the chat it is for
+  (`offer.send`, with the chat's outcome returned through `offer.reply`) and finds the registered
+  session a run's process descends from. A chat that loses the daemon reconnects and publishes
+  everything again (`Daemon::Registration`).
+- **The relay worker** (`relay.rs`, `relay/agenda.rs`, `relay/devices.rs`, `crates/lain-wire`). With
+  `--relay` the daemon starts its own binary as `lain-daemon relay`, a Landlock-confined child with an
+  empty environment whose stdin is a socket pair to the daemon, and stamps each forwarded item with the
+  publishing chat's registration. A worker that exits is not restarted today: `daemon.info` reports
+  `relay: unavailable`. [The phone surface](#the-phone-surface-and-the-epic-gate) section has the rest.
+- **ntfy from the main daemon** (`agenda_watch.rs`, `ntfy.rs`). The worker has no network, so the
+  daemon, not the worker, posts the notice for an item still open after 60 seconds, with its topic read
+  from `DAEMON_NTFY_TOPIC`. The same section has the notice's shape and bounds.
+- **The run supervisor** (`supervisor.rs`). `run.start` takes a kind from a closed set, `epic` (a
+  headless `chat --non-interactive --approval auto --human remote` running `/implement-epic SLUG`),
+  `chores` (`lain todos drain`) and the daemon's own `review-poll` (`lain queue poll`), and builds
+  every argv itself from `--ruby` and `--lain`, so no caller supplies a command. A run is its own
+  process group with a log under `$XDG_STATE_HOME/lain/daemon/runs/`, and `run.stop` sends TERM to the
+  group and KILL after 70 seconds, past the chat's own 60 second shutdown grace. The supervisor matches
+  a run to the session it registers and reports when that session has something parked, which
+  `lain daemon herdr-sync` shows in herdr. The run's environment is an allowlist
+  (`Daemon::Launch::KEEP` and `RUN_ENV`). `ANTHROPIC_API_KEY` is the only secret-shaped name in it,
+  and only the daemon and its runs have it; the relay worker has an empty environment.
+- **The periodic review poll** (`periodic.rs`). With `--poll-every` (300 seconds, set when the user
+  config has a `github` verb) the daemon starts a `review-poll` run at once and every 5 minutes after.
+  A tick while the last poll still runs is skipped, and a tick the daemon was too busy to take is
+  dropped, not repeated.
+- **The spawner** (`spawner.rs`, `lib/lain/daemon/spawner.rb`). The first run boots a `lain daemon
+  spawner` Ruby process, which `require`s lain once and then forks each run from itself, reading JSON
+  lines on its stdin. A fork answers in about 40 milliseconds against about 700 for a fresh `exe/lain`
+  boot. It forks only while it has 1 thread. When lain's own files change it answers `stale`, the
+  daemon starts the next run by exec and replaces the spawner, and a start the spawner does not answer
+  within 10 seconds is made by exec too.
+
+The daemon's local socket reaches every process running as the user, so what a caller can do is the
+boundary. It can register itself, publish items stamped with its own registration, and send an offer.
+It cannot answer an approval, register as another process or start a run with an argv of its own.
+Only a paired phone answers. A bash profile that confines gets no daemon socket.
 
 ## `ext/lain` vs `crates/lain-daemon`: the placement rule
 

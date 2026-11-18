@@ -58,7 +58,7 @@ Everything below is optional, and lain runs without any of it.
 | **Neovim** | No editor integration. | `lain up --nvim`, live `lain://` buffers, the editable `lain://request` buffer that round-trips a hand-edited prompt back to the provider. |
 | **Ollama** | Compaction still fires, but drops tool results to an elision line instead of a summary. | Local tool-result summarization, and `--provider ollama` as a free offline arm. |
 | **An Ollama Cloud key** | The local ollama arm, on whatever your box can serve. | `--provider ollama-cloud`: the same native wire against hosted models. Reads `OLLAMA_API_KEY` (create one at [ollama.com/settings/keys](https://ollama.com/settings/keys)). Costs a subscription, and is **not** determinism-comparable with the local arm — see [Providers](#providers). |
-| **`rake daemon:build`** | `bash` runs in-process. | `crates/lain-daemon`, the out-of-process msgpack-RPC daemon, and the `:core` and `:daemon` specs that drive it. |
+| **`rake daemon:build`** | No daemon: no phone approvals, no headless runs, no review poll. | `crates/lain-daemon`, the per-user daemon (see [The daemon and phone approvals](#the-daemon-and-phone-approvals)), and the `:core` and `:daemon` specs that drive it. |
 
 Without an API key the offline paths still run: dry replay, the sweeps, `qa-lain friction`,
 `qa-lain bench variance`, and local Ollama.
@@ -550,6 +550,23 @@ and the `:LainStart` layout.
 a read-only [`lain watch`](docs/commands.md#lain-watch) on that actor's lineage. It needs `$TMUX`
 and a journal.
 
+### The daemon and phone approvals
+
+`lain-daemon` is 1 background process per user. Every chat registers with it, and it does four things
+for them. Once `remote relay:` is set it runs the phone relay, so a call or question that waits on you also
+shows on your phone, and once `remote ntfy:` is set it sends the notice that tells the phone something has
+waited 60 seconds; it supervises headless runs
+(`lain daemon run epic SLUG`, `lain chat --non-interactive --human remote`) and parks their questions
+for the phone; and it runs the review poll every 5 minutes.
+
+Build it once with `bundle exec rake daemon:build`. Any chat starts it when it is missing. To have it
+up before the first chat, run `lain daemon ensure` from a login hook (a user service on Linux, a launchd
+agent on macOS). `lain daemon status` shows its pid, build, relay state, sessions and runs.
+
+[docs/remote.md](docs/remote.md) walks through the setup: the tailscale address, a self-hosted ntfy,
+pairing the phone, `remote relay:` and `remote ntfy:` in `~/.config/lain/config.rb`, `lain trust --user`,
+and what crosses the tailnet. [docs/commands.md](docs/commands.md#lain-daemon) lists the commands.
+
 ### When something looks wrong
 
 | Symptom | Cause |
@@ -588,7 +605,7 @@ with it. [`docs/GLOSSARY.md`](docs/GLOSSARY.md) defines the math and CS vocabula
 | `Skill` / `Role` / `Plan` / `Gherkin` / `Oracle` | Config values, not behavior. | A role is an attenuation plus a prompt slot; `Gherkin` is a content-addressed IR a grader can attest against. |
 | `Frontend::TTY` / `Frontend::Neovim` | Two subscribers to the same stream. | Editor code never reaches into the agent. |
 | `ext/lain` | In-process Rust (`lain.so`): Canonical/digest, the persistent DAG, in-memory BM25, AST search. | Data-structure work Ruby's object model makes asymptotically worse. Pure, synchronous, no tokio. |
-| `crates/lain-daemon` | Out-of-process [msgpack-RPC](docs/GLOSSARY.md#messagepack-rpc) per-user daemon that hosts the phone relay worker. Builds only under `rake daemon:build`. | Async and isolation-relevant work belongs out of process. An in-process sandbox is not a sandbox. |
+| `crates/lain-daemon` | Out-of-process [msgpack-RPC](docs/GLOSSARY.md#messagepack-rpc) per-user daemon: the chat registry, the phone relay worker, ntfy, headless runs and the review poll. Builds only under `rake daemon:build`. See [docs/remote.md](docs/remote.md). | Async and isolation-relevant work belongs out of process. An in-process sandbox is not a sandbox. |
 
 ## Configuration
 
