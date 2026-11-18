@@ -15,8 +15,10 @@ module Lain
 
       # @param env [Hash{String=>String}]
       # @param shell_out_factory [#call] `Shell::Out.new`, or a double
-      def initialize(env: ENV, shell_out_factory: Shell::Out.public_method(:new))
+      # @param source [String] what herdr files the tokens under, so one caller's tokens never clobber another's
+      def initialize(env: ENV, shell_out_factory: Shell::Out.public_method(:new), source: SOURCE)
         @env = env
+        @source = source
         @shell_out_factory = shell_out_factory
       end
 
@@ -24,11 +26,12 @@ module Lain
       # @param name [String] the token key herdr shows in the workspace header
       # @param value [String]
       # @return [void]
-      def token(label:, name:, value:)
-        id = workspace_id(label) or return
+      def token(label:, name:, value:) = report(label, "--token", "#{name}=#{value}")
 
-        run("workspace", "report-metadata", id, "--source", SOURCE, "--token", "#{name}=#{value}")
-      end
+      # @param label [String] the workspace to unmark
+      # @param name [String] the token key to remove
+      # @return [void]
+      def clear_token(label:, name:) = report(label, "--clear-token", name)
 
       # @param label [String]
       # @return [Boolean] whether a workspace carries the label; false without herdr
@@ -50,6 +53,12 @@ module Lain
       end
 
       private
+
+      def report(label, *change)
+        id = workspace_id(label) or return
+
+        run("workspace", "report-metadata", id, "--source", @source, *change)
+      end
 
       def workspace_id(label)
         answer("workspace", "list").dig("result", "workspaces")&.find { _1["label"] == label }&.fetch("workspace_id")

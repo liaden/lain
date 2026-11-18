@@ -26,6 +26,14 @@ RSpec.describe Lain::Herdr::Workspaces do
                                 "--token", "reviews=7 (2 new)"])
     end
 
+    it "reports under the source it was built with" do
+      described_class.new(env:, shell_out_factory: factory, source: "lain-daemon")
+                     .token(label: "reviews", name: "runs", value: "x")
+
+      expect(argvs.last).to eq(["/opt/herdr", "workspace", "report-metadata", "w4", "--source", "lain-daemon",
+                                "--token", "runs=x"])
+    end
+
     it "reaches the herdr server named by the environment" do
       workspaces.token(label: "reviews", name: "reviews", value: "1")
 
@@ -57,6 +65,29 @@ RSpec.describe Lain::Herdr::Workspaces do
 
       expect { described_class.new(env:, shell_out_factory: failing).token(label: "a", name: "b", value: "c") }
         .not_to raise_error
+    end
+  end
+
+  describe "#clear_token" do
+    it "clears the token of the workspace carrying that label, under the source it was built with" do
+      described_class.new(env:, shell_out_factory: factory, source: "lain-daemon")
+                     .clear_token(label: "reviews", name: "runs")
+
+      expect(argvs.last).to eq(["/opt/herdr", "workspace", "report-metadata", "w4", "--source", "lain-daemon",
+                                "--clear-token", "runs"])
+    end
+
+    it "runs nothing after the listing when no workspace has the label" do
+      workspaces.clear_token(label: "absent", name: "runs")
+
+      expect(argvs.map { _1[1..2] }).to eq([%w[workspace list]])
+    end
+
+    it "does nothing and raises nothing without herdr" do
+      bare = described_class.new(env: { "PATH" => "" }, shell_out_factory: factory)
+
+      expect { bare.clear_token(label: "reviews", name: "runs") }.not_to raise_error
+      expect(calls).to be_empty
     end
   end
 

@@ -278,6 +278,8 @@ struct Caller {
     peer: Peer,
     push: Push,
     registration: OnceLock<Registration>,
+    /// What the registered session has waiting on a human, for the run that started it.
+    watch: OnceLock<supervisor::Watch>,
 }
 
 impl Session for Caller {
@@ -286,6 +288,7 @@ impl Session for Caller {
             peer: conn.peer,
             push: conn.push.clone(),
             registration: OnceLock::new(),
+            watch: OnceLock::new(),
         }
     }
 }
@@ -382,14 +385,18 @@ impl Daemon {
         if !keys.is_map() || params.next().is_some() {
             return Err(malformed());
         }
-        readable_delta(&delta)?;
+        let published = readable_delta(&delta)?;
         let stamp = relay::Stamp {
             session: registration.session_id().to_string(),
             project: registration.root().to_string(),
             registration: registration.registration(),
             pid: caller.peer.pid.unwrap_or_default(),
         };
-        worker.publish(&stamp, delta, keys).await
+        let answer = worker.publish(&stamp, delta, keys).await?;
+        if let Some(watch) = caller.watch.get() {
+            watch.published(&published);
+        }
+        Ok(answer)
     }
 
     async fn register(&self, caller: &Caller, params: Vec<Value>) -> Result<Value, RpcError> {
@@ -400,17 +407,24 @@ impl Daemon {
         let registry = Arc::clone(&self.registry);
         let peer = caller.peer;
         // The process table may be read through `ps`, which blocks.
-        let registration = tokio::task::spawn_blocking(move || registry.register(peer, register))
-            .await
-            .map_err(|error| RpcError::Refused {
-                code: "internal",
-                message: format!("registration failed: {error}"),
-            })??;
+        let (registration, lineage) = tokio::task::spawn_blocking(move || {
+            let registration = registry.register(peer, register)?;
+            Ok::<_, RpcError>((
+                registration,
+                supervisor::lineage_of(peer.pid.unwrap_or_default()),
+            ))
+        })
+        .await
+        .map_err(|error| RpcError::Refused {
+            code: "internal",
+            message: format!("registration failed: {error}"),
+        })??;
         registration.attach(caller.push.clone());
         caller
             .registration
             .set(registration)
             .map_err(|_raced| already_registered())?;
+        let _first = caller.watch.set(self.runs.watch(lineage));
         Ok(Value::Nil)
     }
 }
@@ -525,16 +539,14 @@ fn already_registered() -> RpcError {
 }
 
 /// A publisher on an older wire learns which field it lacks, not the worker's own call shape.
-fn readable_delta(delta: &Value) -> Result<(), RpcError> {
+fn readable_delta(delta: &Value) -> Result<lain_wire::Delta, RpcError> {
     let unreadable = |reason: String| RpcError::Refused {
         code: "bad_params",
         message: format!("agenda.publish could not read its Delta: {reason}"),
     };
     let mut bytes = Vec::new();
     rmpv::encode::write_value(&mut bytes, delta).map_err(|error| unreadable(error.to_string()))?;
-    lain_wire::decode::<lain_wire::Delta>(&bytes)
-        .map(drop)
-        .map_err(|error| unreadable(error.to_string()))
+    lain_wire::decode::<lain_wire::Delta>(&bytes).map_err(|error| unreadable(error.to_string()))
 }
 
 fn decoded<T: serde::de::DeserializeOwned>(params: Vec<Value>, usage: &str) -> Result<T, RpcError> {

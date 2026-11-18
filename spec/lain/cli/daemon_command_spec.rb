@@ -34,6 +34,72 @@ RSpec.describe Lain::CLI::DaemonCommand do
     end
   end
 
+  describe "herdr-sync" do
+    let(:client) { instance_double(Lain::Core::Client, stop: nil) }
+    let(:workspaces) { '{"result":{"workspaces":[{"workspace_id":"w1","label":"lain"}]}}' }
+    let(:rows) do
+      [{ "kind" => "epic", "slug" => "research-x", "status" => nil, "blocked" => true },
+       { "kind" => "chores", "slug" => nil, "status" => nil, "blocked" => false },
+       { "kind" => "epic", "slug" => "old-one", "status" => 0, "blocked" => false },
+       { "kind" => "review-poll", "slug" => nil, "status" => nil, "blocked" => false }]
+    end
+
+    around do |example|
+      Dir.mktmpdir("daemon-command-herdr") do |dir|
+        @log = File.join(dir, "calls")
+        @herdr = File.join(dir, "herdr")
+        File.write(@herdr, "#!/bin/sh\necho \"$@\" >> #{@log}\n" \
+                           "[ \"$1 $2\" = \"workspace list\" ] && echo '#{workspaces}'\nexit 0\n")
+        File.chmod(0o755, @herdr)
+        with_env("HERDR_BIN_PATH" => @herdr) { example.run }
+      end
+    end
+
+    before do
+      allow(client).to receive(:call).with("run.list").and_return(rows)
+      allow(Lain::Daemon).to receive(:attached).and_return(client)
+    end
+
+    def reported = File.readlines(@log, chomp: true).grep(/report-metadata/)
+
+    it "puts each live run and whether it waits on you in the runs token of the lain workspace" do
+      start("herdr-sync")
+
+      expect(reported).to eq(["workspace report-metadata w1 --source lain-daemon " \
+                              "--token runs=epic research-x: blocked; chores: working"])
+    end
+
+    it "clears the token when no run is live" do
+      allow(client).to receive(:call).with("run.list").and_return([rows[2]])
+
+      start("herdr-sync")
+
+      expect(reported).to eq(["workspace report-metadata w1 --source lain-daemon --clear-token runs"])
+    end
+
+    it "prints nothing and does nothing when no daemon is running" do
+      allow(Lain::Daemon).to receive(:attached).and_return(nil)
+
+      expect(start("herdr-sync")).to eq("")
+      expect(File.exist?(@log)).to be(false)
+    end
+
+    context "without a lain workspace" do
+      let(:workspaces) { '{"result":{"workspaces":[{"workspace_id":"w2","label":"other"}]}}' }
+
+      it "reports nothing and exits 0" do
+        expect(start("herdr-sync")).to eq("")
+        expect(reported).to be_empty
+      end
+    end
+
+    it "does nothing and exits 0 without herdr" do
+      with_env("HERDR_BIN_PATH" => nil, "PATH" => "") do
+        expect(start("herdr-sync")).to eq("")
+      end
+    end
+  end
+
   describe "against the real daemon", :daemon do
     around do |example|
       Dir.mktmpdir("daemon-command-state") do |state|
@@ -88,6 +154,11 @@ RSpec.describe Lain::CLI::DaemonCommand do
 
     it "says no daemon is running for status and runs, and starts none" do
       expect([start("status"), start("runs")]).to eq(["no daemon is running\n"] * 2)
+      expect(LainDaemon.pid_at(Lain::Paths.new)).to be_nil
+    end
+
+    it "starts no daemon for herdr-sync" do
+      expect(start("herdr-sync")).to eq("")
       expect(LainDaemon.pid_at(Lain::Paths.new)).to be_nil
     end
 

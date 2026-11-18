@@ -4,9 +4,10 @@ require "thor"
 
 module Lain
   module CLI
-    # `lain daemon status|runs|ensure|restart|stop|run`. The read verbs only attach,
+    # `lain daemon status|runs|ensure|restart|stop|run|herdr-sync`. The read verbs only attach,
     # because a status that starts a daemon leaves one behind that nobody asked for;
-    # `ensure`, `restart` and `run` are the verbs that start one.
+    # `ensure`, `restart` and `run` are the verbs that start one. `herdr-sync` is the daemon's own
+    # call, made as runs start, end, park and unpark.
     class DaemonCommand < ::Thor
       include Exe::Boundary
 
@@ -28,6 +29,18 @@ module Lain
             state = run.fetch("status").nil? ? "running" : "exited #{run.fetch("status")}"
             "#{run.fetch("id")}  #{what}  #{state}  pid #{run.fetch("pid")}  #{run.fetch("log")}"
           end
+        end
+      end
+
+      # The runs token herdr shows on the `lain` workspace. The review poll is left out: it is the
+      # daemon's own timer and has the `reviews` workspace.
+      module RunsToken
+        # @param runs [Array<Hash>] run.list
+        # @return [String] empty when no run is live
+        def self.call(runs)
+          runs.select { |run| run.fetch("status").nil? && run.fetch("kind") != "review-poll" }.map do |run|
+            "#{[run.fetch("kind"), run["slug"]].compact.join(" ")}: #{run["blocked"] ? "blocked" : "working"}"
+          end.join("; ")
         end
       end
 
@@ -93,6 +106,16 @@ module Lain
         end
       end
 
+      desc "herdr-sync", "Show the live runs on the lain herdr workspace; the daemon runs it as runs change"
+      def herdr_sync
+        render(newline: false) do
+          attached("") do |client|
+            show_runs(RunsToken.call(client.call("run.list")))
+            ""
+          end
+        end
+      end
+
       desc "stop RUN", "End a run: TERM its process group, KILL after its shutdown grace"
       def stop(id)
         render do
@@ -115,6 +138,15 @@ module Lain
       end
 
       private
+
+      def show_runs(text)
+        workspaces = ::Lain::Herdr::Workspaces.new(source: "lain-daemon")
+        if text.empty?
+          workspaces.clear_token(label: "lain", name: "runs")
+        else
+          workspaces.token(label: "lain", name: "runs", value: text)
+        end
+      end
 
       def started_by_hand?(kind, slug) = KINDS.include?(kind) && (kind == "epic") == !slug.nil?
 

@@ -17,8 +17,11 @@ const WAIT: Duration = Duration::from_secs(10);
 
 const HELPER: &str = "a_run_helper_registers_then_exits_3";
 
+const PARKER: &str = "a_run_helper_parks_a_call_then_settles_it";
+
 /// A stand-in for ruby: it records what it was run with, then does what `PROBE_MODE` says.
 const FAKE_RUBY: &str = r#"#!/bin/sh
+if [ "$2" = daemon ]; then echo "$@" >> "$PROBE/syncs"; exit 0; fi
 printf '%s\0' "$@" > "$PROBE/argv.tmp" && mv "$PROBE/argv.tmp" "$PROBE/argv"
 env > "$PROBE/env"
 pwd > "$PROBE/cwd"
@@ -694,22 +697,8 @@ fn a_run_helper_registers_then_exits_3() {
         attended: false,
         started_at: "2026-11-17T10:00:00Z".to_string(),
     };
-    let bytes = lain_wire::encode(&register).expect("encode");
-    let register = rmpv::decode::read_value(&mut bytes.as_slice()).expect("a value");
     let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
-    stream
-        .write_all(&encoded(&call_frame("session.register", vec![register])))
-        .expect("send");
-    let mut buffer = Vec::new();
-    let reply = loop {
-        let mut chunk = [0u8; 512];
-        let read = stream.read(&mut chunk).expect("read");
-        assert!(read > 0, "the daemon hung up");
-        buffer.extend_from_slice(&chunk[..read]);
-        if let Ok(Value::Array(reply)) = rmpv::decode::read_value(&mut &buffer[..]) {
-            break reply;
-        }
-    };
+    let reply = exchange(&mut stream, "session.register", vec![wire_value(&register)]);
     if !reply[2].is_nil() {
         std::process::exit(4);
     }
@@ -721,6 +710,115 @@ fn a_run_helper_registers_then_exits_3() {
         std::thread::sleep(Duration::from_millis(10));
     }
     std::process::exit(5);
+}
+
+fn parked_call(id: &str) -> lain_wire::AgendaItem {
+    lain_wire::AgendaItem::ParkedCall {
+        id: id.to_string(),
+        requester: "main".to_string(),
+        tool: "bash".to_string(),
+        input: "ls".to_string(),
+        cwd: "/work".to_string(),
+        why: "outside the checkout".to_string(),
+        postponed: false,
+        asked_at: 1_793_000_000,
+        session: "headless".to_string(),
+        project: "/work".to_string(),
+    }
+}
+
+fn wire_value<T: serde::Serialize>(value: &T) -> Value {
+    let bytes = lain_wire::encode(value).expect("encode");
+    rmpv::decode::read_value(&mut bytes.as_slice()).expect("a value")
+}
+
+/// One blocking call on a helper's own connection, answered with the whole reply frame.
+fn exchange(
+    stream: &mut std::os::unix::net::UnixStream,
+    method: &str,
+    params: Vec<Value>,
+) -> Vec<Value> {
+    stream
+        .write_all(&encoded(&call_frame(method, params)))
+        .expect("send");
+    let mut buffer = Vec::new();
+    loop {
+        let mut chunk = [0u8; 512];
+        let read = stream.read(&mut chunk).expect("read");
+        assert!(read > 0, "the daemon hung up");
+        buffer.extend_from_slice(&chunk[..read]);
+        if let Ok(Value::Array(reply)) = rmpv::decode::read_value(&mut &buffer[..]) {
+            return reply;
+        }
+    }
+}
+
+fn wait_for(probe: &str, name: &str) {
+    let file = Path::new(probe).join(name);
+    for _ in 0..1000 {
+        if file.exists() {
+            return;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    std::process::exit(5);
+}
+
+/// Run by the fake ruby under `register`, as the run itself: registers, then parks a call when
+/// told to and settles it when told to, so the daemon sees a run blocked and unblocked.
+#[test]
+fn a_run_helper_parks_a_call_then_settles_it() {
+    let (Ok(probe), Ok(socket)) = (std::env::var("PROBE"), std::env::var("HELPER_SOCKET")) else {
+        return;
+    };
+    if std::env::var_os("HELPER_SPAWN").is_some() {
+        let child = std::process::Command::new(std::env::current_exe().expect("this test binary"))
+            .args(["--exact", PARKER, "--nocapture", "--test-threads", "1"])
+            .env_remove("HELPER_SPAWN")
+            .status()
+            .expect("fork the session");
+        std::process::exit(child.code().unwrap_or(7));
+    }
+    let register = lain_wire::Register {
+        session_id: "headless".to_string(),
+        pid: std::process::id(),
+        host: "rainbow".to_string(),
+        root: "/work".to_string(),
+        cwd: "/work".to_string(),
+        input_socket: None,
+        journal: None,
+        attended: false,
+        started_at: "2026-11-17T10:00:00Z".to_string(),
+    };
+    let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
+    if !exchange(&mut stream, "session.register", vec![wire_value(&register)])[2].is_nil() {
+        std::process::exit(4);
+    }
+    std::fs::write(Path::new(&probe).join("registered"), "x").expect("note it");
+    wait_for(&probe, "park");
+    let parked = lain_wire::Delta {
+        cursor: 0,
+        added: vec![parked_call("p1")],
+        settled: vec![],
+    };
+    if !exchange(&mut stream, "agenda.publish", vec![wire_value(&parked)])[2].is_nil() {
+        std::process::exit(6);
+    }
+    wait_for(&probe, "settle");
+    if std::env::var_os("HELPER_HANGUP").is_some() {
+        drop(stream);
+    } else {
+        let settled = lain_wire::Delta {
+            cursor: 0,
+            added: vec![],
+            settled: vec!["p1".to_string()],
+        };
+        if !exchange(&mut stream, "agenda.publish", vec![wire_value(&settled)])[2].is_nil() {
+            std::process::exit(6);
+        }
+    }
+    wait_for(&probe, "release");
+    std::process::exit(3);
 }
 
 #[tokio::test]
@@ -931,4 +1029,193 @@ async fn daemon_info_says_whether_the_daemon_holds_the_provider_key_never_its_va
         Value::from(false),
         field(&keyless.info().await, "provider_key")
     );
+}
+
+async fn parked_run(extra: &[(&str, &str)]) -> (Daemon, Value) {
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut env = vec![
+        ("HELPER_EXE", exe.to_str().expect("utf-8")),
+        ("HELPER_NAME", PARKER),
+    ];
+    env.extend_from_slice(extra);
+    let mut daemon = daemon_with_relay("register", &env).await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    appeared(&daemon.probe().join("registered")).await;
+    (daemon, run)
+}
+
+async fn blocked(daemon: &mut Daemon, id: &Value, want: bool) {
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let listed = daemon.list().await;
+        let row = listed
+            .iter()
+            .find(|row| &field(row, "id") == id)
+            .expect("the run is listed");
+        if field(row, "blocked") == Value::from(want) {
+            return;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the run never read blocked: {want}: {row}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_run_whose_session_has_a_parked_call_lists_as_blocked_until_it_settles() {
+    let (mut daemon, run) = parked_run(&[]).await;
+    let id = field(&run, "id");
+    assert_eq!(
+        Value::from(false),
+        field(&daemon.list().await[0], "blocked")
+    );
+
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+
+    std::fs::write(daemon.probe().join("settle"), "").expect("settle it");
+    blocked(&mut daemon, &id, false).await;
+
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&id).await;
+}
+
+#[tokio::test]
+async fn a_run_that_ends_while_blocked_does_not_list_as_blocked() {
+    let (mut daemon, run) = parked_run(&[]).await;
+    let id = field(&run, "id");
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+
+    let (error, _) = daemon
+        .request("run.stop", vec![map(&[("id", id.clone())])])
+        .await;
+    assert_eq!(Value::Nil, error);
+    let row = daemon.ended(&id).await;
+    assert_eq!(Value::from(false), field(&row, "blocked"));
+}
+
+async fn syncs(daemon: &Daemon, more_than: usize) -> Vec<String> {
+    let file = daemon.probe().join("syncs");
+    let deadline = tokio::time::Instant::now() + WAIT;
+    loop {
+        let lines: Vec<String> = std::fs::read_to_string(&file)
+            .unwrap_or_default()
+            .lines()
+            .map(str::to_string)
+            .collect();
+        if lines.len() > more_than {
+            return lines;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "no herdr-sync after {more_than}: {lines:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+}
+
+#[tokio::test]
+async fn herdr_sync_runs_when_a_run_starts_parks_unparks_and_ends() {
+    let (mut daemon, run) = parked_run(&[]).await;
+    let id = field(&run, "id");
+    let command = format!("{} daemon herdr-sync", daemon.lain().display());
+
+    let mut seen = syncs(&daemon, 0).await;
+    assert_eq!(Some(&command), seen.first());
+
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+    seen = syncs(&daemon, seen.len()).await;
+
+    std::fs::write(daemon.probe().join("settle"), "").expect("settle it");
+    blocked(&mut daemon, &id, false).await;
+    seen = syncs(&daemon, seen.len()).await;
+
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&id).await;
+    let seen = syncs(&daemon, seen.len()).await;
+    assert!(seen.iter().all(|line| line == &command), "{seen:?}");
+}
+
+#[tokio::test]
+async fn a_session_that_hangs_up_while_parked_frees_its_live_run() {
+    let (mut daemon, run) = parked_run(&[("HELPER_HANGUP", "1")]).await;
+    let id = field(&run, "id");
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+
+    std::fs::write(daemon.probe().join("settle"), "").expect("hang up");
+    blocked(&mut daemon, &id, false).await;
+    assert_eq!(Value::Nil, field(&daemon.list().await[0], "status"));
+
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&id).await;
+}
+
+#[tokio::test]
+async fn a_session_a_run_forked_blocks_the_run_through_its_ancestry() {
+    let (mut daemon, run) = parked_run(&[("HELPER_SPAWN", "1")]).await;
+    let id = field(&run, "id");
+    std::fs::write(daemon.probe().join("park"), "").expect("park a call");
+    blocked(&mut daemon, &id, true).await;
+
+    std::fs::write(daemon.probe().join("settle"), "").expect("settle it");
+    blocked(&mut daemon, &id, false).await;
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&id).await;
+}
+
+#[tokio::test]
+async fn a_session_outside_every_run_parks_without_blocking_a_live_run() {
+    let exe = std::env::current_exe().expect("this test binary");
+    let mut daemon = daemon_with_relay(
+        "register",
+        &[
+            ("HELPER_EXE", exe.to_str().expect("utf-8")),
+            ("HELPER_NAME", HELPER),
+        ],
+    )
+    .await;
+    let project = daemon.project();
+    let (_, run) = daemon.start(bare("chores", &project)).await;
+    while daemon.sessions().await.is_empty() {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+
+    let register = lain_wire::Register {
+        session_id: "outside".to_string(),
+        pid: std::process::id(),
+        host: "rainbow".to_string(),
+        root: "/work".to_string(),
+        cwd: "/work".to_string(),
+        input_socket: None,
+        journal: None,
+        attended: false,
+        started_at: "2026-11-17T10:00:00Z".to_string(),
+    };
+    let (error, _) = daemon
+        .request("session.register", vec![wire_value(&register)])
+        .await;
+    assert_eq!(Value::Nil, error);
+    let parked = lain_wire::Delta {
+        cursor: 0,
+        added: vec![parked_call("o1")],
+        settled: vec![],
+    };
+    let (error, _) = daemon
+        .request("agenda.publish", vec![wire_value(&parked)])
+        .await;
+    assert_eq!(Value::Nil, error);
+
+    assert_eq!(
+        Value::from(false),
+        field(&daemon.list().await[0], "blocked")
+    );
+    std::fs::write(daemon.probe().join("release"), "").expect("release the run");
+    daemon.ended(&field(&run, "id")).await;
 }

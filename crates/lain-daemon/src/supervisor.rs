@@ -1,30 +1,46 @@
 //! Headless runs, each started from a closed set of kinds. The daemon builds every argv itself and
 //! refuses whatever it cannot check, so no caller starts a process of its own writing.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::ffi::OsString;
 use std::fs::File;
+use std::future::Future;
 use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
 use std::os::unix::process::ExitStatusExt;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lain_rpc::RpcError;
-use lain_wire::RunStart;
+use lain_wire::{AgendaItem, Delta, RunStart};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 use rmpv::Value;
 use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
+
+use crate::registry::{ProcTable, Procs};
 
 /// How long a stopped run's group has between TERM and KILL: past the chat's own 60 s shutdown
 /// grace (`CLI::Shutdown::GRACE_DEFAULT`), so a KILL never cuts the cleanup it is doing.
 pub(crate) const GRACE: Duration = Duration::from_secs(70);
 
+/// The least time between 2 `lain daemon herdr-sync` starts, so a busy run costs herdr a call a
+/// second and not one per park.
+const SYNC_EVERY: Duration = Duration::from_secs(1);
+
+/// A herdr-sync that has not ended by then is killed: a hung one would hold every later sync back.
+const SYNC_BOUND: Duration = Duration::from_secs(30);
+
+/// How far up a session's parents the daemon looks for the run that started it.
+const MAX_ANCESTORS: usize = 64;
+
 /// What every run is started with: `Daemon::Launch` decides each of them, and the env is the
 /// daemon's own less what only the daemon may read.
+#[derive(Clone)]
 pub(crate) struct Settings {
     pub(crate) ruby: PathBuf,
     pub(crate) lain: PathBuf,
@@ -118,6 +134,11 @@ impl RunKind {
         }
     }
 
+    /// Whether herdr lists it: the review poll is the daemon's own timer, with a workspace of its own.
+    fn shown(&self) -> bool {
+        !matches!(self, Self::ReviewPoll)
+    }
+
     /// The project the run works in; `None` for a kind that reads none.
     fn root(&self) -> Option<&Path> {
         match self {
@@ -168,6 +189,8 @@ pub(crate) struct Run {
     pub(crate) started: SystemTime,
     pub(crate) ended: Option<i32>,
     pub(crate) log: PathBuf,
+    /// Whether a session of the run has something parked or asked that only a human answers.
+    pub(crate) blocked: bool,
 }
 
 impl Run {
@@ -191,6 +214,7 @@ impl Run {
                 self.ended.map_or(Value::Nil, Value::from),
             ),
             (Value::from("log"), path(&self.log)),
+            (Value::from("blocked"), Value::from(self.blocked)),
         ];
         if let RunKind::Epic { slug, .. } = &self.kind {
             fields.push((Value::from("slug"), Value::from(slug.as_str())));
@@ -205,6 +229,10 @@ struct Entry {
     /// To the task that owns the child, which alone signals its group: it has not reaped the
     /// child while it holds the request, so the group cannot be another's yet.
     stops: mpsc::UnboundedSender<()>,
+    /// The run process's own start, which tells it from a later process that reuses its pid.
+    start: Option<String>,
+    /// The sessions of this run now waiting on a human.
+    blockers: usize,
 }
 
 /// The runs this daemon started, live and ended, in the order they started.
@@ -212,16 +240,72 @@ pub(crate) struct Supervisor {
     settings: Option<Settings>,
     runs: Mutex<Vec<Entry>>,
     next: AtomicU64,
+    /// `None` for a daemon that runs nothing, which has nothing to show.
+    sync: Option<Arc<Coalescer>>,
 }
 
 impl Supervisor {
     /// `None` is a daemon started without `--ruby`, `--lain` and `--runs-dir`, which runs nothing.
     pub(crate) fn new(settings: Option<Settings>) -> Arc<Self> {
+        let sync = settings.clone().map(|settings| {
+            Coalescer::new(SYNC_EVERY, move || herdr_sync(settings.clone(), SYNC_BOUND))
+        });
         Arc::new(Self {
             settings,
             runs: Mutex::new(Vec::new()),
             next: AtomicU64::new(1),
+            sync,
         })
+    }
+
+    fn sync(&self) {
+        if let Some(sync) = &self.sync {
+            sync.request();
+        }
+    }
+
+    /// Follows what 1 registered session has waiting on a human, for the run its `lineage` (the
+    /// session's pid and its ancestors, each with its start) reaches.
+    pub(crate) fn watch(self: &Arc<Self>, lineage: Vec<(u32, String)>) -> Watch {
+        Watch {
+            supervisor: Arc::clone(self),
+            lineage,
+            state: Mutex::new(Waiting::default()),
+        }
+    }
+
+    /// The live run whose process is among `lineage`.
+    fn run_among(&self, lineage: &[(u32, String)]) -> Option<String> {
+        self.runs()
+            .iter()
+            .find(|entry| {
+                entry.run.ended.is_none()
+                    && lineage.iter().any(|(pid, start)| {
+                        *pid == entry.run.pid && entry.start.as_ref() == Some(start)
+                    })
+            })
+            .map(|entry| entry.run.id.clone())
+    }
+
+    /// A run is blocked while any of its sessions waits, so each session counts once.
+    fn block(&self, id: &str, more: bool) {
+        let shown = {
+            let mut runs = self.runs();
+            runs.iter_mut()
+                .find(|entry| entry.run.id == id)
+                .map(|entry| {
+                    entry.blockers = if more {
+                        entry.blockers + 1
+                    } else {
+                        entry.blockers.saturating_sub(1)
+                    };
+                    entry.run.blocked = entry.blockers > 0;
+                    entry.run.kind.shown()
+                })
+        };
+        if shown == Some(true) {
+            self.sync();
+        }
     }
 
     fn runs(&self) -> MutexGuard<'_, Vec<Entry>> {
@@ -303,15 +387,29 @@ impl Supervisor {
             started: SystemTime::now(),
             ended: None,
             log,
+            blocked: false,
         };
         self.runs().push(Entry {
             run: run.clone(),
             exited,
             stops,
+            start: None,
+            blockers: 0,
         });
+        if run.kind.shown() {
+            self.sync();
+        }
         tracing::info!(id, pid, kind = run.kind.name(), root = ?run.kind.root(), "started a run");
         let supervisor = Arc::clone(self);
         tokio::spawn(async move {
+            // Before `wait` reaps the child, so the zombie is still readable; `ps` may block.
+            let start = tokio::task::spawn_blocking(move || {
+                ProcTable.process(pid).map(|process| process.start)
+            })
+            .await
+            .ok()
+            .flatten();
+            supervisor.started(&id, start);
             let status = tokio::select! {
                 status = child.wait() => status,
                 Some(()) = stop_asked.recv() => stopped(&mut child, pid).await,
@@ -337,11 +435,32 @@ impl Supervisor {
         format!("{since}-{}-{count}", std::process::id())
     }
 
-    fn ended(&self, id: &str, code: i32) {
-        if let Some(entry) = self.runs().iter_mut().find(|entry| entry.run.id == id) {
-            entry.run.ended = Some(code);
+    fn started(&self, id: &str, start: Option<String>) {
+        if start.is_none() {
+            tracing::warn!(
+                id,
+                "could not read the run's start, so it cannot be marked blocked"
+            );
         }
+        if let Some(entry) = self.runs().iter_mut().find(|entry| entry.run.id == id) {
+            entry.start = start;
+        }
+    }
+
+    fn ended(&self, id: &str, code: i32) {
+        let shown = self
+            .runs()
+            .iter_mut()
+            .find(|entry| entry.run.id == id)
+            .map(|entry| {
+                entry.run.ended = Some(code);
+                entry.run.blocked = false;
+                entry.run.kind.shown()
+            });
         tracing::info!(id, code, "a run ended");
+        if shown == Some(true) {
+            self.sync();
+        }
     }
 
     pub(crate) fn list(&self) -> Vec<Run> {
@@ -377,6 +496,171 @@ impl Supervisor {
             .iter()
             .find(|entry| entry.run.id == id)
             .map(|entry| entry.run.clone())
+    }
+}
+
+/// What 1 session has open, and the run it holds blocked while it does.
+#[derive(Default)]
+struct Waiting {
+    open: HashSet<String>,
+    blocking: Option<String>,
+}
+
+/// 1 registered session's agenda as the daemon saw it published. Dropping it, which the
+/// connection's end does, frees the run it was holding blocked.
+pub(crate) struct Watch {
+    supervisor: Arc<Supervisor>,
+    lineage: Vec<(u32, String)>,
+    state: Mutex<Waiting>,
+}
+
+impl Watch {
+    /// Items are tracked by id, so one a chat publishes again counts once.
+    pub(crate) fn published(&self, delta: &Delta) {
+        let mut waiting = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        waiting
+            .open
+            .extend(delta.added.iter().map(|item| id_of(item).to_string()));
+        for id in &delta.settled {
+            waiting.open.remove(id);
+        }
+        match (&waiting.blocking, waiting.open.is_empty()) {
+            (None, false) => {
+                if let Some(id) = self.supervisor.run_among(&self.lineage) {
+                    self.supervisor.block(&id, true);
+                    waiting.blocking = Some(id);
+                }
+            }
+            (Some(id), true) => {
+                self.supervisor.block(id, false);
+                waiting.blocking = None;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Drop for Watch {
+    fn drop(&mut self) {
+        let waiting = self.state.get_mut().unwrap_or_else(PoisonError::into_inner);
+        if let Some(id) = waiting.blocking.take() {
+            self.supervisor.block(&id, false);
+        }
+    }
+}
+
+fn id_of(item: &AgendaItem) -> &str {
+    match item {
+        AgendaItem::ParkedCall { id, .. }
+        | AgendaItem::GateQuestion { id, .. }
+        | AgendaItem::Question { id, .. } => id,
+    }
+}
+
+/// `pid` and its ancestors with their starts, so a pid reused since is not taken for its
+/// earlier owner; the walk stops at the first process the table cannot read. Reads the process
+/// table, which may block.
+pub(crate) fn lineage_of(pid: u32) -> Vec<(u32, String)> {
+    let first = ProcTable.process(pid).map(|process| (pid, process));
+    std::iter::successors(first, |(at, process)| {
+        let parent = process
+            .parent
+            .filter(|&parent| parent != 0 && parent != *at)?;
+        ProcTable.process(parent).map(|process| (parent, process))
+    })
+    .take(MAX_ANCESTORS)
+    .map(|(at, process)| (at, process.start))
+    .collect()
+}
+
+/// Runs an action when asked, and again at most once per period however often it is asked in
+/// between: a request that arrives while one is waiting its turn joins it.
+pub(crate) struct Coalescer {
+    period: Duration,
+    action: Box<dyn Fn() -> Pin<Box<dyn Future<Output = ()> + Send>> + Send + Sync>,
+    pacing: Mutex<Pacing>,
+}
+
+#[derive(Default)]
+struct Pacing {
+    running: bool,
+    asked: bool,
+    last: Option<Instant>,
+}
+
+impl Coalescer {
+    pub(crate) fn new<F, Fut>(period: Duration, action: F) -> Arc<Self>
+    where
+        F: Fn() -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = ()> + Send + 'static,
+    {
+        Arc::new(Self {
+            period,
+            action: Box::new(move || Box::pin(action())),
+            pacing: Mutex::new(Pacing::default()),
+        })
+    }
+
+    fn pacing(&self) -> MutexGuard<'_, Pacing> {
+        self.pacing.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Does nothing outside a runtime, which is a daemon already on its way out.
+    pub(crate) fn request(self: &Arc<Self>) {
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        {
+            let mut pacing = self.pacing();
+            if pacing.running {
+                pacing.asked = true;
+                return;
+            }
+            pacing.running = true;
+        }
+        let this = Arc::clone(self);
+        runtime.spawn(async move { this.drain().await });
+    }
+
+    async fn drain(&self) {
+        loop {
+            let last = self.pacing().last;
+            if let Some(last) = last {
+                tokio::time::sleep_until(last + self.period).await;
+            }
+            {
+                let mut pacing = self.pacing();
+                pacing.asked = false;
+                pacing.last = Some(Instant::now());
+            }
+            (self.action)().await;
+            let mut pacing = self.pacing();
+            if !pacing.asked {
+                pacing.running = false;
+                return;
+            }
+        }
+    }
+}
+
+/// `lain daemon herdr-sync`, which reads `run.list` and shows it in herdr. It has no say over a
+/// run, so a failure is a trace line and nothing more.
+async fn herdr_sync(settings: Settings, bound: Duration) {
+    let mut command = tokio::process::Command::new(&settings.ruby);
+    command
+        .arg(&settings.lain)
+        .args(["daemon", "herdr-sync"])
+        .env_clear()
+        .envs(settings.env.iter().map(|(name, value)| (name, value)))
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true);
+    match tokio::time::timeout(bound, command.status()).await {
+        Ok(Ok(status)) if status.success() => {}
+        Ok(Ok(status)) => tracing::warn!(%status, "herdr-sync failed"),
+        Ok(Err(error)) => tracing::warn!(%error, "could not run herdr-sync"),
+        Err(_) => tracing::warn!(?bound, "killed a herdr-sync that did not end"),
     }
 }
 
@@ -462,13 +746,14 @@ fn clip(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
     use std::time::Duration;
 
     use super::*;
 
     /// Ignores TERM in its whole group, noting each one, so only a KILL ends it.
     const STUBBORN: &str = r#"#!/bin/sh
+[ "$2" = daemon ] && exit 0
 trap 'echo term >> "$PROBE/term"' TERM
 (trap '' TERM; exec sleep 60) &
 echo $! > "$PROBE/grandchild"
@@ -594,5 +879,256 @@ while :; do wait; done
         group.0 = None;
         assert!(reaped(grandchild), "the group outlived its KILL");
         assert_eq!(0, supervisor.live());
+    }
+
+    /// Lets the spawned sync task run every step it can without the clock moving.
+    async fn settle() {
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_burst_of_sync_requests_runs_the_action_once_a_second_at_most() {
+        let count = Arc::new(AtomicU64::new(0));
+        let sync = Coalescer::new(Duration::from_secs(1), {
+            let count = Arc::clone(&count);
+            move || {
+                let count = Arc::clone(&count);
+                async move {
+                    count.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        });
+
+        sync.request();
+        settle().await;
+        assert_eq!(
+            1,
+            count.load(Ordering::Relaxed),
+            "the first request runs at once"
+        );
+
+        for _ in 0..10 {
+            sync.request();
+        }
+        settle().await;
+        tokio::time::advance(Duration::from_millis(999)).await;
+        settle().await;
+        assert_eq!(1, count.load(Ordering::Relaxed), "ran inside the second");
+
+        tokio::time::advance(Duration::from_millis(1)).await;
+        settle().await;
+        assert_eq!(2, count.load(Ordering::Relaxed), "the burst is 1 run");
+
+        tokio::time::advance(Duration::from_secs(60)).await;
+        sync.request();
+        settle().await;
+        assert_eq!(
+            3,
+            count.load(Ordering::Relaxed),
+            "a quiet minute waits for nothing"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_request_made_while_the_action_runs_runs_it_again_afterwards() {
+        let started = Arc::new(AtomicU64::new(0));
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let sync = Coalescer::new(Duration::from_secs(1), {
+            let (started, gate) = (Arc::clone(&started), Arc::clone(&gate));
+            move || {
+                let (started, gate) = (Arc::clone(&started), Arc::clone(&gate));
+                async move {
+                    started.fetch_add(1, Ordering::Relaxed);
+                    gate.notified().await;
+                }
+            }
+        });
+
+        sync.request();
+        settle().await;
+        sync.request();
+        gate.notify_one();
+        settle().await;
+        tokio::time::advance(Duration::from_secs(1)).await;
+        settle().await;
+
+        assert_eq!(2, started.load(Ordering::Relaxed));
+    }
+
+    const HANGER: &str =
+        "#!/bin/sh\n[ \"$2\" = daemon ] || exit 0\necho $$ >> \"$PROBE/syncs\"\nexec sleep 60\n";
+
+    /// A stand-in ruby that waits for `release` in the probe dir, so a run stays live as long as a test needs.
+    const SLEEPER: &str = "#!/bin/sh\n[ \"$2\" = daemon ] && exit 0\nwhile [ ! -e \"$PROBE/release\" ]; do sleep 0.05; done\n";
+
+    fn settings_for(dir: &Path, script: &str) -> Settings {
+        let ruby = dir.join("ruby");
+        std::fs::write(&ruby, script).expect("script");
+        std::fs::set_permissions(&ruby, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+        std::fs::create_dir_all(dir.join("probe")).expect("probe");
+        Settings {
+            ruby,
+            lain: dir.join("lain"),
+            runs: dir.join("runs"),
+            env: vec![
+                ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
+                ("PROBE".into(), dir.join("probe").into_os_string()),
+            ],
+        }
+    }
+
+    async fn lines_after(path: &Path, more_than: usize) -> Vec<String> {
+        for _ in 0..500 {
+            let lines: Vec<String> = std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .map(str::to_string)
+                .collect();
+            if lines.len() > more_than {
+                return lines;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("{} never had more than {more_than} lines", path.display())
+    }
+
+    #[tokio::test]
+    async fn a_herdr_sync_that_hangs_is_killed_at_its_bound_and_a_later_request_syncs_again() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let settings = settings_for(dir.path(), HANGER);
+        let sync = Coalescer::new(Duration::from_millis(10), move || {
+            herdr_sync(settings.clone(), Duration::from_millis(200))
+        });
+        let syncs = dir.path().join("probe").join("syncs");
+
+        sync.request();
+        let first: u32 = lines_after(&syncs, 0).await[0].parse().expect("pid");
+        let mut gone = false;
+        for _ in 0..500 {
+            gone = !alive(first);
+            if gone {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(gone, "the hung sync outlived its bound");
+
+        sync.request();
+        assert_eq!(2, lines_after(&syncs, 1).await.len());
+    }
+
+    /// A live run, its supervisor, and what a test needs to end it.
+    struct Live {
+        supervisor: Arc<Supervisor>,
+        run: Run,
+        probe: PathBuf,
+        _dir: tempfile::TempDir,
+    }
+
+    impl Live {
+        async fn start() -> Self {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let project = dir.path().join("project");
+            std::fs::create_dir_all(project.join(".git")).expect("project");
+            let supervisor = Supervisor::new(Some(settings_for(dir.path(), SLEEPER)));
+            let run = supervisor
+                .start(lain_wire::RunStart {
+                    kind: "chores".to_string(),
+                    root: project.to_str().expect("utf-8").to_string(),
+                    args: Default::default(),
+                })
+                .expect("started");
+            for _ in 0..500 {
+                if supervisor.runs().iter().all(|entry| entry.start.is_some()) {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            Self {
+                supervisor,
+                run,
+                probe: dir.path().join("probe"),
+                _dir: dir,
+            }
+        }
+
+        fn blocked(&self) -> bool {
+            self.supervisor.list()[0].blocked
+        }
+
+        async fn ended(&self) {
+            std::fs::write(self.probe.join("release"), "").expect("release");
+            for _ in 0..500 {
+                if self.supervisor.live() == 0 {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!("the run never ended");
+        }
+    }
+
+    fn parking(id: &str) -> Delta {
+        Delta {
+            cursor: 0,
+            added: vec![AgendaItem::ParkedCall {
+                id: id.to_string(),
+                requester: "main".to_string(),
+                tool: "bash".to_string(),
+                input: "ls".to_string(),
+                cwd: "/work".to_string(),
+                why: "outside the checkout".to_string(),
+                postponed: false,
+                asked_at: 1_793_000_000,
+                session: "s".to_string(),
+                project: "/work".to_string(),
+            }],
+            settled: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn an_ancestor_with_a_runs_pid_but_not_its_start_does_not_block_it() {
+        let live = Live::start().await;
+        let imposter = live
+            .supervisor
+            .watch(vec![(live.run.pid, "not-its-start".to_string())]);
+        imposter.published(&parking("p1"));
+        assert!(!live.blocked());
+
+        let session = live.supervisor.watch(lineage_of(live.run.pid));
+        session.published(&parking("p2"));
+        assert!(live.blocked());
+        drop(session);
+        assert!(!live.blocked());
+        live.ended().await;
+    }
+
+    #[tokio::test]
+    async fn a_session_under_a_run_that_has_ended_blocks_nothing() {
+        let live = Live::start().await;
+        let lineage = lineage_of(live.run.pid);
+        live.ended().await;
+
+        let session = live.supervisor.watch(lineage);
+        session.published(&parking("p1"));
+
+        assert!(!live.blocked());
+        drop(session);
+    }
+
+    #[tokio::test]
+    async fn a_run_that_ends_while_its_session_still_waits_is_not_blocked() {
+        let live = Live::start().await;
+        let session = live.supervisor.watch(lineage_of(live.run.pid));
+        session.published(&parking("p1"));
+        assert!(live.blocked());
+
+        live.ended().await;
+
+        assert!(!live.blocked());
+        drop(session);
     }
 }
