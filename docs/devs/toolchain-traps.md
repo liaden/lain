@@ -347,7 +347,7 @@ Added 2026-11-18, from the lain-daemon run's landing hooks on a box short of mem
 
 - `the repository is not a spec fixture has no example generated from a scan of repository content`
 - `refusal width discipline excludes the lua eval source that shares a file with the rail's own refusals`
-- `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped`
+- `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped` (retired 2026-11-18 with its sibling, see below)
 - `Lain::Frontend::Neovim the inbox's open gesture, end to end opens the set under the cursor in lain://question when the human presses enter`
 
 Two other hook runs that day went red on 13 and 36 starved examples across unrelated files under the same memory pressure. With swap full, the landing ran green at `LAIN_SPEC_WORKERS=8`.
@@ -357,6 +357,8 @@ A live demonstration of why this list is by NAME and not by line: `buffers_spec.
 ### Retired flakes, with the fix that ended each
 
 Keep a retired name here so a later red under it reads as a regression, not as a known flake.
+
+- 2026-11-18: `A project's own tests inside the workspace profile passes one spec file with the example count an unconfined run reports` (STUCK at its 60 s budget in 2 landing hooks, 13.1 s and 13.0 s of CPU at load1 28.3 and 23.8; the 2026-11-10 `starvable:` fix did not apply, because the watchdog read was right: the worker was running). The copy in the example's setup was most of the cost: it copied every entry of the checkout but 5, and the main checkout's ignored `apps/lain-remote/target` holds 9 GB of build output since 2026-11-12. That copy took 7.8 s of CPU and 15.3 s of wall on a quiet box. The example now copies only the 11 entries the 2 nested runs read, 0.2 s of CPU and 0.4 s of wall from the same checkout. The same fix covers its sibling `... passes the fence crate's tests, none of them skipped`, which ran inside the same copy and was red in a landing hook the same day.
 
 - 2026-11-17: `lain-rpc tests::an_overflow_warns_once_for_its_connection` (left 1, right 0; red in 2 landing hooks of the lain-daemon run). A real race: the test counted warnings with a scoped `set_default` subscriber, and tracing caches each callsite's interest process-wide, so another test thread could cache the shared warn callsite as never enabled. It failed 28 of 80 runs under 8 CPU hogs. The test module now installs 1 global subscriber and counts per thread: 0 of 100.
 - 2026-11-17: `Lain::ProjectDir one locator for every governed path is the only place lib/ composes a governed path` (the 30 s watchdog, twice, at load1 23.5 and 33.7). Its cost was 2 tree walks and re-walked subtrees, not the parse. The scan now indexes once and runs 1 example per lib group: 8.1 s in 1 example became 5.1 s for the file, worst example 0.7 s, with the same findings.

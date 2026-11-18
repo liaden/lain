@@ -4,23 +4,27 @@ require "fileutils"
 require "open3"
 require "tmpdir"
 
-# A project's own tests run inside the workspace profile: a throwaway copy of this repo, the mise ruby
-# and cargo, the real sandbox. The copy has no .git, because a linked worktree's .git is a pointer and
-# the specs would drive git against the original's admin dir.
+# A project's own tests run inside the workspace profile: a throwaway copy of what this repo's own test
+# runs read, the mise ruby and cargo, the real sandbox.
 RSpec.describe "A project's own tests inside the workspace profile", :seam do
   around do |example|
     # A short name: the fence test binds a Unix socket beneath the call's TMPDIR, and SUN_LEN is 108 bytes.
     Dir.mktmpdir("w") do |dir|
       @lease = File.realpath(dir)
-      (Dir.children(source) - %w[.git target tmp references planning]).each do |entry|
-        FileUtils.cp_r(File.join(source, entry), @lease)
-      end
+      leased.each { |entry| FileUtils.cp_r(File.join(source, entry), @lease) }
       FileUtils.mkdir_p([File.join(@lease, "tmp"), File.join(@lease, "target")])
       example.run
     end
   end
 
   def source = File.expand_path("../../..", __dir__)
+
+  # Only what the 2 nested runs read: copying the whole checkout took about 15s of the 60s budget on a
+  # quiet box, nearly all of it 9GB of ignored build output under apps/. A missing Gemfile, lib, spec, ext
+  # or crates fails loudly; Gemfile.lock, Cargo.lock and .ruby-version are the ones that go missing
+  # silently. Never add .git: a linked worktree's .git is a pointer, and the specs would drive git
+  # against the original's admin dir.
+  def leased = %w[Gemfile Gemfile.lock lain.gemspec .rspec .ruby-version lib spec Cargo.toml Cargo.lock ext crates]
 
   let(:script) { File.join(source, "bin/workspace-run") }
   let(:fence) { Lain::Confine::Bwrap.fence_binary }
