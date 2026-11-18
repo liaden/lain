@@ -30,7 +30,7 @@ RSpec.describe Lain::Daemon::Launch do
         "ANTHROPIC_API_KEY" => "sk-secret", "LD_PRELOAD" => "/evil.so", "CARGO_TARGET_DIR" => @dir,
         "XDG_SESSION_TOKEN" => "desktop-secret", "XDG_VTNR" => "2", "XDG_SEAT" => "seat0", "LC_PAPER" => "a4" }
     end
-    let(:current) { described_class.current(paths: Lain::Paths.new(env:), env:) }
+    let(:current) { described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)), env:) }
 
     before { FileUtils.mkdir_p(File.join(@dir, "release")) && built("released", name: "release/lain-daemon") }
 
@@ -58,14 +58,15 @@ RSpec.describe Lain::Daemon::Launch do
               "SHELL" => "/bin/zsh", "OLLAMA_HOST" => "127.0.0.1:11434", "LC_CTYPE" => "C.UTF-8" }
       secrets = { "GH_TOKEN" => "ghp", "SSH_AUTH_SOCK" => "/tmp/agent", "OPENAI_API_KEY" => "sk-o",
                   "LAIN_SECRET" => "x", "ANTHROPIC_API_KEY_2" => "sk-2", "LC_API_TOKEN" => "t" }
-      handed = described_class.current(paths: Lain::Paths.new(env:), env: env.merge(run, secrets)).env
+      handed = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)), env: env.merge(run, secrets)).env
 
       expect(handed).to include(run.merge("ANTHROPIC_API_KEY" => "sk-secret"))
       expect(handed.keys & secrets.keys).to eq([])
     end
 
     it "hands a run none of the suite's own LAIN_ controls" do
-      handed = described_class.current(paths: Lain::Paths.new(env:), env: env.merge("LAIN_INTEGRATION" => "1")).env
+      handed = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)),
+                                       env: env.merge("LAIN_INTEGRATION" => "1")).env
 
       expect(handed).not_to have_key("LAIN_INTEGRATION")
     end
@@ -73,20 +74,23 @@ RSpec.describe Lain::Daemon::Launch do
     # A user behind a required proxy has no other route to the topic.
     it "hands the daemon the proxy variables, in both cases" do
       proxies = %w[http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY].to_h { [_1, "http://proxy:3128"] }
-      paths = Lain::Paths.new(env:)
+      paths = Lain::Paths.new(env: SpecHome.env(env))
 
       expect(described_class.current(paths:, env: env.merge(proxies)).env).to include(proxies)
     end
 
     it "takes the XDG homes from its paths when the env names others" do
-      paths = Lain::Paths.new(env: env.merge("XDG_RUNTIME_DIR" => "/run/user/8", "XDG_STATE_HOME" => "/state"))
+      paths = Lain::Paths.new(env: SpecHome.env(env.merge("XDG_RUNTIME_DIR" => "/run/user/8",
+                                                          "XDG_STATE_HOME" => "/state")))
 
       expect(described_class.current(paths:, env:).env)
         .to include("XDG_RUNTIME_DIR" => "/run/user/8", "XDG_STATE_HOME" => "/state")
     end
 
     it "gives a desktop session and a login without one the same digest" do
-      headless = described_class.current(paths: Lain::Paths.new(env:), env: env.except("XDG_VTNR", "XDG_SEAT"))
+      headless = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)),
+                                         env: env.except("XDG_VTNR",
+                                                         "XDG_SEAT"))
 
       expect(headless.digest).to eq(current.digest)
     end
@@ -94,7 +98,8 @@ RSpec.describe Lain::Daemon::Launch do
     it "withholds a secret-shaped name even when the allowlist would take it" do
       stub_const("Lain::Daemon::Launch::KEEP", /\A(?:PATH|GH_TOKEN)\z/)
 
-      expect(described_class.current(paths: Lain::Paths.new(env:), env: env.merge("GH_TOKEN" => "ghp")).env)
+      expect(described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)),
+                                     env: env.merge("GH_TOKEN" => "ghp")).env)
         .not_to have_key("GH_TOKEN")
     end
 
@@ -107,7 +112,7 @@ RSpec.describe Lain::Daemon::Launch do
         { "HOME" => @dir, "PATH" => "/usr/bin", "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
           "CARGO_TARGET_DIR" => @dir }
       end
-      let(:paths) { Lain::Paths.new(env:) }
+      let(:paths) { Lain::Paths.new(env: SpecHome.env(env)) }
       let(:devices) { Lain::Remote::Devices.for(paths:).path }
 
       def write_user_config(body)
@@ -191,7 +196,7 @@ RSpec.describe Lain::Daemon::Launch do
       { "HOME" => @dir, "PATH" => "/usr/bin", "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
         "CARGO_TARGET_DIR" => @dir }
     end
-    let(:paths) { Lain::Paths.new(env:) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env(env)) }
     let(:devices) { Lain::Remote::Devices.for(paths:).path }
 
     def write_user_config(body)

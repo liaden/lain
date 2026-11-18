@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::Land, :seam do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:spawned) { [] }
   # A pid above the kernel's ceiling, so no process can ever answer to it.
   let(:recording) { ->(argv, **options) { (spawned << [argv, options]).size + 4_194_304 } }

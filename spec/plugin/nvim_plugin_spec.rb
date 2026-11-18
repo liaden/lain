@@ -758,7 +758,8 @@ RSpec.describe "lain nvim plugin", :nvim do
 
   describe "the cockpit's pane command" do
     def pane_argv(plugin_root: nil)
-      paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @runtime_dir }, **{ nvim_plugin_root: plugin_root }.compact)
+      paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @runtime_dir }),
+                              **{ nvim_plugin_root: plugin_root }.compact)
       Shellwords.split(Lain::CLI::Up::Cockpit.new(option: @control, cwd: @project, paths:).nvim_pane_command)
     end
 

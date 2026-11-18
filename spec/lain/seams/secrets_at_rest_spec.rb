@@ -29,7 +29,7 @@ RSpec.describe "a lent secret in the session file", :seam do
       @root = File.join(base, "repo")
       @state = File.join(base, "s")
       homes = { "XDG_STATE_HOME" => @state, "HOME" => File.join(base, "h") }
-      @paths = Lain::Paths.new(env: homes)
+      @paths = Lain::Paths.new(env: SpecHome.env(homes))
       tmp = File.join(base, "t")
       FileUtils.mkdir_p([@root, tmp, *homes.values])
       # The TMPDIR sits beside home because the workspace profile a bypassed call runs in refuses one holding it.

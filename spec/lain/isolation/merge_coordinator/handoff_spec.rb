@@ -45,7 +45,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Handoff, :seam do
 
   let(:spawner) { spawner_class.new }
   let(:journal) { [] }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:backend) do
     Lain::Isolation::Worktree.new(repo_root: @repo, root: @trees,
                                   base: Lain::Isolation::WorkingBranch.checked_out(repo_root: @repo))

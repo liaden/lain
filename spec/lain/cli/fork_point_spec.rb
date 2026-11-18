@@ -16,7 +16,7 @@ RSpec.describe Lain::CLI::ForkPoint do
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
   let(:context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
   let(:three) { chain("first", "ack", "second") }

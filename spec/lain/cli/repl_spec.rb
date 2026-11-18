@@ -586,7 +586,7 @@ RSpec.describe Lain::CLI::Repl do
     Dir.mktmpdir do |dir|
       # Paths is injected (the chronicle_spec/journal_spec idiom), never a
       # global ENV mutation: the journal lands under this tmpdir by construction.
-      paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+      paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
       chronicle = Lain::CLI::Chronicle.for(enabled: true, paths:, root: Dir.pwd)
 
       output = run_chat("hello?\n", dir:, chronicle:)

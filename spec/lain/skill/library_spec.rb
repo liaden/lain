@@ -119,7 +119,7 @@ RSpec.describe Lain::Skill::Library do
       Dir.mktmpdir do |root|
         write(File.join(root, ".lain", "skills", "where", "skill.md"), "<%= epic_home %>")
         state = File.join(root, "custom-state")
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state }))
         backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths:)
 
         expect(backend.library.renderer.render(:where)).to start_with(state)
@@ -132,7 +132,7 @@ RSpec.describe Lain::Skill::Library do
       Dir.mktmpdir do |root|
         write(File.join(root, ".lain", "config.rb"), "epics_home :repo\n")
         xdg = %w[CONFIG STATE DATA].to_h { |kind| ["XDG_#{kind}_HOME", File.join(root, kind.downcase)] }
-        paths = Lain::Paths.new(env: xdg)
+        paths = Lain::Paths.new(env: SpecHome.env(xdg))
         backend = Lain::CLI::Backend.new({ provider: "ollama" }, root:, paths:)
 
         expect(backend.slots).to be_a(Lain::Prompt::Slots)

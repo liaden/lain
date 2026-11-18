@@ -51,11 +51,11 @@ module InputPaneSocket
                                               host: writer.host, root: dir, cwd: dir, input_socket: path, journal: nil,
                                               attended: true, started_at: "2026-11-17T10:00:00Z")
       registration = Lain::Daemon::Registration.new(record:, notes: $stderr, daemon: lambda { |pushes:, replace:|
-        Lain::Daemon.ensure(paths: Lain::Paths.new(env: daemon_env), env: daemon_env, pushes:, replace:)
+        Lain::Daemon.ensure(paths: Lain::Paths.new(env: SpecHome.env(daemon_env)), env: daemon_env, pushes:, replace:)
       })
       producer = Lain::CLI::Wiring::InputProducer::QueueOffers.new(
         socket, registration:, rail:, notice: ->(_) {},
-        log: Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+        log: Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir })))
       )
     end
     begin

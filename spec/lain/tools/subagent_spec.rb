@@ -4399,7 +4399,7 @@ RSpec.describe Lain::Tools::Subagent do
       # which is the one shape neither can be driven without.
       def reopened(bytes)
         Dir.mktmpdir do |state_home|
-          paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
+          paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state_home }))
           File.write(File.join(paths.sessions_dir, "20260101T000000-1.ndjson"), bytes)
           yield Lain::CLI::Resume.new(paths:)
         end

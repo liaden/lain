@@ -17,7 +17,7 @@ RSpec.describe Lain::Chores::Runner, :seam do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @dir, "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @dir, "XDG_STATE_HOME" => File.join(@dir, "state") })) }
   let(:todos) { File.join(@main, "TODOS.md") }
   let(:queue) { Lain::Chores::Queue.at(@main, lock: Lain::FileLock.new(File.join(@dir, "queue.lock"))) }
   let(:program) { "/opt/lain/exe/lain" }

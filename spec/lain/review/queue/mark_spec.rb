@@ -49,7 +49,7 @@ RSpec.describe Lain::Review::Queue::Mark do
   describe "#seen" do
     it "appends 1 opened event for its row at its head" do
       Dir.mktmpdir("lain-mark") do |dir|
-        log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }))
+        log = Lain::Review::Queue::Log.new(paths: Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir })))
         described_class.load(row).seen(log, notice: ->(_) {})
         queued = Lain::Review::Queue::Row.new(id: row["id"], rank: :direct, reason: "", request: nil, head_sha: sha)
 

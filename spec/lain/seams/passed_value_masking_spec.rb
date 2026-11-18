@@ -27,7 +27,7 @@ RSpec.describe "a passed value's secret masked in bash output", :seam do
       base = File.realpath(dir)
       @root = File.join(base, "repo")
       homes = { "XDG_STATE_HOME" => File.join(base, "s"), "HOME" => File.join(base, "h") }
-      @paths = Lain::Paths.new(env: homes)
+      @paths = Lain::Paths.new(env: SpecHome.env(homes))
       tmp = File.join(base, "t")
       FileUtils.mkdir_p([@root, tmp, *homes.values])
       # Every Config reader that defaults paths: builds its own Paths over ENV, so trust has to land there too.

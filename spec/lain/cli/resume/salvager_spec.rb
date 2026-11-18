@@ -11,7 +11,8 @@ RSpec.describe Lain::CLI::Resume::Salvager do
   around { |example| Dir.mktmpdir { |dir| @dir = dir and example.run } }
 
   def session_file
-    chronicle = Lain::CLI::Chronicle.for(enabled: true, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir }),
+    chronicle = Lain::CLI::Chronicle.for(enabled: true,
+                                         paths: Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @dir })),
                                          root: Dir.pwd)
     chronicle.start(context:, toolset:, sections: SessionSections.complete)
     chronicle.close

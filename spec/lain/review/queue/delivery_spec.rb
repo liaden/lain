@@ -112,7 +112,8 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
   let(:pending) { Lain::Review::Queue::Pending.new(paths:, env: herdr_env, workspaces:) }
 
   let(:paths) do
-    Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run") })
+    Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state"),
+                                        "XDG_RUNTIME_DIR" => File.join(@dir, "run") }))
   end
   let(:log) { Lain::Review::Queue::Log.new(paths:) }
   let(:account) { Struct.new(:environment).new({ "GH_TOKEN" => "gho_account" }) }

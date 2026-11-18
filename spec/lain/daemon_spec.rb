@@ -17,7 +17,7 @@ RSpec.describe Lain::Daemon do
 
   describe ".socket" do
     it "is daemon.sock in the daemon directory of the runtime dir" do
-      paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => "/run/user/7" })
+      paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => "/run/user/7" }))
 
       expect(described_class.socket(paths:)).to eq("/run/user/7/lain/daemon/daemon.sock")
     end
@@ -26,7 +26,7 @@ RSpec.describe Lain::Daemon do
   describe "an unbuilt binary" do
     it "answers Absent, telling the notes how to build it, and Absent registers nothing" do
       Dir.mktmpdir("unbuilt-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         launch = Lain::Daemon::Launch.current(paths:).with(binary: File.join(dir, "missing"))
         notes = StringIO.new
 
@@ -42,7 +42,7 @@ RSpec.describe Lain::Daemon do
   describe "the env it is given" do
     it "is where it looks for the binary" do
       socket_tmpdir("env-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         env = { "CARGO_TARGET_DIR" => File.join(dir, "no-build") }
 
         result = Sync { described_class.ensure(paths:, env:).tap { |answer| answer.stop if answer.respond_to?(:stop) } }
@@ -58,7 +58,7 @@ RSpec.describe Lain::Daemon do
   describe "a binary path that is a directory" do
     it "answers Absent, and starts nothing that could write to this process's streams" do
       socket_tmpdir("dir-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         launch = Lain::Daemon::Launch.current(paths:).with(binary: dir)
         result = nil
 
@@ -76,7 +76,7 @@ RSpec.describe Lain::Daemon do
         File.write(File.join(dir, "release", "lain-daemon"), "built")
         allow(Digest::SHA256).to receive(:file).and_call_original
 
-        described_class.ensure(paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir }),
+        described_class.ensure(paths: Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir })),
                                env: { "LAIN_DAEMON" => "off", "CARGO_TARGET_DIR" => dir })
 
         expect(Digest::SHA256).not_to have_received(:file)
@@ -87,7 +87,7 @@ RSpec.describe Lain::Daemon do
   describe ".attached" do
     it "refuses, naming rake daemon:build, when the binary is not built" do
       Dir.mktmpdir("attached-unbuilt") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         env = { "CARGO_TARGET_DIR" => dir }
 
         expect { Sync { described_class.attached(paths:, env:) } }.to raise_error(Lain::Error, /rake daemon:build/)
@@ -96,7 +96,7 @@ RSpec.describe Lain::Daemon do
 
     it "refuses when the off switch is set, before it reads the binary" do
       Dir.mktmpdir("attached-off") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
 
         expect { Sync { described_class.attached(paths:, env: { "LAIN_DAEMON" => "off" }) } }
           .to raise_error(Lain::Error, /off/)
@@ -107,7 +107,7 @@ RSpec.describe Lain::Daemon do
   describe "in an example that does not opt in" do
     it "answers Absent without making the runtime dir" do
       Dir.mktmpdir("off-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
 
         expect(described_class.ensure(paths:)).to be_a(Lain::Daemon::Absent)
         expect(Dir.children(dir)).to be_empty
@@ -120,7 +120,7 @@ RSpec.describe Lain::Daemon do
   describe "a daemon from another launch with live runs" do
     around do |example|
       socket_tmpdir("busy-daemon") do |dir|
-        @paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        @paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         FileUtils.mkdir_p(File.dirname(described_class.socket(paths: @paths)), mode: 0o700)
         @stand_in = Process.spawn("sh", "-c", 'trap "" TERM; exec sleep 60')
         @live_runs = 1
@@ -288,7 +288,7 @@ RSpec.describe Lain::Daemon do
   describe "a binary that exits instead of serving" do
     it "refuses in words, naming its exit status and its trace" do
       socket_tmpdir("failed-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         launch = Lain::Daemon::Launch.current(paths:).with(binary: "/bin/false")
 
         expect { Sync { described_class.ensure(paths:, launch:, env: {}) } }
@@ -298,7 +298,7 @@ RSpec.describe Lain::Daemon do
 
     it "names the signal that killed it" do
       socket_tmpdir("killed-daemon") do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         binary = File.join(dir, "suicidal")
         File.write(binary, "#!/bin/sh\nkill -KILL $$\n")
         File.chmod(0o755, binary)

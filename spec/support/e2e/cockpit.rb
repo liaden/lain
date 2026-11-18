@@ -42,7 +42,7 @@ module E2E
     def initialize(sandbox, socket)
       @sandbox = sandbox
       @socket = socket
-      @paths = Lain::Paths.new(env: sandbox.env)
+      @paths = Lain::Paths.new(env: SpecHome.env(sandbox.env))
       @key = @paths.project_hash(sandbox.project.to_s)
       @session = SessionFile.new(sandbox.state_home, project_key: @key)
     end

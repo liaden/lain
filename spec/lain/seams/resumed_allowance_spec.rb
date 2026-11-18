@@ -9,7 +9,7 @@ RSpec.describe "a resumed chat keeps the skill's allowance", :seam do
   let(:model) { "qwen3:4b" }
   let(:state_home) { File.realpath(Dir.mktmpdir("resumed-allowance-state")) }
   let(:project_dir) { File.realpath(Dir.mktmpdir("resumed-allowance-project")) }
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state_home })) }
   let(:project) { throwaway_project(project_dir) }
 
   after { FileUtils.rm_rf([state_home, project_dir]) }

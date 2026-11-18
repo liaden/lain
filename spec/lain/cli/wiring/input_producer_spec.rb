@@ -109,7 +109,7 @@ RSpec.describe Lain::CLI::Wiring::InputProducer do
     let(:registration) { InputProducerSpecSupport::Registration.new }
     let(:rail) { Lain::Frontend::Intake.new }
     let(:log) { Lain::Review::Queue::Log.new(paths:) }
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => state }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state })) }
     let(:said) { Thread::Queue.new }
     let(:url) { "https://github.com/fuze/api/pull/12" }
     let(:row) { { "id" => "pr:fuze/api#12", "head_sha" => "c" * 40 } }

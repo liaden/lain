@@ -14,7 +14,7 @@ RSpec.describe "two cockpits on one machine", :e2e, budget: 60,
   # The watchdog is the bound: a wait that ends sooner would turn a starved box into a red.
   def patience = 300
 
-  def key_of(sandbox) = Lain::Paths.new(env: sandbox.env).project_hash(sandbox.project.to_s)
+  def key_of(sandbox) = Lain::Paths.new(env: SpecHome.env(sandbox.env)).project_hash(sandbox.project.to_s)
 
   def answers?(cockpit)
     cockpit.editor.evaluate("1+1") == 2

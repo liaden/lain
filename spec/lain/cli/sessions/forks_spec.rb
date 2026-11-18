@@ -37,7 +37,7 @@ RSpec.describe Lain::CLI::Sessions::Forks do
   end
 
   it "scans the chronicle's current file each time the source is called" do
-    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir })
+    paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @dir }))
     project = Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag)
     @dir = paths.filing_dir(root: project.root)
     FileUtils.mkdir_p(@dir)
@@ -60,7 +60,7 @@ RSpec.describe Lain::CLI::Sessions::Forks do
   end
 
   describe ".source over unchanged files" do
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @dir }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @dir })) }
     let(:project) { Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :flag) }
     let(:read) { [] }
     let(:facts) { ->(path) { read << File.basename(path) and described_class.send(:resumed_from, path) } }

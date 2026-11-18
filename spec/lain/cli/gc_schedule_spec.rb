@@ -16,7 +16,7 @@ RSpec.describe Lain::CLI::GcSchedule do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state })) }
   let(:now) { Time.utc(2026, 9, 11, 12) }
   let(:spawned) { [] }
   let(:spawner) { ->(argv, **options) { spawned << [argv, options] } }

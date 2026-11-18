@@ -13,7 +13,7 @@ module ResumeKilledMidStream
   CHILD = <<~RUBY
     require "lain"
 
-    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => ARGV.fetch(0) })
+    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => ARGV.fetch(0), "HOME" => ARGV.fetch(0) })
     path = Lain::Journal.default_path(paths:)
     journal = Class.new(Lain::Journal) do
       define_method(:record) do |entry|
@@ -51,7 +51,7 @@ RSpec.describe Lain::CLI::Resume do
   subject(:resume) { described_class.new(paths:) }
 
   let(:untyped) { SessionSections.untyped }
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
   let(:recorded_context) { Lain::Context.new(model: "recorded-model", max_tokens: 512, system: "be terse") }
   let(:toolset) { Lain::Toolset.new([EchoTool.new]) }
 

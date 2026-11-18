@@ -31,7 +31,7 @@ RSpec.describe Lain::CLI::Chronicle do
   describe ".for" do
     it "opens a recording Chronicle on a Paths-based fsync journal when enabled" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(opened).to be_a(described_class)
@@ -45,7 +45,8 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "chains every line of the session file to the line before it" do
       Dir.mktmpdir do |dir|
-        opened = described_class.for(enabled: true, paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir }),
+        opened = described_class.for(enabled: true,
+                                     paths: Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir })),
                                      root: Dir.pwd)
         opened.start(context:, toolset:, sections: SessionSections.complete)
         opened.durable_journal << { "type" => "note" }
@@ -61,7 +62,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "files the journal under the given project root rather than the working directory" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: "/")
 
         expect(File.dirname(opened.journal_path)).to eq(paths.sessions_dir(project: paths.project_hash("/")))
@@ -88,7 +89,7 @@ RSpec.describe Lain::CLI::Chronicle do
         sub = File.join(root, "sub")
         FileUtils.mkdir_p(sub)
         env = { "XDG_STATE_HOME" => File.join(base, "state"), "HOME" => base }
-        paths = Lain::Paths.new(env:)
+        paths = Lain::Paths.new(env: SpecHome.env(env))
 
         with_env(env) do
           Dir.chdir(sub) { described_class.for(enabled: false, root:, paths:).wrap_tee(Lain::Channel::Null.instance) }
@@ -103,7 +104,7 @@ RSpec.describe Lain::CLI::Chronicle do
     # chronicle must name the very file `.for` put on disk.
     it "exposes the opened journal's path -- the session identity /fork forks" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(Dir.glob(File.join(dir, "lain", "sessions", "**", "*.ndjson"))).to eq([opened.journal_path])
@@ -123,7 +124,7 @@ RSpec.describe Lain::CLI::Chronicle do
   describe "#spool" do
     it "opens no file until the spool is actually used" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(Dir.glob(File.join(dir, "lain", "sessions", "**", "*.wal"))).to be_empty
@@ -133,7 +134,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "passes the wire through to the frame it opens" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         opened.spool.open_frame(request_digest: "blake3:abc", wire: "ollama-ndjson").close(complete: true)
@@ -146,7 +147,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "spools a frame into <session-stem>.wal, beside the NDJSON" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         frame = opened.spool.open_frame(request_digest: "blake3:abc", wire: "anthropic-sse")
@@ -162,7 +163,7 @@ RSpec.describe Lain::CLI::Chronicle do
 
     it "memoizes the spool -- every provider this run builds tees into the SAME file" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(opened.spool).to be(opened.spool)
@@ -176,7 +177,7 @@ RSpec.describe Lain::CLI::Chronicle do
     # production caller of its own #close at all.
     it "#close closes the spool it opened, once the spool has actually been used" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         spool = opened.spool
@@ -189,7 +190,7 @@ RSpec.describe Lain::CLI::Chronicle do
     # frame must still create no `.wal` file, even at teardown.
     it "#close does not open the spool merely to close it" do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         opened = described_class.for(enabled: true, paths:, root: Dir.pwd)
 
         expect(Lain::Provider::ResponseWal).not_to receive(:new)
@@ -213,7 +214,7 @@ RSpec.describe Lain::CLI::Chronicle do
       Dir.mktmpdir { |dir| @state_home = dir and example.run }
     end
 
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
 
     def globbed(pattern) = Dir.glob(File.join(@state_home, "lain", "sessions", "**", pattern))
 
@@ -779,7 +780,7 @@ RSpec.describe Lain::CLI::Chronicle do
   describe "end-to-end: a chronicle-produced file with an nvim resend round-trips clean" do
     it "loads through Loader, excludes the resend from RequestReplay, and salvage finds the real digest" do
       Dir.mktmpdir do |dir|
-        real_paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => dir })
+        real_paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => dir }))
         chronicle = described_class.for(enabled: true, paths: real_paths, root: Dir.pwd)
         recorder = Lain::Memory::Recorder.new
         chronicle.wrap_memory(recorder)

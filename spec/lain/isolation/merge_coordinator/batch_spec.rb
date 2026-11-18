@@ -18,7 +18,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Batch, :seam do
 
   let(:queue_class) { Lain::Isolation::LandingQueue }
   let(:verified) { [] }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:queue_for) { -> { queue_class.new(repo_root: @repo, base:, desk:, verify:) } }
   let(:cap) { 2 }
   let(:batch) { described_class.new(queue_for:, rebuild_cap: cap) }

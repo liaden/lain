@@ -14,7 +14,7 @@ RSpec.describe "forking and rewinding a session that already wrote", :seam do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
   let(:counter) { File.join(@dir, "counter") }
   let(:journal_path) { Lain::Journal.default_path(paths:) }
   let(:context) { Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024, system: "be terse") }

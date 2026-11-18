@@ -19,7 +19,7 @@ module CrashMidTool
     require "lain"
 
     state_home, marker, kill_before = ARGV
-    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home })
+    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home, "HOME" => state_home })
     path = Lain::Journal.default_path(paths:)
     journal = Class.new(Lain::Journal) do
       define_method(:record) do |entry|
@@ -66,7 +66,7 @@ RSpec.describe "a session killed while a tool runs", :seam do
   let(:state_home) { File.join(@dir, "state") }
   let(:marker) { File.join(@dir, "bash.pid") }
   let(:stderr) { File.join(@dir, "chat.err") }
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state_home })) }
 
   def session_file = Dir[File.join(paths.sessions_dir, "*.ndjson")].sole
 

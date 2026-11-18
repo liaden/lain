@@ -14,7 +14,7 @@ RSpec.describe Lain::CLI::Todos do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
   let(:project) { Lain::Project.new(root: @dir, cwd: @dir, kind: :project, detected_by: :git) }
   let(:file) { File.join(@dir, "TODOS.md") }
   let(:sink) { StringIO.new }

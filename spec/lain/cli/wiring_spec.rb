@@ -671,7 +671,8 @@ RSpec.describe Lain::CLI::Wiring do
         root = File.realpath(dir)
         env = { "XDG_STATE_HOME" => File.join(root, "s"), "HOME" => File.join(root, "h") }
         reader = wiring_over(options: { grace: 5, approval: "auto", confine: "reader" }, chronicle:,
-                             status_feed:, paths: Lain::Paths.new(env:), project: throwaway_project(root))
+                             status_feed:, paths: Lain::Paths.new(env: SpecHome.env(env)),
+                             project: throwaway_project(root))
         board_existed = []
         allow(Lain::Confine::MaskList).to receive(:new).and_wrap_original do |original, **kwargs|
           original.call(**kwargs).tap do |list|
@@ -3752,7 +3753,7 @@ RSpec.describe Lain::CLI::Wiring do
     # pane is a scrolling transcript nobody types into.
     it "reads the human from an input socket, never this terminal, when --input names one", :seam do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         path = Lain::CLI::InputSocket.path(name: "wiring", paths:, cwd: project_dir)
         stdin = StringIO.new("never read\n")
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
@@ -3802,7 +3803,7 @@ RSpec.describe Lain::CLI::Wiring do
     # cockpit's history is the chat's and not the pane's.
     it "keeps the line a pane sent over the input socket in the chat's history", :seam do
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         path = Lain::CLI::InputSocket.path(name: "wiring-history", paths:, cwd: project_dir)
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         wiring = new_wiring(options: { grace: 5, input: "socket:wiring-history" }, chronicle:, status_feed:,
@@ -3821,7 +3822,7 @@ RSpec.describe Lain::CLI::Wiring do
     # place the chat pane can show it; a plain chat's terminal already shows it.
     it "echoes a line typed in the input pane into the transcript, and not a line typed here", :seam do
       transcripts = Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         path = Lain::CLI::InputSocket.path(name: "wiring-echo", paths:, cwd: project_dir)
         allow(status_feed).to receive(:state).and_return(PublishedFeedState.build)
         outputs = []
@@ -4785,7 +4786,7 @@ RSpec.describe Lain::CLI::Wiring do
       end
 
       Dir.mktmpdir do |dir|
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
         wiring = new_wiring(options: { grace: 5, non_interactive: true, input: "socket:wiring-headless" },
                             chronicle:, status_feed:, paths:, stdin: StringIO.new("quit\n"),
                             tty_factory: tty_factory(dir), conductor_opener:)
@@ -5050,7 +5051,7 @@ RSpec.describe Lain::CLI::Wiring do
       def run_in_pane(notice)
         said = []
         Dir.mktmpdir do |dir|
-          paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => dir })
+          paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => dir }))
           path = Lain::CLI::InputSocket.path(name: "wiring-scrollback", paths:, cwd: project_dir)
           wiring = pane_wiring(dir, paths)
           pane = Thread.new { end_the_chat_from_a_pane(path) }

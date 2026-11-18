@@ -82,7 +82,7 @@ RSpec.configure do |config|
   config.around(:each, :daemon) do |example|
     socket_tmpdir("lain-daemon") do |dir|
       @daemon_env = ENV.to_h.merge("XDG_RUNTIME_DIR" => dir).except(LainDaemon::SWITCH)
-      @daemon_paths = Lain::Paths.new(env: @daemon_env)
+      @daemon_paths = Lain::Paths.new(env: SpecHome.env(@daemon_env))
       begin
         ENV.delete(LainDaemon::SWITCH)
         example.run

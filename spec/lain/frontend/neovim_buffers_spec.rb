@@ -508,7 +508,7 @@ RSpec.describe Lain::Frontend::Neovim, :nvim do
         Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
                               options: { grace: 5, epic: "demo" }, chronicle: Lain::CLI::Chronicle::Null.new,
                               herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(tty_factory:), project:,
-                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => @tmp }),
+                              paths: Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @tmp })),
                               status_feed: instance_double(Lain::StatusFeed, bind_store: nil), stdin: input)
       end
 

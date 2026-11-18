@@ -41,7 +41,7 @@ RSpec.describe Lain::CLI::Usage do
   end
 
   it "refuses a selector naming no session" do
-    expect { described_class.new(selector: "no-such-session", sink:, paths: Lain::Paths.new(env: {})).run }
+    expect { described_class.new(selector: "no-such-session", sink:, paths: Lain::Paths.new(env: SpecHome.env({}))).run }
       .to raise_error(Lain::CLI::SessionFile::SessionNotFound)
   end
 end

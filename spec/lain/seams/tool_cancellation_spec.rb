@@ -265,7 +265,7 @@ RSpec.describe "a tool run torn by a real interrupt", :seam do
       )
       refused_ask(agent)
     end
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
 
     around do |example|
       Dir.mktmpdir { |dir| @state_home = dir and example.run }

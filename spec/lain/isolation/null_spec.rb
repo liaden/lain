@@ -55,7 +55,7 @@ RSpec.describe Lain::Isolation::Null do
       end
     end
 
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
 
     def build(root) = described_class.new(root:, paths:, home: Dir.home)
 

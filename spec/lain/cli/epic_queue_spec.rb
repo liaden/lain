@@ -19,7 +19,7 @@ RSpec.describe Lain::CLI::EpicQueue do
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
 
   # The home the examples that read an epic back resolve against.
   let(:root) { File.join(@state_home, "project").tap { |dir| FileUtils.mkdir_p(dir) } }

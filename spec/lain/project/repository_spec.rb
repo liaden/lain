@@ -13,7 +13,7 @@ RSpec.describe Lain::Project::Repository do
     end
   end
 
-  let(:search_paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+  let(:search_paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
 
   def nearest_from(dir) = described_class.nearest(dir, paths: search_paths, home: Dir.home)
 

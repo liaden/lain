@@ -553,8 +553,8 @@ RSpec.describe Lain::Bench::CLI do
           FileUtils.mkdir_p(File.join(project, ".git"))
           journal = Lain::Channel.new
           cli.arm_report(arms, tasks:, spawn_seam:, grader:, isolation: "worktree", root: project, journal:,
-                               paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime,
-                                                             "XDG_STATE_HOME" => runtime }),
+                               paths: Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime,
+                                                                          "XDG_STATE_HOME" => runtime })),
                                shell_out_factory: BenchArmShells.new)
 
           leases = journal.drain.grep(Lain::Telemetry::IsolationLease).group_by(&:kind)

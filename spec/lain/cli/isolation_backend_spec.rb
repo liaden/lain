@@ -57,7 +57,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
   # Both XDG bases point at throwaway dirs, so a leased worktree lands under a
   # tmpdir instead of the machine's real state dir, and the runtime dir can be
   # shown to stay empty.
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @runtime, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @runtime, "XDG_STATE_HOME" => @state })) }
 
   def resolve(name = nil, root: @project, **)
     described_class.resolve(name, root:, paths:, shell_out_factory: shells, **)
@@ -547,7 +547,7 @@ RSpec.describe Lain::CLI::IsolationBackend, :seam do
       end
     end
 
-    let(:search_paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:search_paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
 
     it "keys a repository's worktree root under state_home" do
       expect(described_class.worktree_root("/r", paths: search_paths))

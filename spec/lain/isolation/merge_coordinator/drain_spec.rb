@@ -19,7 +19,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:passing) { ["sh", "-c", "exit 0"] }
 
   def home = Lain::Isolation::MergeCoordinator::Home.for(repo_root: @repo, branch: "main")
@@ -67,7 +67,7 @@ RSpec.describe Lain::Isolation::MergeCoordinator::Drain, :seam do
       File.write(script, <<~RUBY)
         require "lain"
         File.write(ARGV[2], Process.pid.to_s) if ARGV[2]
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => ARGV[1], "XDG_STATE_HOME" => ARGV[1] })
+        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => ARGV[1], "XDG_STATE_HOME" => ARGV[1], "HOME" => ARGV[1] })
         Lain::Isolation::MergeCoordinator::Drain.for(repo_root: ARGV[0], branch: "main", paths:).call
       RUBY
     end

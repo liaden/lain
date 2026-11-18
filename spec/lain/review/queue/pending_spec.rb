@@ -8,7 +8,8 @@ RSpec.describe Lain::Review::Queue::Pending do
   subject(:pending) { described_class.new(paths:, workspaces:, env:, log:) }
 
   let(:paths) do
-    Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state"), "XDG_RUNTIME_DIR" => File.join(@dir, "run") })
+    Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state"),
+                                        "XDG_RUNTIME_DIR" => File.join(@dir, "run") }))
   end
   let(:env) { {} }
   # A herdr whose workspaces are the ones it was asked to create.

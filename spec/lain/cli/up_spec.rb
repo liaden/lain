@@ -971,7 +971,7 @@ RSpec.describe Lain::CLI::Up do
         write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
         Dir.mktmpdir do |runtime|
           Dir.mktmpdir do |project|
-            paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+            paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime }))
             expected_socket = File.join(paths.runtime_dir, "nvim-#{paths.project_hash(project)}.sock")
             # The chat pane's command re-execs $PROGRAM_NAME (rspec here) and
             # dies quickly; remain-on-exit pins the dead pane so the two-pane
@@ -1127,7 +1127,7 @@ RSpec.describe Lain::CLI::Up do
       end
     end
 
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
     let(:now) { Time.now }
     let(:spawned) { [] }
     let(:schedule) do
@@ -1180,7 +1180,7 @@ RSpec.describe Lain::CLI::Up do
       end
     end
 
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
     let(:existing) { false }
     let(:tmux) { ->(*args, **) { FakeShellOut.new(args[1] == "has-session" && !existing ? 1 : 0, "") } }
     let(:probe) { Lain::Liveness::Probe.new }
@@ -2300,7 +2300,7 @@ RSpec.describe Lain::CLI::Up do
 
     # `binaries` marks a program present (the default) or absent (false) on a
     # fake PATH; tmux itself always answers, with has-session missing so #call creates.
-    def cockpit_up(calls, nvim:, binaries: {}, chat_args: [], paths: Lain::Paths.new(env: {}))
+    def cockpit_up(calls, nvim:, binaries: {}, chat_args: [], paths: Lain::Paths.new(env: SpecHome.env({})))
       on_path = binaries.fetch("nvim", true) ? ["/fake/bin/nvim"] : []
       spy = lambda do |*args|
         calls << args
@@ -2355,7 +2355,7 @@ RSpec.describe Lain::CLI::Up do
     it "derives the plugin's deterministic socket and threads it into both panes" do
       Dir.mktmpdir do |runtime|
         calls = []
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime }))
         socket = File.join(paths.runtime_dir, "nvim-#{paths.project_hash(cwd)}.sock")
 
         cockpit_up(calls, nvim: "", paths:).call
@@ -2428,7 +2428,7 @@ RSpec.describe Lain::CLI::Up do
       Dir.mktmpdir do |runtime|
         calls = []
 
-        cockpit_up(calls, nvim: "", paths: Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })).call
+        cockpit_up(calls, nvim: "", paths: Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime }))).call
 
         expect(first_pane_call(calls).last)
           .to include("-c #{Shellwords.escape(Lain::CLI::Up::Cockpit::SCRATCH_BUFFER)}")
@@ -2474,7 +2474,7 @@ RSpec.describe Lain::CLI::Up do
     it "still opens the cockpit with a plain nvim pane, warning namedly, when the shipped plugin is missing" do
       calls = []
       missing_root = "/nonexistent/lain-plugin-nvim"
-      paths = Lain::Paths.new(env: {}, nvim_plugin_root: missing_root)
+      paths = Lain::Paths.new(env: SpecHome.env({}), nvim_plugin_root: missing_root)
 
       report = cockpit_up(calls, nvim: "", paths:).call
 
@@ -2488,7 +2488,7 @@ RSpec.describe Lain::CLI::Up do
     it "creates the derived socket's directory, private to the user, so nvim --listen can bind" do
       Dir.mktmpdir do |runtime|
         calls = []
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime }))
 
         cockpit_up(calls, nvim: "", paths:).call
 
@@ -2576,7 +2576,7 @@ RSpec.describe Lain::CLI::Up do
     it "names one input socket in both pane commands: the chat's --input and the pane's --socket" do
       Dir.mktmpdir do |runtime|
         calls = []
-        paths = Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime })
+        paths = Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime }))
 
         cockpit_up(calls, nvim: "/x/explicit.sock", paths:).call
 
@@ -2695,7 +2695,7 @@ RSpec.describe Lain::CLI::Up do
     # count stopped being able to answer (a chat over its input pane is two
     # panes, exactly like the old cockpit) and so did the leftovers, since a
     # human who splits a shell into the window has not installed an editor.
-    def reattaching_up(calls, pane_ids:, recorded: %w[%0 %1 %2], paths: Lain::Paths.new(env: {}))
+    def reattaching_up(calls, pane_ids:, recorded: %w[%0 %1 %2], paths: Lain::Paths.new(env: SpecHome.env({})))
       # `recorded: []` is a session lain never built: no option is set, so
       # tmux answers the probe nonzero rather than with an empty value.
       names = [described_class::Panes::CHAT, described_class::Panes::INPUT, described_class::Panes::EDITOR]
@@ -2821,7 +2821,7 @@ RSpec.describe Lain::CLI::Up do
     # the pane commands on that path.
     it "stays silent on reattach even when the shipped plugin is missing" do
       calls = []
-      paths = Lain::Paths.new(env: {}, nvim_plugin_root: "/nonexistent/lain-plugin-nvim")
+      paths = Lain::Paths.new(env: SpecHome.env({}), nvim_plugin_root: "/nonexistent/lain-plugin-nvim")
 
       report = reattaching_up(calls, pane_ids: %w[%0 %1 %2], recorded: %w[%1 %2 %0], paths:).call
 

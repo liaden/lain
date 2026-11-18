@@ -16,7 +16,7 @@ RSpec.describe Lain::CLI::Worktrees do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state })) }
   let(:at) { Time.utc(2026, 9, 11, 12) }
 
   def record(action, subject, name, reason) = Lain::Telemetry::WorktreeReap.new(action:, subject:, name:, reason:)

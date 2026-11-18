@@ -25,7 +25,7 @@ RSpec.describe Lain::Isolation::CandidateDesk, :seam do
   let(:journal) { [] }
   let(:verified) { [] }
   let(:verify) { passing }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:base) { Lain::Isolation::WorkingBranch.new(branch, repo_root: @repo, git: Lain::Isolation::Checkout.new(@repo)) }
   let(:desk) do
     described_class.new(

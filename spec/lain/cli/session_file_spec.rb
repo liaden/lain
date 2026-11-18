@@ -76,7 +76,7 @@ RSpec.describe Lain::CLI::SessionFile do
 
   it "names the one candidate, in the root's directory, when nothing answers" do
     Dir.mktmpdir do |state|
-      store = Lain::Paths.new(env: { "XDG_STATE_HOME" => state })
+      store = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state }))
       root = instance_double(Lain::Project, root: File.realpath(state))
 
       expect { described_class.resolve("nope", paths: store, project: root) }

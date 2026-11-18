@@ -15,7 +15,7 @@ RSpec.describe Lain::Isolation::VerifyCheckout, :seam do
     end
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => @state, "XDG_STATE_HOME" => @state })) }
   let(:keep) { [] }
   let(:checkout) { described_class.for(repo_root: @repo, branch: "main", paths:, keep:) }
 

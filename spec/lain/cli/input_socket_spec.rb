@@ -12,7 +12,7 @@ RSpec.describe Lain::CLI::InputSocket do
   subject(:socket) { described_class.new(rail:, path:, header:, commands: -> { %w[approve inbox] }) }
 
   let(:runtime) { Dir.mktmpdir("lain-input-socket") }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime })) }
   let(:path) { described_class.path(name: "s1", paths:, cwd: Dir.pwd) }
   let(:rail) { Lain::Frontend::Intake.new }
   let(:header) { -> { hud } }

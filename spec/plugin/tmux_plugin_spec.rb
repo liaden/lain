@@ -68,7 +68,7 @@ RSpec.describe "plugin/tmux" do
   # Resolved through the REAL locator, never a hand-built spelling: a spec
   # that composes the path itself can agree with a plugin that both got wrong.
   def state_path(dir = @dir)
-    Lain::ProjectDir.new(root: dir, paths: Lain::Paths.new(env: plugin_env)).state_path
+    Lain::ProjectDir.new(root: dir, paths: Lain::Paths.new(env: SpecHome.env(plugin_env))).state_path
   end
 
   # The renderers print a FIELD now, so a fixture has to carry the one a real
@@ -311,7 +311,7 @@ RSpec.describe "plugin/tmux" do
   end
 
   describe "scripts/lain-status, with a review count beside the state" do
-    def reviews_path = Lain::Paths.new(env: plugin_env).review_counts
+    def reviews_path = Lain::Paths.new(env: SpecHome.env(plugin_env)).review_counts
 
     def write_reviews(fields) = write_json(reviews_path, JSON.generate(fields))
 
@@ -461,7 +461,7 @@ RSpec.describe "plugin/tmux" do
     # The Ruby side of every cross-pin above, built from the SAME env the
     # shell is handed, so neither side can be tuned to agree with the other.
     def ruby_state_path(env)
-      Lain::ProjectDir.new(root: @dir, paths: Lain::Paths.new(env: env.compact)).state_path
+      Lain::ProjectDir.new(root: @dir, paths: Lain::Paths.new(env: SpecHome.env(env.compact))).state_path
     end
 
     it "renders the HUD for a directory by resolving it and handing the file over" do

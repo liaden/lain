@@ -2,7 +2,7 @@
 
 RSpec.describe Lain::CLI::Wiring::HumanInput do
   let(:runtime) { Dir.mktmpdir }
-  let(:paths) { Lain::Paths.new(env: { "XDG_RUNTIME_DIR" => runtime }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_RUNTIME_DIR" => runtime })) }
   let(:tty) { instance_double(Lain::Frontend::TTY) }
   let(:piped) { StringIO.new }
 

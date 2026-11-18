@@ -23,7 +23,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
       end
     end
 
-    let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => File.join(@dir, "state") }) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
     let(:now) { Time.now }
     let(:spawned) { [] }
     let(:stamp) { Lain::CLI::GcSchedule.new(root: @dir, paths:).stamp_path }
@@ -2092,7 +2092,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the daemon registration" do
   end
 
   describe "with a daemon", :daemon do
-    let(:paths) { Lain::Paths.new(env: daemon_env.merge("XDG_STATE_HOME" => state)) }
+    let(:paths) { Lain::Paths.new(env: SpecHome.env(daemon_env.merge("XDG_STATE_HOME" => state))) }
 
     def chat(options) = launch_chat(options, paths:, env: daemon_env)
 
@@ -2144,7 +2144,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "the daemon registration" do
   end
 
   it "runs the chat with no daemon, and lists nothing" do
-    paths = Lain::Paths.new(env: { "XDG_STATE_HOME" => state, "XDG_RUNTIME_DIR" => @dir })
+    paths = Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => state, "XDG_RUNTIME_DIR" => @dir }))
 
     launch_chat({ journal: false }, paths:, env: ENV)
 
@@ -2188,7 +2188,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
     { "XDG_STATE_HOME" => state, "HOME" => File.join(@dir, "home"), "XDG_CONFIG_HOME" => File.join(@dir, config) }
   end
 
-  def launch(options, paths: Lain::Paths.new(env: homes), env: {}, box: probe,
+  def launch(options, paths: Lain::Paths.new(env: SpecHome.env(homes)), env: {}, box: probe,
              chronicle_factory: self.chronicle_factory, wiring_factory: self.wiring_factory)
     described_class.new(options, profile: Lain::CLI::RunProfile.from_options({}).with_defaults(provider: "ollama"),
                                  project_factory: -> { throwaway_project(@dir) },
@@ -2245,7 +2245,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
       end
     end
 
-    def relay_in_user_config(paths = Lain::Paths.new(env: homes))
+    def relay_in_user_config(paths = Lain::Paths.new(env: SpecHome.env(homes)))
       FileUtils.mkdir_p(File.dirname(paths.user_config))
       File.write(paths.user_config, "remote relay: \"127.0.0.1:7820\"\n")
       Lain::Project::Trust.for_user(paths:).grant!
@@ -2273,7 +2273,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
     it "refuses when the chat's own user config names no relay, before asking the daemon" do
       allow(Lain::Daemon).to receive(:ensure)
 
-      expect(refused(remote)).to include("remote relay:", Lain::Paths.new(env: homes).user_config)
+      expect(refused(remote)).to include("remote relay:", Lain::Paths.new(env: SpecHome.env(homes)).user_config)
       expect(Lain::Daemon).not_to have_received(:ensure)
       opened_nothing
     end
@@ -2293,7 +2293,7 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
     context "with a real daemon that runs no relay", :daemon do
       def env(config) = daemon_env.merge(homes(config:))
 
-      def paths(config) = Lain::Paths.new(env: env(config))
+      def paths(config) = Lain::Paths.new(env: SpecHome.env(env(config)))
 
       def held_chat
         writer = Lain::Liveness::Writer.current

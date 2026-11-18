@@ -50,7 +50,7 @@ RSpec.describe Lain::Remote::Agenda do
     Dir.mktmpdir { |dir| @state_home = dir and example.run }
   end
 
-  let(:paths) { Lain::Paths.new(env: { "XDG_STATE_HOME" => @state_home }) }
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => @state_home })) }
   let(:root) { File.join(@state_home, "project").tap { FileUtils.mkdir_p(_1) } }
   let(:now) { Time.utc(2026, 11, 4, 9, 0, 0) }
   let(:queue) { Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: StringIO.new)) }
