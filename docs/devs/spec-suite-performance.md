@@ -171,6 +171,25 @@ Ranked from `tmp/parallel_runtime_rspec.log`, 2026-08-05 (a snapshot and not a f
 Even if both isolation files fell, `deletability` and `promotion` at ~9.5s become the
 next floor. Fixture reuse alone cannot get the wall under ~9s.
 
+## CI worker count
+
+`.envrc`'s 12 is a measurement from an 8-physical-core developer box. CI runs on GitHub's
+`ubuntu-latest`, the 4-vCPU, 16GB standard runner, which is different and unmeasured
+hardware, so 12 does not transfer.
+
+Leaving the count unset is also wrong. The `Rakefile` fallback counts unique physical core
+ids from `lscpu -p=core`. On a 4-vCPU runner that resolves to 3 at best and possibly 1,
+depending on SMT this repo has not measured. Both sit below the runner's own core count and
+at or near the worst count tried here.
+
+`main.yml` sets `LAIN_SPEC_WORKERS=$(nproc)`, the logical count read at job time. It
+skips the fallback's `- 1` on purpose. That subtraction is a floor for hardware nobody has
+measured, chosen because guessing high risks an OOM that `parallel_tests` reports as a
+pass. The measurements above found the optimum above the logical count (12 to 14 on an
+8-physical, 16-logical box), so subtracting for headroom is the policy they repudiate. At
+4 workers on 16GB there is no OOM risk to hedge: the 8-core box runs 12 in the same memory.
+Do not restore consistency with `- 1` there.
+
 ## Profiling
 
 Every slow spec file splits its cost between fixture setup and the subject's own work,
