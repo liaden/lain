@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# Remove merged card worktrees under tmp/worktrees/, archiving their uncommitted work first.
+#
+#   bin/prune-merged-worktrees --dry-run [--repo <path>]   say what each worktree would get
+#   bin/prune-merged-worktrees --apply   [--repo <path>]   archive, remove, delete the branch
+#
+# Why the archive: cards land by patch, so a branch reads as merged while its worktree still
+# holds edits that never landed. The merge test proves nothing; the archive is the protection.
+# Skips every branch starting card/S, and unmerged, locked, in-use or already-archived worktrees.
+# Ignored files other than .handback*.md are discarded with the worktree.
+# Linux and GNU tar only: it reads /proc/*/cwd and uses tar --null --verbatim-files-from.
+set -Eeuo pipefail
+
+usage() {
+  echo "usage: $0 (--dry-run | --apply) [--repo <path>]" >&2
+  echo "skips every branch starting card/S, unmerged, locked, in-use or already-archived worktrees;" >&2
+  echo "ignored files other than .handback*.md are discarded with the worktree" >&2
+  exit 2
+}
+
+if [ ! -r /proc/self/cwd ] || ! tar --version 2> /dev/null | grep -q 'GNU tar'; then
+  echo "$0 needs Linux (/proc) and GNU tar" >&2
+  exit 2
+fi
+
+mode=""
+repo=""
+while [ $# -gt 0 ]; do
+  case $1 in
+    --dry-run | --apply) mode=$1 ;;
+    --repo)
+      [ $# -ge 2 ] || usage
+      repo=$2
+      shift
+      ;;
+    *) usage ;;
+  esac
+  shift
+done
+[ -n "$mode" ] || usage
+repo=$(realpath "${repo:-$(dirname "$0")/..}")
+worktrees_dir="$repo/tmp/worktrees"
+archive_root="$repo/tmp/worktree-archive"
+
+# One "path<TAB>branch<TAB>locked-or-dash" line per worktree under tmp/worktrees/.
+list_worktrees() {
+  git -C "$repo" worktree list --porcelain | awk -v dir="$worktrees_dir/" '
+    function flush() { if (index(path, dir) == 1) print path "\t" branch "\t" (locked ? "locked" : "-") }
+    /^worktree / { path = substr($0, 10); branch = "-"; locked = 0 }
+    /^branch /   { branch = substr($0, 19) }
+    /^locked/    { locked = 1 }
+    /^$/         { flush(); path = "" }
+    END          { if (path != "") flush() }
+  '
+}
+
+# 1. Skip: print the reason and return 0 when the worktree must stay.
+skip_reason() {
+  local path=$1 branch=$2 locked=$3 cwd
+  case $branch in
+    card/S*)
+      echo "plan card branch"
+      return 0
+      ;;
+    card/*) ;;
+    *)
+      echo "not a card branch"
+      return 0
+      ;;
+  esac
+  if [ ! -d "$path" ]; then
+    echo "directory missing (prunable)"
+    return 0
+  fi
+  if [ -e "$archive_root/$(basename "$path")" ]; then
+    echo "archive exists"
+    return 0
+  fi
+  if ! git -C "$repo" merge-base --is-ancestor "$branch" main; then
+    echo "not merged into main"
+    return 0
+  fi
+  if [ "$locked" = locked ]; then
+    echo "locked"
+    return 0
+  fi
+  for cwd in /proc/[0-9]*/cwd; do
+    case $(readlink "$cwd" 2> /dev/null || true) in
+      "$path" | "$path"/*)
+        echo "in use by a process"
+        return 0
+        ;;
+    esac
+  done
+  return 1
+}
+
+# 2. Archive the diff, the base SHA, and the untracked files plus ignored handback reports.
+# Built beside the final name and moved in last, so an interrupted run never leaves a
+# directory the "archive exists" skip would trust.
+archive() {
+  local path=$1 name=$2 out="$archive_root/$2.partial" files ignored
+  if [ -e "$out" ]; then
+    echo "replacing leftover partial archive for $name"
+    rm -rf "$out"
+  fi
+  mkdir -p "$out"
+  git -C "$path" diff --binary HEAD > "$out/diff.patch"
+  git -C "$path" rev-parse HEAD > "$out/base.txt"
+  files=$(mktemp)
+  ignored=$(mktemp)
+  git -C "$path" ls-files -z --others --ignored --exclude-standard > "$ignored"
+  {
+    git -C "$path" ls-files -z --others --exclude-standard
+    grep -zE '(^|/)\.handback[^/]*\.md$' "$ignored" || true
+  } > "$files"
+  tar -cf "$out/untracked.tar" -C "$path" --null --verbatim-files-from -T "$files"
+  rm -f "$files" "$ignored"
+  mv -T "$out" "$archive_root/$name"
+}
+
+# 3. Remove the worktree, then its branch.
+remove() {
+  if ! git -C "$repo" worktree remove --force "$1" || ! git -C "$repo" branch -D "$2" > /dev/null; then
+    echo "archive kept at $archive_root/$(basename "$1"); finish by hand with:" >&2
+    echo "  git -C $repo worktree remove --force $1 && git -C $repo branch -D $2" >&2
+    return 1
+  fi
+}
+
+current=""
+trap 'echo "failed on ${current:-setup}" >&2' ERR
+done_count=0
+skipped=0
+seen=0
+while IFS=$'\t' read -r path branch locked; do
+  name=$(basename "$path")
+  current=$name
+  seen=$((seen + 1))
+  if reason=$(skip_reason "$path" "$branch" "$locked"); then
+    echo "skip $name ($branch): $reason"
+    skipped=$((skipped + 1))
+  elif [ "$mode" = --dry-run ]; then
+    echo "would archive to $archive_root/$name and remove $name ($branch)"
+    done_count=$((done_count + 1))
+  else
+    archive "$path" "$name"
+    remove "$path" "$branch"
+    echo "archived and removed $name ($branch)"
+    done_count=$((done_count + 1))
+  fi
+done < <(list_worktrees)
+
+# 4. Report.
+[ "$seen" -gt 0 ] || echo "no worktrees found under $worktrees_dir"
+verb=removed
+[ "$mode" = --dry-run ] && verb="would remove"
+echo "$verb $done_count, skipped $skipped"
