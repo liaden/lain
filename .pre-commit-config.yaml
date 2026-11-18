@@ -12,6 +12,12 @@ repos:
         exclude: '\.rs$'
       - id: check-merge-conflict
       - id: check-yaml
+      - id: check-added-large-files
+        args: [--maxkb=1024]
+      # A toml-test case is invalid TOML on purpose.
+      - id: check-toml
+        exclude: '^spec/fixtures/toml-test/'
+      - id: check-json
       # A .patch file's whitespace is load-bearing: a blank context line in a diff is a
       # single trailing space, and stripping it corrupts the patch's applicability. A
       # .msgpack fixture is bytes that often look like text, and a fixer's newline breaks
@@ -65,15 +71,15 @@ repos:
                plugin/nvim/README.md, plugin/tmux/README.md, apps/lain-remote/README.md,
                ext/lain/README.md]
 
-  - repo: local
+  # Pins shellcheck itself, so a fresh clone or a CI runner checks with the same version.
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
     hooks:
       - id: shellcheck
-        name: shellcheck
-        entry: shellcheck
-        language: system
-        types: [shell]
         exclude: '^\.envrc$'
 
+  - repo: local
+    hooks:
       - id: cargo-fmt
         name: cargo fmt
         entry: cargo fmt -- --check
