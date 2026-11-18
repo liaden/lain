@@ -1,0 +1,119 @@
+#!/usr/bin/env bash
+# Installs and asserts the binaries the suite drives: nvim, tmux, jq, bwrap, strace.
+#
+#   bin/ci/install-spec-binaries [--persist] [--print-url] [neovim-version]
+#
+# Works as root or through sudo, on x86_64 and aarch64. --persist keeps the
+# user-namespace sysctl across reboots; --print-url prints the neovim tarball
+# URL and exits, installing nothing. The version defaults to "stable".
+set -euo pipefail
+
+persist=0
+print_url=0
+# A moving "stable" on purpose: the :nvim specs drive nvim over msgpack-RPC, so
+# tracking the release a developer has beats a pinned tag that drifts from dev boxes.
+version=stable
+for arg in "$@"; do
+  case "$arg" in
+    --persist) persist=1 ;;
+    --print-url) print_url=1 ;;
+    *) version=$arg ;;
+  esac
+done
+
+nvim_arch() {
+  case "$(uname -m)" in
+    x86_64) echo x86_64 ;;
+    aarch64 | arm64) echo arm64 ;;
+    *) echo "unsupported machine: $(uname -m)" >&2; return 1 ;;
+  esac
+}
+
+nvim_url() {
+  echo "https://github.com/neovim/neovim/releases/download/${version}/nvim-linux-$(nvim_arch).tar.gz"
+}
+
+if [ "$print_url" -eq 1 ]; then
+  nvim_url
+  exit 0
+fi
+
+as_root() {
+  if [ "$(id -u)" -eq 0 ]; then "$@"; else sudo "$@"; fi
+}
+
+apt_updated=0
+apt_install() {
+  if [ "$apt_updated" -eq 0 ]; then
+    as_root apt-get update -q
+    apt_updated=1
+  fi
+  as_root apt-get install -y -q "$@"
+}
+
+install_missing() {
+  local pkgs=() tool pkg
+  for pair in bwrap:bubblewrap tmux:tmux jq:jq strace:strace curl:curl; do
+    tool=${pair%%:*}
+    pkg=${pair##*:}
+    command -v "$tool" >/dev/null 2>&1 || pkgs+=("$pkg")
+  done
+  if [ ${#pkgs[@]} -ne 0 ]; then apt_install "${pkgs[@]}"; fi
+}
+
+# Ubuntu 24.04's AppArmor refuses an unprivileged user namespace, so bwrap
+# cannot build the reader sandbox. A read-only /proc/sys (a container) cannot
+# take the write, and the namespace assert below reports what that costs.
+allow_userns() {
+  local key=kernel.apparmor_restrict_unprivileged_userns
+  [ -e "/proc/sys/${key//.//}" ] || return 0
+  as_root sysctl -w "$key=0" || echo "warning: could not set $key" >&2
+  if [ "$persist" -eq 1 ]; then
+    echo "$key = 0" | as_root tee /etc/sysctl.d/60-lain-userns.conf >/dev/null
+  fi
+}
+
+# NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind a dev box, and
+# the specs talk to it over RPC.
+install_nvim() {
+  local tarball
+  tarball=$(mktemp)
+  curl -fsSL "$(nvim_url)" -o "$tarball"
+  as_root tar -C /opt -xzf "$tarball"
+  rm -f "$tarball"
+  as_root ln -sf "/opt/nvim-linux-$(nvim_arch)/bin/nvim" /usr/local/bin/nvim
+}
+
+# Both suites SKIP silently when a binary is missing, so a gap reddens nothing
+# and just stops testing the editor and the multiplexer. Assert instead.
+assert_binaries() {
+  local missing=() tool
+  for tool in nvim tmux jq bwrap strace; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+  done
+  if [ ${#missing[@]} -ne 0 ]; then
+    echo "::error::missing spec binaries: ${missing[*]} -- the specs that need them would SKIP, not fail" >&2
+    return 1
+  fi
+  echo "nvim:   $(nvim --version | head -1)"
+  echo "tmux:   $(tmux -V)"
+  echo "jq:     $(jq --version)"
+  echo "bwrap:  $(bwrap --version)"
+  echo "strace: $(strace -V | head -1)"
+}
+
+# Mirrors the argv in lib/lain/confine/bwrap.rb, not just --unshare-user: that one passes on hosts
+# where this argv fails with "Creating new namespace failed".
+assert_bwrap_namespace() {
+  if ! bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --unshare-pid --die-with-parent -- true; then
+    echo "::error::bwrap namespace assert failed: cannot build lain's reader namespace" >&2
+    return 1
+  fi
+  echo "bwrap reader namespace: ok"
+}
+
+install_missing
+allow_userns
+install_nvim
+assert_binaries
+assert_bwrap_namespace

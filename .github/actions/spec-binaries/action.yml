@@ -1,7 +1,7 @@
 name: Install spec binaries
 description: >
-  The editor the suite actually drives, plus a loud assertion that it and the
-  image's own tmux and jq are really there.
+  Installs and asserts the binaries the suite drives (nvim, tmux, jq, bwrap,
+  strace), and asserts that bwrap can build lain's reader namespace.
 
 inputs:
   neovim-version:
@@ -16,47 +16,8 @@ inputs:
 runs:
   using: composite
   steps:
-    # tmux comes from the base image; display-popup (>= 3.2) is detected at runtime, and the assert below catches an image that drops it.
-
-    # Ubuntu 24.04's AppArmor refuses an unprivileged user namespace, so bwrap
-    # cannot build the reader sandbox and the specs of it read a bare box.
-    - name: Let bwrap build the reader sandbox
+    - name: Install and assert the suite's binaries
       shell: bash
-      run: |
-        set -euo pipefail
-        command -v bwrap >/dev/null 2>&1 || { sudo apt-get update -q && sudo apt-get install -y -q bubblewrap; }
-        sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-        bwrap --unshare-user --ro-bind / / true
-
-    # NOT apt: Ubuntu 24.04's neovim is 0.9.x, several minors behind what a dev
-    # box runs, and these specs talk to it over RPC. The upstream tarball keeps
-    # CI and development on the same editor.
-    - name: Install neovim ${{ inputs.neovim-version }}
-      shell: bash
-      run: |
-        set -euo pipefail
-        url="https://github.com/neovim/neovim/releases/download/${{ inputs.neovim-version }}/nvim-linux-x86_64.tar.gz"
-        curl -fsSL "$url" -o /tmp/nvim.tar.gz
-        sudo tar -C /opt -xzf /tmp/nvim.tar.gz
-        echo "/opt/nvim-linux-x86_64/bin" >> "$GITHUB_PATH"
-
-    # The step that earns the install above. Both suites SKIP silently when their
-    # binary is missing -- :nvim filters the tag out, and the tmux specs skip
-    # per example -- so a missing binary does not redden anything; it just
-    # quietly stops testing the editor and the multiplexer, which is the exact
-    # invisibility this whole arrangement exists to end. Assert instead.
-    - name: Assert the suite's binaries are really here
-      shell: bash
-      run: |
-        set -euo pipefail
-        missing=()
-        for tool in nvim tmux jq bwrap strace; do
-          command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
-        done
-        if [ ${#missing[@]} -ne 0 ]; then
-          echo "::error::missing spec binaries: ${missing[*]} -- the specs that need them would SKIP, not fail"
-          exit 1
-        fi
-        echo "nvim: $(nvim --version | head -1)"
-        echo "tmux: $(tmux -V)"
-        echo "jq:   $(jq --version)"
+      env:
+        NEOVIM_VERSION: ${{ inputs.neovim-version }}
+      run: bin/ci/install-spec-binaries "$NEOVIM_VERSION"
