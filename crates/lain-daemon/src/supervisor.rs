@@ -40,13 +40,22 @@ pub(crate) enum RunKind {
     /// exists is the chat's to say: where an epic lives is the project's config to decide.
     Epic {
         slug: String,
+        root: PathBuf,
     },
+    /// `lain queue poll` counts review requests across the user's forge and reads no project, so
+    /// only the daemon's own timer starts it, and it carries no root.
     ReviewPoll,
-    Chores,
+    Chores {
+        root: PathBuf,
+    },
 }
 
 impl RunKind {
-    fn from_request(kind: &str, args: &BTreeMap<String, String>) -> Result<Self, RpcError> {
+    fn from_request(
+        kind: &str,
+        args: &BTreeMap<String, String>,
+        root: &str,
+    ) -> Result<Self, RpcError> {
         match kind {
             "epic" => {
                 if let Some(key) = args.keys().find(|key| key.as_str() != "slug") {
@@ -67,7 +76,10 @@ impl RunKind {
                         ),
                     ));
                 }
-                Ok(Self::Epic { slug: slug.clone() })
+                Ok(Self::Epic {
+                    slug: slug.clone(),
+                    root: project_root(root)?,
+                })
             }
             "review-poll" | "chores" => {
                 if let Some(key) = args.keys().next() {
@@ -76,11 +88,17 @@ impl RunKind {
                         format!("a {kind} run takes no args, not {:?}", clip(key)),
                     ));
                 }
-                Ok(if kind == "chores" {
-                    Self::Chores
+                if kind == "chores" {
+                    Ok(Self::Chores {
+                        root: project_root(root)?,
+                    })
                 } else {
-                    Self::ReviewPoll
-                })
+                    Err(refused(
+                        "bad_root",
+                        "a review-poll run takes no root, and only the daemon's own timer starts it"
+                            .to_string(),
+                    ))
+                }
             }
             other => Err(refused(
                 "unknown_kind",
@@ -96,14 +114,22 @@ impl RunKind {
         match self {
             Self::Epic { .. } => "epic",
             Self::ReviewPoll => "review-poll",
-            Self::Chores => "chores",
+            Self::Chores { .. } => "chores",
+        }
+    }
+
+    /// The project the run works in; `None` for a kind that reads none.
+    fn root(&self) -> Option<&Path> {
+        match self {
+            Self::Epic { root, .. } | Self::Chores { root } => Some(root),
+            Self::ReviewPoll => None,
         }
     }
 
     /// What follows `<ruby> <lain>`.
-    fn argv(&self, root: &Path) -> Vec<OsString> {
+    fn argv(&self) -> Vec<OsString> {
         match self {
-            Self::Epic { slug } => {
+            Self::Epic { slug, root } => {
                 let mut argv: Vec<OsString> = vec!["chat".into(), "--root".into(), root.into()];
                 argv.extend(["--cwd".into(), root.into()]);
                 argv.extend(
@@ -121,7 +147,7 @@ impl RunKind {
                 argv
             }
             Self::ReviewPoll => vec!["queue".into(), "poll".into()],
-            Self::Chores => vec!["todos".into(), "drain".into()],
+            Self::Chores { .. } => vec!["todos".into(), "drain".into()],
         }
     }
 }
@@ -138,7 +164,6 @@ fn is_slug(slug: &str) -> bool {
 pub(crate) struct Run {
     pub(crate) id: String,
     pub(crate) kind: RunKind,
-    pub(crate) root: PathBuf,
     pub(crate) pid: u32,
     pub(crate) started: SystemTime,
     pub(crate) ended: Option<i32>,
@@ -155,7 +180,10 @@ impl Run {
         let mut fields = vec![
             (Value::from("id"), Value::from(self.id.as_str())),
             (Value::from("kind"), Value::from(self.kind.name())),
-            (Value::from("root"), path(&self.root)),
+            (
+                Value::from("root"),
+                self.kind.root().map_or(Value::Nil, path),
+            ),
             (Value::from("pid"), Value::from(self.pid)),
             (Value::from("started"), Value::from(started)),
             (
@@ -164,7 +192,7 @@ impl Run {
             ),
             (Value::from("log"), path(&self.log)),
         ];
-        if let RunKind::Epic { slug } = &self.kind {
+        if let RunKind::Epic { slug, .. } = &self.kind {
             fields.push((Value::from("slug"), Value::from(slug.as_str())));
         }
         Value::Map(fields)
@@ -200,17 +228,41 @@ impl Supervisor {
         self.runs.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// Must run inside the runtime, which reaps the run.
+    /// A caller's request. Must run inside the runtime, which reaps the run.
     pub(crate) fn start(self: &Arc<Self>, request: RunStart) -> Result<Run, RpcError> {
-        let settings = self.settings.as_ref().ok_or_else(|| {
+        self.settings()?;
+        self.launch(RunKind::from_request(
+            &request.kind,
+            &request.args,
+            &request.root,
+        )?)
+    }
+
+    /// The daemon's own timer's run, which a caller's request cannot name.
+    pub(crate) fn start_review_poll(self: &Arc<Self>) -> Result<Run, RpcError> {
+        self.launch(RunKind::ReviewPoll)
+    }
+
+    /// Whether a review poll is still running.
+    pub(crate) fn review_poll_live(&self) -> bool {
+        self.runs()
+            .iter()
+            .any(|entry| entry.run.ended.is_none() && matches!(entry.run.kind, RunKind::ReviewPoll))
+    }
+
+    fn settings(&self) -> Result<&Settings, RpcError> {
+        self.settings.as_ref().ok_or_else(|| {
             refused(
                 "no_runs",
                 "this daemon was started without --ruby, --lain and --runs-dir, so it runs nothing"
                     .to_string(),
             )
-        })?;
-        let kind = RunKind::from_request(&request.kind, &request.args)?;
-        let root = project_root(&request.root)?;
+        })
+    }
+
+    /// A run with no project starts in the runs directory, which the log's open creates.
+    fn launch(self: &Arc<Self>, kind: RunKind) -> Result<Run, RpcError> {
+        let settings = self.settings()?;
         let id = self.next_id();
         let log = settings.runs.join(format!("{id}.log"));
         let output = open_log(&settings.runs, &log).map_err(|error| {
@@ -227,8 +279,8 @@ impl Supervisor {
         })?;
         let mut child = tokio::process::Command::new(&settings.ruby)
             .arg(&settings.lain)
-            .args(kind.argv(&root))
-            .current_dir(&root)
+            .args(kind.argv())
+            .current_dir(kind.root().unwrap_or(&settings.runs))
             .env_clear()
             .envs(settings.env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null())
@@ -247,7 +299,6 @@ impl Supervisor {
         let run = Run {
             id: id.clone(),
             kind,
-            root,
             pid,
             started: SystemTime::now(),
             ended: None,
@@ -258,7 +309,7 @@ impl Supervisor {
             exited,
             stops,
         });
-        tracing::info!(id, pid, kind = run.kind.name(), root = %run.root.display(), "started a run");
+        tracing::info!(id, pid, kind = run.kind.name(), root = ?run.kind.root(), "started a run");
         let supervisor = Arc::clone(self);
         tokio::spawn(async move {
             let status = tokio::select! {

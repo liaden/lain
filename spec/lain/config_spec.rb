@@ -95,6 +95,42 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe ".user_github?" do
+    around do |example|
+      Dir.mktmpdir("lain-user-github") do |tmp|
+        @tmp = tmp
+        example.run
+      end
+    end
+
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+
+    def write_user(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant!
+    end
+
+    it "is false without the user's file" do
+      expect(described_class.user_github?(paths:)).to be(false)
+    end
+
+    it "is true for a verb that sets any key, even to its default" do
+      write_user("github since_days: 14\n")
+
+      expect(described_class.user_github?(paths:)).to be(true)
+    end
+
+    it "is false when the file declares no github table" do
+      write_user("remote relay: \"100.64.0.1:7820\"\n")
+
+      expect(described_class.user_github?(paths:)).to be(false)
+    end
+  end
+
   describe ".remote" do
     around do |example|
       Dir.mktmpdir("lain-remote-config") do |tmp|

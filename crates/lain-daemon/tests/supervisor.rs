@@ -104,15 +104,20 @@ impl Daemon {
 
 /// A daemon that runs `FAKE_RUBY` for ruby, with `env` and nothing else of the test's own.
 async fn daemon_with(mode: &str, env: &[(&str, &str)]) -> Daemon {
-    spawned(mode, env, false).await
+    spawned(mode, env, false, &[]).await
+}
+
+/// As [`daemon_with`], with the review poll on a timer, whose first tick is at once.
+async fn daemon_polling(mode: &str, env: &[(&str, &str)]) -> Daemon {
+    spawned(mode, env, false, &["--poll-every", "300"]).await
 }
 
 /// As [`daemon_with`], with a phone relay, so the daemon may be handed an ntfy topic.
 async fn daemon_with_relay(mode: &str, env: &[(&str, &str)]) -> Daemon {
-    spawned(mode, env, true).await
+    spawned(mode, env, true, &[]).await
 }
 
-async fn spawned(mode: &str, env: &[(&str, &str)], relay: bool) -> Daemon {
+async fn spawned(mode: &str, env: &[(&str, &str)], relay: bool, extra: &[&str]) -> Daemon {
     let dir = tempfile::tempdir().expect("tempdir");
     let ruby = dir.path().join("ruby");
     std::fs::write(&ruby, FAKE_RUBY).expect("write the fake ruby");
@@ -132,6 +137,7 @@ async fn spawned(mode: &str, env: &[(&str, &str)], relay: bool) -> Daemon {
         .arg(dir.path().join("exe-lain"))
         .arg("--runs-dir")
         .arg(dir.path().join("state").join("runs"))
+        .args(extra)
         .env_clear()
         .env("PATH", std::env::var("PATH").unwrap_or_default())
         .env("PROBE", &probe)
@@ -593,21 +599,37 @@ async fn a_daemon_started_without_run_settings_refuses_every_run() {
 }
 
 #[tokio::test]
-async fn a_run_that_exits_3_is_listed_with_status_3_and_its_log() {
-    let mut daemon = daemon("exit3").await;
-    let project = daemon.project();
-    let (error, run) = daemon.start(bare("review-poll", &project)).await;
-    assert_eq!(Value::Nil, error);
-    let row = daemon.ended(&field(&run, "id")).await;
-    assert_eq!(Value::from(3), field(&row, "status"));
-    assert_eq!(field(&run, "log"), field(&row, "log"));
-    assert_eq!(Value::from("review-poll"), field(&row, "kind"));
-    assert_eq!(Value::from(0), field(&daemon.info().await, "live_runs"));
+async fn the_review_poll_the_timer_starts_runs_in_the_runs_dir_with_no_project_root() {
+    let mut daemon = daemon_polling("exit3", &[("LAIN_GH_ACCOUNT", "work")]).await;
     let argv = appeared(&daemon.probe().join("argv")).await;
     assert_eq!(
         vec![daemon.lain().to_str().expect("utf-8"), "queue", "poll"],
         argv.trim_end_matches('\0').split('\0').collect::<Vec<_>>()
     );
+    let runs = daemon.runs().canonicalize().expect("the runs dir");
+    let cwd = appeared(&daemon.probe().join("cwd")).await;
+    assert_eq!(runs.to_str().expect("utf-8"), cwd.trim_end());
+    let env = appeared(&daemon.probe().join("env")).await;
+    assert!(
+        env.lines().any(|line| line == "LAIN_GH_ACCOUNT=work"),
+        "{env}"
+    );
+
+    let row = daemon.list().await.remove(0);
+    assert_eq!(Value::from("review-poll"), field(&row, "kind"));
+    assert_eq!(Value::Nil, field(&row, "root"));
+    let row = daemon.ended(&field(&row, "id")).await;
+    assert_eq!(Value::from(3), field(&row, "status"));
+    assert_eq!(Value::from(0), field(&daemon.info().await, "live_runs"));
+}
+
+#[tokio::test]
+async fn a_caller_cannot_start_a_review_poll_with_a_root_or_at_all() {
+    let mut daemon = daemon("exit3").await;
+    let project = daemon.project();
+    let (error, _) = daemon.start(bare("review-poll", &project)).await;
+    assert!(refusal(&error).contains("takes no root"), "{error}");
+    assert!(daemon.list().await.is_empty());
 }
 
 #[tokio::test]

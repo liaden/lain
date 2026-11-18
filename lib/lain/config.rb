@@ -139,6 +139,15 @@ module Lain
       { relay: built.remote_relay, ntfy: built.remote_ntfy }
     end
 
+    # Whether the user's config.rb has a `github` verb that sets any key, even to its default.
+    # A bare `github` with no keys reads the same as no verb.
+    #
+    # @param paths [Paths] where the user's config.rb lives
+    # @return [Boolean]
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] naming the user's file and line
+    def self.user_github?(paths:) = user(paths).github != Github.empty
+
     # The keys the user's config.rb rebinds. Only that file may declare them.
     #
     # @param paths [Paths] where the user's config.rb lives

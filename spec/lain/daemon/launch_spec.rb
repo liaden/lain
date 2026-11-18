@@ -184,6 +184,61 @@ RSpec.describe Lain::Daemon::Launch do
     end
   end
 
+  describe "the review poll" do
+    before { FileUtils.mkdir_p(File.join(@dir, "release")) && built("released", name: "release/lain-daemon") }
+
+    let(:env) do
+      { "HOME" => @dir, "PATH" => "/usr/bin", "XDG_RUNTIME_DIR" => File.join(@dir, "run"),
+        "CARGO_TARGET_DIR" => @dir }
+    end
+    let(:paths) { Lain::Paths.new(env:) }
+    let(:devices) { Lain::Remote::Devices.for(paths:).path }
+
+    def write_user_config(body)
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, body)
+      Lain::Project::Trust.for_user(paths:).grant!
+    end
+
+    it "polls every 300 seconds when the user's config has a github verb" do
+      write_user_config("github account: \"work\"\n")
+
+      expect(described_class.current(paths:, env:).flags).to eq(["--poll-every", "300"])
+    end
+
+    it "polls for a github verb that sets only a default" do
+      write_user_config("github since_days: 14\n")
+
+      expect(described_class.current(paths:, env:).flags).to eq(["--poll-every", "300"])
+    end
+
+    it "runs after the relay's flags, which it does not replace" do
+      write_user_config("remote relay: \"100.64.0.1:7820\"\ngithub orgs: [\"acme\"]\n")
+
+      expect(described_class.current(paths:, env:).flags)
+        .to eq(["--relay", "100.64.0.1:7820", "--devices-file", devices, "--poll-every", "300"])
+    end
+
+    it "does not poll when the user's config has no github verb, or only an account from the environment" do
+      expect(described_class.current(paths:, env:).flags).to eq([])
+      expect(described_class.current(paths:, env: env.merge("LAIN_GH_ACCOUNT" => "work")).flags).to eq([])
+    end
+
+    it "does not poll when the user's config cannot be read" do
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, "github account: \"work\"\n")
+
+      expect(described_class.current(paths:, env:).flags).to eq([])
+    end
+
+    it "gives a launch that polls and one that does not different digests" do
+      without = described_class.current(paths:, env:)
+      write_user_config("github account: \"work\"\n")
+
+      expect(described_class.current(paths:, env:).digest).not_to eq(without.digest)
+    end
+  end
+
   describe "a daemon started over the user's config", :daemon do
     after { FileUtils.rm_f(daemon_paths.user_config) }
 

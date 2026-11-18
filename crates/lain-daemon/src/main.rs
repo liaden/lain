@@ -8,6 +8,7 @@
 
 mod agenda_watch;
 mod ntfy;
+mod periodic;
 mod registry;
 mod relay;
 mod supervisor;
@@ -17,6 +18,7 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
+use std::time::Duration;
 
 use lain_rpc::{Conn, Handler, Peer, Push, RpcError, Session};
 use lain_wire::Register;
@@ -58,6 +60,8 @@ struct Args {
     /// The ruby, the `exe/lain` and the log directory every run is started with, given together or
     /// not at all.
     run: Option<(PathBuf, PathBuf, PathBuf)>,
+    /// How often the review poll runs; only a daemon that runs things can run it.
+    poll_every: Option<Duration>,
 }
 
 impl Args {
@@ -71,6 +75,7 @@ impl Args {
         let (mut socket, mut trace) = (None, None);
         let (mut listen, mut devices) = (None, None);
         let (mut ruby, mut lain, mut runs) = (None, None, None);
+        let mut poll_every = None;
         while let Some(flag) = args.next() {
             let value = args.next()?;
             match flag.as_str() {
@@ -81,6 +86,11 @@ impl Args {
                 "--ruby" => ruby = Some(PathBuf::from(value)),
                 "--lain" => lain = Some(PathBuf::from(value)),
                 "--runs-dir" => runs = Some(PathBuf::from(value)),
+                "--poll-every" => {
+                    poll_every = Some(Duration::from_secs(
+                        value.parse().ok().filter(|seconds| *seconds > 0)?,
+                    ));
+                }
                 _ => return None,
             }
         }
@@ -89,6 +99,9 @@ impl Args {
             (None, None, None) => None,
             _ => return None,
         };
+        if poll_every.is_some() && run.is_none() {
+            return None;
+        }
         let relay = match (listen, devices) {
             (Some(listen), Some(devices)) => Some((listen, devices)),
             (None, None) => None,
@@ -104,6 +117,7 @@ impl Args {
             relay,
             ntfy,
             run,
+            poll_every,
         })
     }
 }
@@ -619,6 +633,9 @@ async fn serve_unix(args: Args) -> ExitCode {
         runs,
         env: run_env(std::env::vars_os()),
     }));
+    if let Some(every) = args.poll_every {
+        tokio::spawn(periodic::poll_every(Arc::clone(&runs), every));
+    }
     let handler = Daemon {
         launch_digest: args.launch_digest,
         registry,
@@ -1024,6 +1041,40 @@ mod tests {
                 "{part:?}"
             );
         }
+    }
+
+    const RUNS: [&str; 6] = ["--ruby", "/r", "--lain", "/l", "--runs-dir", "/runs"];
+
+    fn polling(every: &[&str]) -> Option<Args> {
+        let flags: Vec<&str> = RUNS.into_iter().chain(every.iter().copied()).collect();
+        Args::parse(argv(&flags), None, digest())
+    }
+
+    #[test]
+    fn a_review_poll_interval_is_a_whole_number_of_seconds() {
+        let args = polling(&["--poll-every", "300"]).expect("parse");
+        assert_eq!(Some(Duration::from_secs(300)), args.poll_every);
+        assert!(polling(&[]).expect("parse").poll_every.is_none());
+    }
+
+    #[test]
+    fn a_review_poll_interval_that_is_zero_or_no_number_is_a_bad_invocation() {
+        for every in ["0", "abc", "-5", "", "1.5", "99999999999999999999"] {
+            assert!(
+                polling(&["--poll-every", every]).is_none(),
+                "{every:?} was accepted"
+            );
+        }
+    }
+
+    #[test]
+    fn a_review_poll_interval_with_no_value_is_a_bad_invocation() {
+        assert!(polling(&["--poll-every"]).is_none());
+    }
+
+    #[test]
+    fn a_review_poll_interval_with_no_run_settings_is_a_bad_invocation() {
+        assert!(Args::parse(argv(&["--poll-every", "300"]), None, digest()).is_none());
     }
 
     const RELAY: [&str; 4] = ["--relay", "127.0.0.1:0", "--devices-file", "/d/devices"];

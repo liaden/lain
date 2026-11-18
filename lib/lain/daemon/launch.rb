@@ -19,6 +19,8 @@ module Lain
                  (?:http|https|no)_proxy|(?:HTTP|HTTPS|NO)_PROXY|
                  XDG_(?:RUNTIME_DIR|STATE_HOME|CONFIG_HOME|CACHE_HOME|DATA_HOME))\z/x
 
+      POLL = ["--poll-every", "300"].freeze
+
       # The ntfy topic is as good as a password and an argv is world-readable, so it rides in the
       # environment under this name, which the daemon's `main.rs` reads by the same string. The
       # digest hashes the topic with inputs any user can read, so it rides there too.
@@ -43,7 +45,8 @@ module Lain
           new(binary: File.join(Paths::Shipped.cargo_target(env:), "release", "lain-daemon"),
               socket: Daemon.socket(paths:), trace: trace_path(paths:),
               ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"), runs: runs_dir(paths),
-              env: kept(env).merge(run_env(env), homes(paths), topic_env(remote)), flags: relay_flags(remote, paths))
+              env: kept(env).merge(run_env(env), homes(paths), topic_env(remote)),
+              flags: [*relay_flags(remote, paths), *poll_flags(paths)])
         )
       end
 
@@ -65,6 +68,14 @@ module Lain
 
       def self.relay_flags(remote, paths)
         remote[:relay] ? ["--relay", remote[:relay], "--devices-file", devices_file(paths)] : []
+      end
+
+      # The review count has a source only when the user's config has a github verb; the
+      # environment's account alone does not.
+      def self.poll_flags(paths)
+        Config.user_github?(paths:) ? POLL : []
+      rescue Error
+        []
       end
 
       # Only a relay has items to announce, so a topic with no relay goes to nobody.
@@ -98,7 +109,7 @@ module Lain
           .transform_values { |dir| File.dirname(dir) }
       end
       private_class_method :kept, :run_env, :homes, :relay_flags, :devices_file, :remote_settings, :topic_env,
-                           :runs_dir
+                           :poll_flags, :runs_dir
 
       # Content, not mtime or size, so an untouched or re-copied binary does
       # not restart the daemon. A rebuild at a new commit stamps a new sha in,
