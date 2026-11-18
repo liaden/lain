@@ -9,8 +9,7 @@ gem "rake", "~> 13.0"
 gem "rake-compiler"
 
 group :development do
-  gem "benchmark-ips", "~> 2.15" # M4 claims fork is O(1) and that Rust beats Ruby; claims get measured
-  gem "debug", "~> 1.11"         # rdbg --open, for stepping the agent loop from another pane
+  gem "debug", "~> 1.11" # rdbg --open, for stepping the agent loop from another pane
   gem "irb"
   gem "rubocop", "~> 1.21"
   gem "rubocop-performance", "~> 1.25"
@@ -63,11 +62,6 @@ group :test do
   gem "test-prof", "~> 1.4"
   # ActiveModel validation matchers; integrated :rspec + :active_model only (no Rails).
   gem "shoulda-matchers", "~> 8.0"
-  # A REVIEW LENS, NEVER A GATE. Used while reviewing a branch to find untested
-  # branches -- error paths, the `else` on a stop_reason case. No minimum-coverage
-  # threshold is committed: in a codebase whose invariants are property-tested, a
-  # coverage number is reassurance, not evidence.
-  gem "simplecov", "~> 1.3", require: false
   # Structural diffs on failure output only -- never changes matching semantics.
   gem "super_diff", "~> 0.16"
   # Hooks into the webmock we already have. Configured in spec/support/ with safe

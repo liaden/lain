@@ -56,7 +56,6 @@ GEM
       io-event (~> 1.21)
     attr_extras (7.1.0)
     base64 (0.3.0)
-    benchmark-ips (2.15.1)
     bigdecimal (4.1.3)
     bootsnap (1.26.1)
       msgpack (~> 1.5)
@@ -241,7 +240,6 @@ GEM
     securerandom (0.4.1)
     shoulda-matchers (8.0.1)
       activesupport (>= 7.2)
-    simplecov (1.3.2)
     stackprof (0.2.28)
     standardwebhooks (1.1.0)
     state_machines (0.301.2)
@@ -286,7 +284,6 @@ PLATFORMS
 
 DEPENDENCIES
   anthropic (~> 1.55)
-  benchmark-ips (~> 2.15)
   debug (~> 1.11)
   dotenv (~> 3.2)
   irb
@@ -303,7 +300,6 @@ DEPENDENCIES
   rubocop-thread_safety (~> 0.7)
   rubocop-yard (~> 1.3)
   shoulda-matchers (~> 8.0)
-  simplecov (~> 1.3)
   stackprof (~> 0.2)
   state_machines-mermaid (~> 0.1)
   super_diff (~> 0.16)
@@ -322,7 +318,6 @@ CHECKSUMS
   async (2.46.0) sha256=34f984733dbf63a997376346451ec995e858cacc3105e86ccfeaf8877b4f490b
   attr_extras (7.1.0) sha256=d96fc9a9dd5d85ba2d37762440a816f840093959ae26bb90da994c2d9f1fc827
   base64 (0.3.0) sha256=27337aeabad6ffae05c265c450490628ef3ebd4b67be58257393227588f5a97b
-  benchmark-ips (2.15.1) sha256=07a1a9f3c6105ecaf68c174fc3fbcddd71a0e9ada6236ae03093a0dcfd812d59
   bigdecimal (4.1.3) sha256=61ebe1e5e559bdc3cc6f2c0ee7f427321fc838f59611c294356eb04d6e21cf66
   bootsnap (1.26.1) sha256=5b5bd90f8f13ea338627c1d56ffbe2ea25e743ac48c2afec1a9bea3a06a264e2
   concurrent-ruby (1.3.8) sha256=b2f1be836e968ccc78ccfce277ea79c72a88633f22306782c16ff23fb415d1e1
@@ -405,7 +400,6 @@ CHECKSUMS
   ruby-progressbar (1.13.0) sha256=80fc9c47a9b640d6834e0dc7b3c94c9df37f08cb072b7761e4a71e22cff29b33
   securerandom (0.4.1) sha256=cc5193d414a4341b6e225f0cb4446aceca8e50d5e1888743fac16987638ea0b1
   shoulda-matchers (8.0.1) sha256=5dbb46e5765b9da225111b085e0819e8c8a121ff94bba430a153eb1ea2c60288
-  simplecov (1.3.2) sha256=2a22ec1759f1b8db60881a2e038758956fc69ef93ed669be0bde0678de6d0e85
   stackprof (0.2.28) sha256=4ec2ace02f386012b40ca20ef80c030ad711831f59511da12e83b34efb0f9a04
   standardwebhooks (1.1.0) sha256=356ba711c14def4fb27310e4163b26bd5cccf325212c3440cabadd825e4be11f
   state_machines (0.301.2) sha256=740087ec4e0a7a22e03cfcfc6bcb4c44990a10ead8004e3ac88bdd8e0be29463
