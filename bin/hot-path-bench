@@ -7,6 +7,7 @@ require "lain"
 require "open3"
 require "pathname"
 require "rbconfig"
+require "tmpdir"
 
 # Guards the chat-turn, bash-call, request and journal paths the way `bin/runtime-census` guards the
 # suite's wall: `--record` keeps the last 3 logs, `--check` exits 1 when a row is over its ceiling in
@@ -15,6 +16,8 @@ require "rbconfig"
 #   --record   measure every row and keep the log under tmp/hot-path-bench
 #   --check    exit 1 unless each ceilinged row is at or under its ceiling in 2 of the last 3 logs
 #   (none)     print the latest log beside the ceilings
+#
+# spawn_exec is `run.start` to the exit of a run that boots lain, not to a chat's registration.
 #
 # Not a spec: a record takes minutes, and a time asserted in a spec is a flake.
 #
@@ -57,11 +60,17 @@ module HotPathBench
     "wire_ready" => 17.1,
     "credential_scan_assignment" => 37.7,
     "credential_scan_gated" => 63.7,
-    "mask_list_warm" => 4.45
+    "mask_list_warm" => 4.45,
+    "spawn_exec" => 879
   }.freeze
 
   SCAN_SIZE = 100_000
   SCAN_REPS = 21
+  SPAWN_REPS = 11
+  SPAWN_POLL = 0.002
+  SPAWN_DEADLINE = 30
+  # Stands in for exe/lain and sends it `help`: a real chores run would do work this row must not time.
+  SPAWN_STAND_IN = "ARGV.replace(%<argv>s)\nload %<exe>s\n"
 
   HotPaths = Lain::Bench::HotPaths
 
@@ -73,7 +82,7 @@ module HotPathBench
 
   def measure
     hot_paths = HotPaths.new
-    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths)].map(&:to_h))
+    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths), spawn_exec_row(hot_paths)].map(&:to_h))
   end
 
   # A backtracking shape stalls every read and write it guards on a long unbroken line; Ruby cannot
@@ -102,6 +111,60 @@ module HotPathBench
      "A_PASSWORD=\"$(#{a}", %("password": "#{a}), %("password": "${#{a}), "postgres://#{a}",
      "postgres://a:#{"b" * SCAN_SIZE}", "postgres://a:$#{"B" * SCAN_SIZE}", "ghp_#{a}",
      "Authorization: Bearer #{a} ", "Authorization: Bearer x" * (SCAN_SIZE / 25), "a:" * (SCAN_SIZE / 2)]
+  end
+
+  # spawn_exec times `run.start` up to the exit of a run that boots lain (exec, ruby boot, `require "lain"`,
+  # Thor's parse, `help`). It is not registration. A forked-parent row must time the same endpoint to compare.
+  def spawn_exec_row(hot_paths)
+    Dir.mktmpdir("spawn") do |dir|
+      env = spawn_env(dir)
+      launch = spawn_launch(dir, env)
+      return spawn_skipped unless File.executable?(launch.binary)
+
+      Sync { measured_spawns(hot_paths, launch, Lain::Paths.new(env:), env, dir) }
+    end
+  end
+
+  def spawn_skipped
+    HotPaths::Row.new(name: "spawn_exec", median_ms: nil, spread_ms: nil, reps: 0, skipped: "lain-daemon is not built")
+  end
+
+  def spawn_env(dir)
+    ENV.slice(*PASSED_THROUGH).merge("XDG_RUNTIME_DIR" => dir, "XDG_STATE_HOME" => File.join(dir, "state"),
+                                     "XDG_CONFIG_HOME" => File.join(dir, "config"),
+                                     "XDG_CACHE_HOME" => File.join(dir, "cache"), "HOME" => dir)
+  end
+
+  def spawn_launch(dir, env)
+    stand_in = File.join(dir, "stand-in", "lain")
+    FileUtils.mkdir_p(File.dirname(stand_in))
+    exe = REPO_ROOT.join("exe/lain").to_s
+    File.write(stand_in, format(SPAWN_STAND_IN, argv: ["help"].inspect, exe: exe.inspect))
+    Lain::Daemon::Launch.current(paths: Lain::Paths.new(env:), env:).with(lain: stand_in)
+  end
+
+  def measured_spawns(hot_paths, launch, paths, env, dir)
+    client = Lain::Daemon.ensure(paths:, env:, launch:)
+    root = File.join(dir, "project")
+    FileUtils.mkdir_p(File.join(root, ".git"))
+    # The child's HOME and cache are fresh, so the first run would pay a bootsnap compile a real run does not.
+    ran(client, root)
+    hot_paths.measure(SPAWN_REPS, name: "spawn_exec") { ran(client, root) }
+  ensure
+    client&.stop
+    Lain::Daemon.stop(paths:)
+  end
+
+  def ran(client, root)
+    id = client.call("run.start", [{ "kind" => "chores", "root" => root }]).fetch("id")
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + SPAWN_DEADLINE
+    until client.call("run.list").find { _1["id"] == id }.fetch("status")
+      if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        raise "spawn_exec: run #{id} had not ended in #{SPAWN_DEADLINE}s"
+      end
+
+      sleep(SPAWN_POLL)
+    end
   end
 
   def record
