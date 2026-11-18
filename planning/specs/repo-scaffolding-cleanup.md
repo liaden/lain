@@ -1,6 +1,6 @@
 # Repo scaffolding cleanup
 
-status: in-progress
+status: done  head: f90c0c181b1b90f3d1107647a7960202da83e5db
 base: cb517990c75dcbae6fe9852eb3d28126951c73b2
 commit-mode: orchestrator-commits
 language: ruby (cards S5, S6, S16 are bash and YAML)
@@ -1099,3 +1099,20 @@ Paths that need user approval: none.
 - 17:48: S12 landed a96c4cb7
 - 17:48: S12 landed a96c4cb7 (attempt 1).
 - 17:51: F1 added for the repeat flake (workspace_profile rspec seam STUCK at a 0.21 CPU share). S13 rebased onto a96c4cb7 by the main session (shared-file conflict with S12, both sides kept); review started (medium).
+- 17:52: F1 started (cut from 73fd2ba4).
+- 17:54: S13 APPROVE-WITH-FIXES: casgn and match_var names missed (old lexer caught them), Forbidden lists unpinned, 1 comment made false by the card, 3 surviving mutants, 2 comment nits. Sent back; dequeue via send/public_send left out (old spec missed it too).
+- 17:57: F1 handed back. Cause: the seam copied the whole checkout (9GB ignored apps/lain-remote/target) inside its watch window; STUCK was correct. Fix: copy only the entries the nested runs read. The card's Starvation acceptance (main-session hypothesis) was disproved; the main session dropped it, since meeting it needed a looser threshold. Review started (medium).
+- 18:04: S13 landed cd2760b3
+- 18:04: S13 landed cd2760b3 (attempt 1). Note: rubocop run in a worktree under tmp/ also loads main's .rubocop/ cops, so a card editing an existing cop is linted by main's copy.
+- 18:06: F1 APPROVE-WITH-FIXES: cause confirmed by probes (old copy 6.7s CPU/14.5s wall at load 9, new 0.2s). Wording overclaims, exe unused, .ruby-version missing, the sibling fence-crate example covered by the same fix. Sent back.
+- 18:10: F1 landed f90c0c18
+- 18:11: F1 landed f90c0c18 (attempt 1). All cards landed.
+- 18:20: Integration checks.
+  1. rake pspec: 36265 examples, 0 failures, 15 pending; the LAIN_SLOW=1 dry-run also counts 36265, so no worker died. Base dry-run at a994effd was 36212; the net +53 is the 7 deleted specs' examples out and the new cop, prune, bootsnap and changed-paths specs in.
+  2. pre-commit run --all-files: every hook passed, the 6 new ones included.
+  3. bundle exec rubocop: 2784 files, 0 offenses, 58.3s wall. No base wall time was taken.
+  4. CI on main: not run; main is 32 commits ahead of origin and pushing is the user's call.
+  5. git status lists none of S1's files.
+  6. tmp/cache 96M (was 83G at grounding, 85G at the cut), tmp/worktrees 4.0K (was 21G).
+  7. Mac pass: owed by the user (limactl validate and start, a Landlock ABI from lain-fence, update lain-macos-bringup.md).
+- Close-out: the 82 merged card worktrees and branches from earlier plans were removed on purpose by S2's prune, with archives in tmp/worktree-archive/. Every pre-commit stash was restored. Pre-staged user work re-staged after this commit.
