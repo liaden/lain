@@ -1,18 +1,5 @@
 # frozen_string_literal: true
 
-# Split from streaming.rb -- see that file's header. Building the `on_data` proc
-# Faraday calls is a distinct concern from the SSE parsing the engine does with
-# the bytes once they arrive, and the split keeps `Streaming` under the default
-# `Metrics/ModuleLength` without loosening the cop.
-#
-# {StallClock} and {StalledStreamError} are Lain's, not upstream's, and they
-# live here because this file is the one place in the stack that learns a body
-# byte arrived. A Faraday middleware cannot see an inter-chunk gap -- by the
-# time its `call` returns the body is finished -- so the clock is split at the
-# only line where each half is knowable: the middleware
-# ({Connection::MiddlewareStack::StallProtection}) owns the request's SCOPE,
-# and the `on_data` proc below owns the TICKS.
-
 module Lain
   class Provider
     module HTTP
@@ -67,9 +54,17 @@ module Lain
         # reachable deliberately -- so do not write a clock spec that assumes it
         # away.
         #
+        # This and {StalledStreamError} are Lain's, not upstream's, and they live
+        # here because this file is the one place in the stack that learns a body
+        # byte arrived. A Faraday middleware cannot see an inter-chunk gap -- by
+        # the time its `call` returns the body is finished -- so the clock is
+        # split at the only line where each half is knowable: the middleware
+        # ({Connection::MiddlewareStack::StallProtection}) owns the request's
+        # SCOPE, and the `on_data` proc below owns the TICKS.
+        #
         # The full account -- the two wrong slots and what each measured, the
         # adapter assumption that retires, all five landing places, and what is
-        # still owed -- is in docs/providers/stall-clock.md.
+        # still owed -- is in docs/devs/stall-clock.md.
         class StallClock
           # A key in the FARADAY REQUEST CONTEXT -- the request's own carrier
           # rather than an ambient slot.
@@ -403,6 +398,11 @@ module Lain
         end
 
         # Builds the Faraday `on_data` proc.
+        #
+        # Split from streaming.rb -- see that file's header. Building the proc
+        # Faraday calls is a distinct concern from the SSE parsing the engine
+        # does with the bytes once they arrive, and the split keeps `Streaming`
+        # under the default `Metrics/ModuleLength` without loosening the cop.
         module FaradayHandlers
           module_function
 
