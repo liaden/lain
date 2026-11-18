@@ -192,13 +192,19 @@ code at HEAD and none has been driven yet, so the first round that runs one corr
 | [`session-tree-and-export.md`](scenarios/session-tree-and-export.md) | Does `lain://tree` draw the chain, abandoned branches and fork rows truthfully, do `<CR>` rewind and `L` / `/label` act on the right turn and survive `--resume`, and do `lain export` and `/share` carry only the model's masked view with paths rewritten and a released read refused? | cockpit plus about 5 local completions; export and share offline; a stand-in `gh` |
 | [`notifications.md`](scenarios/notifications.md) | Does the in-pane bell ring at once while the desktop and `notify-feed` notices for a blocked or finished agent wait `attention delay:` and skip the window you are looking at, does `quiet` silence them, does a chat with no tracker keep the old immediate notices, and does a note never carry a secret or a control byte? Also the editor's echo of a settled ask. | cheap; 3 short local asks; stand-in `notify-feed` and `tmux` |
 | [`herdr.md`](scenarios/herdr.md) | Inside herdr, does lain report its state and resume command only to a pane it can prove is its own, leave Claude Code's panes untouched, set `lain_parked` on `/park`, open `/fork` and `--windows` as herdr tabs once `lain herdr link` is done, and report each watched child from its tab? | a stub herdr, then an isolated real herdr session; the user's own herdr only by read-only `agent get` |
-| [`remote-phone.md`](scenarios/remote-phone.md) | Can a human answer a parked call, a question or a deferred gate from a paired phone with the desk's authority, masked as the desk masks, while a revoked device, a dead relay, a bad socket directory and a slow ntfy topic cost nothing but the phone? Config refusals, `lain remote pair` and `revoke`, the `relay` window of `lain up`, ntfy's one notice per item and its reminder after a restart. The `apps/lain-remote` desktop app reaching the relay over the tailnet address only, and an emulated Android device as a second tailnet node. | cheap; 3 short local asks; a built `lain-core`, a stand-in ntfy topic; `tailscaled` up for §6, `dx`, the Android SDK and Waydroid or KVM for §7 |
+| [`remote-phone.md`](scenarios/remote-phone.md) | Can a human answer a parked call, a question or a deferred gate from a paired phone with the desk's authority, masked as the desk masks, while a revoked device, a dead relay, a bad socket directory and a slow ntfy topic cost nothing but the phone? Config refusals, `lain remote pair` and `revoke`, the phone relay lain-daemon runs as a confined worker, ntfy's one notice per item and its reminder after a restart. The `apps/lain-remote` desktop app reaching the relay over the tailnet address only, and an emulated Android device as a second tailnet node. | cheap; 3 short local asks; a built `lain-daemon`, a stand-in ntfy topic; `tailscaled` up for §6, `dx`, the Android SDK and Waydroid or KVM for §7 |
 
 **Added 2026-11-16**: the review queue, the offer, the HUD count and the configured GitHub account. Written from the code at HEAD and not yet driven:
 
 | Scenario | The question it answers | Cost |
 |---|---|---|
 | [`review-queue.md`](scenarios/review-queue.md) | Does `lain queue` list what waits for review with no model call, does a row reach 1 chat in its own checkout as an offer that runs nothing until Enter (accepted, dropped, held for the next cockpit, refused when forged), does the poll write the count every HUD shows, and does every `gh` lain runs act as the configured account with its token masked in bash? Real fzf in a pty; a stand-in `gh`, herdr and `notify-feed`. | cheap; 2 short local asks; the live half needs a throwaway personal pull request |
+
+**Added 2026-11-18**: the per-user daemon. Written from the code at main and not yet driven:
+
+| Scenario | The question it answers | Cost |
+|---|---|---|
+| [`daemon.md`](scenarios/daemon.md) | Does lain-daemon start on demand and only on demand, replace itself only when idle, survive a kill under a chat, keep 2 chats and 1 phone apart with a shared gate shown once, buzz ntfy once per item, route a queue offer to the newest attended chat, run a headless epic that outlives its terminal and asks on the phone, hold a call on silence, poll on a timer and after a reboot, report to herdr's `lain` workspace, replace a stale spawner, and refuse a fake chat registered from a chat's bash while the agent's bash cannot answer for you? | cheap for most; a paired client for the phone sections; a local model for the headless epic |
 
 [`changeset-review.md`](scenarios/changeset-review.md) gained §10, `/review --since` and `--critique`.
 
@@ -756,8 +762,8 @@ a full directory does not read as completeness:
   `protected_patterns` are composed by no live pipeline path a flag selects. `Context::Recall` is
   explicitly opt-in and unwired — see `memory-and-dogfood.md`'s note, which exists so the next round
   does not go looking for it.
-- **`Exec::Core` and the `lain-core` daemon.** Removed on 2026-10-17 (`6c25ea68`, `fe4566eb`; `lain-core` is kept as a
-  wire seed only), so there is nothing to drive.
+- **`Exec::Core` and the `lain-core` daemon.** Removed on 2026-10-17 (`6c25ea68`, `fe4566eb`), and `lain-core` is retired
+  since: the per-user `lain-daemon` replaced it (`daemon.md`), so there is nothing to drive.
 - **The forge half of the review tier.** `Source::GithubPr`, `lain epic land`'s promote/merge path,
   and `/review-submit` actually posting all need github.com. `changeset-review.md` and `epic-tier.md`
   drive the **boundary** — that a local-branch review refuses to post, and that `land` refuses before

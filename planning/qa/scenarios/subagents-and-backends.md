@@ -519,12 +519,8 @@ Then, inside tmux, spawn two subagents and check:
 
 ## 7 — What this scenario still cannot reach
 
-- **`Exec::Core` and the `lain-core` daemon.** Not reachable from a flag by design (§1). Reaching it
-  needs a driver that starts a client and calls the backend directly — a `bundle exec ruby`
-  harness, not a chat — and `bundle exec rake core:build` first. There is no shipped tool that
-  builds one: the tool that used to serve as that driver was deleted as unreachable. Named here
-  because "no scenario covers it" should not read as "nothing covers it": the `:core`-tagged specs
-  do, and what is missing is a human at the gate, not coverage.
+- **`Exec::Core` and the `lain-core` daemon.** Both are gone: there is no `Exec::Core` backend and no `rake core:build`,
+  and the per-user `lain-daemon` replaced `lain-core` (`daemon.md`). Nothing here to reach or cover.
 - **Isolation under concurrency.** The one-run-per-project precondition above is a *precondition*,
   not a property under test. Whether two concurrent runs actually corrupt each other is a question
   this scenario deliberately does not ask, because asking it destroys the answer.

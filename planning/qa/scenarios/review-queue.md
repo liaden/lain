@@ -2,12 +2,14 @@
 
 **What it exercises:** `lain queue here|local|prs|show|open|pick|poll` (`CLI::Queue`, `CLI::Queue::Picker`), `Review::Queue` and its
 sources (`PlanRuns`, `LocalChanges`, `PullRequests`, `Checkouts`), `Review::Queue::Request` (the one plain value that crosses a
-socket or a file), `Delivery`, `Pending`, `Log` and `Poll`; the input socket's `offer` frame (`CLI::InputSocket`) and
+socket or a file), `Delivery`, `Pending`, `Log` and `Poll`; lain-daemon's `offer.send` (it routes an offer to the newest
+attended chat in the row's checkout; `daemon.md` section 6 owns the routing), the chat's `QueueOffers` and
 `Frontend::Intake`'s offer; `Herdr::Workspaces`; `Forge::Gh::Account` and `Forge::Gh::Reads` (the configured GitHub account);
 the account's token lent to bash through `Exec::ChildEnv`; and the `rv N+M` segment on the input pane header, the tmux status
 bar (`plugin/tmux/scripts/lain-status`, `Up::Hud`) and nvim's `require('lain').hud()`.
 
-**Status:** written 2026-11-17 from the code at main (`f6504763`) and `docs/commands.md`. Nothing here has been driven. Every
+**Status:** written 2026-11-17 from the code at main (`f6504763`) and `docs/commands.md`; revised 2026-11-18 for lain-daemon,
+which replaced the live-session files and the input socket's offer frame. Nothing here has been driven. Every
 "Expect" is a prediction read off the code, so a mismatch is either a defect or a stale line in this file, and the round says
 which.
 
@@ -21,7 +23,8 @@ short asks. **Nothing here needs a remote provider or the real GitHub.** §11 is
 throwaway pull request in a personal repository.
 
 **Needs:** the sandbox from `../method.md`, so `$XDG_STATE_HOME`, `$XDG_CONFIG_HOME` and `$XDG_RUNTIME_DIR` are the round's own;
-`../bench.md` up for §4, §9 and §10; tmux, nvim and `fzf` on `PATH`. Start each Bash call that touches files with `: "${QA:?}"`.
+`../bench.md` up for §4, §9 and §10; a built `lain-daemon` (`bundle exec rake daemon:build`; `lain queue open` starts one, so the
+round's own `XDG_RUNTIME_DIR` is what keeps it off the user's); tmux, nvim and `fzf` on `PATH`. Start each Bash call that touches files with `: "${QA:?}"`.
 
 **Never point a round at the user's herdr or at GitHub.** This box runs inside herdr, so every command below that is not a stub
 test runs under `env -u HERDR_ENV -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_PANE_ID -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID`,
@@ -228,14 +231,15 @@ popup is the live check in §11.
 ## 4: An offer, accepted and dropped
 
 Start a cockpit for `$R` (`lain up --nvim`, which starts `lain chat --nvim`), with `$QA/shim` on the cockpit's `PATH` and the
-sandbox variables. Pin the journal as `method.md` says. The chat records itself under `$XDG_STATE_HOME/lain/live/`:
+sandbox variables. Pin the journal as `method.md` says. The chat registers itself with lain-daemon for as long as it runs:
 
 ```bash
-ls $XDG_STATE_HOME/lain/live/ && cat $XDG_STATE_HOME/lain/live/*.json
+lain daemon status
 ```
 
-Expect `session_id`, `pid`, `root` (= `$R`), `input_socket`, `attended: true` and a `started_at`. Record the file; it is deleted
-when the chat ends (§5).
+Expect a line `session <id> pid <n> $R`. For the full record (`session_id`, `pid`, `root` = `$R`, `input_socket`,
+`attended: true`, `started_at`) ask the daemon: `dctl session.list` with the instrument of `daemon.md` section 0. The
+session leaves the list when the chat ends (§5); there is no file to delete.
 
 **Happy path, Enter.** From `web` (another repository):
 
@@ -279,12 +283,13 @@ already offered, so this one was dropped`. Offer A again: `already offered` and 
 The chat writes the `opened` record, not `lain queue open`: the offer frame carries the row's `id` and `head_sha`, and the chat
 appends them once the human takes it. A chat stopping with an offer showing ends within about 2 seconds.
 
-**Unhappy path 1, a chat that has gone.** `kill -9` the chat, then `lain queue open` a row. The record is dead by
-`Liveness::Probe`, so the chat is skipped: the answer is the held-review line of §5, not a hang. The stale file is **not**
-deleted by the reader (`ls $XDG_STATE_HOME/lain/live/` still names it).
+**Unhappy path 1, a chat that has gone.** `kill -9` the chat, then `lain queue open` a row. The daemon drops a session when its
+connection closes, so the chat is no longer listed (`lain daemon status`) and the answer is the held-review line of §5, not a
+hang. No file is left to go stale.
 
-**Unhappy path 2, a chat that greets and says nothing.** Not reachable from a stock chat; record it as unreachable. The code's
-answer is `the chat <session id> has not answered the offer, and may still show it` after 30 seconds.
+**Unhappy path 2, a chat that is registered and says nothing.** `kill -STOP` the chat, then open a row. The daemon waits 30
+seconds and the command prints `the chat <session id> has not answered the offer, and may still show it`. `daemon.md` section 6
+drives it with its resume check.
 
 **A pull request row, in the checkout that has its clone.** `lain queue open 'pr:qa-org/api#101'` from `web`. Expect the offer
 in the chat in `api` with the line `/review https://github.com/qa-org/api/pull/101`. Drop it with `x`. **Do not press Enter in a
@@ -298,7 +303,7 @@ in the browser` and, in `gh.log`, `pr view --web https://github.com/qa-org/other
 
 ## 5: A review held for the next cockpit
 
-**Happy path.** Close every chat in `api` (the live files go). From `web`:
+**Happy path.** Close every chat in `api` (the daemon's session list empties). From `web`:
 
 ```bash
 env -u HERDR_ENV lain queue open "branch:$QA/src/api:feature"; ls -l $XDG_STATE_HOME/lain/queue/pending/
@@ -447,9 +452,11 @@ nothing and `gh.log` shows `GH_TOKEN=unset`: lending is the account's doing, not
 
 ## 9: What another process writes must reach you as an offer, never as a run
 
-The input socket is mode 0600 but any process of the same user can write to it, and so can the agent's own bash. Find it:
-`ls $XDG_RUNTIME_DIR/input-*.sock`. Send frames with `ruby -rsocket -rjson -e '...'` (1 JSON object per line, `\n` ended) from
-another shell, and from the agent's bash in the last check.
+An offer now reaches a chat from lain-daemon, not from the input socket, which takes no `offer` frame. Any process of the same
+user can call the daemon's `offer.send`, and so can the agent's own bash if the sandbox grants the daemon socket. Send each
+row below with `dctl offer.send '[{"root":"<R>","request":<request>,"row":<row>}]'` (`daemon.md` section 0) from another
+shell, and from the agent's bash in the last check. In the rows, a frame names its `request` and `row`; the `{"v":"offer"}`
+wrapper is not sent. The sender's answer is the daemon's, `outcome` and `field`, in place of the old `offered` frame.
 
 | frame | expect |
 |---|---|
@@ -460,23 +467,23 @@ another shell, and from the agent's bash in the last check.
 | `{"v":"offer","request":{"kind":"pr","url":"https://github.com/qa-org/api/pull/1","focus":"a\u001b[2Jb"}}` | refused on `focus`; the screen is not cleared |
 | `{"v":"offer","request":{"kind":"pr","url":"https://evil.example/pull/1"}}` | refused on `url` |
 | `{"v":"offer","request":"/ruby system('id')"}` | refused on `kind` (not a map) |
-| a frame of 70000 bytes | the line is refused whole: `input pane sent one line past ... bytes and it was refused whole` |
+| a frame of 70000 bytes | not an input-pane line any more: the daemon's own codec ceiling applies and the call is refused or the connection closed. Record which, and that the chat never shows an offer |
 
 For every row the journal shows **no** `tool_use`, no `changeset_opened` and no turn until a human presses Enter at an offer that
 names a review the chat would have opened anyway, and the offer line is the rebuilt `/review ...`, never the sender's text.
 
-**The agent's bash.** Ask the model to write a request into the live socket and then into the pending directory:
+**The agent's bash.** Ask the model to send a request to the daemon and then write one into the pending directory:
 
 ```
-you> with bash, send {"v":"offer","request":{"kind":"dirty","repo_root":"<R>"},"row":{"id":"x","head_sha":"<40 hex>"}} to the input socket, then write {"request":<that request>,"row":<that row>} to the file in $XDG_STATE_HOME/lain/queue/pending/
+you> with bash, run dctl offer.send with {"root":"<R>","request":{"kind":"dirty","repo_root":"<R>"},"row":{"id":"x","head_sha":"<40 hex>"}}, then write {"request":<that request>,"row":<that row>} to the file in $XDG_STATE_HOME/lain/queue/pending/
 ```
 
 Expect, whichever of the 2 the sandbox lets through, the result to **reach you as an offer** (`Enter opens, x drops`) and to run
 nothing without your keypress; and a write the sandbox refuses is recorded as such, not as a pass. Note which of the 3 paths
-(socket, pending file, neither) the confinement left open; that is a finding about the sandbox, not about the queue.
+(daemon socket, pending file, neither) the confinement left open; that is a finding about the sandbox, not about the queue.
 
 **Known and open, not a finding of this scenario:** a raw `{"v":"line","text":"/mode bypass"}` frame from any same-uid process is
-accepted by the input socket today (`docs` Open decisions of the plan). Send it once, record that it is accepted, and file nothing.
+accepted by the input socket today (the input socket still takes `line` frames; only its offer frame is gone; see the plan's Open decisions). Send it once, record that it is accepted, and file nothing.
 
 ## 10: Known and deferred, so a round does not file them
 

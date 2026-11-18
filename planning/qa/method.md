@@ -46,7 +46,7 @@ QA=~/tmp/lain-qa-<date>
 export XDG_CONFIG_HOME="$QA/xdg/config"   # -> $QA/xdg/config/lain
 export XDG_STATE_HOME="$QA/xdg/state"     # -> $QA/xdg/state/lain/sessions/<project_hash>
 export XDG_CACHE_HOME="$QA/xdg/cache"
-export XDG_RUNTIME_DIR="$QA/xdg/runtime"  # -> $QA/xdg/runtime/lain   (nvim + lain-core sockets)
+export XDG_RUNTIME_DIR="$QA/xdg/runtime"  # -> $QA/xdg/runtime/lain   (nvim + lain-daemon sockets)
 chmod 700 "$QA/xdg/runtime"
 ```
 
@@ -104,7 +104,7 @@ exits 1 on a server with no panes, so an empty check cannot pass.
 
 Two more, both verified:
 
-- `XDG_RUNTIME_DIR` relocates the **nvim and lain-core** sockets. It does **not** relocate the tmux
+- `XDG_RUNTIME_DIR` relocates the **nvim and lain-daemon** sockets. It does **not** relocate the tmux
   server socket, which lives under `TMUX_TMPDIR` or `/tmp/tmux-<uid>` and ignores XDG entirely —
   `-L` is the lever there.
 - **Check `~/.lain` does not exist before act 1.** A stray `~/.lain/state.json` makes every directory

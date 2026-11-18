@@ -7,7 +7,7 @@
 `apps/lain-remote` (§6 on the desktop, §7 on an emulated Android device).
 
 **Status:** written 2026-11-04 from the code at HEAD (`5d769e5f`: `cli/remote.rb`, `remote/devices.rb`, `remote/agenda.rb`,
-`approval/remote_surface.rb`, `cli/up.rb` `class Relay`, `config/builder.rb`, `crates/lain-core/src/relay.rs`).
+`approval/remote_surface.rb`, `config/builder.rb`, `crates/lain-daemon/src/relay.rs`).
 Revised 2026-11-17 when the relay moved into lain-daemon: `lain up` opens no relay window, `lain-core relay` is no
 longer the phone path, and the chat publishes through its daemon registration rather than a per-project socket.
 The ntfy notice moved the same day: `remote/ntfy.rb` is gone, and `crates/lain-daemon/src/agenda_watch.rs` and
