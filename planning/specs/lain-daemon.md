@@ -1122,7 +1122,7 @@ Scenario: the parent stays a blank slate
 Scenario: lain's own code changed
   Given the install digest (path, mtime and size of every file under lib/, exe/lain and lib/lain/lain.so) differs from the one taken at boot
   When the next request arrives
-  Then the spawner replies :stale and exits, and the daemon restarts it before retrying
+  Then the spawner replies :stale, reports its live runs' exits, then exits, and the daemon restarts it before retrying (ruling 2026-11-18)
 ```
 
 Spec file: `spec/lain/daemon/spawner_spec.rb` (`:seam`, real fork)
@@ -1194,6 +1194,36 @@ Spec file: none (QA documents).
 **Stop and report if:**
 - A scenario needs a paired phone and none is available. Mark it manual-only.
 
+### D27: Document the daemon, the phone path and self-hosted ntfy          [risk: low]
+
+**Depends on:** D18, D19, D22 (docs-only tail; may start once D22 lands)
+**Files:** `README.md`, `ARCHITECTURE.md`, `docs/remote.md` (new), `docs/commands.md`, `docs/GLOSSARY.md`, `CLAUDE.md` (only if a rule changes)
+**Reuse:** the user rulings of 2026-11-16 and 2026-11-17 in this plan; `docs/commands.md`'s `### lain daemon` section; the ntfy setup done on the dev box (ntfy release binary in `~/.local/bin`, `~/.config/ntfy/server.yml` listening on the tailscale address only, `ntfy-local.service`).
+**Shared-file wiring:** none
+**Reachable from:** a new user reading README.md; a developer reading ARCHITECTURE.md.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a user can set up phone approvals from the README
+  Then README.md says what the daemon does, how it starts (`lain daemon ensure`, a login hook), and links docs/remote.md
+  And docs/remote.md walks through: the tailscale relay address, pairing the phone, `remote relay:` and `remote ntfy:` in ~/.config/lain/config.rb, `lain trust --user`, and `lain chat --non-interactive --human remote`
+
+Scenario: ntfy is self-hosted by default in the docs
+  Then docs/remote.md recommends a self-hosted ntfy listening only on the tailscale address, with the steps used on the dev box (release binary checked against its checksums, server.yml, a user service, the app's instant delivery), and names ntfy.sh only as an option with what it would see (titles naming the requester, the item link, timing, the box's IP)
+
+Scenario: the trust boundaries are written down
+  Then docs/remote.md states what crosses the tailnet and what never does, that a phone-approved bash call runs traced like a terminal approval (user ruling 2026-11-17), that ANTHROPIC_API_KEY alone passes to supervised runs and never to the relay worker, and the follow-ups still open
+
+Scenario: developers find the daemon in ARCHITECTURE.md
+  Then ARCHITECTURE.md has a lain-daemon section covering the registry, the confined relay worker, ntfy from the main daemon, the run supervisor and its env allowlist, the periodic review poll and the spawner, each pointing at its source file
+```
+
+Spec file: the existing docs specs (`spec/docs_naming_spec.rb`, `spec/docs_config_examples_spec.rb`) and any spec that reads README.md or ARCHITECTURE.md.
+
+**Stop and report if:**
+- A documented step does not work as written on this box.
+
 ### F1: Fix the project_dir_spec governed-path scan's cost          [risk: low]
 
 **Depends on:** none
@@ -1239,6 +1269,24 @@ Scenario: a refused first showing is never settled for nothing
 ```
 
 **Stop and report if:** the only fix found is a longer timeout. That goes to the user.
+
+### F4: Keep the developer's real home out of specs          [risk: low]
+
+**Depends on:** none
+**Files:** `spec/support/spec_home.rb` (new), `spec/isolated_home_spec.rb` (new), every spec that builds `Paths.new(env:` from a hash naming neither HOME nor XDG_CONFIG_HOME (55 files at landing)
+**Why:** D23's landing 1 went red with 8 examples raising Untrusted once a real `~/.config/lain/config.rb` existed. A Paths built from an env hash without HOME falls back to Dir.home, the developer's real home.
+
+```gherkin
+Scenario: a real user config never runs inside a spec
+  Given an untrusted config.rb under the home a spec would fall back to
+  Then no example reads it, because SpecHome.env gives each such hash a per-run temp HOME
+
+Scenario: a new bare hash is caught
+  When a spec builds Paths.new(env: {...}) with neither key and without the helper
+  Then the guard spec fails, naming the site
+```
+
+**Stop and report if:** the fix changes what Dir.home or ENV["HOME"] answer for the whole suite (rejected in review: it broke a child-env example, sent 6 cargo examples to pending and neutered 5 leak guards).
 
 ## Main-session dotfiles steps
 
@@ -1500,3 +1548,36 @@ Run log after the cc8f51a0 checkpoint:
 - 18:30 to 20:00 D17: stopped on scope, widened; user ruling on phone-approved bash; review 1 asked for changes (reach controls, remote wiring, rename, local relay check); review 2 approved.
 - 20:05 D17 landed 2f21480c.
 - Checkpoint after D17: no agents in flight. Ready next: D16.
+
+Carried notes and rulings after the 911588e9 checkpoint:
+
+- D16 (user rulings 2026-11-17): runs carry no `--max-cost`; ANTHROPIC_API_KEY, and only that name, passes Launch to daemon to runs, never to the relay worker or the ps child. The epic argv gains `--epic <slug>`; run.stop's grace is 70 s (the chat's own shutdown grace is 60 s); the launch digest hashes whether the key is present.
+- D19: a bare github verb with no keys reads as no verb, so it does not poll (accepted). `Config.user_github?` decides the flag.
+- D18: status, runs and stop only attach (`Daemon.attached`); `restart --force` names the runs it leaves.
+- D20: widened to main.rs. A run is matched to its session by (pid, start) through the session's ancestry; herdr-sync is coalesced to 1 a second and bounded at 30 s; an empty runs string clears the token. The run's start is read in its reaper task, so a session registering before that read cannot match (accepted; the chat registers seconds later).
+- D23: spawn_exec times run.start to the exit of a stand-in run that boots lain (`exe/lain help`), seeded at 879 ms from 3 logs at load 1.28 to 1.46 (medians about 700 ms).
+- D21: `spec/output_discipline_spec.rb` joined with 1 allowlist entry for lain/daemon/spawner.rb (a forked run reopens its own fds 1 and 2), pinned. The stale scenario now reads "replies :stale, reports its live runs' exits, then exits" (ruling 2026-11-18). The child exit is shared with exe/lain's ChatPreflightFork as `lib/lain/forked_exit.rb`, which now prints a setup failure before exiting 1. ThreadSafety/DirChdir excludes spawner.rb in .rubocop.yml.
+- D22: serde_json and main.rs joined. No unsafe pre_exec; inherited fds are kept out by CLOEXEC and Daemon.ensure's close_others. The spawner starts lazily (the first run boots it by exec). A fork answering after the 10 s bound is killed; registration runs in its own task so a dropped caller cannot orphan a run. spawn_fork measured 42 to 44 ms against spawn_exec 705 to 717 ms (about 16x); private memory about 9 MB a run.
+- F4 added (below F3): spec config isolation, found when the user's real config went in during D23's landing.
+- D27 added (below D24): the README and developer docs the user asked for on 2026-11-18.
+- Dotfiles: E1 to E3 done 2026-11-18 on the Linux box (dotfiles 249f635). The unit needs RemainAfterExit=yes, or systemd reaps the daemon when the oneshot ends. ntfy runs locally as ntfy-local.service on the tailscale address (self-hosting on mnemosyne later). The Mac's launchd steps are left to the user.
+- User 2026-11-18: /profile of current bottlenecks was asked for after the remaining cards, then held in favour of the dotfiles steps.
+
+Follow-ups with no card yet (added):
+- Prune ended runs and their logs (the poll alone adds 288 a day).
+- restart's live-run check then stop is a client-side race; needs a daemon-side guard.
+- `lain daemon status` should name the relay worker's exit reason.
+- Key presence in the launch digest swaps an idle daemon between keyless and keyed callers.
+- Launch::RUN_ENV passes no HERDR_SOCKET_PATH or HERDR_BIN_PATH; a daemon that dies leaves its herdr runs token stale; the user's herdr row template must reference `$runs`.
+- A lain-daemon started other than by Daemon.ensure can pass an inherited fd to the spawner and its runs.
+- remote_surface_spec assumes the relay worker is the daemon's only child.
+- The bench: request_1000000 and wire_ready read over ceiling in D23's worktree; compare with the base at close-out.
+
+Run log after the 911588e9 checkpoint:
+
+- D16 started 20:06; 3 reviews (signal race, --epic, key in digest); landed 7c00f49e 00:29.
+- D19 landed c14dc0b7 00:51 (2 reviews). D18 landed 216c2769 07:22 (3 reviews; a flake where stragglers matched the daemon's argv, fixed). D23 landed 28a5814a 07:39 (landing 1 red on the user's real config, which became F4).
+- D20 landed cc012ba6 08:03 (2 reviews). F4 landed 408edc76 08:49 (2 reviews; a Dir.home prepend rejected).
+- D21 landed ef8e687d 09:42 (3 reviews; landing 1 red: 36 examples starved by an OOM event on the box, 1 order-dependent count in the card's own spec).
+- D22 landed 44eb572b 10:38 (2 stops on scope, 3 reviews: an untracked fork on a cancelled start, a double run after a timeout, a stale-spawner teardown).
+- Checkpoint after D22: no agents in flight. Ready next: D24 and D27 (docs tails), then the 2 spawn_fork ceilings to seed.
