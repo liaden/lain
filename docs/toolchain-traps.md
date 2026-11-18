@@ -1045,6 +1045,16 @@ Unproven; counting only the example's own thread would settle it.
   in a landing hook at load1 1.2, after a reviewer saw it red 2 times in about 22 runs. It repeated,
   so it is a fix card in that run (F3), not a flake to budget a retry for.
 
+  Added 2026-11-18, from the lain-daemon run's landing hooks on a box short of memory (swap full,
+  the kernel OOM-killing desktop helpers, load1 31 to 40). Each hit the spec watchdog once and
+  passed alone: `the repository is not a spec fixture has no example generated from a scan of
+  repository content`, `refusal width discipline excludes the lua eval source that shares a file
+  with the rail's own refusals`, `A project's own tests inside the workspace profile passes the
+  fence crate's tests, none of them skipped`, and `Lain::Frontend::Neovim the inbox's open gesture,
+  end to end opens the set under the cursor in lain://question when the human presses enter`. 2
+  other hook runs that day went red on 13 and 36 starved examples across unrelated files under the
+  same memory pressure; with swap full, the landing ran green at `LAIN_SPEC_WORKERS=8`.
+
   A live demonstration of why this list is by NAME rather than by line: `buffers_spec.rb:329` was
   recorded by line in an earlier chunk, and one card in this one moved that same example to `:417`
   by adding 88 lines above it.
