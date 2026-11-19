@@ -345,6 +345,15 @@ module Lain
           # @return [String] the question a surface asks, in its own words
           def call_face = @mask.call(["#{tool}(#{input.inspect})", cwd_face].compact.join(" "))
 
+          # The command is masked before the cut, and the journal keeps this line instead of the input.
+          #
+          # @return [String] the tool and, for a shell call, its command, in one bounded line
+          def summary_face
+            command = input["command"] if input.is_a?(Hash)
+            ::Lain::Frontend::TTY::Notifier.plain([tool, (command if command.is_a?(String))].compact.join(" "),
+                                                  mask: @mask)
+          end
+
           # Where a relative path in the call lands, so a surface says it beside the call.
           #
           # @return [String, nil] nil when the call names no relative path
@@ -491,7 +500,8 @@ module Lain
           # hand-maintained list does not name them. Adding the field writes real
           # credentials into the Journal with no test to notice, since every test
           # here asserts the fields that ARE listed.
-          # {Telemetry::AwaitingHuman.approval} carries the identical note.
+          # {Telemetry::AwaitingHuman.approval} carries the identical note, and
+          # the command's text reaches the record only as its masked, cut `summary`.
           #
           # `tool_use_id` is what pairs this decision with its `awaiting_human`:
           # parallel calls park together and are decided in any order, so a count

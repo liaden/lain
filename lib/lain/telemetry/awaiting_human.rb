@@ -79,12 +79,14 @@ module Lain
       # keeping them out of the Journal is that this list does not name them.
       # No test would catch the field being added, because every test asserts
       # the fields that ARE listed. `input_digest` names the bytes without
-      # carrying them, and a decision's `tool` is its kind.
+      # carrying them, and a decision's `tool` is its kind. The command's text
+      # reaches the record by one route only, `summary`, which holds just
+      # `summary_face`: masked, then cut.
       #
       # @param pending [Approval::Parked::Queue::Pending]
       # @return [AwaitingHuman]
       def self.approval(pending)
-        new(kind: "approval", ref: pending.tool_use_id, deadline: pending.deadline, summary: pending.tool,
+        new(kind: "approval", ref: pending.tool_use_id, deadline: pending.deadline, summary: pending.summary_face,
             requester: pending.requester, tool: pending.tool, tool_use_id: pending.tool_use_id,
             humans_only: pending.humans_only?, notes: pending.notes, input_digest: pending.input_digest,
             spawn: pending.spawn)

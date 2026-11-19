@@ -8,9 +8,9 @@ RSpec.describe Lain::Telemetry::AwaitingHuman do
                         tool_use_id: "tu_1", **fields)
   end
 
-  def parked(**options)
+  def parked(command: "rm -rf build", **options)
     Lain::Approval::Parked::Queue::Pending.new(
-      effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "rm -rf build" }),
+      effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command }),
       identity: Lain::Requester.new(name: "the-agent"), clock: -> { 0.0 },
       wall: -> { Time.utc(2026, 11, 2, 9, 0, 0) }, timeout: 300, **options
     )
@@ -140,7 +140,33 @@ RSpec.describe Lain::Telemetry::AwaitingHuman do
       journaled = described_class.approval(parked).to_journal
 
       expect(journaled).to include("input_digest" => Lain::Canonical.digest("command" => "rm -rf build"))
-      expect(journaled.to_json).not_to include("rm -rf build")
+      expect(journaled).not_to have_key("input")
+    end
+
+    it "names the tool and the command in the summary" do
+      expect(described_class.approval(parked(command: "cargo test --release")).summary)
+        .to eq("bash cargo test --release")
+    end
+
+    it "masks a known value in the summary and still journals no input field" do
+      mask = ->(text) { text.gsub("hunter2", "<redacted:1>") }
+      journaled = described_class.approval(parked(command: "echo hunter2 done", mask:)).to_journal
+
+      expect(journaled).to include("summary" => "bash echo <redacted:1> done")
+      expect(journaled).not_to have_key("input")
+    end
+
+    it "cuts the summary at the notifier's limit" do
+      summary = described_class.approval(parked(command: "echo #{"a" * 500}")).summary
+
+      expect(summary.length).to eq(Lain::Frontend::TTY::TmuxMessage::LIMIT)
+    end
+
+    it "masks a value that straddles the limit before it cuts, so no prefix of it survives" do
+      mask = ->(text) { text.gsub("hunter2xyz", "<redacted:1>") }
+      summary = described_class.approval(parked(command: "#{"a" * 190}hunter2xyz", mask:)).summary
+
+      expect(summary).not_to include("hunt")
     end
 
     it "carries the Pending's notes and who may decide it" do

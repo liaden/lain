@@ -413,7 +413,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
       records = pending_records.to_a + decision_records.to_a
       expect(records.map { _1["input_digest"] }).to eq([Lain::Canonical.digest(call.input)] * 2)
-      expect(records.map(&:to_json)).to all(satisfy { !_1.include?("rm -rf build") })
+      expect(records).to all(satisfy { !_1.key?("input") })
     end
   end
 

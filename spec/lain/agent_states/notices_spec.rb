@@ -70,6 +70,20 @@ RSpec.describe Lain::AgentStates::Notices do
     expect(sent).to eq(["blocked: approve bash"])
   end
 
+  it "names the parked command, masked, in the notice a journaled approval produces" do
+    pending = Lain::Approval::Parked::Queue::Pending.new(
+      effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash",
+                                         input: { "command" => "cargo test --release" }),
+      identity: Lain::Requester.new(name: "main"), clock: -> { 0.0 }
+    )
+    subject = notices
+    tracker << request << telemetry::AwaitingHuman.approval(pending)
+    now[0] += 31
+    subject.tick
+
+    expect(sent).to eq(["blocked: bash cargo test --release"])
+  end
+
   it "says nothing about a wait settled within the delay, and never probes focus" do
     subject = notices
     change(tracker, blocked)
