@@ -31,8 +31,11 @@ module Lain
       # no other way to its key. The relay worker the daemon runs clears its env, so it never has it.
       PROVIDER_KEY = "ANTHROPIC_API_KEY"
 
-      # What a run the daemon starts needs beyond KEEP, which the daemon hands on to it whole.
-      RUN_NAMES = [*CLI::PaneCommand::RUNTIME_ENV, "SHELL", "OLLAMA_HOST", PROVIDER_KEY].freeze
+      # What a run the daemon starts needs beyond KEEP, which the daemon hands on to it whole. The
+      # provider profile names are here so a run with no requester chats on the daemon's own model;
+      # the digest hashes the pattern, never a value, so another shell's model restarts nothing.
+      RUN_NAMES = [*CLI::PaneCommand::RUNTIME_ENV, *CLI::EnvDefaults::READ, "SHELL", "OLLAMA_HOST",
+                   PROVIDER_KEY].freeze
       RUN_ENV = /\A(?:#{Regexp.union(*RUN_NAMES).source}|LC_\w+)\z/
 
       # @param paths [Paths] where the socket and trace go, the XDG homes the daemon is handed, and

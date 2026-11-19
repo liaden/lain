@@ -71,6 +71,14 @@ RSpec.describe Lain::Daemon::Launch do
       expect(handed).not_to have_key("LAIN_INTEGRATION")
     end
 
+    it "hands a run the provider, model, endpoint and runner knobs the daemon started with" do
+      profile = { "LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3-coder:30b",
+                  "LAIN_API_BASE" => "http://127.0.0.1:11434", "LAIN_NUM_CTX" => "32768", "LAIN_NUM_BATCH" => "4096" }
+      handed = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)), env: env.merge(profile)).env
+
+      expect(handed).to include(profile)
+    end
+
     # A user behind a required proxy has no other route to the topic.
     it "hands the daemon the proxy variables, in both cases" do
       proxies = %w[http_proxy https_proxy no_proxy HTTP_PROXY HTTPS_PROXY NO_PROXY].to_h { [_1, "http://proxy:3128"] }
@@ -93,6 +101,14 @@ RSpec.describe Lain::Daemon::Launch do
                                                          "XDG_SEAT"))
 
       expect(headless.digest).to eq(current.digest)
+    end
+
+    it "gives 2 launches that differ only in LAIN_MODEL's value the same digest" do
+      paths = Lain::Paths.new(env: SpecHome.env(env))
+      one = described_class.current(paths:, env: env.merge("LAIN_MODEL" => "qwen3:4b"))
+      other = described_class.current(paths:, env: env.merge("LAIN_MODEL" => "lfm2.5:latest"))
+
+      expect(other.digest).to eq(one.digest)
     end
 
     it "withholds a secret-shaped name even when the allowlist would take it" do

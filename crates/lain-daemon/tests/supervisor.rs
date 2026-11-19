@@ -566,6 +566,28 @@ async fn another_provider_takes_none_of_the_daemons_model_endpoint_or_runner_kno
 }
 
 #[tokio::test]
+async fn a_daemon_with_no_provider_of_its_own_drops_its_model_for_a_requesters_provider() {
+    // Intended for any requested provider, ollama included: the daemon's model belongs to no provider the requester named.
+    let mut daemon = daemon_with("exit3", &[("LAIN_MODEL", "daemons-own")]).await;
+    let project = daemon.project();
+    let (error, run) = daemon
+        .start(profiled(
+            bare("chores", &project),
+            &[("provider", Value::from("anthropic"))],
+        ))
+        .await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    let env = appeared(&daemon.probe().join("env")).await;
+    let lines = env_lines(&env);
+    assert!(lines.contains(&"LAIN_PROVIDER=anthropic"), "{lines:?}");
+    assert!(
+        !lines.iter().any(|line| line.starts_with("LAIN_MODEL=")),
+        "the daemon's model reached a run on another provider: {lines:?}"
+    );
+}
+
+#[tokio::test]
 async fn an_epic_run_takes_the_requesters_profile_in_its_env() {
     let mut daemon = daemon_with("exit3", &DAEMONS_OWN).await;
     let root = daemon.project().canonicalize().expect("the project");
