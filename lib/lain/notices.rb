@@ -34,7 +34,7 @@ module Lain
     # @return [Feed, Null]
     def self.for(env:, notes:)
       found = Shell::Path.find(PROGRAM, path: env["PATH"], filesystem: Candidates)
-      found ? Feed.new(program: found, notes:) : Null.new
+      found ? Feed.new(program: found, notes:, env:) : Null.new
     end
   end
 end

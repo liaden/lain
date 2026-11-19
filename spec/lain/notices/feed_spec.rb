@@ -32,9 +32,35 @@ RSpec.describe Lain::Notices::Feed do
     shell_out = class_double(Lain::Shell::Out)
     allow(shell_out).to receive(:new).and_return(out)
 
-    described_class.new(program: "nf", shell_out:, notes:).call("lain", "t", "b")
+    described_class.new(program: "nf", shell_out:, notes:, env: {}).call("lain", "t", "b")
 
-    expect(shell_out).to have_received(:new).with("nf", "lain", "t", input: "b", timeout: 2)
+    expect(shell_out).to have_received(:new).with("nf", "lain", "t", input: "b", timeout: 2, environment: {})
+  end
+
+  context "with lain's Ruby loader env set" do
+    let(:loader_env) do
+      { "RUBYOPT" => "-rlain_no_such_lib", "RUBYLIB" => "/nowhere", "BUNDLE_GEMFILE" => "/nowhere/Gemfile" }
+    end
+    let(:kept_env) { { "DISPLAY" => ":9", "DBUS_SESSION_BUS_ADDRESS" => "unix:path=/nowhere", "HOME" => "/home/x" } }
+
+    it "hands the program none of the loader names and keeps the display and home ones" do
+      File.write(program, "#!/bin/sh\nenv > #{capture}.env\n")
+      File.chmod(0o755, program)
+
+      with_env(loader_env.merge(kept_env)) { described_class.new(program:, notes:).call("lain", "t", "b") }
+
+      seen = File.read("#{capture}.env").lines(chomp: true).to_h { |line| line.split("=", 2) }
+      expect(seen).to include(kept_env).and(satisfy { |env| !loader_env.keys.intersect?(env.keys) })
+    end
+
+    it "delivers the note to a Ruby program that the inherited RUBYOPT would have broken" do
+      File.write(program, "#!/usr/bin/env ruby\nFile.write(\"#{capture}.stdin\", $stdin.read)\n")
+      File.chmod(0o755, program)
+
+      sent = with_env(loader_env) { described_class.new(program:, notes:).call("lain", "t", "body") }
+
+      expect([sent, notes.string, File.read("#{capture}.stdin")]).to eq([true, "", "body"])
+    end
   end
 
   it "returns false and names the status on the notes sink when the program fails" do

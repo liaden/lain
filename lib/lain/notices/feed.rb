@@ -9,11 +9,17 @@ module Lain
     class Feed
       TIMEOUT = 2
 
+      # RUBYLIB binds a Ruby feed to lain's load path as RUBYOPT does, and {Exec::ChildEnv::SCRUB} lacks it.
+      # Scrubbed rather than allowlisted, because a desktop notifier needs DISPLAY and DBUS_SESSION_BUS_ADDRESS.
+      LOADER_NAMES = Regexp.union(Exec::ChildEnv::SCRUB, /\ARUBYLIB\z/)
+
       # @param program [String] the notify-feed executable
       # @param notes [#puts] where a failure is named
       # @param shell_out [#new] builds the command, `Shell::Out`'s shape
-      def initialize(program:, notes:, shell_out: Shell::Out)
+      # @param env [#to_h] the real process environment, which the program inherits; its Ruby loader names are unset
+      def initialize(program:, notes:, shell_out: Shell::Out, env: ENV)
         @program = program
+        @env = env
         @shell_out = shell_out
         @notes = notes
         @reported = Concurrent::AtomicBoolean.new
@@ -37,8 +43,10 @@ module Lain
       end
 
       def run(source, title, body)
-        @shell_out.new(@program, source, title, input: body, timeout: TIMEOUT).run_command
+        @shell_out.new(@program, source, title, input: body, timeout: TIMEOUT, environment: scrubbed).run_command
       end
+
+      def scrubbed = @env.to_h.keys.grep(LOADER_NAMES).to_h { |name| [name, nil] }
     end
   end
 end
