@@ -545,4 +545,100 @@ RSpec.describe Lain::Approval::LeaseCommit, :seam do
   it "has no opinion on a message option with no message" do
     expect(decided(cut(main), "git commit -m")).to be_nil
   end
+
+  describe "when it has no opinion" do
+    def why(root, command, cwd: root, **) = chain(root, cwd:, **).call(call_of(command, cwd:)).why_not
+
+    it "names the admitted check for a commit with an option nobody listed" do
+      expect(why(cut(main), "git commit --amend -m x")).to include("admitted")
+    end
+
+    it "names the widening check for an add that a glob widens" do
+      expect(why(cut(main), "git add '*' && git commit -m x")).to include("widening")
+    end
+
+    it "names the added_inside check for an add outside the lease and for one into its git dir" do
+      lease = cut(main)
+
+      expect(["git add ../x && git commit -m x", "git add .git/config && git commit -m x"].map { why(lease, _1) })
+        .to all(include("added_inside"))
+    end
+
+    it "names the own_lease check for a root that holds the lease" do
+      expect(why(main, "git commit -m x", cwd: cut(main))).to include("own_lease")
+    end
+
+    it "names the trusted_git check for a hook this lineage wrote" do
+      written = hook(File.join(main, ".git", "hooks"))
+
+      expect(why(cut(main), "git commit -a -m x", written: [written])).to include("trusted_git")
+    end
+
+    it "names the repository check for a lease whose git dir is a pointer" do
+      lease = cut(main)
+      FileUtils.rm_rf(File.join(lease, ".git"))
+      File.write(File.join(lease, ".git"), "gitdir: #{File.join(main, ".git")}\n")
+
+      expect(why(lease, "git commit -a -m x")).to include("own_repository")
+    end
+
+    it "names the git_env_free check for an env that points git at another repository" do
+      expect(why(cut(main), "git commit -m x", env: { "GIT_DIR" => File.join(main, ".git") }))
+        .to include("git_env_free")
+    end
+
+    it "names the nothing_nested check for a repository below the lease and for a gitlink in its index" do
+      lease = cut(main)
+      head = SeedRepo.git(lease, "rev-parse", "HEAD").stdout.strip
+      SeedRepo.git(lease, "update-index", "--add", "--cacheinfo", "160000,#{head},linked")
+      nested = cut(main)
+      SeedRepo.git(File.join(nested, "deep").tap { FileUtils.mkdir_p(_1) }, "init", "-q")
+
+      expect([lease, nested].map { why(_1, "git commit -a -m x") }).to all(include("nothing_nested"))
+    end
+
+    it "names the user_configs_held check for a user config that includes another file" do
+      lease = cut(main)
+      included = File.join(@base, "included.gitconfig").tap { File.write(_1, "[core]\n\tquotePath = false\n") }
+      File.write(File.join(@home, ".gitconfig"), "[include]\n\tpath = #{included}\n")
+
+      expect(why(lease, "git commit -m x")).to include("user_configs_held")
+    end
+
+    it "names the no_filter check for a filter driver the config defines" do
+      lease = cut(main)
+      SeedRepo.git(lease, "config", "filter.y.clean", "fakefilter")
+
+      expect(why(lease, "git commit -a -m x")).to include("no_filter")
+    end
+
+    it "says nothing for a call that is no commit" do
+      expect(why(cut(main), "git status")).to be_nil
+    end
+  end
+
+  describe "a leased child rooted at its clone, judged as the board judges it" do
+    def child_decision(lease, command)
+      lent = { "PATH" => "/usr/bin", "HOME" => @home, "XDG_CONFIG_HOME" => File.join(@home, "xdg") }
+      fresh = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                 stat: Lain::Shell::Executable::Stat.new)
+      resolver = Lain::Shell::Executable::Resolver.new(root: main, fresh:)
+      parent = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+        home: @home, cwd: main, root: main, confinement: Lain::Approval::Root.new(main), resolver:,
+        worker_env: Lain::WorkerEnv.new(cwd: main, env: lent)
+      )
+      factory = parent.for(Lain::WorkerEnv.new(cwd: lease, env: lent, checkout: lease))
+      rules = Lain::CLI::Wiring::BoardBuild.approving([], factory, workspace: true)
+      Lain::Approval::Escalation::Rules.ladder(rules).call(call_of(command, cwd: lease))
+    end
+
+    it "commits by this rule" do
+      lease = cut(main)
+      File.write(File.join(lease, "chore.txt"), "done\n")
+
+      outcome = child_decision(lease, "git add chore.txt && git commit -m chore")
+
+      expect(outcome.decision).to have_attributes(verdict: :allow, rule: "lease_commit")
+    end
+  end
 end

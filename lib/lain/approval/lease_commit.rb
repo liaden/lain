@@ -72,15 +72,41 @@ module Lain
       # @param call [Rule::Call]
       # @return [Rule::Decision, nil] an allow, or nil for every other call
       def decide(call)
-        term, cwd = read(call) if call.tool_name == TOOL && mentions_commit?(call.input)
-        return nil unless term && commit?(term)
+        commit = commit_of(call)
+        commit && failed_check(*commit).nil? ? allow(call, because: APPROVED) : nil
+      end
 
-        clone, landing = own_lease(cwd)
-        approved = clone && added_inside?(term, clone, landing) && untouched?(clone, landing, cwd, term)
-        approved ? allow(call, because: APPROVED) : nil
+      # @param call [Rule::Call] a call this rule abstained on
+      # @return [String, nil] the check a commit failed, and nil for a call that is no commit
+      def why_not(call)
+        commit = commit_of(call)
+        failed = failed_check(*commit) if commit
+        "lease_commit: the #{failed} check failed" if failed
       end
 
       private
+
+      def commit_of(call)
+        term, cwd = read(call) if call.tool_name == TOOL && mentions_commit?(call.input)
+        [term, cwd] if term && commit?(term)
+      end
+
+      # The name of the first check that failed, nil when every one holds.
+      def failed_check(term, cwd) = shape_failure(term) || placed_failure(term, cwd)
+
+      def shape_failure(term)
+        *adds, commit = term.stages.map(&:argv)
+        return "admitted" unless admitted?(commit.drop(2))
+
+        adds.find { !add?(_1) } && "widening"
+      end
+
+      def placed_failure(term, cwd)
+        clone, landing = own_lease(cwd)
+        return "own_lease" unless clone
+
+        added_inside?(term, clone, landing) ? untouched_failure(clone, landing, cwd, term) : "added_inside"
+      end
 
       # Every bash call reaches this rule, and a commit names both words, so the rest pay nothing more.
       def mentions_commit?(input) = [GIT, COMMIT].all? { input.command.to_s.include?(_1) }
@@ -99,10 +125,7 @@ module Lain
       # A {Shell::Reading} reads `;` as it reads `&&`, and a commit after `;` runs whether the add failed or not.
       def only_ands?(parse) = parse.separators.all? { _1.text == Shell::Reading::AND }
 
-      def commit?(term)
-        *adds, commit = term.stages.map(&:argv)
-        commit&.first(2) == [GIT, COMMIT] && admitted?(commit.drop(2)) && adds.all? { add?(_1) }
-      end
+      def commit?(term) = term.stages.last&.argv&.first(2) == [GIT, COMMIT]
 
       def add?(argv) = argv.first(2) == [GIT, ADD] && argv.size > 2 && argv.drop(2).none? { _1.match?(WIDENING) }
 
@@ -136,14 +159,18 @@ module Lain
         [clone, landing] if clone && confinement.contains?(clone) && !confinement.contains?(File.dirname(clone))
       end
 
-      # {#commit?} admits only `git add` and `git commit` with no option before the subcommand, so every stage
-      # resolves the same git with the same run files, and the commit's stands for them all.
-      def untouched?(clone, landing, cwd, term)
+      # The commit's stands for every stage: only `git add` and `git commit` with no option before the subcommand
+      # are read, so each resolves the same git with the same run files.
+      def untouched_failure(clone, landing, cwd, term)
         env = git_env
         git = @sensitivity.executables(term, cwd).last
-        own_repository?(clone, landing) && git_env_free?(env) && trusted_git?(clone, git) &&
-          nothing_nested?(clone, git, env) && user_configs_held?(git, env, landing, cwd) &&
-          no_filter?(git, env, landing)
+        checks = {
+          "own_repository" => -> { own_repository?(clone, landing) }, "git_env_free" => -> { git_env_free?(env) },
+          "trusted_git" => -> { trusted_git?(clone, git) }, "nothing_nested" => -> { nothing_nested?(clone, git, env) },
+          "user_configs_held" => -> { user_configs_held?(git, env, landing, cwd) },
+          "no_filter" => -> { no_filter?(git, env, landing) }
+        }
+        checks.find { |_, held| !held.call }&.first
       end
 
       def nothing_nested?(clone, git, env) = no_git_below?(clone) && no_gitlink?(clone, git, env)
