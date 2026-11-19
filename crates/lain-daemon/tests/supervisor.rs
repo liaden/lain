@@ -463,6 +463,202 @@ async fn an_epic_run_is_its_own_chat_in_its_own_group_with_its_output_in_its_log
     assert_eq!(Value::Nil, error);
 }
 
+fn profiled(mut start: Value, profile: &[(&str, Value)]) -> Value {
+    if let Value::Map(fields) = &mut start {
+        fields.push((Value::from("profile"), map(profile)));
+    }
+    start
+}
+
+fn requesters_ollama() -> Vec<(&'static str, Value)> {
+    vec![
+        ("provider", Value::from("ollama")),
+        ("model", Value::from("qwen3-coder:30b")),
+        (
+            "api_base",
+            Value::from("http://user:secret@127.0.0.1:11434"),
+        ),
+        ("num_ctx", Value::from(32768)),
+        ("num_batch", Value::from(4096)),
+    ]
+}
+
+fn env_lines(env: &str) -> Vec<&str> {
+    env.lines().collect()
+}
+
+/// Every value is the requester's, none the daemon's own.
+fn assert_requesters_profile(env: &str, argv: &str) {
+    let lines = env_lines(env);
+    for line in [
+        "LAIN_PROVIDER=ollama",
+        "LAIN_MODEL=qwen3-coder:30b",
+        "LAIN_API_BASE=http://user:secret@127.0.0.1:11434",
+        "LAIN_NUM_CTX=32768",
+        "LAIN_NUM_BATCH=4096",
+    ] {
+        assert!(lines.contains(&line), "{line} not in {lines:?}");
+    }
+    for own in ["LAIN_MODEL=daemons-own", "LAIN_NUM_BATCH=512"] {
+        assert!(!lines.contains(&own), "{own} in {lines:?}");
+    }
+    assert!(
+        !argv.contains("secret"),
+        "the api base reached the argv: {argv}"
+    );
+    assert!(!argv.contains("qwen3"), "the profile rode the argv: {argv}");
+}
+
+const DAEMONS_OWN: [(&str, &str); 5] = [
+    ("LAIN_PROVIDER", "ollama"),
+    ("LAIN_MODEL", "daemons-own"),
+    ("LAIN_API_BASE", "http://daemons-own:11434"),
+    ("LAIN_NUM_CTX", "8192"),
+    ("LAIN_NUM_BATCH", "512"),
+];
+
+async fn run_env_for(profile: &[(&str, Value)]) -> String {
+    let mut daemon = daemon_with("exit3", &DAEMONS_OWN).await;
+    let project = daemon.project();
+    let (error, run) = daemon
+        .start(profiled(bare("chores", &project), profile))
+        .await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    appeared(&daemon.probe().join("env")).await
+}
+
+#[tokio::test]
+async fn a_field_the_requester_left_unset_keeps_the_daemons_value() {
+    let env = run_env_for(&[
+        ("provider", Value::from("ollama")),
+        ("model", Value::from("qwen3-coder:30b")),
+    ])
+    .await;
+    let lines = env_lines(&env);
+    for line in [
+        "LAIN_PROVIDER=ollama",
+        "LAIN_MODEL=qwen3-coder:30b",
+        "LAIN_API_BASE=http://daemons-own:11434",
+        "LAIN_NUM_CTX=8192",
+        "LAIN_NUM_BATCH=512",
+    ] {
+        assert!(lines.contains(&line), "{line} not in {lines:?}");
+    }
+}
+
+#[tokio::test]
+async fn another_provider_takes_none_of_the_daemons_model_endpoint_or_runner_knobs() {
+    let env = run_env_for(&[("provider", Value::from("anthropic"))]).await;
+    let lines = env_lines(&env);
+    assert!(lines.contains(&"LAIN_PROVIDER=anthropic"), "{lines:?}");
+    for name in [
+        "LAIN_MODEL=",
+        "LAIN_API_BASE=",
+        "LAIN_NUM_CTX=",
+        "LAIN_NUM_BATCH=",
+    ] {
+        assert!(
+            !lines.iter().any(|line| line.starts_with(name)),
+            "{name} reached a run on another provider: {lines:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn an_epic_run_takes_the_requesters_profile_in_its_env() {
+    let mut daemon = daemon_with("exit3", &DAEMONS_OWN).await;
+    let root = daemon.project().canonicalize().expect("the project");
+    let (error, run) = daemon
+        .start(profiled(epic(&root, "greet"), &requesters_ollama()))
+        .await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    assert_requesters_profile(
+        &appeared(&daemon.probe().join("env")).await,
+        &appeared(&daemon.probe().join("argv")).await,
+    );
+}
+
+#[tokio::test]
+async fn a_chores_run_takes_the_requesters_profile_in_its_env() {
+    let mut daemon = daemon_with("exit3", &DAEMONS_OWN).await;
+    let project = daemon.project();
+    let (error, run) = daemon
+        .start(profiled(bare("chores", &project), &requesters_ollama()))
+        .await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    assert_requesters_profile(
+        &appeared(&daemon.probe().join("env")).await,
+        &appeared(&daemon.probe().join("argv")).await,
+    );
+}
+
+#[tokio::test]
+async fn a_forked_run_takes_the_requesters_profile_in_its_env() {
+    let mut daemon = forking("exit3", &DAEMONS_OWN).await;
+    daemon.warmed().await;
+    let project = daemon.project();
+    let (error, run) = daemon
+        .start(profiled(bare("chores", &project), &requesters_ollama()))
+        .await;
+    assert_eq!(Value::Nil, error);
+    assert_eq!(
+        vec![pid_of(&run)],
+        daemon.forked(),
+        "the run was not forked"
+    );
+    daemon.ended(&field(&run, "id")).await;
+    assert_requesters_profile(
+        &appeared(&daemon.probe().join("env")).await,
+        &appeared(&daemon.probe().join("argv")).await,
+    );
+}
+
+#[tokio::test]
+async fn a_run_with_no_profile_keeps_the_daemons_own_env() {
+    let mut daemon = daemon_with("exit3", &DAEMONS_OWN).await;
+    let project = daemon.project();
+    let (error, run) = daemon.start(bare("chores", &project)).await;
+    assert_eq!(Value::Nil, error);
+    daemon.ended(&field(&run, "id")).await;
+    let env = appeared(&daemon.probe().join("env")).await;
+    let lines = env_lines(&env);
+    for (name, value) in DAEMONS_OWN {
+        let line = format!("{name}={value}");
+        assert!(lines.contains(&line.as_str()), "{line} not in {lines:?}");
+    }
+}
+
+#[tokio::test]
+async fn a_profile_with_an_unknown_provider_is_refused_naming_it() {
+    let mut daemon = daemon("exit3").await;
+    let project = daemon.project();
+    let (error, _) = daemon
+        .start(profiled(
+            bare("chores", &project),
+            &[("provider", Value::from("nope"))],
+        ))
+        .await;
+    assert!(refusal(&error).contains("\"nope\""), "{error}");
+    assert!(daemon.list().await.is_empty());
+}
+
+#[tokio::test]
+async fn a_profile_naming_an_env_of_its_own_is_refused() {
+    let mut daemon = daemon("exit3").await;
+    let project = daemon.project();
+    let (error, _) = daemon
+        .start(profiled(
+            bare("chores", &project),
+            &[("env", map(&[("LD_PRELOAD", Value::from("/x.so"))]))],
+        ))
+        .await;
+    assert!(refusal(&error).contains("env"), "{error}");
+    assert!(daemon.list().await.is_empty());
+}
+
 #[tokio::test]
 async fn an_unknown_kind_is_refused() {
     let mut daemon = daemon("exit3").await;

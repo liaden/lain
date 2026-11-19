@@ -952,7 +952,7 @@ Spec file: `spec/lain/cli/chat_launch_spec.rb`, `spec/lain/approval/remote_surfa
 **Reuse:** `Chores::Runner`'s argv (`chores/runner.rb:162`); `std::process::Command` with `process_group(0)`.
 **Shared-file wiring:** none
 **Reachable from:**
-- the daemon's local handler: `run.start { kind, root, args }`, `run.list`, `run.stop`;
+- the daemon's local handler: `run.start { kind, root, args, profile }`, `run.list`, `run.stop`; `profile` is the requester's provider, model, api base, num_ctx and num_batch, which the run takes in its env;
 - `Daemon::Launch` adds `--ruby`, `--lain`, `--runs-dir` and the run env allowlist. A run carries no `--max-cost` (user ruling 2026-11-17).
 
 **Acceptance criteria**
@@ -962,8 +962,8 @@ Scenario: daemon.info reports live runs
   Then daemon.info carries `live_runs`, the key Daemon.ensure reads (default 0) to keep a busy daemon from another launch, and a :daemon example reads it from the real binary
 
 Scenario: a run kind builds its own argv
-  When run.start { kind: "epic", root: R, args: { slug: "research-x" } } arrives
-  Then the daemon runs `<ruby> <lain> chat --root R --cwd R --non-interactive --approval auto --human remote --epic research-x --prompt "/implement-epic research-x"` in its own process group, with the allowlisted env and output to state_home/daemon/runs/<id>.log
+  When run.start { kind: "epic", root: R, args: { slug: "research-x" }, profile: { provider: "ollama" } } arrives
+  Then the daemon runs `<ruby> <lain> chat --root R --cwd R --non-interactive --approval auto --human remote --epic research-x --prompt "/implement-epic research-x"` in its own process group, with the allowlisted env plus LAIN_PROVIDER=ollama from the profile, never on its argv, and output to state_home/daemon/runs/<id>.log
 
 Scenario: inputs are checked, not trusted
   Then run.start is refused when the kind is unknown, when argv, approval or env keys are passed, when the slug doesn't match [a-z0-9][a-z0-9-]* (checked by regex only), or when R has no lain project marker

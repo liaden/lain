@@ -100,6 +100,70 @@ RSpec.describe Lain::CLI::DaemonCommand do
     end
   end
 
+  describe "run" do
+    let(:client) { instance_double(Lain::Core::Client, stop: nil) }
+    let(:project) { Lain::Project.new(root: Dir.pwd, cwd: Dir.pwd, kind: :project, detected_by: :git) }
+    let(:unset) { Lain::CLI::EnvDefaults::READ.to_h { [_1, nil] } }
+
+    before do
+      allow(Lain::Project::Resolver).to receive(:default_project).and_return(project)
+      allow(Lain::Daemon).to receive(:ensure).and_return(client)
+      allow(client).to receive(:call).with("run.start", anything).and_return({ "id" => "r1" })
+    end
+
+    def requested(fields) = have_received(:call).with("run.start", [a_hash_including(fields)])
+
+    it "hands an epic run the requester's provider profile" do
+      with_env(unset.merge("LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3-coder:30b",
+                           "LAIN_API_BASE" => "http://127.0.0.1:11434", "LAIN_NUM_CTX" => "32768",
+                           "LAIN_NUM_BATCH" => "2048")) do
+        start("run", "epic", "greet")
+      end
+
+      expect(client).to requested(
+        "kind" => "epic", "args" => { "slug" => "greet" },
+        "profile" => { "provider" => "ollama", "model" => "qwen3-coder:30b",
+                       "api_base" => "http://127.0.0.1:11434", "num_ctx" => 32_768, "num_batch" => 2048 }
+      )
+    end
+
+    it "hands a chores run the same profile" do
+      with_env(unset.merge("LAIN_PROVIDER" => "ollama", "LAIN_MODEL" => "qwen3-coder:30b")) { start("run", "chores") }
+
+      expect(client).to requested("kind" => "chores",
+                                  "profile" => { "provider" => "ollama", "model" => "qwen3-coder:30b" })
+    end
+
+    it "sends no profile when the requester's environment sets none, so a daemon without one still runs it" do
+      with_env(unset) { start("run", "chores") }
+
+      expect(client).to have_received(:call).with("run.start", [hash_excluding("profile")])
+    end
+
+    %w[LAIN_NUM_CTX LAIN_NUM_BATCH].product(%w[-1 0 8192.5 4294967296]).each do |name, value|
+      it "refuses #{name}=#{value}, naming it, and asks the daemon nothing" do
+        with_env(unset.merge(name => value)) do
+          expect { start("run", "chores") }.to raise_error(Thor::Error, /#{name}=#{Regexp.escape(value.inspect)}/)
+        end
+
+        expect(client).not_to have_received(:call)
+      end
+    end
+
+    it "takes the largest whole number the daemon can hold" do
+      with_env(unset.merge("LAIN_NUM_CTX" => "4294967295")) { start("run", "chores") }
+
+      expect(client).to requested("profile" => { "num_ctx" => 4_294_967_295 })
+    end
+
+    it "knows the same providers as the daemon that checks them" do
+      source = File.read(File.expand_path("../../../crates/lain-daemon/src/supervisor.rs", __dir__))
+      listed = source[/const PROVIDERS: \[&str; \d+\] = \[([^\]]*)\]/, 1] or raise "no PROVIDERS in supervisor.rs"
+
+      expect(listed.scan(/"([^"]+)"/).flatten).to eq(Lain::CLI::Backend::PROVIDERS)
+    end
+  end
+
   describe "against the real daemon", :daemon do
     around do |example|
       Dir.mktmpdir("daemon-command-state") do |state|

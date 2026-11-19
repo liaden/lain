@@ -465,7 +465,7 @@ impl Daemon {
 impl Daemon {
     /// A request naming anything the kind does not take learns which name it was.
     async fn run_start(&self, params: Vec<Value>) -> Result<Value, RpcError> {
-        let usage = "run.start takes [{kind, root, args}]";
+        let usage = "run.start takes [{kind, root, args, profile}]";
         let [param] = <[Value; 1]>::try_from(params).map_err(|_| RpcError::Refused {
             code: "bad_params",
             message: usage.to_string(),

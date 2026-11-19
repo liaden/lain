@@ -310,6 +310,33 @@ pub struct RunStart {
     /// What the kind takes: an epic's `slug`, and nothing for the others.
     #[serde(default)]
     pub args: BTreeMap<String, String>,
+    /// The requester's provider, which the run takes in its env and never on its argv.
+    #[serde(default)]
+    pub profile: RunProfile,
+}
+
+/// Which model server a run talks to, as the requester's environment named it. A field left
+/// unset keeps whatever the daemon's own env says.
+///
+/// Encode with [`encode`] (named maps); positional arrays do not decode.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RunProfile {
+    /// `LAIN_PROVIDER`.
+    #[serde(default)]
+    pub provider: Option<String>,
+    /// `LAIN_MODEL`.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// `LAIN_API_BASE`, which may hold credentials, so it must never reach an argv.
+    #[serde(default)]
+    pub api_base: Option<String>,
+    /// `LAIN_NUM_CTX`.
+    #[serde(default)]
+    pub num_ctx: Option<u32>,
+    /// `LAIN_NUM_BATCH`.
+    #[serde(default)]
+    pub num_batch: Option<u32>,
 }
 
 /// `run.stop`: the run to end.
@@ -898,9 +925,46 @@ mod tests {
                 kind: s("epic"),
                 root: s("/work/api"),
                 args: [(s("slug"), s("research-x"))].into_iter().collect(),
+                profile: RunProfile::default(),
             },
             start
         );
+    }
+
+    #[test]
+    fn a_run_start_carries_the_requesters_profile() {
+        let profile = rmpv::Value::Map(vec![
+            (rmpv::Value::from("provider"), rmpv::Value::from("ollama")),
+            (
+                rmpv::Value::from("model"),
+                rmpv::Value::from("qwen3-coder:30b"),
+            ),
+            (rmpv::Value::from("num_ctx"), rmpv::Value::from(32768)),
+            (rmpv::Value::from("num_batch"), rmpv::Value::from(4096)),
+        ]);
+        let start: RunStart = decode(&run_start_with(&[("profile", profile)])).expect("decode");
+        assert_eq!(
+            RunProfile {
+                provider: Some(s("ollama")),
+                model: Some(s("qwen3-coder:30b")),
+                api_base: None,
+                num_ctx: Some(32768),
+                num_batch: Some(4096),
+            },
+            start.profile
+        );
+    }
+
+    #[test]
+    fn a_profile_naming_a_field_it_does_not_hold_does_not_decode() {
+        let profile = rmpv::Value::Map(vec![(
+            rmpv::Value::from("env"),
+            rmpv::Value::from("LD_PRELOAD=/x.so"),
+        )]);
+        let error = decode::<RunStart>(&run_start_with(&[("profile", profile)]))
+            .expect_err("env in a profile")
+            .to_string();
+        assert!(error.contains("env"), "{error}");
     }
 
     #[test]

@@ -17,6 +17,7 @@ module Lain
       # Kinds a human starts; the review poll belongs to the daemon's own timer.
       KINDS = %w[epic chores].freeze
       USAGE = "lain daemon run epic SLUG | lain daemon run chores"
+      U32_MAX = (2**32) - 1
       NONE = "no daemon is running"
       LIVE = "the daemon has live runs: %<ids>s; `lain daemon restart --force` restarts it anyway"
 
@@ -158,8 +159,26 @@ module Lain
       def started_by_hand?(kind, slug) = KINDS.include?(kind) && (kind == "epic") == !slug.nil?
 
       def run_request(kind, slug)
+        profile = requester_profile
         { "kind" => kind, "root" => ::Lain::Project::Resolver.default_project.root,
-          "args" => slug ? { "slug" => slug } : {} }
+          "args" => slug ? { "slug" => slug } : {}, **(profile.empty? ? {} : { "profile" => profile }) }
+      end
+
+      # Only what this shell set, with no built-in provider, so an unset field keeps the daemon's.
+      # An empty profile is left off, so a daemon built before profiles still takes the run.
+      def requester_profile
+        { "provider" => EnvDefaults.string("LAIN_PROVIDER"), "model" => EnvDefaults.string("LAIN_MODEL"),
+          "api_base" => EnvDefaults.string("LAIN_API_BASE"), "num_ctx" => runner_knob("LAIN_NUM_CTX"),
+          "num_batch" => runner_knob("LAIN_NUM_BATCH") }.compact
+      end
+
+      # The daemon holds these as u32, and its refusal could not name the variable.
+      def runner_knob(name)
+        value = EnvDefaults.numeric(name)
+        return value if value.nil? || (value.is_a?(Integer) && value.between?(1, U32_MAX))
+
+        raise Lain::Error, "#{name}=#{EnvDefaults.string(name).inspect} is not a whole number from 1 to " \
+                           "#{U32_MAX} -- unset it, or give it one"
       end
 
       def report(client)

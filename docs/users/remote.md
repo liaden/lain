@@ -185,6 +185,8 @@ lain daemon run epic my-epic        # the same, supervised by the daemon
 `--human remote` refuses to start, naming the reason, when `remote relay:` is missing from the user
 config, when the daemon's relay is not `running`, or when bash would run outside a sandbox that
 confines it. It also needs `--non-interactive`. A run the daemon starts outlives the terminal.
+It takes the provider, model, api base, context size and batch size from the `LAIN_*` variables
+in the shell that started it, passed in its environment and never on its command line.
 
 ## Trust boundaries
 

@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lain_rpc::RpcError;
-use lain_wire::{AgendaItem, Delta, RunStart};
+use lain_wire::{AgendaItem, Delta, RunProfile, RunStart};
 use nix::sys::signal::{Signal, killpg};
 use nix::unistd::Pid;
 use rmpv::Value;
@@ -46,6 +46,18 @@ const ORPHAN_POLL: Duration = Duration::from_secs(1);
 
 /// How far up a session's parents the daemon looks for the run that started it.
 const MAX_ANCESTORS: usize = 64;
+
+/// `CLI::Backend::PROVIDERS`: a headless chat refuses any other only in a log nobody reads.
+const PROVIDERS: [&str; 3] = ["anthropic", "ollama", "ollama-cloud"];
+
+/// `CLI::EnvDefaults::READ`, provider first, in [`RunProfile`]'s field order.
+const PROFILE_NAMES: [&str; 5] = [
+    "LAIN_PROVIDER",
+    "LAIN_MODEL",
+    "LAIN_API_BASE",
+    "LAIN_NUM_CTX",
+    "LAIN_NUM_BATCH",
+];
 
 /// What every run is started with: `Daemon::Launch` decides each of them, and the env is the
 /// daemon's own less what only the daemon may read.
@@ -180,6 +192,38 @@ impl RunKind {
             Self::Chores { .. } => vec!["todos".into(), "drain".into()],
         }
     }
+}
+
+/// The env a requester's profile sets, under the names `CLI::EnvDefaults::READ` reads. Env and
+/// not argv, because an api base may carry credentials and an argv is in `ps`.
+fn profile_env(profile: &RunProfile) -> Result<Vec<(OsString, OsString)>, RpcError> {
+    if let Some(provider) = profile
+        .provider
+        .as_deref()
+        .filter(|provider| !PROVIDERS.contains(provider))
+    {
+        return Err(refused(
+            "bad_provider",
+            format!(
+                "run.start knows no provider {:?}; the providers are {}",
+                clip(provider),
+                PROVIDERS.join(", ")
+            ),
+        ));
+    }
+    let number = |value: Option<u32>| value.map(|value| value.to_string());
+    let values = [
+        profile.provider.clone(),
+        profile.model.clone(),
+        profile.api_base.clone(),
+        number(profile.num_ctx),
+        number(profile.num_batch),
+    ];
+    Ok(PROFILE_NAMES
+        .into_iter()
+        .zip(values)
+        .filter_map(|(name, value)| Some((name.into(), value?.into())))
+        .collect())
 }
 
 /// The grammar of an epic's directory name, `Epic::Home::NAME`.
@@ -330,9 +374,10 @@ impl Supervisor {
     pub(crate) async fn start(self: &Arc<Self>, request: RunStart) -> Result<Run, RpcError> {
         self.settings()?;
         let kind = RunKind::from_request(&request.kind, &request.args, &request.root)?;
+        let env = self.env_with(profile_env(&request.profile)?);
         // Its own task, so a caller that hangs up mid-fork cannot drop a forked run unlisted.
         let supervisor = Arc::clone(self);
-        tokio::spawn(async move { supervisor.launch(kind).await })
+        tokio::spawn(async move { supervisor.launch(kind, env).await })
             .await
             .unwrap_or_else(|error| {
                 Err(refused(
@@ -342,15 +387,19 @@ impl Supervisor {
             })
     }
 
-    async fn launch(self: &Arc<Self>, kind: RunKind) -> Result<Run, RpcError> {
+    async fn launch(
+        self: &Arc<Self>,
+        kind: RunKind,
+        env: Vec<(OsString, OsString)>,
+    ) -> Result<Run, RpcError> {
         let (id, log, output) = self.open_run_log()?;
-        let forked = match self.request_line(&kind, &log) {
+        let forked = match self.request_line(&kind, &env, &log) {
             Some(line) => self.fork(&line).await,
             None => None,
         };
         let (pid, process) = match forked {
             Some(forked) => forked,
-            None => self.exec(&kind, output)?,
+            None => self.exec(&kind, &env, output)?,
         };
         Ok(self.supervise(id, kind, pid, log, process))
     }
@@ -360,7 +409,7 @@ impl Supervisor {
     pub(crate) fn start_review_poll(self: &Arc<Self>) -> Result<Run, RpcError> {
         let kind = RunKind::ReviewPoll;
         let (id, log, output) = self.open_run_log()?;
-        let (pid, process) = self.exec(&kind, output)?;
+        let (pid, process) = self.exec(&kind, &self.env_with(Vec::new()), output)?;
         Ok(self.supervise(id, kind, pid, log, process))
     }
 
@@ -413,15 +462,19 @@ impl Supervisor {
 
     /// The JSON line the spawner reads; `None` for a run whose argv, env or paths are not UTF-8,
     /// which JSON cannot carry.
-    fn request_line(&self, kind: &RunKind, log: &Path) -> Option<Vec<u8>> {
+    fn request_line(
+        &self,
+        kind: &RunKind,
+        env: &[(OsString, OsString)],
+        log: &Path,
+    ) -> Option<Vec<u8>> {
         let settings = self.settings.as_ref()?;
         let argv = kind
             .argv()
             .iter()
             .map(|word| word.to_str().map(str::to_string))
             .collect::<Option<Vec<_>>>()?;
-        let env = settings
-            .env
+        let env = env
             .iter()
             .map(|(name, value)| Some((name.to_str()?.to_string(), value.to_str()?.into())))
             .collect::<Option<serde_json::Map<_, _>>>()?;
@@ -467,8 +520,43 @@ impl Supervisor {
         Ok((id, log, output))
     }
 
+    /// The requester's values win over the daemon's own, since the requester is who asked for the
+    /// run. A requester on another provider takes none of the daemon's model, endpoint or runner
+    /// knobs, which belong to the daemon's provider: the rule `CLI::RunProfile#over` keeps for a
+    /// resumed chat.
+    fn env_with(&self, requested: Vec<(OsString, OsString)>) -> Vec<(OsString, OsString)> {
+        let own = self
+            .settings
+            .as_ref()
+            .map_or(&[][..], |settings| &settings.env);
+        let provider = |env: &[(OsString, OsString)]| {
+            env.iter()
+                .find(|(name, _)| name.to_str() == Some(PROFILE_NAMES[0]))
+                .map(|(_, value)| value.clone())
+        };
+        let switched = provider(&requested).is_some_and(|asked| provider(own) != Some(asked));
+        let replaced = |name: &OsString| {
+            requested.iter().any(|(set, _)| set == name)
+                || (switched
+                    && PROFILE_NAMES
+                        .iter()
+                        .any(|profile| name.to_str() == Some(profile)))
+        };
+        let kept: Vec<_> = own
+            .iter()
+            .filter(|(name, _)| !replaced(name))
+            .cloned()
+            .collect();
+        kept.into_iter().chain(requested).collect()
+    }
+
     /// A run with no project starts in the runs directory, which the log's open creates.
-    fn exec(&self, kind: &RunKind, output: File) -> Result<(u32, Process), RpcError> {
+    fn exec(
+        &self,
+        kind: &RunKind,
+        env: &[(OsString, OsString)],
+        output: File,
+    ) -> Result<(u32, Process), RpcError> {
         let settings = self.settings()?;
         let errors = output
             .try_clone()
@@ -478,7 +566,7 @@ impl Supervisor {
             .args(kind.argv())
             .current_dir(kind.root().unwrap_or(&settings.runs))
             .env_clear()
-            .envs(settings.env.iter().map(|(name, value)| (name, value)))
+            .envs(env.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null())
             .stdout(output)
             .stderr(errors)
@@ -1016,6 +1104,7 @@ while :; do wait; done
                 kind: "chores".to_string(),
                 root: project.to_str().expect("utf-8").to_string(),
                 args: Default::default(),
+                profile: Default::default(),
             })
             .await
             .expect("started");
@@ -1228,6 +1317,7 @@ while :; do wait; done
                     kind: "chores".to_string(),
                     root: project.to_str().expect("utf-8").to_string(),
                     args: Default::default(),
+                    profile: Default::default(),
                 })
                 .await
                 .expect("started");
@@ -1324,6 +1414,7 @@ while :; do wait; done
             kind: "chores".to_string(),
             root: project.to_str().expect("utf-8").to_string(),
             args: Default::default(),
+            profile: Default::default(),
         };
         let first = supervisor.start(chores()).await.expect("started");
         assert_eq!(
@@ -1379,6 +1470,7 @@ while :; do wait; done
             kind: "chores".to_string(),
             root: project.to_str().expect("utf-8").to_string(),
             args: Default::default(),
+            profile: Default::default(),
         };
         (dir, supervisor, probe, chores)
     }
