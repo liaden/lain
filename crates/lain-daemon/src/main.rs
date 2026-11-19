@@ -1,6 +1,6 @@
 //! lain-daemon: the per-user daemon, a msgpack-RPC server on a Unix socket.
 //!
-//! The socket path, trace path and launch digest all arrive via argv: this binary NEVER computes
+//! The socket path and trace path arrive via argv and the launch digests via the environment: this binary NEVER computes
 //! its own path, because path policy belongs to Ruby (`Paths#runtime_dir`). Tracing goes to a file,
 //! never a terminal: the Journal is NDJSON and one stray diagnostic line breaks the experiment record.
 #![forbid(unsafe_code)]
@@ -53,7 +53,12 @@ fn build_id_of(version: &str, sha: Option<&str>) -> String {
 struct Args {
     socket: PathBuf,
     trace: Option<PathBuf>,
-    launch_digest: String,
+    /// What only a new build, another checkout or ruby, or the provider key added or removed changes;
+    /// a daemon whose build digest differs is replaced.
+    build_digest: String,
+    /// The relay, devices file, review poll, ntfy topic and runs dir it runs with; a difference is
+    /// told, never replaced. None when the environment held a build digest alone.
+    settings_digest: Option<String>,
     /// The phone relay's listen address and devices file, given together or not at all.
     relay: Option<(String, PathBuf)>,
     /// The ntfy topic items still waiting after a minute are announced on; only a relay has items.
@@ -111,10 +116,16 @@ impl Args {
         if !ntfy.as_deref().is_none_or(is_topic_url) || (ntfy.is_some() && relay.is_none()) {
             return None;
         }
+        let digests = launch_digest?;
+        let (build_digest, settings_digest) = match digests.split_once(' ') {
+            Some((build, settings)) => (build.to_string(), Some(settings.to_string())),
+            None => (digests, None),
+        };
         Some(Self {
             socket: socket?,
             trace,
-            launch_digest: launch_digest?,
+            build_digest,
+            settings_digest,
             relay,
             ntfy,
             run,
@@ -137,8 +148,9 @@ pub(crate) const NTFY_VAR: &str = "DAEMON_NTFY_TOPIC";
 /// The one secret `Daemon::Launch` hands the daemon, only for its runs.
 pub(crate) const PROVIDER_KEY_VAR: &str = "ANTHROPIC_API_KEY";
 
-/// Where `Daemon::Launch` hands the daemon its launch digest. The digest hashes the topic with inputs
-/// any user can read, so on a command line it would let a user test guesses at the topic.
+/// Where `Daemon::Launch` hands the daemon its build digest and its settings digest, in that order and
+/// split by a space. The settings digest hashes the topic, so on a command line it would let a user
+/// test guesses at the topic.
 pub(crate) const DIGEST_VAR: &str = "DAEMON_LAUNCH_DIGEST";
 
 fn main() -> ExitCode {
@@ -216,7 +228,8 @@ async fn serve_relay(bound: relay::Bound, socket: Option<&Path>) -> ExitCode {
 /// What the daemon answers beyond `ping`, which `lain_rpc::serve` answers itself. No local
 /// method answers an approval or a question: answers come only from the phone or the chat itself.
 struct Daemon {
-    launch_digest: String,
+    build_digest: String,
+    settings_digest: Option<String>,
     registry: Arc<Registry>,
     owner_uid: u32,
     relay: PhoneRelay,
@@ -314,8 +327,12 @@ impl Handler for Daemon {
             "daemon.info" => Ok(Value::Map(vec![
                 (Value::from("build_id"), Value::from(build_id())),
                 (
-                    Value::from("launch_digest"),
-                    Value::from(self.launch_digest.as_str()),
+                    Value::from("build_digest"),
+                    Value::from(self.build_digest.as_str()),
+                ),
+                (
+                    Value::from("settings_digest"),
+                    self.settings_digest.as_deref().map_or(Value::Nil, Value::from),
                 ),
                 (Value::from("relay"), Value::from(self.relay.state())),
                 (Value::from("live_runs"), Value::from(self.runs.live())),
@@ -650,7 +667,8 @@ async fn serve_unix(args: Args) -> ExitCode {
         tokio::spawn(periodic::poll_every(Arc::clone(&runs), every));
     }
     let handler = Daemon {
-        launch_digest: args.launch_digest,
+        build_digest: args.build_digest,
+        settings_digest: args.settings_digest,
         registry,
         owner_uid,
         relay,
@@ -807,7 +825,8 @@ mod tests {
 
     fn daemon(registry: Arc<Registry>, relay: PhoneRelay) -> Daemon {
         Daemon {
-            launch_digest: "abc".to_string(),
+            build_digest: "abc".to_string(),
+            settings_digest: Some("def".to_string()),
             registry,
             owner_uid: OWNER,
             relay,
@@ -1014,21 +1033,33 @@ mod tests {
             .into_iter()
     }
 
-    /// What `Daemon::Launch` puts in the daemon's environment as its digest.
+    /// What `Daemon::Launch` puts in the daemon's environment: its build digest, then its settings digest.
     fn digest() -> Option<String> {
-        Some("abc".to_string())
+        Some("abc def".to_string())
     }
 
     #[test]
     fn the_launch_digest_comes_from_the_environment_and_never_from_the_command_line() {
         let args = Args::parse(argv(&[]), None, digest()).expect("parse");
-        assert_eq!("abc", args.launch_digest);
+        assert_eq!(
+            ("abc", Some("def")),
+            (args.build_digest.as_str(), args.settings_digest.as_deref())
+        );
         assert!(
             Args::parse(argv(&[]), None, None).is_none(),
             "a daemon with no digest started"
         );
         let flags = ["--launch-digest", "abc"];
         assert!(Args::parse(argv(&flags), None, digest()).is_none());
+    }
+
+    #[test]
+    fn a_digest_with_no_settings_part_reports_no_settings_digest() {
+        let args = Args::parse(argv(&[]), None, Some("abc".to_string())).expect("parse");
+        assert_eq!(
+            ("abc", None),
+            (args.build_digest.as_str(), args.settings_digest.as_deref())
+        );
     }
 
     #[test]

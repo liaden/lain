@@ -24,6 +24,9 @@ module Lain
               "it restarts on this checkout's build once %<those>s"
     KEYLESS = "the daemon at %<socket>s lacks #{Launch::PROVIDER_KEY}, so runs it starts cannot reach anthropic " \
               "until it restarts; it has %<busy>s and restarts once %<those>s".freeze
+    RESETTLE = "the daemon at %<socket>s keeps the %<names>s it started with, " \
+               "which this chat would start differently; `lain daemon restart` applies them"
+    UNREAD = "the daemon at %<socket>s is kept as it runs, since the user config cannot be read: %<error>s"
 
     # The daemon was spawned and never answered.
     class Unstarted < Error; end
@@ -111,13 +114,16 @@ module Lain
       !replace || closing_on_error(client) { kept?(client, launch, notes) }
     end
 
-    # A daemon with live runs, which a replacement could no longer list or
-    # stop, or with chats that would have to register again, is kept until
-    # they end. Two checkouts sharing a runtime dir would otherwise replace
-    # each other's daemon on every start.
+    # Only another build replaces a daemon, and an unreadable config replaces none, since the
+    # replacement would start without the settings the config could not give. A daemon with live
+    # runs, which a replacement could no longer list or stop, or with chats that would have to
+    # register again, is kept until they end. Two checkouts sharing a runtime dir would otherwise
+    # replace each other's daemon on every start.
     def self.kept?(client, launch, notes)
+      return kept_unread?(launch, notes) if launch.config_error
+
       info = client.call("daemon.info")
-      return true if info.fetch("launch_digest") == launch.digest
+      return settled?(launch, info, notes) if info["build_digest"] == launch.build_digest
 
       runs = info.fetch("live_runs", 0)
       chats = client.call("session.list").size
@@ -136,7 +142,18 @@ module Lain
     # The daemon is this launch's in all but the provider key it was started without: a launch
     # with no key has the same digest without one, which already differed from the daemon's.
     def self.keyless?(launch, info)
-      launch.with(env: launch.env.except(Launch::PROVIDER_KEY)).digest == info.fetch("launch_digest")
+      launch.with(env: launch.env.except(Launch::PROVIDER_KEY)).build_digest == info["build_digest"]
+    end
+
+    def self.settled?(launch, info, notes)
+      names = launch.settings_differing(info["settings_digest"])
+      notes.puts(format(RESETTLE, socket: launch.socket, names: names.join(", "))) unless names.empty?
+      true
+    end
+
+    def self.kept_unread?(launch, notes)
+      notes.puts(format(UNREAD, socket: launch.socket, error: launch.config_error))
+      true
     end
 
     def self.halt(client, socket)
@@ -184,7 +201,7 @@ module Lain
       "lain-daemon #{how}; its trace is #{launch.trace}"
     end
 
-    private_class_method :built?, :absent, :attach, :closing_on_error, :usable?, :kept?, :pending, :keyless?, :halt,
-                         :running?, :started, :spawned, :unstarted
+    private_class_method :built?, :absent, :attach, :closing_on_error, :usable?, :kept?, :pending, :keyless?, :settled?,
+                         :kept_unread?, :halt, :running?, :started, :spawned, :unstarted
   end
 end

@@ -6,10 +6,12 @@ require "rbconfig"
 
 module Lain
   module Daemon
-    Launch = Data.define(:binary, :socket, :trace, :ruby, :lain, :runs, :env, :flags, :digest)
+    Launch = Data.define(:binary, :socket, :trace, :ruby, :lain, :runs, :env, :settings, :config_error, :build_digest,
+                         :settings_digest)
 
-    # Everything that decides how a daemon behaves, so a running daemon whose
-    # digest differs was started by another launch and is due a restart.
+    # Everything that decides how a daemon behaves, split in 2: a running daemon whose build digest
+    # differs was started by another build or checkout and is due a restart, while one whose settings
+    # digest differs keeps running, since a restart is the user's to ask for.
     class Launch
       # Only what the daemon and its children need. A desktop session's own
       # names (XDG_SEAT, XDG_VTNR) would split a desktop lain and an ssh lain
@@ -19,11 +21,11 @@ module Lain
                  (?:http|https|no)_proxy|(?:HTTP|HTTPS|NO)_PROXY|
                  XDG_(?:RUNTIME_DIR|STATE_HOME|CONFIG_HOME|CACHE_HOME|DATA_HOME))\z/x
 
-      POLL = ["--poll-every", "300"].freeze
+      POLL = { "review poll" => ["--poll-every", "300"].freeze }.freeze
 
       # The ntfy topic is as good as a password and an argv is world-readable, so it rides in the
       # environment under this name, which the daemon's `main.rs` reads by the same string. The
-      # digest hashes the topic with inputs any user can read, so it rides there too.
+      # settings digest hashes the topic, so both digests ride there too, under 1 name split by a space.
       NTFY = "DAEMON_NTFY_TOPIC"
       DIGEST = "DAEMON_LAUNCH_DIGEST"
 
@@ -43,13 +45,13 @@ module Lain
       # @param env [Hash] the caller's environment, read for cargo's target dir and the allowlist
       # @return [Launch] this checkout's release build, run by this ruby
       def self.current(paths:, env: ENV)
-        remote = remote_settings(paths)
+        remote, polled, config_error = configured(paths)
         Ractor.make_shareable(
           new(binary: File.join(Paths::Shipped.cargo_target(env:), "release", "lain-daemon"),
               socket: Daemon.socket(paths:), trace: trace_path(paths:),
               ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"), runs: runs_dir(paths),
               env: kept(env).merge(run_env(env), homes(paths), topic_env(remote)),
-              flags: [*relay_flags(remote, paths), *poll_flags(paths)])
+              settings: relay_settings(remote, paths).merge(polled ? POLL : {}), config_error:)
         )
       end
 
@@ -61,24 +63,19 @@ module Lain
       # @return [String] where each run's log goes, as `<id>.log`
       def self.runs_dir(paths) = File.join(paths.state_home, "daemon", "runs")
 
-      # A user config that cannot be read starts a daemon with no relay; the chat reading the same
-      # file is what says why.
-      def self.remote_settings(paths)
-        Config.remote(paths:)
-      rescue Error
-        {}
+      # A user config that cannot be read starts a daemon with no relay and no poll, and its error
+      # rides along so the chat can say why a running daemon was kept. The review count has a
+      # source only when the user's config has a github verb; the environment's account alone does not.
+      def self.configured(paths)
+        [Config.remote(paths:), Config.user_github?(paths:), nil]
+      rescue Error => e
+        [{}, false, e.message]
       end
 
-      def self.relay_flags(remote, paths)
-        remote[:relay] ? ["--relay", remote[:relay], "--devices-file", devices_file(paths)] : []
-      end
+      def self.relay_settings(remote, paths)
+        return {} unless remote[:relay]
 
-      # The review count has a source only when the user's config has a github verb; the
-      # environment's account alone does not.
-      def self.poll_flags(paths)
-        Config.user_github?(paths:) ? POLL : []
-      rescue Error
-        []
+        { "relay" => ["--relay", remote[:relay]], "devices file" => ["--devices-file", devices_file(paths)] }
       end
 
       # Only a relay has items to announce, so a topic with no relay goes to nobody.
@@ -111,37 +108,61 @@ module Lain
           "XDG_CONFIG_HOME" => paths.config_home, "XDG_CACHE_HOME" => paths.cache_home }
           .transform_values { |dir| File.dirname(dir) }
       end
-      private_class_method :kept, :run_env, :homes, :relay_flags, :devices_file, :remote_settings, :topic_env,
-                           :poll_flags, :runs_dir
+      private_class_method :kept, :run_env, :homes, :relay_settings, :devices_file, :configured, :topic_env, :runs_dir
 
       # Content, not mtime or size, so an untouched or re-copied binary does
       # not restart the daemon. A rebuild at a new commit stamps a new sha in,
       # so it does. The allowlist, not the env: 2 shells that differ only in
       # whether TMPDIR is set would otherwise restart each other's daemon.
       # Whether the provider key is there, never its value, so a daemon started without it is
-      # replaced by a launch that has it rather than keeping every later run keyless.
+      # replaced by a launch that has it rather than keeping every later run keyless: the key is
+      # part of the run env this digest already hashes the shape of.
       # @return [String, nil] hex; nil when the binary is not built
-      def self.digest_of(binary:, ruby:, lain:, runs:, flags:, topic: nil, keyed: false)
+      def self.build_digest_of(binary:, ruby:, lain:, keyed: false)
         return unless File.file?(binary)
 
-        Digest::SHA256.hexdigest([Digest::SHA256.file(binary).hexdigest, ruby, lain, runs, KEEP.source, RUN_ENV.source,
-                                  flags, topic, keyed].inspect)
+        Digest::SHA256.hexdigest([Digest::SHA256.file(binary).hexdigest, ruby, lain, KEEP.source, RUN_ENV.source,
+                                  keyed].inspect)
       end
 
-      # Recomputed from the fields, so a #with never carries a stale digest; it is also put in
-      # the environment, where the daemon reads it.
-      def initialize(**fields)
-        given = fields.except(:digest)
-        digest = Launch.digest_of(**given.slice(:binary, :ruby, :lain, :runs, :flags),
-                                  topic: given[:env][NTFY], keyed: given[:env].key?(PROVIDER_KEY))
-        env = digest ? given[:env].merge(DIGEST => digest) : given[:env]
-        super(**given, env:, digest:)
+      # 1 short hash per named setting, so a chat can name which differ without the daemon ever
+      # reporting a value, the topic least of all.
+      # @param named [Hash{String => Object}] each setting's user-facing name and its value
+      # @return [String] `name=hash` entries joined by commas
+      def self.settings_digest_of(named)
+        named.map { |name, value| "#{name}=#{Digest::SHA256.hexdigest([name, value].inspect)[0, 16]}" }.join(",")
       end
+
+      # Recomputed from the fields, so a #with never carries a stale digest; both are also put in
+      # the environment, where the daemon reads them.
+      def initialize(config_error: nil, **fields)
+        given = fields.except(:build_digest, :settings_digest)
+        build_digest = Launch.build_digest_of(**given.slice(:binary, :ruby, :lain),
+                                              keyed: given[:env].key?(PROVIDER_KEY))
+        settings_digest = Launch.settings_digest_of(given[:settings].merge("ntfy topic" => given[:env][NTFY],
+                                                                           "runs dir" => given[:runs]))
+        env = build_digest ? given[:env].merge(DIGEST => "#{build_digest} #{settings_digest}") : given[:env]
+        super(**given, env:, config_error:, build_digest:, settings_digest:)
+      end
+
+      # @param other [String, nil] a running daemon's settings digest; nil from a build that reports none
+      # @return [Array<String>] the settings this launch would run with otherwise, by name, never a value
+      def settings_differing(other)
+        mine = named_digests(settings_digest)
+        theirs = named_digests(other.to_s)
+        (mine.keys | theirs.keys).reject { |name| mine[name] == theirs[name] }
+      end
+
+      # @return [Array<String>] the flags its settings start the daemon with
+      def flags = settings.values.flatten
 
       # @return [Array<String>] the command the daemon is started with
       def argv = [binary, "--socket", socket, "--trace", trace, *run_flags, *flags]
 
       private
+
+      # An entry with no name is one this launch cannot match, so each of its own settings reads as differing.
+      def named_digests(digest) = digest.split(",").filter_map { _1.split("=", 2) if _1.include?("=") }.to_h
 
       def run_flags = ["--ruby", ruby, "--lain", lain, "--runs-dir", runs]
     end

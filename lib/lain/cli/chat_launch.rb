@@ -516,7 +516,11 @@ module Lain
         raise Lain::Error, format(UNRELAYED, state:, config: @paths.user_config)
       end
 
-      def relay_state = Sync { relay_of(::Lain::Daemon.ensure(paths: @paths, env: @env, notes: herdr_notes)) }
+      # The registration that opens with the conversation says the daemon's notes; saying them here too would
+      # put each on the screen twice.
+      def relay_state
+        Sync { relay_of(::Lain::Daemon.ensure(paths: @paths, env: @env, notes: ::Lain::Sink::Null.new)) }
+      end
 
       def relay_of(client)
         return "unreachable (#{client.reason})" if client.is_a?(::Lain::Daemon::Absent)

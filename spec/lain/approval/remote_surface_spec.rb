@@ -191,7 +191,8 @@ module RemoteSurfaceSpecSupport
     def initialize(dir, launch:, paths:, env:, devices: Lain::Remote::Devices.new(File.join(dir, "devices", "devices")))
       @token = devices.pair("pixel")
       @port = TCPServer.open("127.0.0.1", 0) { _1.addr[1] }
-      @launch = launch.with(flags: ["--relay", "127.0.0.1:#{@port}", "--devices-file", devices.path])
+      @launch = launch.with(settings: { "relay" => ["--relay", "127.0.0.1:#{@port}"],
+                                        "devices file" => ["--devices-file", devices.path] })
       @paths = paths
       @env = env
       @root = dir
@@ -236,9 +237,9 @@ module RemoteSurfaceSpecSupport
     require "stringio"
     require "lain"
 
-    session, root, out, rows, flags = ARGV
+    session, root, out, rows, settings = ARGV
     paths = Lain::Paths.new
-    launch = Lain::Daemon::Launch.current(paths:).with(flags: JSON.parse(flags))
+    launch = Lain::Daemon::Launch.current(paths:).with(settings: JSON.parse(settings))
     gates = Class.new do
       define_method(:each) do |&block|
         JSON.parse(File.read(rows)).map do |issue, digest, at|
@@ -285,10 +286,10 @@ module RemoteSurfaceSpecSupport
   class SiblingChat
     STOP_BUDGET = 10
 
-    def initialize(env, session, root:, out:, rows:, flags:)
+    def initialize(env, session, root:, out:, rows:, settings:)
       @err = File.join(root, "#{session}.err")
       @io = IO.popen(env, [RbConfig.ruby, "-I", File.expand_path("../../../lib", __dir__), "-e", SIBLING_CHAT,
-                           session, root, out, rows, JSON.generate(flags)], "r+", err: @err)
+                           session, root, out, rows, JSON.generate(settings)], "r+", err: @err)
     end
 
     # Reads what the chat prints until a publish adds `id`.
@@ -1100,7 +1101,7 @@ RSpec.describe Lain::Approval::RemoteSurface do
       rows.each_value { File.write(_1, JSON.generate([["a", "d1", 100], ["b", "d2", 200]])) }
       chats = rows.map do |session, file|
         RemoteSurfaceSpecSupport::SiblingChat.new(daemon_env, session, root: @dir, out:, rows: file,
-                                                                       flags: desk.launch.flags)
+                                                                       settings: desk.launch.settings)
       end
       refusal, old, renewed = Sync do |task|
         task.with_timeout(20) do

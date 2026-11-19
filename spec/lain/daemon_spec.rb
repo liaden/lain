@@ -127,7 +127,7 @@ RSpec.describe Lain::Daemon do
         @sessions = []
         @refuse_info = false
         @push_on_info = false
-        @digest = "another"
+        @info = { "build_digest" => "another", "settings_digest" => "other settings" }
         @provider_key = false
         @hangups = Thread::Queue.new
         @server = UNIXServer.new(described_class.socket(paths: @paths))
@@ -158,8 +158,7 @@ RSpec.describe Lain::Daemon do
       return ["refused", nil] if method == "daemon.info" && @refuse_info
 
       [nil, { "ping" => { "version" => Lain::Core::Client::PROTOCOL_VERSION, "pid" => @stand_in },
-              "daemon.info" => { "launch_digest" => @digest, "live_runs" => @live_runs,
-                                 "provider_key" => @provider_key },
+              "daemon.info" => @info.merge("live_runs" => @live_runs, "provider_key" => @provider_key),
               "session.list" => @sessions }.fetch(method)]
     end
 
@@ -232,7 +231,7 @@ RSpec.describe Lain::Daemon do
 
     it "says a kept daemon lacks the provider key when the key is all that differs" do
       keyless = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
-      @digest = keyless.digest
+      @info = { "build_digest" => keyless.build_digest, "settings_digest" => keyless.settings_digest }
       notes = StringIO.new
       Sync { described_class.ensure(paths: @paths, launch: keyed(keyless), notes:, env: {}).stop }
 
@@ -273,6 +272,94 @@ RSpec.describe Lain::Daemon do
       end
 
       expect(pushed).to eq(["offer", ["daemon.info"]])
+    end
+
+    def relayed(launch)
+      launch.with(settings: { "relay" => ["--relay", "127.0.0.1:7820"], "devices file" => ["--devices-file", "/d"],
+                              "review poll" => ["--poll-every", "300"] })
+    end
+
+    def kept_note(launch)
+      notes = StringIO.new
+      pid = Sync do
+        client = described_class.ensure(paths: @paths, launch:, notes:, env: {})
+        ping_pid(client).tap { client.stop }
+      end
+      [pid, notes.string]
+    end
+
+    it "keeps an idle one of this build whose settings differ, and says once which and how to apply them" do
+      @live_runs = 0
+      launch = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      started = relayed(launch)
+      @info = { "build_digest" => started.build_digest, "settings_digest" => started.settings_digest }
+
+      pid, note = kept_note(launch)
+
+      expect([pid, alive?(@stand_in)]).to eq([@stand_in, true])
+      expect(note).to eq(
+        "the daemon at #{described_class.socket(paths: @paths)} keeps the relay, devices file, review poll it " \
+        "started with, which this chat would start differently; `lain daemon restart` applies them\n"
+      )
+    end
+
+    # Its runs dir comes from the chat's XDG_STATE_HOME, which 2 shells on 1 runtime dir can set apart.
+    it "keeps an idle one started under another state home, and names the runs dir" do
+      @live_runs = 0
+      launch = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      started = launch.with(runs: "/elsewhere/state/lain/daemon/runs")
+      @info = { "build_digest" => started.build_digest, "settings_digest" => started.settings_digest }
+
+      pid, note = kept_note(launch)
+
+      expect([pid, alive?(@stand_in)]).to eq([@stand_in, true])
+      expect(note).to include("keeps the runs dir it started with")
+    end
+
+    it "keeps an idle one of this build whose settings digest it cannot read, and names its settings" do
+      @live_runs = 0
+      launch = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      @info = { "build_digest" => launch.build_digest, "settings_digest" => "abc,def" }
+
+      pid, note = kept_note(launch)
+
+      expect([pid, alive?(@stand_in)]).to eq([@stand_in, true])
+      expect(note).to include("keeps the ntfy topic, runs dir it started with")
+    end
+
+    it "keeps an idle one of this build and the same settings without a word" do
+      @live_runs = 0
+      launch = Lain::Daemon::Launch.current(paths: @paths, env: {}).with(binary: RbConfig.ruby)
+      @info = { "build_digest" => launch.build_digest, "settings_digest" => launch.settings_digest }
+
+      expect(kept_note(launch)).to eq([@stand_in, ""])
+    end
+
+    it "keeps an idle one of another build when the user's config cannot be read, and names the error" do
+      @live_runs = 0
+      Dir.mktmpdir("unread-home") do |home|
+        paths = Lain::Paths.new(env: { "HOME" => home, "XDG_RUNTIME_DIR" => File.dirname(@paths.runtime_dir) })
+        FileUtils.mkdir_p(File.dirname(paths.user_config))
+        File.write(paths.user_config, "remote relay: \"127.0.0.1:7820\"\n")
+        launch = Lain::Daemon::Launch.current(paths:, env: {}).with(binary: RbConfig.ruby)
+
+        pid, note = kept_note(launch)
+
+        expect([pid, alive?(@stand_in)]).to eq([@stand_in, true])
+        expect(note).to start_with("the daemon at #{described_class.socket(paths: @paths)} is kept as it runs, " \
+                                   "since the user config cannot be read: ")
+        expect(note).to include(paths.user_config)
+      end
+    end
+
+    it "replaces an idle one that reports no build digest, as an older build" do
+      @live_runs = 0
+      @info = { "launch_digest" => "older" }
+      stub_const("Lain::Daemon::STOP_BUDGET", 0.2)
+      launch = Lain::Daemon::Launch.current(paths: @paths).with(binary: RbConfig.ruby)
+
+      expect { Sync { described_class.ensure(paths: @paths, launch:, env: {}) } }
+        .to raise_error(Lain::Daemon::Unstopped, /#{@stand_in}/)
     end
 
     it "refuses in words when an idle one ignores the stop" do
@@ -347,13 +434,33 @@ RSpec.describe Lain::Daemon do
       end
     end
 
-    it "connects to the daemon this launch started, and says which launch it is" do
+    it "connects to the daemon this launch started, and says which build and settings it runs" do
       info = Sync do
         client = described_class.ensure(paths: daemon_paths, env: daemon_env)
         client.call("daemon.info").tap { client.stop }
       end
 
-      expect(info.fetch("launch_digest")).to eq(daemon_launch.digest)
+      expect(info.values_at("build_digest", "settings_digest"))
+        .to eq([daemon_launch.build_digest, daemon_launch.settings_digest])
+    end
+
+    it "keeps a running daemon whose relay this chat's config lacks, and says so once" do
+      devices = Lain::Remote::Devices.new(File.join(File.dirname(daemon_paths.runtime_dir), "devices", "devices"))
+      devices.pair("pixel")
+      port = TCPServer.open("127.0.0.1", 0) { _1.addr[1] }
+      relayed = daemon_launch.with(settings: { "relay" => ["--relay", "127.0.0.1:#{port}"],
+                                               "devices file" => ["--devices-file", devices.path] })
+      notes = StringIO.new
+
+      first, second, relay = Sync do
+        client = described_class.ensure(paths: daemon_paths, env: daemon_env, launch: relayed)
+        started = ping_pid(client).tap { client.stop }
+        client = described_class.ensure(paths: daemon_paths, env: daemon_env, notes:)
+        [started, ping_pid(client), client.call("daemon.info").fetch("relay")].tap { client.stop }
+      end
+
+      expect([second, relay]).to eq([first, "running"])
+      expect(notes.string.lines.grep(/keeps the relay, devices file it started with/).size).to eq(1)
     end
 
     it "starts 1 daemon for 4 callers at once, and all 4 connect to it" do
@@ -372,7 +479,8 @@ RSpec.describe Lain::Daemon do
     it "replaces an idle daemon from another launch" do
       socket = described_class.socket(paths: daemon_paths)
       FileUtils.mkdir_p(File.dirname(socket), mode: 0o700)
-      stale = Process.spawn({ "DAEMON_LAUNCH_DIGEST" => "another" }, daemon_launch.binary, "--socket", socket,
+      stale = Process.spawn({ "DAEMON_LAUNCH_DIGEST" => "another #{daemon_launch.settings_digest}" },
+                            daemon_launch.binary, "--socket", socket,
                             in: File::NULL, out: File::NULL, err: File::NULL)
       waiter = Process.detach(stale)
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
@@ -385,7 +493,7 @@ RSpec.describe Lain::Daemon do
 
       expect(waiter.join(5)).not_to be_nil
       expect(pid).not_to eq(stale)
-      expect(info.fetch("launch_digest")).to eq(daemon_launch.digest)
+      expect(info.fetch("build_digest")).to eq(daemon_launch.build_digest)
     end
 
     it "hands the daemon it starts the queue the caller gave for pushes" do

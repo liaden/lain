@@ -2261,6 +2261,25 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
       expect(client).to have_received(:stop)
     end
 
+    # The registration that opens with the conversation says a kept daemon's note; the relay check saying it too
+    # would put it on the chat's screen twice.
+    it "leaves a kept daemon's note to the registration, so the relay check puts none on the chat's screen" do
+      relay_in_user_config
+      client = daemon_answering("running")
+      held = Lain::Herdr::HeldNotes.new
+      allow(Lain::Herdr::HeldNotes).to receive(:new).and_return(held)
+      allow(Lain::Daemon).to receive(:ensure) do |notes: Lain::Sink::Null.new, **|
+        notes.puts("the daemon keeps the relay it started with")
+        client
+      end
+      screen = []
+
+      launch(remote).call { |_notice| nil }
+      held.bind(screen.method(:<<))
+
+      expect(screen).to eq([])
+    end
+
     it "refuses when the daemon's relay is off, naming `remote relay:` in the user config" do
       relay_in_user_config
       daemon_answering("off")

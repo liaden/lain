@@ -122,9 +122,9 @@ async fn connected(dir: &Path, digest: &str) -> (tokio::process::Child, UnixStre
 }
 
 #[tokio::test]
-async fn it_answers_ping_and_reports_its_build_and_launch_digest() {
+async fn it_answers_ping_and_reports_its_build_and_settings_digests() {
     let dir = tempfile::tempdir().expect("tempdir");
-    let (daemon, mut stream) = connected(dir.path(), "abc").await;
+    let (daemon, mut stream) = connected(dir.path(), "abc def").await;
 
     let ping = call(&mut stream, "ping").await;
     assert_eq!(Value::from("0.1.0"), field(&ping, "version"));
@@ -139,7 +139,8 @@ async fn it_answers_ping_and_reports_its_build_and_launch_digest() {
         build.as_str().is_some_and(|id| id.starts_with("0.1.0 ")),
         "{build}"
     );
-    assert_eq!(Value::from("abc"), field(&info, "launch_digest"));
+    assert_eq!(Value::from("abc"), field(&info, "build_digest"));
+    assert_eq!(Value::from("def"), field(&info, "settings_digest"));
 }
 
 #[tokio::test]
@@ -158,7 +159,7 @@ async fn a_second_daemon_on_the_same_socket_exits_1_and_the_first_keeps_serving(
     assert!(trace.contains("daemon.sock"), "{trace}");
 
     let info = call(&mut stream, "daemon.info").await;
-    assert_eq!(Value::from("abc"), field(&info, "launch_digest"));
+    assert_eq!(Value::from("abc"), field(&info, "build_digest"));
 }
 
 #[tokio::test]

@@ -544,7 +544,7 @@ project's `.lain/config.rb` that says `remote` is refused, naming the user's con
     launch does not pass it), then `HTTPS_PROXY`, then `HTTP_PROXY`, for a topic of either
     scheme. A host named in `NO_PROXY` goes direct, an http topic is tunnelled with `CONNECT`,
     and a proxy variable that is not a valid URL is ignored, so the post goes direct.
-  * The topic and the daemon's launch digest reach the daemon in its environment and never its
-    command line, since any user can read a command line and a topic is as good as a password to
-    anyone who can post to it. It is a shared name to ntfy, which is why nothing else rides on
-    the notice.
+  * The topic and the daemon's build and settings digests reach the daemon in its environment and
+    never its command line, since any user can read a command line and a topic is as good as a
+    password to anyone who can post to it. It is a shared name to ntfy, which is why nothing else
+    rides on the notice.

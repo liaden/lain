@@ -21,7 +21,7 @@ RSpec.describe Lain::Daemon::Launch do
     described_class.new(binary:, socket: "/run/lain/daemon/daemon.sock", trace: "/run/lain/daemon/daemon.trace",
                         ruby: "/usr/bin/ruby", lain: "/src/lain/exe/lain", runs: "/state/lain/daemon/runs",
                         env: { "PATH" => "/usr/bin" }.freeze,
-                        flags: [].freeze, **overrides)
+                        settings: {}.freeze, **overrides)
   end
 
   describe ".current" do
@@ -95,20 +95,30 @@ RSpec.describe Lain::Daemon::Launch do
         .to include("XDG_RUNTIME_DIR" => "/run/user/8", "XDG_STATE_HOME" => "/state")
     end
 
-    it "gives a desktop session and a login without one the same digest" do
+    it "gives a desktop session and a login without one the same digests" do
       headless = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)),
                                          env: env.except("XDG_VTNR",
                                                          "XDG_SEAT"))
 
-      expect(headless.digest).to eq(current.digest)
+      expect([headless.build_digest, headless.settings_digest]).to eq([current.build_digest, current.settings_digest])
     end
 
-    it "gives 2 launches that differ only in LAIN_MODEL's value the same digest" do
+    it "names the runs dir, and keeps the build digest, for a launch under another state home" do
+      paths = Lain::Paths.new(env: SpecHome.env(env))
+      moved = Lain::Paths.new(env: SpecHome.env(env.merge("XDG_STATE_HOME" => "/s")))
+      elsewhere = described_class.current(paths: moved, env:)
+      here = described_class.current(paths:, env:)
+
+      expect(elsewhere.build_digest).to eq(here.build_digest)
+      expect(elsewhere.settings_differing(here.settings_digest)).to eq(["runs dir"])
+    end
+
+    it "gives 2 launches that differ only in LAIN_MODEL's value the same digests" do
       paths = Lain::Paths.new(env: SpecHome.env(env))
       one = described_class.current(paths:, env: env.merge("LAIN_MODEL" => "qwen3:4b"))
       other = described_class.current(paths:, env: env.merge("LAIN_MODEL" => "lfm2.5:latest"))
 
-      expect(other.digest).to eq(one.digest)
+      expect([other.build_digest, other.settings_digest]).to eq([one.build_digest, one.settings_digest])
     end
 
     it "withholds a secret-shaped name even when the allowlist would take it" do
@@ -160,12 +170,14 @@ RSpec.describe Lain::Daemon::Launch do
         expect([launch.flags, launch.env.key?("DAEMON_NTFY_TOPIC")]).to eq([[], false])
       end
 
-      it "restarts the daemon when the topic changes, by a different digest" do
+      it "names a changed topic as a setting that differs, and keeps the build digest" do
         write_user_config("remote relay: \"100.64.0.1:7820\", ntfy: \"https://ntfy.sh/x\"\n")
         first = described_class.current(paths:, env:)
         write_user_config("remote relay: \"100.64.0.1:7820\", ntfy: \"https://ntfy.sh/y\"\n")
+        second = described_class.current(paths:, env:)
 
-        expect(described_class.current(paths:, env:).digest).not_to eq(first.digest)
+        expect(second.build_digest).to eq(first.build_digest)
+        expect(second.settings_differing(first.settings_digest)).to eq(["ntfy topic"])
       end
 
       it "writes an empty devices file, mode 0600 in a 0700 directory, before the daemon reads it" do
@@ -189,18 +201,28 @@ RSpec.describe Lain::Daemon::Launch do
         expect(File.exist?(devices)).to be(false)
       end
 
-      it "runs none when the user's config cannot be read, and leaves saying why to the chat" do
+      it "runs none when the user's config cannot be read, and carries the error for the chat to name" do
         FileUtils.mkdir_p(File.dirname(paths.user_config))
         File.write(paths.user_config, "remote relay: \"100.64.0.1:7820\"\n")
+        launch = described_class.current(paths:, env:)
 
-        expect(described_class.current(paths:, env:).flags).to eq([])
+        expect(launch.flags).to eq([])
+        expect(launch.config_error).to include(paths.user_config)
       end
 
-      it "gives a launch with the relay and one without different digests" do
-        without = described_class.current(paths:, env:)
+      it "carries no config error when the user's config reads" do
         write_user_config("remote relay: \"100.64.0.1:7820\"\n")
 
-        expect(described_class.current(paths:, env:).digest).not_to eq(without.digest)
+        expect(described_class.current(paths:, env:).config_error).to be_nil
+      end
+
+      it "names the relay and the devices as the settings a launch with the relay differs in" do
+        without = described_class.current(paths:, env:)
+        write_user_config("remote relay: \"100.64.0.1:7820\"\n")
+        with = described_class.current(paths:, env:)
+
+        expect(with.build_digest).to eq(without.build_digest)
+        expect(with.settings_differing(without.settings_digest)).to eq(["relay", "devices file"])
       end
     end
   end
@@ -252,11 +274,13 @@ RSpec.describe Lain::Daemon::Launch do
       expect(described_class.current(paths:, env:).flags).to eq([])
     end
 
-    it "gives a launch that polls and one that does not different digests" do
+    it "names the poll as the setting a launch that polls differs in" do
       without = described_class.current(paths:, env:)
       write_user_config("github account: \"work\"\n")
+      polling = described_class.current(paths:, env:)
 
-      expect(described_class.current(paths:, env:).digest).not_to eq(without.digest)
+      expect(polling.build_digest).to eq(without.build_digest)
+      expect(polling.settings_differing(without.settings_digest)).to eq(["review poll"])
     end
   end
 
@@ -343,7 +367,7 @@ RSpec.describe Lain::Daemon::Launch do
 
   describe "#argv" do
     it "names the socket, the trace, what a run is started with, then the flags, and carries no digest" do
-      subject = launch(flags: ["--relay", "on"].freeze)
+      subject = launch(settings: { "relay" => ["--relay", "on"] }.freeze)
 
       expect(subject.argv).to eq([subject.binary, "--socket", "/run/lain/daemon/daemon.sock",
                                   "--trace", "/run/lain/daemon/daemon.trace", "--ruby", "/usr/bin/ruby",
@@ -351,14 +375,15 @@ RSpec.describe Lain::Daemon::Launch do
                                   "--relay", "on"])
     end
 
-    # The digest hashes the topic with inputs a local user can read, so on a world-readable
-    # command line it would let that user test guesses at the topic.
-    it "keeps the digest out of the command line, and hands it to the daemon in its environment" do
+    # The settings digest hashes the topic, so on a world-readable command line it would let a
+    # local user test guesses at the topic.
+    it "keeps both digests out of the command line, and hands them to the daemon in 1 environment name" do
       env = { "PATH" => "/usr/bin", "DAEMON_NTFY_TOPIC" => "x" }.freeze
-      subject = launch(flags: ["--relay", "on"].freeze, env:)
+      subject = launch(settings: { "relay" => ["--relay", "on"] }.freeze, env:)
 
-      expect(subject.argv.join(" ")).not_to include(subject.digest)
-      expect(subject.env.fetch("DAEMON_LAUNCH_DIGEST")).to eq(subject.digest)
+      expect(subject.argv.join(" ")).not_to include(subject.build_digest)
+      expect(subject.argv.join(" ")).not_to include(subject.settings_digest)
+      expect(subject.env.fetch("DAEMON_LAUNCH_DIGEST")).to eq("#{subject.build_digest} #{subject.settings_digest}")
     end
 
     it "gives a launch with another topic another digest in the environment" do
@@ -369,41 +394,57 @@ RSpec.describe Lain::Daemon::Launch do
     end
   end
 
-  describe "#digest" do
+  describe "#build_digest" do
     it "is the same for the same launch" do
-      expect(launch.digest).to eq(launch.digest)
+      expect(launch.build_digest).to eq(launch.build_digest)
     end
 
     # An untouched or re-copied binary keeps its content, so it must not restart the daemon.
     it "ignores the binary's mtime" do
-      before = launch.digest
+      before = launch.build_digest
       File.utime(Time.at(0), Time.at(0), binary)
 
-      expect(launch.digest).to eq(before)
+      expect(launch.build_digest).to eq(before)
     end
 
     it "changes with the binary's content" do
-      expect(launch(binary: built("built twice", name: "other")).digest).not_to eq(launch.digest)
+      expect(launch(binary: built("built twice", name: "other")).build_digest).not_to eq(launch.build_digest)
     end
 
-    it "changes with the ruby, the lain, the runs dir and the flags" do
-      digests = [launch, launch(ruby: "/opt/ruby"), launch(lain: "/elsewhere/exe/lain"),
-                 launch(runs: "/elsewhere/runs"), launch(flags: ["--relay"].freeze)].map(&:digest)
+    it "changes with the ruby and the lain" do
+      digests = [launch, launch(ruby: "/opt/ruby"), launch(lain: "/elsewhere/exe/lain")].map(&:build_digest)
 
-      expect(digests.uniq.size).to eq(5)
+      expect(digests.uniq.size).to eq(3)
+    end
+
+    # A chat with another XDG_STATE_HOME on the same runtime dir would otherwise replace an idle daemon.
+    it "is the same whatever the runs dir, which is a setting the chat names instead" do
+      elsewhere = launch(runs: "/elsewhere/runs")
+
+      expect(elsewhere.build_digest).to eq(launch.build_digest)
+      expect(elsewhere.settings_differing(launch.settings_digest)).to eq(["runs dir"])
+    end
+
+    # A chat whose config differs from the one the daemon started with must not replace it.
+    it "is the same whatever the relay, the poll and the topic" do
+      settled = launch(settings: { "relay" => ["--relay", "on"], "devices file" => ["--devices-file", "/d"],
+                                   "review poll" => ["--poll-every", "300"] }.freeze,
+                       env: { "PATH" => "/usr/bin", "DAEMON_NTFY_TOPIC" => "x" }.freeze)
+
+      expect(settled.build_digest).to eq(launch.build_digest)
     end
 
     # 2 lains whose shells differ only in whether TMPDIR is set must share 1 daemon, not restart each other's.
     it "is the same whichever allowlisted names are set, and whatever their values" do
-      expect(launch(env: { "PATH" => "/opt/bin" }.freeze).digest).to eq(launch.digest)
-      expect(launch(env: { "PATH" => "/usr/bin", "TMPDIR" => "/tmp" }.freeze).digest).to eq(launch.digest)
+      expect(launch(env: { "PATH" => "/opt/bin" }.freeze).build_digest).to eq(launch.build_digest)
+      expect(launch(env: { "PATH" => "/usr/bin", "TMPDIR" => "/tmp" }.freeze).build_digest).to eq(launch.build_digest)
     end
 
     it "changes with the allowlist" do
-      before = launch.digest
+      before = launch.build_digest
       stub_const("Lain::Daemon::Launch::KEEP", /\APATH\z/)
 
-      expect(launch.digest).not_to eq(before)
+      expect(launch.build_digest).not_to eq(before)
     end
 
     # A daemon started from a shell without the key would otherwise keep every later run keyless.
@@ -411,22 +452,59 @@ RSpec.describe Lain::Daemon::Launch do
       without = launch
       with = launch(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-a" }.freeze)
 
-      expect(with.digest).not_to eq(without.digest)
-      expect(with.with(env: { "PATH" => "/usr/bin" }.freeze).digest).to eq(without.digest)
+      expect(with.build_digest).not_to eq(without.build_digest)
+      expect(with.with(env: { "PATH" => "/usr/bin" }.freeze).build_digest).to eq(without.build_digest)
     end
 
     it "hashes only whether the provider key is there, never its value" do
       first = launch(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-a" }.freeze)
 
-      expect(first.with(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-b" }.freeze).digest)
-        .to eq(first.digest)
+      expect(first.with(env: { "PATH" => "/usr/bin", "ANTHROPIC_API_KEY" => "sk-b" }.freeze).build_digest)
+        .to eq(first.build_digest)
     end
 
     it "changes with the run allowlist" do
-      before = launch.digest
+      before = launch.build_digest
       stub_const("Lain::Daemon::Launch::RUN_ENV", /\ASHELL\z/)
 
-      expect(launch.digest).not_to eq(before)
+      expect(launch.build_digest).not_to eq(before)
+    end
+  end
+
+  describe "#settings_differing" do
+    let(:relayed) do
+      launch(settings: { "relay" => ["--relay", "on"], "devices file" => ["--devices-file", "/d"],
+                         "review poll" => ["--poll-every", "300"] }.freeze,
+             env: { "PATH" => "/usr/bin", "DAEMON_NTFY_TOPIC" => "https://ntfy.sh/x-secret" }.freeze)
+    end
+
+    it "names nothing for the same settings" do
+      expect(relayed.settings_differing(relayed.settings_digest)).to eq([])
+    end
+
+    it "names each setting that differs, in a fixed order" do
+      expect(launch.settings_differing(relayed.settings_digest))
+        .to eq(["ntfy topic", "relay", "devices file", "review poll"])
+    end
+
+    it "names every setting against a settings digest it cannot read" do
+      expect(launch.settings_differing("abc,def")).to eq(["ntfy topic", "runs dir"])
+    end
+
+    it "names every setting against a daemon that reports none" do
+      expect(launch.settings_differing(nil)).to eq(["ntfy topic", "runs dir"])
+    end
+
+    # A flag the daemon is started with that no digest hashes would let a changed one go unseen.
+    it "names an extra setting, which also lands in the argv" do
+      extra = launch(settings: { "extra" => ["--extra", "x"] }.freeze)
+
+      expect(extra.settings_differing(launch.settings_digest)).to eq(["extra"])
+      expect(extra.argv.last(2)).to eq(["--extra", "x"])
+    end
+
+    it "never carries the topic in its digest" do
+      expect(relayed.settings_digest).not_to include("x-secret")
     end
   end
 end

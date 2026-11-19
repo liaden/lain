@@ -130,6 +130,11 @@ lain daemon status
 `lain` must be on your `PATH`. On the dev box `bin/install-shim` writes `~/.local/bin/lain`, a small script
 that runs the checkout's `exe/lain` under the right ruby.
 
+A new daemon build, another lain checkout, another ruby, or `ANTHROPIC_API_KEY` added or removed
+replaces an idle daemon. The relay, devices file, ntfy topic, review poll and runs dir never do: a
+running daemon keeps the ones it started with, the next chat names the ones it would start
+differently, and `lain daemon restart` applies them. An unreadable user config replaces no daemon.
+
 `status` should print `relay: running`. Any chat starts the daemon on demand too, but `ensure` at
 login is what keeps the review count fresh and lets a headless run start while no chat is open. On
 Linux that is a oneshot user service wanted by `default.target`:
@@ -296,7 +301,7 @@ These are known and have no fix yet.
 - No end-to-end example yet of a phone-approved bash call running traced. It is proven in 2 halves.
 - An inherited descriptor. A `lain-daemon` started by anything other than `Daemon.ensure` can pass an
   open descriptor of its own to the spawner and to every run.
-- Keyless and keyed callers swap an idle daemon. The launch digest includes whether
+- Keyless and keyed callers swap an idle daemon. The build digest includes whether
   `ANTHROPIC_API_KEY` is set, so an idle daemon is replaced each time a lain without the key and a lain
   with it alternate, and each swap restarts the relay.
 - The mac. Its launchd steps are by hand, and the relay does not run there.

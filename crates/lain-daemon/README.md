@@ -27,8 +27,8 @@ The integration tests are in `tests/` (`lifecycle.rs`, `relay.rs`, `supervisor.r
 
 ## Layout
 
-- `main.rs`: the server. Socket, trace path and launch digest arrive in argv; the binary never
-  computes its own path.
+- `main.rs`: the server. Socket and trace path arrive in argv, and the build and settings digests
+  in its environment; the binary never computes its own path.
 - `registry.rs`: the live chats, each registered over its own connection.
 - `supervisor.rs`: headless runs, each started from a closed set of kinds.
 - `spawner.rs`: the end of `lain daemon spawner`, a Ruby process that forks each run (JSON lines).
