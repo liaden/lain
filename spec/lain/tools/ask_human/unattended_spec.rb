@@ -49,4 +49,31 @@ RSpec.describe Lain::Tools::AskHuman::Unattended do
     expect(tool.last_question).to be_nil
     expect(store.size).to eq(before)
   end
+
+  describe "#ask, the door a gate knocks on" do
+    it "answers at once with a deny in REFUSAL's words, and writes nothing" do
+      parent
+      before = store.size
+      asked = tool.ask("approve the plan?")
+
+      expect(asked.await.verdict).to be_denied
+      expect(asked.await.verdict.note).to eq(described_class::REFUSAL)
+      expect(asked.await.surface).to eq(described_class::SURFACE)
+      expect([tool.pending?, store.size]).to eq([false, before])
+    end
+
+    it "keeps NO_MAILBOX's words for a spawn with no mailbox" do
+      mailless = described_class.new(parent:, text: described_class::NO_MAILBOX)
+
+      expect(mailless.ask("approve?").await.verdict.note).to eq(described_class::NO_MAILBOX)
+    end
+
+    it "never tells the desk" do
+      told = []
+      noisy = described_class.new(parent:, notify: ->(question) { told << question })
+      noisy.ask("approve?")
+
+      expect(told).to be_empty
+    end
+  end
 end

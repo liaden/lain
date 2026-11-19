@@ -34,6 +34,9 @@ module Lain
                      "to relay has nobody to put it to and no answer will ever come back. Decide with " \
                      "what you have, or stop and say what you needed."
 
+        # Who a gate's journal credits for a refusal nobody was there to give.
+        SURFACE = "unattended"
+
         # `text:` lets a caller choose WHICH observable fact this asker
         # states -- {REFUSAL} by default, since {CLI::Wiring::Askers#asker_over}
         # is the one caller for whom `--non-interactive` really is the reason.
@@ -46,6 +49,16 @@ module Lain
         def initialize(text: REFUSAL, **)
           super(**)
           @text = text
+        end
+
+        # A gate asks through here and parks on the promise, so an asker that
+        # can never answer settles it before handing it back: parking would
+        # hold the stage for its whole window, and the Q it would write is half
+        # of an exchange that has no other half.
+        def ask(_question)
+          Promise.new.tap do |promise|
+            promise.resolve(Epic::Gate::Answer.new(verdict: Approval::Verdict::Deny.new(note: @text), surface: SURFACE))
+          end
         end
 
         protected

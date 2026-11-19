@@ -1356,4 +1356,15 @@ RSpec.describe Lain::Epic::Gate do
       expect(described_class.deny("timeout").verdict).to eq(Lain::Approval::Verdict::Deny.new)
     end
   end
+
+  describe "an asker that is nobody" do
+    it "refuses at once, naming the config line that decides the stage unattended" do
+      asker = Lain::Tools::AskHuman::Unattended.new(parent: nil)
+
+      expect(call(gate(timeout: 30), asker:, stage: "epic_plan")).to be(false)
+
+      expect(decisions.last["reason"]).to include("gate :epic_plan, :hands_off").and include(".lain/config.rb")
+      expect(decisions.last["answered_by"]).to eq(Lain::Tools::AskHuman::Unattended::SURFACE)
+    end
+  end
 end

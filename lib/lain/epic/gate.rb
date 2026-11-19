@@ -318,13 +318,23 @@ module Lain
         # rescue already guards against. Deferral holds the cancellation off
         # until this block runs to completion, THEN raises it; it does not
         # swallow it.
-        task.defer_stop { settle(artifact, answer, latency:, **decided) }
+        task.defer_stop { settle(artifact, remedied(answer, stage), latency:, **decided) }
       ensure
         withdrawn(asker, asked)
         retired(asked)
       end
 
       private
+
+      # An asker that cannot be asked refuses in its own words; only the gate
+      # knows the stage, so only here can the refusal name the line that decides it.
+      def remedied(answer, stage)
+        return answer unless answer.respond_to?(:surface) && answer.surface == Tools::AskHuman::Unattended::SURFACE
+
+        remedy = "to decide #{stage} unattended, add `gate :#{stage}, :#{Policy::HandsOff::NAME}` (or " \
+                 ":#{Policy::Deferred::NAME}) to the `epics` block of .lain/config.rb"
+        Answer.new(verdict: answer.verdict.class.new(note: "#{answer.reason}; #{remedy}"), surface: answer.surface)
+      end
 
       # Journaled once the question is out rather than before it, so an asker
       # that refuses to ask leaves no wait that no decision will ever close.
