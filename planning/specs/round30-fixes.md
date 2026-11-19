@@ -20,7 +20,8 @@ The user ruled on 2026-11-19 (memory `qa-round-30-rulings.md`):
    - The daemon's own settings (relay, devices, review poll) come from the user config.
    - A project's `.lain/config.rb` may add project-level daemon settings, its own review poll, layered over the user's. The daemon applies them when a chat there registers, without a restart. The user does not want daemon settings to be a singleton.
 6. g30-1: a child starts at the parent's current approval, read live.
-7. m30-2: a human's plain `y` on a project script (`bin/rails`) must run it, contained with no network, even if the script was edited in the session. Masked files stay masked. Whether a contained run with no network could see secrets is a research question; see Open decisions.
+7. m30-2: a human's plain `y` on a project script (`bin/rails`) must run it, contained with no network, even if the script was edited in the session. Masked files stay masked. Whether a contained run with no network could see secrets went to research (`planning/contained-run-secrets-research-2026-11.md`).
+8. The research's 2 recommendations are in this plan (user, 2026-11-19): masks become decoys so a masked Rails app boots (T40), and a separate human answer unmasks the secret files for 1 contained run, with the decrypted credentials masked and the run's writes scanned (T41 to T43).
 
 Roadmap: `ROADMAP.md` item 76, added in the commit that lands this plan.
 
@@ -42,11 +43,13 @@ What lands, by stream:
   - A human `y` runs a project script contained.
   - The refusal stops telling the model to ask a human who already answered.
   - A masked file is named.
+  - A masked file reads as empty, and a masked Rails key pair as a decoy, so `bin/rails` boots contained.
   - An unreadable lineage parks the next networked build (round 29 ruling 12).
   - The mask listing stops reclassifying 50,000 ignored names per call.
   - The judge sees related directories.
   - A drained chore can add a file.
   - A human allow is remembered.
+  - A `secrets` answer runs 1 contained call with the secret files unmasked. Its decrypted Rails credentials are masked, and what it wrote is scanned and gated.
 - **H, headless and daemon (T25 to T34):**
   - A headless run gets a provider.
   - A chore's failure says why.
@@ -107,6 +110,8 @@ What lands, by stream:
 | Review counts file | free to break; T32 adds 1 file per project root beside the user's | `paths.review_counts`, read by the HUD |
 | Config DSL (`.lain/config.rb`) | no new key; the project `github` verb that exists already starts driving a poll | `lib/lain/config.rb:180-187` |
 | `lain export --format jsonl` | must keep raw | round 29 ruling 7 |
+| Approval answers (`y`, `n`, `hold`, `network`) | free to break; T43 adds `secrets` at the TTY and in nvim, the 2 surfaces that offer `network` | `Approval::Reply` (`approval/reply.rb:35-57`) is the only parser; the phone offers neither (`remote/wire.rb:126-144`) |
+| Mask contents inside a contained run | free to break, with 1 guard; T40 turns EACCES into an empty file or a decoy | the sandboxed program reads them, and git can write them into the host's index and objects. T40's filter and `DecoyGuard` keep a decoy out of the repo. `spec/lain/confine/bwrap_spec.rb:410-518` pins EACCES and is rewritten |
 
 No must-keep surface stood in the way of a simplification, so there was no trade to report.
 
@@ -116,7 +121,10 @@ No must-keep surface stood in the way of a simplification, so there was no trade
 |---|---|---|
 | c30-3: is the per-call cost git's listing or lain's work over the names? | lain's. `git ls-files -z -co` over 50,000 ignored files took 0.03 s (3 runs). Fork c measured 280 to 370 ms warm and 5.1 to 5.3 s cold per call for the same tree, so the Ruby diff and classification of 50,000 names is the cost, not git. T20 skips the work when the listing is byte-identical, and prunes the common build directories. | throwaway repo in the session scratchpad (`r30/spike-ls`), 500 dirs of 100 files under an ignored `build/`; `~/tmp/lain-qa-2026-11-18-c/records/fork-report.md:48-49,59` |
 
-The spike was a throwaway git repo in the scratchpad, not a worktree, because it ran git alone and no lain code.
+| T40: does a git clean filter set through env keep a decoy out of a commit? | Yes for `git commit -am`: HEAD kept the original blob. A `.gitattributes` with `-filter` in the repo turns it off, so T40 also checks the index and new commits after the run. | throwaway repo in the session scratchpad (`r30/filterspike`) |
+| m30-2: does `bin/rails` run under today's masks, and what would let it? | No. A mask is `/dev/null` bound `nodev`, so a read fails with EACCES, and Rails 8.1 reads its credentials at boot: `rails runner 'p 1+1'` and `rails g scaffold` exit 1. A decoy pair (a random key and `{}` encrypted under it) boots both, with credentials empty. The private netns blocked TCP, DNS, UDP, the dbus socket and abstract sockets through `Confine::Profiles`. | `planning/contained-run-secrets-research-2026-11.md`, 2 spikes and a decoy run under bwrap (T40, T43) |
+
+The c30-3 spike was a throwaway git repo in the scratchpad, not a worktree, because it ran git alone and no lain code.
 
 ## Panel review
 
@@ -147,15 +155,28 @@ The spike was a throwaway git repo in the scratchpad, not a worktree, because it
   - T15 uses the notifier's 200-character limit.
 - **Declined:** merging T17 with T18 and T22 with T23. The reason is in Rejected options.
 
+A 2nd review (Ruby roster) covered T40 to T43, added after the secrets research. Verdict REQUEST-CHANGES, 2 BLOCKERs, 9 SHOULD-FIX and 8 NITs, all applied. The panel traced `secrets` from `ApprovalPolicy.read` and `ApprovalView#read` through `Reply.parse`, `Pending#resolve` and `Escalation` to `Profiles#contained`, and probed T40 with the real `Bwrap` argv and the compiled fence:
+
+- **BLOCKERs:**
+  - A decoy over the tracked `credentials.yml.enc` let a contained `git commit -am` commit it, where the mask fails closed today. T40 now prevents this with a git clean filter and checks the index and new commits after the run.
+  - A decoy bound from a path let a planted link read any host file at a project path. T40 binds every mask from an fd (`--ro-bind-data`).
+- **Mechanism:**
+  - T42 scopes by ctime against a filesystem mark, scans the index and new commits, unions the taint into the bwrap masks, and keys T20's reuse on the taint.
+  - T42's wiring goes through `ToolsetBuild` lazily, and it says "per process".
+  - T42 introduces `Profile#unmasked?` for T43 to set, and gives `:tainted` a home in `Sensitivity`.
+  - T43 lifts project masks only, caps the row at 5 names, lists every surface's files, and covers the combined answers per surface.
+  - T40 binds a decoy pair whenever the key is masked, and builds its decoy lazily.
+- **Mechanical:** T18 uses `.env` and names a decoy as a decoy; graph edges T17 --> T40, T20 --> T42, T40 --> T42 and T41 --> T43; the zeitwerk line; the phone gains no answer.
+
 ## Shared files
 
 Only the main session edits these. Cards hand back 1-line diffs.
 
 - `lib/lain/cli/command/surface.rb`: T10, T11, T35 thread a collaborator into the command env.
 - `lib/lain/cli/wiring.rb`: T12, T19.
-- `lib/lain/cli/wiring/board_build.rb`: T19 puts the lineage's `Fresh` on `ToolGuard::Inputs`.
-- `lib/lain/cli/wiring/toolset_build.rb`: T7 hands the window to the spawn seam.
-- `ROADMAP.md`, `docs/devs/architecture.md`, `docs/users/configuration.md`, `docs/users/remote.md`: doc lines the cards hand back.
+- `lib/lain/cli/wiring/board_build.rb`: T19 puts the lineage's `Fresh` on `ToolGuard::Inputs`. T42 builds 1 `Sensitivity::Taint` per chat and hands it to the Policy (`:296`) and to `Sandboxed`.
+- `lib/lain/cli/wiring/toolset_build.rb`: T7 hands the window to the spawn seam. T42 hands `Sandboxed` the taint and the known values lazily.
+- `ROADMAP.md`, `docs/devs/architecture.md`, `docs/users/configuration.md`, `docs/users/remote.md`, `docs/users/commands.md` (`:1228-1235`, the masks and the answers, for T40 and T43): doc lines the cards hand back.
 - `.rubocop.yml`: only if a card's stop condition says a limit trips.
 
 ## Rejected options
@@ -171,11 +192,19 @@ Only the main session edits these. Cards hand back 1-line diffs.
 - **Exec-grant a project script only if it was not written in the session (m30-2).** The user ruled that a human's `y` runs it either way, because the call has no network.
 - **Hash `LAIN_*` values into the daemon digest (q30-1).** A shell with another `LAIN_MODEL` would then replace an idle daemon. That is the c30-1 failure the user ruled out.
 - **A per-project poll interval (c30-1, rule 3).** The poll's only inputs are the account and the orgs (`review/queue/poll.rb`). No caller needs a second interval, so a project's poll runs on the user's.
+- **Present a masked file as absent (T40).** Rails boots with the key absent, but bwrap cannot remove 1 file under the bound `/` without a tmpfs over its directory, and new files written there would vanish with the run. A decoy pair gives the same boot with ordinary binds.
+- **Unmask on the plain `y` (T43).** A program can reshape a secret (reverse, base64) past any exact-value mask, so unmasking is a separate human answer that names the files, never the default.
+- **Inject `RAILS_MASTER_KEY` into the child env, `op run` style (T43).** The credentials file stays unreadable, so Rails still fails, and it has the same derived-value and copy gaps as unmasking.
+- **Decoys only for untracked masks (T40, panel).** `config/credentials.yml.enc` is tracked in nearly every Rails app, so this would leave Rails failing to boot. T40 keeps decoys and guards git instead.
+- **A path source for each decoy (T40, panel).** bwrap follows a link at the source, so a planted link would read any host file at a project path. `--ro-bind-data` from an fd has no path.
+- **Scope the scan by mtime (T42, panel).** `cp -p`, hard links, `tar x` and `touch -d` keep an old mtime. ctime moves for all 4.
+- **Trace every read and write to taint files (T42).** strace or fanotify costs far more than a listing by mtime and still cannot follow a reshaped value.
 - **Journal the raw command in `awaiting_human` for o30-3.** The record leaves input out on purpose, because input can carry credential bytes (`telemetry/awaiting_human.rb:75-79`). T15 journals only text that has already gone through the chat's mask.
 
 ## Open decisions
 
-- **Secrets in a contained run with no network.** The user asked whether a human-approved contained call with no network could see masked files (Rails `master.key`), if lain can prove nothing leaves over the network. That needs `/research` before a plan. No card depends on it. T16 keeps masked files masked.
+- **The name of the unmasking answer (T43).** The plan uses `secrets`, beside `network`. The user may rename it; only `Reply`'s word and the surfaces' prompts change.
+- **Databases in a contained run.** The netns has its own loopback and grants no unix socket, so a contained `rails runner` cannot reach a host postgres. Granting a database socket would give a `secrets` run a store outside T42's scan. Not in this plan.
 - **A child of a parent in plan scope (g30-1).** There is no scope flag, so a child starts in checkout scope. T35 carries the approval only. Whether a fork from plan scope should refuse, or a `--scope` flag should exist, is the user's call.
 - **Round 29 ruling 17 (`max_tokens` continues the reply).** Still its own plan. T4 only stops a length cut from running calls.
 
@@ -198,16 +227,28 @@ flowchart LR
   T32 --> T33
   T33 --> T34
   T35 --> T34
+  T16 --> T40
+  T17 --> T40
+  T20 --> T42
+  T40 --> T42
+  T41 --> T43
+  T40 --> T18
+  T18 --> T42
+  T19 --> T43
+  T41 --> T42
+  T9 --> T43
+  T16 --> T43
+  T24 --> T43
+  T40 --> T43
+  T42 --> T43
   T1
   T2
   T3
   T7
   T8
-  T9
   T11
   T12
   T14
-  T20
   T21
   T27
   T28
@@ -877,7 +918,7 @@ Spec file: `spec/lain/exec/sandboxed_spec.rb` (`REFUSED` at `:28,85,270,319,330`
 
 ### T18: a contained run names the masked files its command touched          [risk: low]
 
-**Depends on:** T17
+**Depends on:** T17, T40 (both edit or read the mask note's files, and T40 makes "read as empty" true)
 **Files:**
 - `lib/lain/exec/sandboxed.rb`
 - `spec/lain/exec/sandboxed_spec.rb`
@@ -890,8 +931,12 @@ Spec file: `spec/lain/exec/sandboxed_spec.rb` (`REFUSED` at `:28,85,270,319,330`
 
 ```gherkin
 Scenario: cat of a masked file says which file
-  Given a contained `cat config/master.key` that printed nothing
-  Then the note says config/master.key is masked in the sandbox and read as empty
+  Given a contained `cat .env` that printed nothing
+  Then the note says .env is masked in the sandbox and read as empty
+
+Scenario: a decoy key is named as a decoy
+  Given a contained `cat config/master.key` that printed a key
+  Then the note says config/master.key is a decoy in the sandbox, not the project's key
 
 Scenario: a command that names no masked file gets today's note
   Given a contained `ls`
@@ -1756,24 +1801,347 @@ Spec files: `spec/lain/cli/wiring/input_producer_spec.rb` (`:74-95`, `:153-358`)
 **Stop and report if:**
 - A held reply makes the daemon try the next-newest chat in a loop. Check `crates/lain-daemon/src/registry.rs:307-321`.
 
+### T40: a mask reads as an empty file, and Rails's key pair as a decoy          [risk: high]
+
+**Depends on:** T16 (shared `contained_approval_spec.rb`), T17 (shared `exec/sandboxed.rb`)
+**Files:**
+- `lib/lain/confine/bwrap.rb`
+- `lib/lain/confine/decoys.rb` (new)
+- `lib/lain/confine/decoy_guard.rb` (new)
+- `lib/lain/confine/sandbox.rb` (`ABLE_CHOICE` and `PORTED_CHOICE` at `:71-75`)
+- `lib/lain/exec/sandboxed.rb` (`CONTAINED` and `CONTAINED_PORTED` at `:76-80`)
+- `spec/lain/confine/bwrap_spec.rb`
+- `spec/lain/confine/decoys_spec.rb` (new)
+- `spec/lain/confine/decoy_guard_spec.rb` (new)
+- `spec/lain/confine/sandbox_spec.rb`
+- `spec/lain/exec/sandboxed_spec.rb`
+- `spec/lain/seams/contained_approval_spec.rb`
+
+**Reuse:**
+- `Bwrap#masking` (`confine/bwrap.rb:118-123`), which keeps its directory rule (a read-only tmpfs).
+- The trace fd's route through `Bwrap#wrap(term, profile, trace_fd:)` (`bwrap.rb:57`) to the spawn, for the decoy fds.
+- `ActiveSupport::EncryptedConfiguration`, already in lain's bundle, required inside the method that builds the decoy.
+**Shared-file wiring:** none
+**Reachable from:** `Bwrap#wrap` builds every contained call's argv, masks and hidden programs included (`bwrap.rb:78-86`), for the profiles `Profiles#for` returns (`profiles.rb:140-146`). `Exec::Sandboxed` runs it and runs the guard after it.
+
+Today a mask is `--ro-bind /dev/null <file>`. bwrap mounts it `nodev`, so a read fails with EACCES. A Rails app's boot reads its credentials (`ActiveRecord::Encryption`'s railtie), so every `bin/rails` command fails under the masks, `rails runner 'p 1+1'` and `rails g scaffold` included. Research `planning/contained-run-secrets-research-2026-11.md` measured both, and measured that a decoy pair boots Rails 8.1 with empty credentials.
+
+- **Content.** A masked file becomes an empty regular file. A masked Rails key becomes a decoy pair: a random 32-hex key, and `{}` encrypted under it, bound over both the key and its credentials file, whether or not the credentials file is masked (a real file under a decoy key raises `key must be 16 bytes`). The pairs are `config/master.key` with `config/credentials.yml.enc`, and `config/credentials/<env>.key` with `config/credentials/<env>.yml.enc`. Each lain process builds its decoy bytes once, in memory.
+- **No source path.** Every mask is `--perms 0400 --ro-bind-data <fd> <dest>`: a `/dev/null` fd for an empty file, a pipe for decoy bytes. A path source would be followed by bwrap on the host, and a link planted there would read any host file at a project path (panel probe). Mode 0400 also keeps an empty file bound over a hidden program (`/usr/bin/mise`, `bwrap_spec.rb:822-830`) from running as an empty script.
+- **Git.** `config/credentials.yml.enc` is tracked by design, and today `git commit -a` under a mask fails closed (exit 128). A decoy would commit. 2 layers stop it:
+  - Prevent: a run with a decoy over a tracked file gets `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_n`/`GIT_CONFIG_VALUE_n` naming a `core.attributesFile` (bound with `--ro-bind-data`) and a `filter.laindecoy.clean` command that maps the decoy's bytes back to the index blob. A coordinator spike (scratchpad `r30/filterspike`) showed `git commit -am` then stores the original blob. A `.gitattributes` the run writes can turn the filter off, so the filter is not the guarantee.
+  - Detect: `Confine::DecoyGuard` records HEAD and the index's blob ids at the masked paths before the run. After it, an index entry holding a decoy blob is restored to its recorded blob, and a new commit holding one is named in the run's note with the command to amend it. A decoy holds no secret, so this protects the repo's integrity, not a secret.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a masked file reads as empty
+  Given a project whose .env is masked
+  When a contained call runs `cat .env; echo rc=$?`
+  Then it prints "rc=0" and nothing before it
+
+Scenario: a masked Rails pair decrypts to empty credentials
+  Given a project whose config/master.key and config/credentials.yml.enc are masked
+  When a contained call reads them with ActiveSupport::EncryptedConfiguration
+  Then the read returns {} and raises nothing
+  And the key it read is not the project's key
+
+Scenario: a masked key beside an unmasked credentials file still decrypts
+  Given config/master.key is masked and config/credentials.yml.enc is exempt
+  Then the contained read returns {}
+
+Scenario: a lone masked key file is an empty file
+  Given a masked config/server.key with no credentials file beside it
+  Then a contained read of it is empty
+
+Scenario: a masked directory is unchanged
+  Given a masked .ssh directory
+  Then it is still a read-only tmpfs
+
+Scenario: nothing on the host path can redirect a mask
+  Given a link to a host file outside every grant, placed anywhere lain might keep decoys
+  Then no contained read at a masked project path returns that file's bytes
+
+Scenario: commit -a stores the real credentials file
+  Given a tracked config/credentials.yml.enc under a decoy, and an edit to app.rb
+  When a contained call runs `git commit -am x`
+  Then HEAD's config/credentials.yml.enc is the blob it was before the run
+
+Scenario: a repo .gitattributes that defeats the filter is caught after the run
+  Given the call also writes `config/credentials.yml.enc -filter` to .gitattributes, then runs `git add -A`
+  Then after the run the index holds the recorded blob at that path
+
+Scenario: a commit that holds a decoy is named
+  Given the call commits the decoy past the filter
+  Then the run's note names the commit and the path, and says how to amend it
+
+Scenario: the row and the note say what the run sees
+  Then the approval row and the contained note say masked files read as empty or as a decoy, not that they cannot be read
+```
+Spec files: `spec/lain/confine/bwrap_spec.rb` (its masked-read examples at `:410-414` and `:512-518` expect `Permission denied`; they now expect empty output and assert the secret's bytes are absent; the comment at `:801-802` is updated), `spec/lain/confine/decoys_spec.rb`, `spec/lain/confine/decoy_guard_spec.rb`, `spec/lain/confine/sandbox_spec.rb`, `spec/lain/exec/sandboxed_spec.rb`, `spec/lain/seams/contained_approval_spec.rb` (bwrap and the compiled fence, real masks, a real git repo)
+
+**Interface**
+
+```ruby
+Confine::Decoys.new # builds the empty and decoy bytes once per process, lazily
+Confine::Decoys#bytes_for(mask, masks:) # -> "" or a decoy key or decoy credentials
+Confine::DecoyGuard.before(root:, masks:) # -> a guard holding HEAD and the index blobs at those paths
+Confine::DecoyGuard#settle # -> Settled(restored: [paths], commits: [[sha, path]])
+```
+
+**Stop and report if:**
+- `--ro-bind-data` with a pipe fails for any mask count lain sees in practice (the fixture of round 30's 50,000 ignored files lists its masks; measure the fd count).
+- A fresh boot's `$LOADED_FEATURES` gains `active_support/encrypted_configuration`. Build the decoy lazily, with the spec the Requires rule asks for.
+- A spec outside the Files reads EACCES on a masked file as the proof that the mask holds (grep `Permission denied` and `EACCES` under `spec/`). Name it.
+- `bin/hot-path-bench --check` regresses the bash-call row.
+
+### T41: decrypted Rails credentials are known values          [risk: medium]
+
+**Depends on:** none
+**Files:**
+- `lib/lain/sensitivity/history_literals.rb`
+- `lib/lain/sensitivity/rails_credentials.rb` (new)
+- `spec/lain/sensitivity/history_literals_spec.rb`
+- `spec/lain/sensitivity/rails_credentials_spec.rb` (new)
+
+**Reuse:** `HistoryLiterals`'s on-disk pass (`sensitivity/history_literals.rb:90-130`), which already reads the key file as a known value, and `ActiveSupport::EncryptedConfiguration#config`.
+**Shared-file wiring:** none
+**Reachable from:** `CLI::Wiring::BoardBuild#secrets` primes `HistoryLiterals` (`board_build.rb:278-281`), and every mask site reads the known values through `Secrets::Source`.
+
+A program that decrypts the credentials prints values no known value matches today. This card makes them known, so T9's reads and every bash result mask them. Research measured the decrypt at 0.053 ms for 33 leaves.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a credential leaf is masked in bash output
+  Given a project whose credentials.yml.enc holds stripe.key "synthetic-leaf-4f9a2c" under its master.key
+  When a bash result prints "synthetic-leaf-4f9a2c"
+  Then the model sees a mask placeholder
+
+Scenario: per-environment credentials count too
+  Given config/credentials/development.yml.enc with its development.key
+  Then its leaves are known values
+
+Scenario: RAILS_MASTER_KEY in lain's own env decrypts the file
+  Given no key file, and RAILS_MASTER_KEY set in lain's env
+  Then the leaves are known values
+
+Scenario: a file that will not decrypt adds nothing and says nothing secret
+  Given a credentials file and a key that does not match it
+  Then no leaf is added, and the reason journaled names the file, not the key
+
+Scenario: short or structural leaves are not masked
+  Given leaves "true", "3" and "development"
+  Then they are not known values
+```
+Spec files: `spec/lain/sensitivity/rails_credentials_spec.rb`, `spec/lain/sensitivity/history_literals_spec.rb`
+
+**Stop and report if:**
+- `HistoryLiterals`'s minimum-length or shape filter has no rule that keeps a structural leaf out. Say which leaves the fixture masks.
+- Loading `active_support/encrypted_configuration` adds to a fresh boot's `$LOADED_FEATURES` in a way the boot-time spec catches. Then require it inside the method, with the spec the repo's Requires rule asks for.
+
+### T42: scan what an unmasked run wrote, and gate what holds a secret          [risk: high]
+
+**Depends on:** T18 (shared `exec/sandboxed.rb`), T20 (shared `confine/mask_list.rb`), T40 (shared `exec/sandboxed.rb`), T41
+**Files:**
+- `lib/lain/sensitivity/taint.rb` (new)
+- `lib/lain/sensitivity.rb` (`EXPLANATIONS` at `:63-78` gains `:tainted`)
+- `lib/lain/sensitivity/policy.rb`
+- `lib/lain/confine/mask_list.rb`
+- `lib/lain/confine/profile.rb` (an `unmasked` attribute)
+- `lib/lain/confine/sandbox.rb`
+- `lib/lain/exec/sandboxed.rb`
+- `spec/lain/sensitivity/taint_spec.rb` (new)
+- `spec/lain/sensitivity/policy_spec.rb`
+- `spec/lain/confine/mask_list_spec.rb`
+- `spec/lain/confine/profile_spec.rb`
+- `spec/lain/exec/sandboxed_spec.rb`
+
+**Reuse:** `Sensitivity::TextMask` with the known values, `git ls-files -co` as `Confine::MaskList` runs it (0.03 s over 50,000 files), `Bounds::Cell#swap` (`sensitivity/bounds/cell.rb:36`) for the taint's set inside a Policy that freezes itself (`policy.rb:379-392`), and `Sandboxed#notice` (`sandboxed.rb:241`).
+**Shared-file wiring:** `lib/lain/cli/wiring/toolset_build.rb` hands `Sandboxed` the taint and the `Secrets::Source` lazily, the way `MaskList` reads `-> { @switchboard.call.sensitivity }`, because `ToolsetBuild#sandboxed` (`toolset_build.rb:446-453`) runs before `BoardBuild.for`. `lib/lain/cli/wiring/board_build.rb` builds 1 `Sensitivity::Taint` per process and hands it to the Policy (`:296`).
+**Reachable from:** `Sandboxed#run_under` (`sandboxed.rb:144-149`), after a run whose profile is `unmasked?`. T43 is the only caller that sets it.
+
+A run that could read a secret can copy it into a project file (research: `cp config/master.key leaked.txt` succeeded). After such a run lain scans what it changed, and a file that holds a known value is gated with reason `:tainted` for the rest of the process. "Per chat" means per process: in-process children share the Policy through `Policy#confined` (`tool_guard.rb:661-665`), and a `/fork`, `btw` or pane chat runs its own board and does not see the taint. The gateway's and the bench's Policies classify no chat reads.
+
+- **Scope.** Files under the project, tracked, untracked or ignored, whose ctime is at or after a start mark. The mark is the ctime of a file lain touches under the project's TMPDIR just before the run, so the kernel's coarse clock is on both sides. mtime is not used: `cp -p`, a hard link, `tar x` and `touch -d` all keep it before the start (panel probe).
+- **Git.** The index's new blob ids and the blobs of commits made since the recorded HEAD are scanned too (`git cat-file --batch`). An object written with `git hash-object -w` and reachable from no ref is not scanned; a push cannot carry it.
+- **Size.** A file over 8 MB is not read; it is gated unscanned and the note says so. This fails closed, which matters for `log/development.log`.
+- **Masks.** `MaskList#masks` unions in the taint's paths, and T20's reuse key includes the taint's generation, so a later contained run gets the tainted file masked even when its inode did not change.
+- **Who answers.** A tainted path is gated like `.env`: a human may release it, and the judge may not approve it.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: a copied key is gated
+  Given an unmasked run of `cp config/master.key leaked.txt`
+  Then leaked.txt is gated with reason tainted for the rest of the process
+  And a read_file of it parks for a human, and the judge cannot approve it
+  And the run's note names leaked.txt
+
+Scenario: a copy that keeps its old mtime is still caught
+  Given an unmasked run of `cp -p config/master.key keep.txt` and `touch -d 2020-01-01 keep.txt`
+  Then keep.txt is gated
+
+Scenario: a decrypted value appended to a log is gated and masked in the next run
+  Given an unmasked run that appended a credential leaf to an existing log/development.log
+  Then log/development.log is gated
+  And the next contained run reads it as an empty file
+
+Scenario: a secret committed during the run is named
+  Given an unmasked run of `git add -f config/master.key && git commit -m x`
+  Then the note names the commit as holding a known value
+
+Scenario: a file too large to scan is gated unscanned
+  Given an unmasked run that wrote a 9 MB file
+  Then it is gated, and the note says it was not scanned
+
+Scenario: a file holding no known value is untouched
+  Given an unmasked run that wrote app/models/post.rb with no known value
+  Then it is not gated
+
+Scenario: a run with decoy masks is not scanned
+  Given a plain y run under decoy masks
+  Then no scan runs
+```
+Spec files: `spec/lain/sensitivity/taint_spec.rb`, `spec/lain/sensitivity/policy_spec.rb`, `spec/lain/confine/mask_list_spec.rb`, `spec/lain/confine/profile_spec.rb`, `spec/lain/exec/sandboxed_spec.rb`
+
+**Interface**
+
+```ruby
+Sensitivity::Taint.new # a per-process set of gated paths, swapped through Bounds::Cell
+Sensitivity::Taint#scan(root:, since:, head:, secrets:) # -> Taint::Scan
+Sensitivity::Taint::Scan = Data.define(:gated, :unscanned, :commits)
+Sensitivity::Taint#generation # -> Integer, part of MaskList's reuse key
+Confine::Profile#unmasked? # true only for a profile T43 builds
+```
+
+**Stop and report if:**
+- The scan takes over 1 s after a first `rails runner` boot in a fresh app (it writes `tmp/cache`), or on round 30's fixture of 50,000 ignored files the run did not touch.
+- A gated path breaks a later `git add` of an unrelated file, or `LeaseCommit`.
+- The ctime start mark misses a file the run wrote within the same clock tick. Then mark the start a tick earlier and say how far.
+
+### T43: a `secrets` answer runs a contained call with the project's secret files unmasked          [risk: high]
+
+**Depends on:** T9, T16, T19 (shared `confine/profiles.rb`), T24, T40, T41, T42
+**Files:**
+- `lib/lain/approval/verdict.rb`
+- `lib/lain/approval/reply.rb`
+- `lib/lain/approval/escalation.rb`
+- `lib/lain/approval/parked/queue.rb`
+- `lib/lain/confine/profiles.rb`
+- `lib/lain/confine/sandbox.rb`
+- `lib/lain/exec/sandboxed.rb` (`contained_line` at `:157-166`)
+- `lib/lain/frontend/approval_policy.rb`
+- `lib/lain/frontend/neovim/approval_view.rb`
+- `lib/lain/telemetry/sandbox.rb` (the audit record at `:36-42`)
+- `spec/lain/approval/verdict_spec.rb`
+- `spec/lain/approval/reply_spec.rb`
+- `spec/lain/approval/escalation_spec.rb`
+- `spec/lain/approval/parked/queue_spec.rb`
+- `spec/lain/confine/profiles_spec.rb`
+- `spec/lain/confine/sandbox_spec.rb`
+- `spec/lain/exec/sandboxed_spec.rb`
+- `spec/lain/frontend/approval_policy_spec.rb`
+- `spec/lain/frontend/neovim/approval_view_spec.rb`
+- `spec/lain/telemetry/sandbox_spec.rb`
+- `spec/lain/seams/contained_approval_spec.rb`
+
+**Reuse:** the `network` answer, end to end. `Verdict::Base`'s `network` field (`approval/verdict.rb:11-24`), `Reply::NETWORK` and its strict tail (`approval/reply.rb:35-57`), the Ruling's `network` field (`approval/escalation.rb:158-195`), `Pending#resolve` and its offer rule (`parked/queue.rb:305-324,722-733`), and `Containment#over`, the only route from `MaskList` to the row (`sandbox.rb`).
+**Shared-file wiring:** none
+**Reachable from:** a human types `secrets` at the TTY (`ApprovalPolicy.read`, `approval_policy.rb:219-220,363`) or in nvim (`ApprovalView#read`, `approval_view.rb:391-397`). Both call `Reply.parse`, which builds a `Verdict::Approve`. `Pending#resolve` takes it, `Escalation`'s `approved` builds the Ruling (`escalation.rb:1010-1016`), and `Confine::Sandbox` (built by `ToolsetBuild#sandboxed`, `toolset_build.rb:449`) hands it to `Profiles#for` (`profiles.rb:140`) and `#contained` (`:159`). The phone offers no `network` today (`remote/wire.rb:126-144`, `apps/lain-remote/src/ui/item.rs:49`) and gains no `secrets`.
+
+The answer is `secrets` (Open decisions). It is a human's choice, like `network`, and the 2 cannot be combined: secrets are readable only where the network is closed.
+
+- **What it lifts.** Only the masks `MaskList` lists under the project root. Masks in related directories and the `hidden` binds (`~/.bundle/config`, the mise binaries, `profile.rb:412-416`) stay. The profile is `unmasked?` (T42), so the run's writes are scanned.
+- **What the row says.** It offers `secrets` where it offers `network`, and names the files it lifts: the first 5 by path, then "and N more".
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the secrets answer unmasks the project's secret files for 1 contained run
+  Given a parked `bin/rails runner 'p Rails.application.credentials.stripe.key.present?'`
+  When the human answers secrets
+  Then it runs under the workspace profile with private_net and no project masks
+  And it prints true
+  And the run's note names the files it could read
+
+Scenario: related and hidden masks stay
+  Given a related directory with a masked .env, and the mise binaries hidden
+  When the human answers secrets
+  Then those stay masked
+
+Scenario: the value stays masked for the model
+  Given the same call prints the decrypted leaf
+  Then the model sees a mask placeholder
+
+Scenario: a secrets run has no network
+  Then a curl inside it fails, as in a contained run
+
+Scenario: the row names what it unmasks
+  Given a parked call whose profile would mask 7 project files
+  Then the approval row offers secrets and names 5 of them, then "and 2 more"
+
+Scenario: "secrets network" at the TTY is neither combined answer
+  When the human answers "secrets network" at the TTY
+  Then it is not read as an approval with network
+  And it is not read as an approval with secrets
+
+Scenario: "network, secrets" at the TTY is neither combined answer
+  When the human answers "network, secrets" at the TTY
+  Then it is not read as an approval with network
+  And it is not read as an approval with secrets
+
+Scenario: "approve secrets network" at nvim is neither combined answer
+  When the human answers "approve secrets network" at nvim
+  Then it is not read as an approval with network
+  And it is not read as an approval with secrets
+
+Scenario: "network secrets" at nvim is neither combined answer
+  When the human answers "network secrets" at nvim
+  Then it is not read as an approval with network
+  And it is not read as an approval with secrets
+
+Scenario: only a human gives it
+  Given the judge, a rule or Bypass allows the call
+  Then the masks hold
+
+Scenario: a secrets answer is never remembered
+  Given the human answered secrets under auto
+  When the model makes the same call again
+  Then it parks again
+
+Scenario: the next plain y is masked again
+  Given a secrets run, then a plain y on another call
+  Then the second runs with decoy masks
+
+Scenario: the audit record says it
+  Then the sandbox telemetry record for the run carries secrets true
+```
+Spec files: listed above; the seam runs a contained call through bwrap and the compiled fence.
+
+**Stop and report if:**
+- A surface offers `network` through a path these Files do not list (grep `NETWORK_WORD`, `network?` and `offers_network` under `lib/`). Name it and add it.
+- A git-history route still reaches a masked file under a decoy run (`git show HEAD~1:.env`, binary-identity research). Say whether this card widens it; it does not close it.
+- An unmasked run needs a socket a contained profile does not grant (a database). Report it; do not grant it.
+
 ## Integration checks
 
 After the last card lands:
 
 - `bundle exec rake pspec`, the example count against the last recorded run, and `bundle exec rubocop`.
 - `cargo test && cargo clippy --all-targets -- -D warnings`, then `bundle exec rake daemon:build && bundle exec rspec --tag core`.
-- `bin/hot-path-bench --check` (T9 and T20 touch the bash-call and read paths).
+- `bin/hot-path-bench --check` (T9, T20 and T40 touch the bash-call and read paths).
 - `bin/comment-census --check-tickets` over the touched files: no round ids in comments.
-- `bin/zeitwerk-census` (T19 and T24 add files).
+- `bin/zeitwerk-census` (T19, T24, T40, T41 and T42 add files).
 - Re-run the m30-1 repro: `bundle exec ruby -Ilib ~/tmp/lain-qa-2026-11-18-m/records/erb_slot_repro.rb` prints "rendered" for all 3 cases and "kept literal".
 - **Manual pass owed by a QA round** (round 31), driving at least:
-  - `rails-blog`: m30-1, m30-2, m30-3.
+  - `rails-blog`: m30-1, m30-2, m30-3. A plain `y` on `bin/rails g scaffold` and `bin/rails runner` succeeds under decoy masks. A `secrets` answer on a runner that reads a credential prints it masked, and a `cp config/master.key x` under it gates `x`.
   - `secret-boundary` and `session-tree-and-export`: h30-2, o30-4.
   - `daemon` §7 and the live halves of §2, §6, §10, §12, now that q30-1 no longer blocks them. Also c30-1, and a project poll.
   - `repl-commands`: g30-1, g30-2.
   - `todos-drain`: p30-1, s30-4.
   - `remote-phone`: r30-1, r30-5.
   - `review-queue`: r30-6.
-- Update `planning/qa/scenarios/` for every behaviour that changed (memory `qa-scenarios-track-features.md`): `daemon.md` (replace rule, project poll), `rails-blog.md` (contained `y` runs Rails), `repl-commands.md` (fork approval), `notifications.md` (blocked notice text).
+- Update `planning/qa/scenarios/` for every behaviour that changed (memory `qa-scenarios-track-features.md`): `daemon.md` (replace rule, project poll), `rails-blog.md` (contained `y` runs Rails, the `secrets` answer), `secret-boundary.md` (decoy masks, the post-run scan), `repl-commands.md` (fork approval), `notifications.md` (blocked notice text).
 
 ## Execution log
