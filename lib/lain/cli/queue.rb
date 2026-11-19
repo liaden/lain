@@ -121,6 +121,12 @@ module Lain
       end
       private_constant :Printer
 
+      # A project's poll leaves the herdr `reviews` token to the user's.
+      class NoToken
+        def token(**) = nil
+      end
+      private_constant :NoToken
+
       EXE = File.expand_path("../../../exe/lain", __dir__)
       PICKABLE = %w[here local prs].freeze
       TURNED_AWAY = { crowded: "the chat is showing another offer; try again when it is answered",
@@ -166,15 +172,12 @@ module Lain
       end
 
       desc "poll", "Count the review requests asked of me, for the HUDs; meant for a timer"
+      method_option :root, type: :string, desc: "Poll this project's own github settings instead of the user's"
       def poll
         paths = Paths.new
-        config = Config.github(root: nil, paths:)
-        account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
-        ::Lain::Review::Queue::Poll.new(
-          reads: Forge::Gh::Reads.new(cwd: Dir.pwd, account:), log: ::Lain::Review::Queue::Log.new(paths:),
-          counts: paths.review_counts, workspaces: Herdr::Workspaces.new, feed: Notices.for(env: ENV, notes:),
-          orgs: config.orgs
-        ).call
+        root = options[:root]
+        config = root ? project_github(root, paths) : Config.github(root: nil, paths:)
+        config && poll_with(config, paths, root)
       end
 
       desc "pick [here|local|prs]", "Choose a row in fzf and open it; Alt-Enter opens it with a critique"
@@ -200,6 +203,28 @@ module Lain
       end
 
       private
+
+      def project_github(root, paths)
+        return skipped("#{root} sets no github, so it is not polled") unless Config.project_github?(root:, paths:)
+
+        Config.github(root:, paths:)
+      rescue Project::Trust::Untrusted
+        skipped("#{root} is untrusted, so it is not polled; run lain trust there")
+      end
+
+      def skipped(note)
+        notes.puts(note)
+        nil
+      end
+
+      def poll_with(config, paths, root)
+        account = Forge::Gh::Account.for(config, shell_out_factory: Shell::Out.public_method(:new), notes:)
+        ::Lain::Review::Queue::Poll.new(
+          reads: Forge::Gh::Reads.new(cwd: root || Dir.pwd, account:), log: ::Lain::Review::Queue::Log.new(paths:),
+          counts: paths.review_counts(root), workspaces: root ? NoToken.new : Herdr::Workspaces.new,
+          feed: Notices.for(env: ENV, notes:), orgs: config.orgs
+        ).call
+      end
 
       def rows(sources, listed: false)
         log = ::Lain::Review::Queue::Log.new(paths: Paths.new)

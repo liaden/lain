@@ -131,6 +131,52 @@ RSpec.describe Lain::Config do
     end
   end
 
+  describe ".project_github?" do
+    around do |example|
+      Dir.mktmpdir("lain-project-github") do |tmp|
+        @tmp = tmp
+        example.run
+      end
+    end
+
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @tmp, "XDG_CONFIG_HOME" => File.join(@tmp, "config"),
+                             "XDG_STATE_HOME" => File.join(@tmp, "state") })
+    end
+    let(:root) { File.join(@tmp, "project") }
+
+    def write_project(body, trusted: true)
+      FileUtils.mkdir_p(File.join(root, ".lain"))
+      File.write(File.join(root, ".lain", "config.rb"), body)
+      Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:, paths:), paths:).grant! if trusted
+    end
+
+    it "is false for a project with no config file" do
+      expect(described_class.project_github?(root:, paths:)).to be(false)
+    end
+
+    it "is false when the project's config has no github verb" do
+      write_project("# nothing\n")
+
+      expect(described_class.project_github?(root:, paths:)).to be(false)
+    end
+
+    it "is true for a github verb, even when its values match the user's" do
+      FileUtils.mkdir_p(File.dirname(paths.user_config))
+      File.write(paths.user_config, "github orgs: %w[acme]\n")
+      Lain::Project::Trust.for_user(paths:).grant!
+      write_project("github orgs: %w[acme]\n")
+
+      expect(described_class.project_github?(root:, paths:)).to be(true)
+    end
+
+    it "is refused while the project's file is untrusted" do
+      write_project("github orgs: %w[acme]\n", trusted: false)
+
+      expect { described_class.project_github?(root:, paths:) }.to raise_error(Lain::Project::Trust::Untrusted)
+    end
+  end
+
   describe ".remote" do
     around do |example|
       Dir.mktmpdir("lain-remote-config") do |tmp|

@@ -633,6 +633,74 @@ RSpec.describe Lain::CLI::Queue, :seam do
         expect(File.exist?(File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "reviews.json"))).to be(true)
       end
 
+      context "with --root" do
+        let(:project) { File.join(@repo, "..", "queue-project-#{Process.pid}") }
+        let(:user_counts) { File.join(ENV.fetch("XDG_STATE_HOME"), "lain", "reviews.json") }
+        let(:herdr_log) { File.join(bin, "herdr.log") }
+
+        around do |example|
+          Dir.mktmpdir("lain-queue-config") do |config|
+            FileUtils.mkdir_p(File.join(project, ".lain"))
+            listing = JSON.generate("result" => { "workspaces" => [{ "label" => "reviews", "workspace_id" => "w1" }] })
+            File.write(File.join(bin, "herdr"),
+                       "#!/bin/sh\necho \"$@\" >> #{herdr_log}\n[ \"$2\" = list ] && echo '#{listing}'\nexit 0\n")
+            File.chmod(0o755, File.join(bin, "herdr"))
+            with_env("XDG_CONFIG_HOME" => config, "HERDR_BIN_PATH" => File.join(bin, "herdr")) { example.run }
+          ensure
+            FileUtils.remove_entry(project)
+          end
+        end
+
+        def configure(body, trusted: true)
+          File.write(File.join(project, ".lain", "config.rb"), body)
+          return unless trusted
+
+          paths = Lain::Paths.new
+          Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: project, paths:), paths:).grant!
+        end
+
+        def project_counts = Lain::Paths.new.review_counts(project)
+
+        it "counts with the project's orgs and writes that project's counts file" do
+          FileUtils.mkdir_p(File.dirname(Lain::Paths.new.user_config))
+          File.write(Lain::Paths.new.user_config, "github orgs: %w[other]\n")
+          Lain::Project::Trust.for_user(paths: Lain::Paths.new).grant!
+          configure("github orgs: %w[acme]\n")
+          capture("poll", "--root", project)
+
+          expect(JSON.parse(File.read(project_counts))).to include("total" => 1)
+          expect(File.exist?(user_counts)).to be(false)
+        end
+
+        it "does not push the herdr reviews token" do
+          configure("github orgs: %w[acme]\n")
+          capture("poll", "--root", project)
+
+          expect((File.read(herdr_log) if File.exist?(herdr_log)).to_s).not_to include("report-metadata")
+        end
+
+        it "still pushes the token for the user's own poll" do
+          capture("poll")
+
+          expect(File.read(herdr_log)).to include("report-metadata w1")
+        end
+
+        it "polls nothing for an untrusted project and says so" do
+          configure("github orgs: %w[acme]\n", trusted: false)
+          _, err = capture("poll", "--root", project)
+
+          expect(err).to include("untrusted")
+          expect(File.exist?(project_counts)).to be(false)
+        end
+
+        it "polls nothing for a project with no github settings" do
+          configure("# nothing\n")
+          capture("poll", "--root", project)
+
+          expect(File.exist?(project_counts)).to be(false)
+        end
+      end
+
       it "writes the count file and notifies once, from the environment and config alone" do
         with_env("HERDR_BIN_PATH" => "/bin/true") do
           capture("poll")

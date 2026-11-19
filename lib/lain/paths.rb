@@ -359,9 +359,15 @@ module Lain
       File.join(ensure_dir(File.join(state_home, "queue")), "log.ndjson")
     end
 
-    # Rewritten by each `lain queue poll`; every HUD reads it, so it lives beside no project. Creates
-    # nothing, because a HUD refresh must not make a directory; the writer does.
-    def review_counts = File.join(state_home, "reviews.json")
+    # Rewritten by each `lain queue poll`; every HUD reads it. Creates nothing, because a HUD refresh
+    # must not make a directory; the writer does.
+    #
+    # @param root [String, nil] a project root whose own poll writes it; nil for the user's file
+    def review_counts(root = nil)
+      return File.join(state_home, "reviews.json") unless root
+
+      ProjectDir.new(root:, paths: self).container("reviews", key: "#{project_hash(root)}.json")
+    end
 
     # Purgeable: deleting the directory costs one export per image on the next run.
     #

@@ -425,6 +425,11 @@ config.rb or a project's may say it. `LAIN_GH_ACCOUNT` in the environment beats 
 field by field. Unset, the account is `gh`'s own and `since_days` is 14. An unknown key, or a value of the wrong
 type, is refused by name.
 
+`lain queue poll --root <project>` polls with that project's own `github` block and writes its counts
+to a file of the project's own, so a project that tracks other repos keeps its own review count. It
+skips a project you have not trusted, or one with no `github` block, and says why. The herdr `reviews`
+token stays the user's.
+
 ## User config
 
 `$XDG_CONFIG_HOME/lain/config.rb` (by default `~/.config/lain/config.rb`) applies to every project. It

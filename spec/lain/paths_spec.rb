@@ -22,6 +22,19 @@ RSpec.describe Lain::Paths do
     end
   end
 
+  describe "#review_counts for a project root" do
+    it "is 1 file per root beside the user's, and creates nothing" do
+      Dir.mktmpdir do |tmp|
+        p = paths("XDG_STATE_HOME" => File.join(tmp, "state"))
+        mine = p.review_counts(tmp)
+
+        expect(mine).to eq(File.join(tmp, "state", "lain", "reviews", "#{p.project_hash(tmp)}.json"))
+        expect(mine).not_to eq(p.review_counts)
+        expect(Dir.children(tmp)).to be_empty
+      end
+    end
+  end
+
   describe "XDG variables win" do
     it "uses XDG_CONFIG_HOME, suffixed with /lain" do
       expect(paths("XDG_CONFIG_HOME" => "/x").config_home).to eq("/x/lain")

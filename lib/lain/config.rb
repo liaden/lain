@@ -148,6 +148,16 @@ module Lain
     # @raise [Refusal] naming the user's file and line
     def self.user_github?(paths:) = user(paths).github != Github.empty
 
+    # Whether the project's own config.rb has a `github` verb that sets any key, even to the value the
+    # user's file gives it.
+    #
+    # @param root [String] a project root
+    # @param paths [Paths] where the user's config.rb lives
+    # @return [Boolean]
+    # @raise [Project::Trust::Untrusted] as {.load}
+    # @raise [Refusal] naming the project's file and line
+    def self.project_github?(root:, paths:) = built(root, paths:).github != Github.empty
+
     # The keys the user's config.rb rebinds. Only that file may declare them.
     #
     # @param paths [Paths] where the user's config.rb lives
