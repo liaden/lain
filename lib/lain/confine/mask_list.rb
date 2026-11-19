@@ -507,8 +507,12 @@ module Lain
           @stat = stat
           @whole_pruned = whole_pruned
           @walks_unlisted = walks_unlisted
-          @state = State.new(identities: {}, masks: {}, stamps: Stamps.new(Time.at(0), {}), leaves: {})
+          @state = blank_state
           @pruned = []
+          @beneath_pruned = []
+          @links = {}
+          @read = nil
+          @current = nil
           @listed = false
         end
 
@@ -524,7 +528,9 @@ module Lain
         end
 
         # The policy is read only once the listing answered, and before the
-        # walk, which asks it which directory names a rule matches.
+        # walk, which asks it which directory names a rule matches. An ask
+        # reuses the last masks while the policy and the directory stamps are
+        # unchanged, since a name cannot be added or swapped without moving one.
         #
         # @param policy [#call]
         # @return [Sensitivity::Policy, nil] the policy read, or nil when the listing failed
@@ -535,16 +541,15 @@ module Lain
           return unless @listed
 
           read = policy.call
-          beneath = Beneath.new(@root, read, @state.leaves, @stat)
-          @state = restated(listed, read, beneath)
-          @pruned = @whole_pruned ? [*pruned, *beneath.pruned.filter_map { pruned_mask(_1) }] : []
+          unchanged = reusable?(read)
+          advance(listed, read) unless unchanged
+          settle_pruned(@whole_pruned ? [*pruned, *@beneath_pruned] : [], !unchanged)
           read
         end
 
         # @return [Array<Sensitivity::Policy::Mask>] resolved paths that exist now, in listing order
         def current
-          [*@state.masks.values, *@pruned].uniq(&:path).select { File.exist?(_1.path) }
-                                          .map { _1.with(path: outward(_1.path)) }
+          @current ||= built
         end
 
         # @param path [String]
@@ -556,6 +561,39 @@ module Lain
         # Held as bytes, handed out in the filesystem's encoding, which is what
         # every caller compares a path in.
         def outward(bytes) = bytes.dup.force_encoding(FILESYSTEM).freeze
+
+        def blank_state = State.new(identities: {}, masks: {}, stamps: Stamps.new(Time.at(0), {}), leaves: {})
+
+        def built
+          [*@state.masks.values, *@pruned].uniq(&:path).select { File.exist?(_1.path) }
+                                          .map { _1.with(path: outward(_1.path)) }.freeze
+        end
+
+        # Another policy judges every name afresh, so what was classified under the last is dropped.
+        def advance(listed, read)
+          @state = blank_state unless read.equal?(@read)
+          beneath = Beneath.new(@root, read, @state.leaves, @stat)
+          @state = restated(listed, read, beneath)
+          @beneath_pruned = @whole_pruned ? beneath.pruned.filter_map { pruned_mask(_1) } : []
+          @links = @state.identities.select { |_, identity| identity&.link }
+          @read = read
+        end
+
+        def settle_pruned(pruned, moved)
+          @current = nil if moved || pruned != @pruned
+          @pruned = pruned
+        end
+
+        # A link is looked at again, since a chain can move without any directory this tree read.
+        def reusable?(read)
+          read.equal?(@read) && @state.stamps.all_settled?(@stat) &&
+            @state.leaves.each_value.all? { settled?(_1) } &&
+            @links.all? { |name, identity| Identity.of(File.join(@root, name)) == identity }
+        end
+
+        def settled?(leaf)
+          leaf.stamps.all_settled?(@stat) && leaf.links.all? { |name, real| Identity.of(real) == leaf.found[name] }
+        end
 
         def restated(listed, policy, beneath)
           parents = listed.to_h { [_1, File.dirname(_1)] }

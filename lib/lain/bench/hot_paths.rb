@@ -222,7 +222,8 @@ module Lain
             File.write(File.join(root, "pkg#{i}", ".env"), "TOKEN=#{i}\n")
           end
           sensitivity = Sensitivity.new(home: root, cwd: root, root:)
-          Confine::MaskList.new(root:, policy: -> { Sensitivity::Policy.new(sensitivity:, home: root, root:) })
+          policy = Sensitivity::Policy.new(sensitivity:, home: root, root:)
+          Confine::MaskList.new(root:, policy: -> { policy })
         end
 
         def probe = Confine::Probe.new(fence: Confine::Bwrap.fence_binary, journal: Channel::Null.instance)

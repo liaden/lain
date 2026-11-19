@@ -20,7 +20,7 @@ RSpec.describe Lain::Confine::MaskList, :seam do
     Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: File.join(@base, "home"), cwd: root))
   end
   let(:asked) { [] }
-  let(:recording) do
+  let(:recorder) do
     Class.new(SimpleDelegator) do
       def initialize(policy, asked)
         super(policy)
@@ -28,8 +28,9 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       end
 
       def mask_paths(files, **) = @asked.push(files.to_a).then { super }
-    end.new(policy, asked)
+    end
   end
+  let(:recording) { recorder.new(policy, asked) }
   let(:list) { described_class.new(root:, policy: -> { recording }) }
   let(:stat_at) { Struct.new(:mtime, :ctime, :ino, :dev, :dir) { def directory? = dir } }
 
@@ -894,6 +895,65 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       failing = true
 
       expect(flaky.masks.map(&:path)).to eq([secret])
+    end
+
+    describe "an ask that finds the same listing under the same policy" do
+      let(:aged_list) { described_class.new(root:, policy: -> { recording }, stat: method(:aged)) }
+
+      it "answers the last masks without classifying a name again" do
+        FileUtils.mkdir_p(File.join(root, "build"))
+        write(".env")
+        write("build/out.txt")
+        first = aged_list.masks
+        asked.clear
+
+        expect([aged_list.masks, asked]).to eq([first, []])
+        expect(aged_list.masks).to equal(first)
+      end
+
+      it "classifies every name again once the policy is another" do
+        write(".env")
+        write("README.md")
+        policy_now = recording
+        reloaded = recorder.new(policy, asked)
+        swapping = described_class.new(root:, policy: -> { policy_now }, stat: method(:aged))
+        swapping.masks
+        asked.clear
+
+        policy_now = reloaded
+        swapping.masks
+
+        expect(asked.flatten).to contain_exactly(".env", "README.md")
+      end
+
+      it "masks a file swapped for a link to a secret" do
+        write("config/app.yml")
+        expect(aged_list.masks).to be_empty
+
+        swap_for_link("config/app.yml", File.join(home, ".ssh", "id_rsa"))
+
+        expect(aged_list.masks.map(&:path)).to eq([secret])
+      end
+
+      it "drops a mask whose target outside the root was deleted, with the listing and its directories unchanged" do
+        File.symlink(File.join(home, ".ssh", "id_rsa"), File.join(root, "lnk"))
+        expect(aged_list.masks.map(&:path)).to eq([secret])
+
+        FileUtils.rm(secret)
+
+        expect(aged_list.masks).to be_empty
+      end
+
+      it "masks an ignored file created after the last ask" do
+        write(".gitignore", "build/\n")
+        FileUtils.mkdir_p(File.join(root, "build"))
+        write("build/out.txt")
+        expect(aged_list.masks).to be_empty
+
+        write("build/.env")
+
+        expect(aged_list.masks.map(&:path)).to eq([File.join(root, "build", ".env")])
+      end
     end
 
     describe "a later ask over directories changed more than a tick before the last one" do
