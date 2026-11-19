@@ -62,6 +62,42 @@ RSpec.describe Lain::Survey::Projection do
     end
   end
 
+  describe "a value the chat lends, which no detector reports" do
+    subject(:projection) { described_class.new(ledger:, secrets: [lent]) }
+
+    let(:lent) { "plainwordvalue" }
+    let(:prose) { "see the note\nthe token is #{lent} today\nand again #{lent}\n" }
+    let(:ordinary) { Lain::Sensitivity::Verdict.new(level: :ordinary, reason: :none) }
+
+    it "masks it in the projected file, wherever it recurs" do
+      expect(projection.project("/repo/notes.txt", prose, verdict: ordinary))
+        .to eq("see the note\nthe token is #{placeholder(1)} today\nand again #{placeholder(2)}\n")
+    end
+
+    it "masks it in a line, under the ordinal the whole projection gives it" do
+      expect(projection.line("/repo/notes.txt", prose, 3, verdict: ordinary)).to eq("and again #{placeholder(2)}")
+    end
+
+    it "masks it in a sheet's blind line" do
+      expect(projection.sheet("/repo/notes.txt", prose, verdict: ordinary).blind(2)).not_to include(lent)
+    end
+
+    it "maps a raw line to the line the masked projection shows" do
+      expect(projection.projected_line("/repo/notes.txt", prose, 3, verdict: ordinary)).to eq(3)
+    end
+
+    it "masks a lent value that sits inside a released detected region" do
+      lending = described_class.new(ledger:, secrets: [api_key])
+      ledger.release(path, [regions_in(dotenv).first])
+
+      expect(lending.project(path, dotenv, verdict:)).not_to include(api_key)
+    end
+
+    it "leaves a projection with no secrets masking only what it detects" do
+      expect(described_class.new(ledger:).project("/repo/notes.txt", prose, verdict: ordinary)).to eq(prose)
+    end
+  end
+
   describe "a release" do
     it "is real bytes, while everything unreleased stays a placeholder" do
       ledger.release(path, [regions_in(dotenv).first])

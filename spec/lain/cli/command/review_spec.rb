@@ -163,6 +163,16 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
     end
   end
 
+  it "masks a lent value in the evidence of the target it resolves" do
+    lending = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new,
+                                  gh_account: Lain::Forge::Gh::Account::None.new, paths: Lain::Paths.new,
+                                  secrets: ["plainwordvalue"])
+    projection = lending.send(:targets).resolve("feature").source.projection
+
+    expect(projection.line(File.join(@repo, "README"), "the word is plainwordvalue\n", 1,
+                           verdict: Lain::Survey::Projection::UNJUDGED)).to eq("the word is <redacted:1>")
+  end
+
   it "runs its git through Shell::Out when no factory is injected" do
     allow(Lain::Shell::Out).to receive(:new).and_call_original
     defaulted = described_class.new(root: @repo, outbox:, ledger: Lain::Sensitivity::Ledger.new,

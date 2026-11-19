@@ -187,13 +187,16 @@ module Lain
         #   a note's anchor text journals a released region as released
         # @param gh_account [Lain::Forge::Gh::Account, Lain::Forge::Gh::Account::None] the
         #   process's one account, whose token a pull request's gh reads run with
+        # @param secrets [#to_a] the values the chat knows, masked in a note's evidence and the briefs
         # @param critique [#call] takes what follows `/critique` and answers a callable that runs it,
         #   having raised every refusal a typed `/critique` raises before it spawns; asked BEFORE
         #   the round opens, so a critique that cannot run leaves no review behind
         def initialize(outbox:, ledger:, gh_account:, paths:, root: Dir.pwd, bounds: Lain::Review::Bounds.new,
-                       shell_out_factory: Lain::Shell::Out.public_method(:new), critique: NO_CRITIQUE)
+                       shell_out_factory: Lain::Shell::Out.public_method(:new), critique: NO_CRITIQUE,
+                       secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
           @outbox = outbox
           @ledger = ledger
+          @secrets = secrets
           @root = root
           @bounds = bounds
           @shell_out_factory = shell_out_factory
@@ -376,7 +379,7 @@ module Lain
         # and a second resolver here would be a second set of answers.
         def targets
           Lain::Review::Target.new(repo_root: @root, shell_out_factory: @shell_out_factory,
-                                   ledger: @ledger, account: @gh_account)
+                                   ledger: @ledger, account: @gh_account, secrets: @secrets)
         end
       end
     end

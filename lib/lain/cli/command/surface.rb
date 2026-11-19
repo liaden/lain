@@ -248,9 +248,9 @@ module Lain
         # `/introspect` is only a READER and could never disagree with them.
         def review_commands
           [Review.new(root: @root, outbox:, ledger: @ledger, gh_account: @gh_account, paths: @paths,
-                      critique: method(:critique)),
+                      critique: method(:critique), secrets: @secrets),
            ReviewSubmit.new(root: @root, outbox:, account: @gh_account),
-           Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity, paths: @paths)]
+           Survey.new(cwd: @cwd, outbox:, ledger: @ledger, sensitivity: @sensitivity, paths: @paths, secrets: @secrets)]
         end
       end
     end

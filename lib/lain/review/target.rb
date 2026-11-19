@@ -39,12 +39,14 @@ module Lain
       #   source masks a note's evidence against; a fresh one masks everything
       # @param account [Lain::Forge::Gh::Account, Lain::Forge::Gh::Account::None] whose token
       #   the pull request's gh reads run with
-      def initialize(repo_root:, shell_out_factory:, account:, ledger: Lain::Sensitivity::Ledger.new)
+      # @param secrets [#to_a] the values a note's evidence masks wherever they recur
+      def initialize(repo_root:, shell_out_factory:, account:, ledger: Lain::Sensitivity::Ledger.new,
+                     secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
         @repo_root = File.expand_path(repo_root)
         @shell_out_factory = shell_out_factory
         @account = account
         @git = Isolation::Checkout.of(@repo_root, shell_out_factory:)
-        @projection = Lain::Survey::Projection.new(ledger:)
+        @projection = Lain::Survey::Projection.new(ledger:, secrets:)
       end
 
       # @param target [String]

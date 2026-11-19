@@ -89,13 +89,16 @@ module Lain
       UNJUDGED = Sensitivity::Verdict.new(level: :ordinary, reason: :none)
 
       # @param ledger [Sensitivity::Ledger] the run's ONE region ledger
+      # @param secrets [#to_a] values the chat knows, masked wherever they recur
+      #   even when no detector reports them, and whatever was released
       # @raise [ArgumentError] on a nil ledger
-      def initialize(ledger:)
+      def initialize(ledger:, secrets: Sensitivity::Secrets::Source::DEFAULT)
         # A missing KEYWORD is Ruby's error; a nil VALUE is not, and nil is what
         # a caller reaching for an unwired board holds.
         raise ArgumentError, "a ledger is required: #{LEDGER_CONTRACT}" unless ledger
 
         @ledger = ledger
+        @secrets = secrets
         freeze
       end
 
@@ -167,7 +170,8 @@ module Lain
       # @return [Sheet]
       def sheet(path, content, verdict:, reconcile: true)
         detected = Sensitivity::Regions.detect(content)
-        Sheet.new(content, detected:, unreleased: @ledger.outstanding(path, detected, complete: reconcile),
+        Sheet.new(content, detected: with_known(content, detected),
+                           unreleased: with_known(content, @ledger.outstanding(path, detected, complete: reconcile)),
                            named: verdict.named?)
       end
 
@@ -198,7 +202,12 @@ module Lain
       private
 
       def outstanding(path, content, reconcile: true)
-        @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: reconcile)
+        with_known(content, @ledger.outstanding(path, Sensitivity::Regions.detect(content), complete: reconcile))
+      end
+
+      # A lent value is masked even where a release stands, so it joins as a span.
+      def with_known(content, regions)
+        Sensitivity::Spans.of(regions + Sensitivity::Regions.recurrences(content, @secrets.to_a)).list
       end
 
       def whole(content) = Sensitivity::Masking.render(content, [Clipped.new(start: 0, length: content.bytesize)])

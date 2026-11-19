@@ -210,6 +210,17 @@ RSpec.describe Lain::CLI::Command::Survey do
     end
   end
 
+  describe "the values the chat lends" do
+    it "masks a lent value in the projection the survey reads files through" do
+      lending = described_class.new(cwd: @root, outbox:, ledger:, sensitivity:, paths: Lain::Paths.new,
+                                    secrets: ["plainwordvalue"])
+      projection = lending.instance_variable_get(:@projection)
+
+      expect(projection.project(File.join(@root, "notes.md"), "the word is plainwordvalue\n",
+                                verdict: Lain::Survey::Projection::UNJUDGED)).to eq("the word is <redacted:1>\n")
+    end
+  end
+
   describe "what it refuses before it opens anything" do
     # Both sides call the same method, so this says the two AGREE and nothing
     # about what either contains -- dropping the `format` ships the raw

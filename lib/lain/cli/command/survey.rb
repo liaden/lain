@@ -89,12 +89,14 @@ module Lain
         #   attached editor was started in; naming from the root breaks
         #   `/survey .` for every chat opened below the repository top.
         # @param paths [Paths] the state home an earlier session of the chain is found under
-        def initialize(outbox:, ledger:, sensitivity:, paths:, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new)
+        # @param secrets [#to_a] the values the chat knows, masked in every file the survey reads
+        def initialize(outbox:, ledger:, sensitivity:, paths:, cwd: Dir.pwd, bounds: Lain::Review::Bounds.new,
+                       secrets: Lain::Sensitivity::Secrets::Source::DEFAULT)
           @outbox = outbox
           @cwd = cwd
           @bounds = bounds
           @sensitivity = sensitivity
-          @projection = Lain::Survey::Projection.new(ledger:)
+          @projection = Lain::Survey::Projection.new(ledger:, secrets:)
           @round = ReviewRound.new(outbox:, paths:)
           freeze
         end
