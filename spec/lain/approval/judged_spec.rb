@@ -487,6 +487,23 @@ RSpec.describe Lain::Approval::Judged do
       end
     end
 
+    context "when the project has a related directory" do
+      let(:policy) do
+        sensitivity = Lain::Sensitivity.new(home:, cwd: root, root:,
+                                            rules: Lain::Sensitivity::Rules.from({ "related" => ["#{home}/shared"] }))
+        Lain::Sensitivity::Policy.new(sensitivity:, home:, root:)
+      end
+
+      it "lists it on the related directories line" do
+        expect(prompt_for(bash("cat #{home}/shared/README.md")))
+          .to include("related directories: #{"#{home}/shared".inspect}")
+      end
+    end
+
+    it "lists no related directory when the project has none" do
+      expect(prompt_for(bash("ls"))).to include("related directories: none")
+    end
+
     it "names the main agent's plan-scope spike as the project root, and the human's checkout" do
       spike = Lain::WorkerEnv.new(cwd: "/state/spikes/s1", env: {}, checkout: "/state/spikes/s1")
 

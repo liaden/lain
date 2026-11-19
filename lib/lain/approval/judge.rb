@@ -5,7 +5,7 @@ require "async"
 module Lain
   module Approval
     # One bounded question to the `auto_approver` role: may this call run?
-    # {Judged} asks it on the live gate path, so it waits with the call
+    # `Judged` asks it on the live gate path, so it waits with the call
     # unparked and must answer within {TIMEOUT}.
     #
     # It is one request with no tools, framed by the role's sealed prompt, asked
@@ -43,11 +43,14 @@ module Lain
       #   @return [String, nil] the human's checkout, when the call runs in a tree of its own
       # @!attribute [r] read_roots
       #   @return [Array<String>] the directories the requester's bounds let it read
+      # @!attribute [r] related
+      #   @return [Array<String>] the project's related directories, which a read may reach beyond its roots
       # @!attribute [r] classified
       #   @return [Hash{String => Sensitivity::Verdict}] each path the call names, as lain classified it
       Place = Data.define(:root, :cwd, :requester, :outside, :facts, :request, :human_checkout, :read_roots,
-                          :classified) do
-        def initialize(facts: Facts::NONE, request: nil, human_checkout: nil, read_roots: [], classified: {}, **rest)
+                          :related, :classified) do
+        def initialize(facts: Facts::NONE, request: nil, human_checkout: nil, read_roots: [], related: [],
+                       classified: {}, **rest)
           super
         end
       end
@@ -306,6 +309,11 @@ module Lain
 
       def class_of(verdict) = verdict.reason == :none ? verdict.level.to_s : "#{verdict.level}: #{verdict.reason}"
 
+      def reach_lines(place)
+        ["read roots: #{listed(place.read_roots.map(&:inspect))}",
+         "related directories: #{listed(place.related.map(&:inspect))}"].join("\n")
+      end
+
       # The facts go after the instructions, where the bench measured them.
       def question(tool, input, place)
         <<~PROMPT
@@ -315,7 +323,7 @@ module Lain
           project root: #{place.root.inspect}#{checkout_line(place.human_checkout)}
           working directory: #{place.cwd.inspect}
           outside the project root: #{listed(place.outside.map(&:inspect))}
-          read roots: #{listed(place.read_roots.map(&:inspect))}
+          #{reach_lines(place)}
           named paths: #{classified(place.classified)}
           tool: #{tool}
           input: #{input.inspect}

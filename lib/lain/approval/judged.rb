@@ -417,7 +417,8 @@ module Lain
                          outside: outside(effect, context, cwd),
                          facts: disclosed(facts, context), request: @request.call(context),
                          human_checkout: (@policy.root unless root == @policy.root),
-                         read_roots: read_roots(context), classified: classified(effect, context, cwd))
+                         read_roots: read_roots(context), related: @policy.related_directories,
+                         classified: classified(effect, context, cwd))
       end
 
       def disclosed(facts, context)

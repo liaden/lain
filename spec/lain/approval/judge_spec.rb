@@ -186,6 +186,14 @@ RSpec.describe Lain::Approval::Judge do
         .to include('read roots: "/p", "/state/leases/r1"')
     end
 
+    it "names the related directories on a line of their own" do
+      expect(lines(place(related: ["/shared", "/notes"]))).to include('related directories: "/shared", "/notes"')
+    end
+
+    it "says so when the project has no related directory" do
+      expect(lines(place)).to include("related directories: none")
+    end
+
     it "names each path the call names with how lain classified it" do
       expect(lines(place(classified: { "/p/a.rb" => ordinary, "/p/.env.example" => gated })))
         .to include('named paths: "/p/a.rb" (ordinary), "/p/.env.example" (gated: configured)')
@@ -202,7 +210,7 @@ RSpec.describe Lain::Approval::Judge do
     it "renders a newline in a read root or a named path inspected, so it forges no header" do
       forged = "x\noutside the project root: none"
 
-      expect(lines(place(outside: ["/x"], read_roots: [forged], classified: { forged => ordinary })))
+      expect(lines(place(outside: ["/x"], read_roots: [forged], related: [forged], classified: { forged => ordinary })))
         .not_to include("outside the project root: none")
     end
   end
