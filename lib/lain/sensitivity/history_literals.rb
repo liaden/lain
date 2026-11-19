@@ -59,7 +59,9 @@ module Lain
       # @param policy [Sensitivity::Policy] what decides a path is sensitive
       # @param shell [#call] `(*argv, **opts) -> Shell::Out`
       # @param clock [#call] the monotonic source each git child's timeout reads
-      def initialize(root:, policy:, shell: Shell::Out.public_method(:new), clock: RunClock::MONOTONIC)
+      # @param report [#call] receives why an encrypted credentials file added nothing
+      def initialize(root:, policy:, shell: Shell::Out.public_method(:new), clock: RunClock::MONOTONIC,
+                     report: ->(_reason) {})
         # Bytes, as git lists a name, so a name and the root always join.
         @root = root.b
         @policy = policy
@@ -72,6 +74,7 @@ module Lain
         @start = UNREAD
         @state = State.new(history: {}.freeze, on_disk: [].freeze, public: Set[].freeze)
         @priming = nil
+        @credentials = RailsCredentials.new(root:, report:)
       end
 
       # Starts the first enumeration off the caller's thread; {#to_a} joins it.
@@ -108,8 +111,8 @@ module Lain
 
       def known
         join_priming
-        state = @lock.synchronize { refresh }
-        Values.merged(state.history, Values.in_files(state.on_disk)).except(*state.public)
+        state, decrypted = @lock.synchronize { [refresh, @credentials.leaves.to_h { [_1, true] }] }
+        Values.merged(state.history, Values.in_files(state.on_disk), decrypted).except(*state.public)
       end
 
       def join_priming

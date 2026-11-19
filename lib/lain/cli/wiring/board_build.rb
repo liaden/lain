@@ -91,7 +91,8 @@ module Lain
                           test_layout: test_layout(project:, paths:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root, paths:),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
-                          request:, secrets: secrets(project:, sensitivity:, child_env:), containment:,
+                          request:, containment:,
+                          secrets: secrets(project:, sensitivity:, child_env:, journal: chronicle.record_journal),
                           denied_tools: config.approval.deny_tools, stops:, masks:, memo: judge_memo(config))
         end
 
@@ -274,11 +275,22 @@ module Lain
         # @param project [Lain::Project]
         # @param sensitivity [Lain::Sensitivity::Policy] what the history walk reads the sensitive paths from
         # @param child_env [Lain::Exec::ChildEnv]
+        # @param journal [#<<] where a credentials file that adds no known value says why
         # @return [Lain::Sensitivity::Secrets::Source]
-        def secrets(project:, sensitivity:, child_env:)
-          history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity).prime
+        def secrets(project:, sensitivity:, child_env:, journal: Lain::Channel::Null.instance)
+          history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity,
+                                                           report: credentials_report(journal)).prime
           Lain::Sensitivity::Secrets::Source.new(child_env:, history:)
         end
+
+        def credentials_report(journal)
+          lambda do |reason|
+            journal << Lain::Telemetry::CapabilityDegraded.new(capability: :rails_credentials,
+                                                               requirer: Lain::Sensitivity::RailsCredentials.name,
+                                                               provider: reason)
+          end
+        end
+        private_class_method :credentials_report
 
         # The run's path boundary, wrapped in the policy both gates read
         # through -- {Middleware::Sensitivity} for what may not be touched

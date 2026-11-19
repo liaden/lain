@@ -2,6 +2,8 @@
 
 require "fileutils"
 require "tmpdir"
+require "openssl"
+require "securerandom"
 
 # Every git argv the subject spawns, run for real unless it names a word
 # `failing` holds, which runs `false` in its place that many times, or the
@@ -632,6 +634,39 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
   describe described_class::Null do
     it "lists nothing" do
       expect(described_class.to_a).to eq([])
+    end
+  end
+
+  describe "Rails credentials" do
+    # Sealed the way Rails seals credentials, without ActiveSupport: loading it here would
+    # put its JSON extensions into every later example in the worker.
+    def seal(yaml, key)
+      cipher = OpenSSL::Cipher.new("aes-128-gcm").encrypt
+      cipher.key = [key].pack("H*")
+      iv = cipher.random_iv
+      cipher.auth_data = ""
+      data = cipher.update(Marshal.dump(yaml)) + cipher.final
+      [data, iv, cipher.auth_tag].map { [_1].pack("m0") }.join("--")
+    end
+
+    it "lists a leaf the project's encrypted credentials hold" do
+      key = SecureRandom.hex(16)
+      FileUtils.mkdir_p(File.join(root, "config"))
+      File.write(File.join(root, "config/master.key"), key)
+      File.write(File.join(root, "config/credentials.yml.enc"), seal("signing:\n  value: synthetic-leaf-4f9a2c\n", key))
+
+      expect(described_class.new(root:, policy:).to_a).to include("synthetic-leaf-4f9a2c")
+    end
+
+    it "reports through the given callable a credentials file that will not decrypt, naming the file" do
+      FileUtils.mkdir_p(File.join(root, "config"))
+      File.write(File.join(root, "config/master.key"), SecureRandom.hex(16))
+      File.write(File.join(root, "config/credentials.yml.enc"), "not-decryptable")
+      reasons = []
+
+      described_class.new(root:, policy:, report: reasons.method(:<<)).to_a
+
+      expect(reasons).to eq(["config/credentials.yml.enc did not decrypt"])
     end
   end
 end

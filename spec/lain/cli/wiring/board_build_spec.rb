@@ -290,6 +290,38 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    it "journals one capability_degraded naming only the file when a credentials file will not decrypt" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "config"))
+        File.write(File.join(root, "config/master.key"), "0" * 32)
+        File.write(File.join(root, "config/credentials.yml.enc"), "not-decryptable")
+        sink = []
+        secrets = described_class.secrets(project: project_at(root), sensitivity: board_for(root, home).sensitivity,
+                                          child_env: Lain::Exec::ChildEnv::DEFAULT, journal: sink)
+        2.times { secrets.history.to_a }
+
+        degraded = have_attributes(capability: :rails_credentials, requirer: "Lain::Sensitivity::RailsCredentials",
+                                   provider: "config/credentials.yml.enc did not decrypt")
+        expect(sink).to match([an_instance_of(Lain::Telemetry::CapabilityDegraded).and(degraded)])
+      end
+    end
+
+    it "journals a degraded credentials file onto the chronicle's journal through the board's own build" do
+      in_tree do |root, home|
+        FileUtils.mkdir_p(File.join(root, "config"))
+        File.write(File.join(root, "config/master.key"), "0" * 32)
+        File.write(File.join(root, "config/credentials.yml.enc"), "not-decryptable")
+        sink = []
+        allow(chronicle).to receive(:record_journal).and_return(sink)
+
+        board_for(root, home).guard_inputs.secrets.history.to_a
+
+        degraded = have_attributes(capability: :rails_credentials,
+                                   provider: "config/credentials.yml.enc did not decrypt")
+        expect(sink).to match([an_instance_of(Lain::Telemetry::CapabilityDegraded).and(degraded)])
+      end
+    end
+
     it "hands the board's guard stack a history over the project, already priming" do
       in_tree do |root, home|
         primed = []
@@ -301,7 +333,8 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
         board = board_for(root, home)
 
         expect(primed).to eq([board.guard_inputs.secrets.history])
-        expect(Lain::Sensitivity::HistoryLiterals).to have_received(:new).with(root:, policy: board.sensitivity)
+        expect(Lain::Sensitivity::HistoryLiterals).to have_received(:new).with(root:, policy: board.sensitivity,
+                                                                               report: an_instance_of(Proc))
       end
     end
 
