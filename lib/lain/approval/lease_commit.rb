@@ -7,7 +7,8 @@ require "pathname"
 module Lain
   module Approval
     # Approves `git commit` with a message in the clone lease lain cut for this
-    # chat, so a drained chore can commit its work with nobody at the terminal.
+    # chat, after any `git add` of literal paths inside it joined by `&&`, so a
+    # drained chore can commit its work with nobody at the terminal.
     # It is the one rule that approves a write: the write lands in a lease
     # nothing else reads, and reaches the project only through a landing.
     #
@@ -29,6 +30,9 @@ module Lain
       TOOL = "bash"
       GIT = "git"
       COMMIT = "commit"
+      ADD = "add"
+      # An option, a pathspec magic or a glob widens an add past the words it names.
+      WIDENING = /\A[-:]|[*?\[\\]/
       MESSAGE = %w[-m --message].freeze
       ATTACHED_MESSAGE = "--message="
       SWITCHES = %w[-a --all -q --quiet].freeze
@@ -72,7 +76,8 @@ module Lain
         return nil unless term && commit?(term)
 
         clone, landing = own_lease(cwd)
-        clone && untouched?(clone, landing, cwd, term) ? allow(call, because: APPROVED) : nil
+        approved = clone && added_inside?(term, clone, landing) && untouched?(clone, landing, cwd, term)
+        approved ? allow(call, because: APPROVED) : nil
       end
 
       private
@@ -88,13 +93,30 @@ module Lain
         decision = call.tool.decision_for(call.input)
         return [decision.term, call.input.cwd] if decision.allow?
 
-        Shell::Reading.from(decision.parse, call.input.cwd) if decision.abstain?
+        Shell::Reading.from(decision.parse, call.input.cwd) if decision.abstain? && only_ands?(decision.parse)
       end
 
+      # A {Shell::Reading} reads `;` as it reads `&&`, and a commit after `;` runs whether the add failed or not.
+      def only_ands?(parse) = parse.separators.all? { _1.text == Shell::Reading::AND }
+
       def commit?(term)
-        stages = term.stages
-        stages.one? && stages.first.argv.first(2) == [GIT, COMMIT] && admitted?(stages.first.argv.drop(2))
+        *adds, commit = term.stages.map(&:argv)
+        commit&.first(2) == [GIT, COMMIT] && admitted?(commit.drop(2)) && adds.all? { add?(_1) }
       end
+
+      def add?(argv) = argv.first(2) == [GIT, ADD] && argv.size > 2 && argv.drop(2).none? { _1.match?(WIDENING) }
+
+      # git reads a pathspec's `..` as text, so a lexical expansion is where the add lands. The lease root itself
+      # stages the whole clone, as `-A` does, so it waits for a human.
+      def added_inside?(term, clone, landing)
+        own = File.join(clone, OWN_GIT_DIR)
+        term.stages[...-1].flat_map { _1.argv.drop(2) }.all? do |path|
+          added = File.expand_path(path, landing)
+          below?(added, clone) && added != own && !below?(added, own)
+        end
+      end
+
+      def below?(path, dir) = path.start_with?("#{dir}/")
 
       def admitted?(words, messaged: false)
         return messaged if words.empty?
@@ -114,10 +136,11 @@ module Lain
         [clone, landing] if clone && confinement.contains?(clone) && !confinement.contains?(File.dirname(clone))
       end
 
-      # One stage is all {#commit?} admits, so `sole` raising is a broken predicate, and the ladder hears it.
+      # {#commit?} admits only `git add` and `git commit` with no option before the subcommand, so every stage
+      # resolves the same git with the same run files, and the commit's stands for them all.
       def untouched?(clone, landing, cwd, term)
         env = git_env
-        git = @sensitivity.executables(term, cwd).sole
+        git = @sensitivity.executables(term, cwd).last
         own_repository?(clone, landing) && git_env_free?(env) && trusted_git?(clone, git) &&
           nothing_nested?(clone, git, env) && user_configs_held?(git, env, landing, cwd) &&
           no_filter?(git, env, landing)
@@ -125,8 +148,8 @@ module Lain
 
       def nothing_nested?(clone, git, env) = no_git_below?(clone) && no_gitlink?(clone, git, env)
 
-      # `commit -a` may consult a repository anywhere in the work tree. The clone's own git dir is pruned, and
-      # Find never follows a link out of the clone.
+      # `commit -a` may consult a repository anywhere in the work tree, and `add` stages one as a gitlink. The
+      # clone's own git dir is pruned, and Find never follows a link out of the clone.
       def no_git_below?(clone)
         own = File.join(clone, OWN_GIT_DIR)
         entries = Enumerator.new { |found| Find.find(clone) { _1 == own ? Find.prune : found << _1 } }

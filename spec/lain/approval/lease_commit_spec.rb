@@ -401,11 +401,78 @@ RSpec.describe Lain::Approval::LeaseCommit, :seam do
     expect(chain(lease).call(call).decision).to be_nil
   end
 
-  it "abstains on a commit of 2 stages without a fault" do
+  it "reads each stage of an add then a commit without a fault" do
     lease = cut(main)
-    outcome = chain(lease).call(call_of("git commit -m x && ls", cwd: lease))
+    File.write(File.join(lease, "f"), "f\n")
+    outcome = chain(lease).call(call_of("git add f && git commit -m x", cwd: lease))
 
-    expect([outcome.decision, outcome.faults]).to eq([nil, []])
+    expect([outcome.decision&.verdict, outcome.faults]).to eq([:allow, []])
+  end
+
+  describe "an add joined to the commit" do
+    it "approves adding a file in the lease then committing it, and the file lands" do
+      lease = cut(main)
+      FileUtils.mkdir_p(File.join(lease, "docs"))
+      File.write(File.join(lease, "docs", "new.md"), "doc\n")
+
+      decision = decided(lease, 'git add docs/new.md && git commit -m "add doc"')
+      SeedRepo.git(lease, "add", "docs/new.md")
+      SeedRepo.git(lease, "commit", "-q", "-m", "add doc")
+
+      expect(decision).to have_attributes(verdict: :allow, rule: "lease_commit")
+      expect(SeedRepo.git(lease, "ls-tree", "--name-only", "-r", "HEAD").stdout.lines).to include("docs/new.md\n")
+    end
+
+    it "has no opinion on an add of a path outside the lease" do
+      lease = cut(main)
+
+      expect(decided(lease, "git add ../other && git commit -m x")).to be_nil
+    end
+
+    it "has no opinion on an add of the lease root, which stages the whole clone, but approves a subdirectory" do
+      lease = cut(main)
+      FileUtils.mkdir_p(File.join(lease, "docs"))
+      File.write(File.join(lease, "docs", "new.md"), "doc\n")
+      commands = ["git add . && git commit -m x", "git add docs/.. && git commit -m x",
+                  "git add #{lease} && git commit -m x", "git add docs . && git commit -m x"]
+
+      expect(commands.map { decided(lease, _1) }).to all(be_nil)
+      expect(decided(lease, "git add docs && git add docs/new.md && git commit -m x"))
+        .to have_attributes(verdict: :allow)
+    end
+
+    it "has no opinion on an add inside the lease's own git dir" do
+      lease = cut(main)
+      commands = ["git add .git/config && git commit -m x", "git add docs/../.git && git commit -m x"]
+
+      expect(commands.map { decided(lease, _1) }).to all(be_nil)
+    end
+
+    it "has no opinion on an add of a directory that holds a repository of its own" do
+      lease = cut(main)
+      SeedRepo.git(File.join(lease, "vendored-repo").tap { FileUtils.mkdir_p(_1) }, "init", "-q")
+
+      expect(decided(lease, "git add vendored-repo && git commit -m x")).to be_nil
+    end
+
+    it "has no opinion on an add with an option, a pathspec magic or a glob" do
+      lease = cut(main)
+      commands = ["git add -A && git commit -m x", "git add --pathspec-from-file=f && git commit -m x",
+                  "git add ':(attr:x)' && git commit -m x", "git add '*' && git commit -m x",
+                  "git add && git commit -m x", "git add 'a\\b' && git commit -m x",
+                  "git status f && git commit -m x"]
+
+      expect(commands.map { decided(lease, _1) }).to all(be_nil)
+    end
+
+    it "has no opinion on stages joined by anything but &&" do
+      lease = cut(main)
+      File.write(File.join(lease, "f"), "f\n")
+      commands = ["git add f; git commit -m x", "git add f || git commit -m x", "git add f | git commit -m x",
+                  "git commit -m x && git add f", "git commit -m x && git commit -m y"]
+
+      expect(commands.map { decided(lease, _1) }).to all(be_nil)
+    end
   end
 
   describe "a clone that holds a nested repository" do
