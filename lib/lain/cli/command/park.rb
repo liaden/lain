@@ -24,7 +24,7 @@ module Lain
         def usage = "/park text -- leave a note for when you return; no text clears it"
 
         def call(args, env)
-          text = args.to_s.strip
+          text = env.reporter.mask.call(args.to_s.strip)
           env.agent.session.record_reentry_note(text)
           text.empty? ? clear(env) : announce(text, env)
         end
@@ -32,7 +32,7 @@ module Lain
         private
 
         def announce(text, env)
-          @feed.call("lain", @title, "parked: #{env.reporter.mask.call(text)}")
+          @feed.call("lain", @title, "parked: #{text}")
           env.reporter.metadata(TOKEN, text)
           "noted: #{text}"
         end

@@ -63,6 +63,14 @@ RSpec.describe Lain::CLI::Command::Park do
     expect(fed.sole.last).to start_with("parked: echo").and(satisfy { !_1.include?(value) })
   end
 
+  it "masks a secret-named environment value in the journaled note, the pane token and the reply" do
+    value = "opensesame-plain-words-42"
+    reply = with_env("LAIN_SPEC_PARK_TOKEN" => value) { command.call("echo #{value}", env) }
+
+    expect([session.reentry_note, tokens.sole.last, reply]).to all(include("echo"))
+    expect([session.reentry_note, tokens.sole.last, reply].join).not_to include(value)
+  end
+
   it "sets lain's own pane token, never one named parked" do
     command.call("waiting on CI", env)
 
