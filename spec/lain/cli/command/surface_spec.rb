@@ -59,6 +59,17 @@ RSpec.describe Lain::CLI::Command::Surface do
     end
   end
 
+  it "opens /share's export over the secrets it was handed" do
+    with_project do |root|
+      source = Lain::Sensitivity::Secrets::Source::DEFAULT
+      allow(Lain::CLI::Export).to receive(:new).and_call_original
+
+      build_surface(root, secrets: source).send(:share_commands).first.instance_variable_get(:@exports).call("s.ndjson")
+
+      expect(Lain::CLI::Export).to have_received(:new).with(hash_including(secrets: source))
+    end
+  end
+
   it "hands the herdr binding's reporter and window surface to the env its commands read" do
     reporter = Object.new
     window_surface = Object.new

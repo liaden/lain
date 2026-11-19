@@ -187,4 +187,30 @@ RSpec.describe Lain::CLI::Export do
   it "raises SessionNotFound for a selector nothing answers to" do
     expect { export("nope").call }.to raise_error(Lain::CLI::SessionFile::SessionNotFound)
   end
+
+  context "with a chat's known secret values" do
+    let(:known) { "hunter2xyz" }
+    let(:raw) do
+      JSON.generate({ "type" => "turn", "digest" => "d5", "role" => "user", "parent" => "d4", "meta" => {},
+                      "content" => [{ "type" => "text", "text" => "pw #{known}" }] })
+    end
+    let(:released_free) { lines.reject { |line| line.include?("read_released") } }
+
+    before { File.write(File.join(sessions_dir, "work.ndjson"), "#{[*released_free, raw].join("\n")}\n") }
+
+    def masking = described_class.new(selector: "work", paths:, project:, secrets: [known])
+
+    it "masks the value in the html and counts that region" do
+      html = masking.call(format: :html)
+
+      expect(html).not_to include(known)
+      expect(html).to include("&lt;redacted:")
+      expect(masking.masked).to eq(2)
+    end
+
+    it "leaves the jsonl byte for byte" do
+      expect(masking.call(format: :jsonl)).to include(known)
+      expect(masking.call(format: :jsonl)).to eq(export.call(format: :jsonl))
+    end
+  end
 end

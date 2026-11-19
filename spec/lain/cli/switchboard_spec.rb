@@ -1467,6 +1467,12 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  it "hands the chat's secret source to the command surface" do
+    kwargs = switchboard.surface_kwargs(conductor: instance_double(Lain::CLI::Conductor))
+
+    expect(kwargs.fetch(:secrets)).to be(switchboard.secrets)
+  end
+
   it "exposes the one policy it was given" do
     policy = home_policy
 

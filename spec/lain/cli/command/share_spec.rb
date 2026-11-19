@@ -242,6 +242,23 @@ RSpec.describe Lain::CLI::Command::Share do
       FileUtils.remove_entry(dir)
     end
 
+    it "uploads a page holding no known value, and says one region was masked" do
+      File.write(file, "#{[*records, { "type" => "turn", "digest" => "d2", "role" => "user", "parent" => "d1",
+                                       "meta" => {}, "content" => [{ "type" => "text", "text" => "hunter2xyz" }] }]
+                           .map { |record| JSON.generate(record) }.join("\n")}\n")
+      masking = lambda do |selector|
+        Lain::CLI::Export.new(selector:, paths: Lain::Paths.new, project: instance_double(Lain::Project, root: dir),
+                              secrets: ["hunter2xyz"])
+      end
+      sharing = described_class.new(exports: masking, journal:)
+      reply = sharing.call("",
+                           build_command_env(chronicle: instance_double(Lain::CLI::Chronicle::Null,
+                                                                        journal_path: file)))
+
+      expect(File.read("#{dir}/stdin")).not_to include("hunter2xyz")
+      expect(reply).to include("3 regions masked")
+    end
+
     it "pipes the real html to gh and records the url and the masked count" do
       sharing = described_class.new(exports:, journal:)
       sharing.call("", build_command_env(chronicle: instance_double(Lain::CLI::Chronicle::Null, journal_path: file)))

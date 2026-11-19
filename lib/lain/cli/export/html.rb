@@ -16,15 +16,21 @@ module Lain
         # @param redactions [Journal::Projection::Redactions] the counts the footer prints
         # @param home [String, nil] written as `~` wherever it appears
         # @param root [String, nil] the project root, written as `<project>`
-        def initialize(records:, redactions:, home: nil, root: nil)
+        # @param secrets [#to_a] values masked wherever they appear, whether or not a read ever masked them
+        def initialize(records:, redactions:, home: nil, root: nil, secrets: [])
           @records = records
           @redactions = redactions
+          @secrets = secrets
+          @blocks = {}.compare_by_identity
           @released = redactions.released
           @prefixes = prefixes([[root, "<project>"], [home, "~"]])
         end
 
         # @return [Boolean] whether the page would show no turn, whatever turn records exist
         def empty? = rows.none? { |row| row["type"] == "turn" }
+
+        # @return [Integer] regions masked as placeholders: the session's own plus the known values found here
+        def masked = @redactions.masked + shown.fresh
 
         # @return [String]
         def render = ERB.new(File.read(TEMPLATE), trim_mode: "-").result(binding)
@@ -58,26 +64,34 @@ module Lain
           digest.nil? ? [] : [digest, *follow(parents[digest], parents)]
         end
 
-        def masked = @redactions.masked
-
         def regions(count) = "#{count} #{"region".pluralize(count)}"
         def were(count) = count == 1 ? "was" : "were"
 
+        # Memoized by content so the block a row renders is the one {#shown} masked.
         def blocks(content)
-          (content.is_a?(Array) ? content : [content]).map do |block|
+          @blocks[content] ||= (content.is_a?(Array) ? content : [content]).map do |block|
             block.is_a?(Hash) ? block : { "type" => "text", "text" => block.to_s }
           end
         end
 
-        def block_text(block)
-          scrubbed(
-            case block["type"]
-            when "text" then block["text"]
-            when "tool_use" then "#{block["name"]} #{JSON.generate(block["input"])}"
-            when "tool_result" then result_text(block["content"])
-            else omitted(block)
-            end
-          )
+        def block_text(block) = shown.text(block)
+
+        # Every piece masks as one transcript, so a region reads the same wherever it stands and the
+        # numbers run across the page. It follows the path scrub, or a random directory name reads as a secret.
+        def shown = @shown ||= Shown.new(pieces, @secrets)
+
+        def pieces
+          rows.select { |row| row["type"] == "turn" }.flat_map { |row| blocks(row["content"]) }
+              .map { |block| [block, scrubbed(raw_text(block))] }
+        end
+
+        def raw_text(block)
+          case block["type"]
+          when "text" then block["text"].to_s
+          when "tool_use" then "#{block["name"]} #{JSON.generate(block["input"])}"
+          when "tool_result" then result_text(block["content"])
+          else omitted(block)
+          end
         end
 
         def result_text(content)
@@ -108,6 +122,28 @@ module Lain
         def at_boundary(spelling) = /(?<![^\s"'=(:])#{Regexp.escape(spelling.chomp("/"))}(?![\w.@+-])/
 
         def h(value) = ERB::Util.html_escape(value)
+
+        # The pieces of a page masked together, and how many regions that masked.
+        class Shown
+          # @return [Integer] placeholders the masking added
+          attr_reader :fresh
+
+          # @param pieces [Array<Array(Hash, String)>] each block with the text it renders
+          # @param secrets [#to_a]
+          def initialize(pieces, secrets)
+            masked = Sensitivity::TextMask.transcript(pieces.map(&:last), secrets:)
+            @texts = pieces.map(&:first).zip(masked).each_with_object({}.compare_by_identity) { |(b, t), by| by[b] = t }
+            @fresh = count(masked) - count(pieces.map(&:last))
+          end
+
+          # @param block [Hash]
+          # @return [String] the text of a block this was built over
+          def text(block) = @texts.fetch(block)
+
+          private
+
+          def count(texts) = texts.sum { Sensitivity::Regions.placeholders(_1) }
+        end
       end
     end
   end

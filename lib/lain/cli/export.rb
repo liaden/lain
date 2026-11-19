@@ -6,7 +6,7 @@ module Lain
     # document over its whole resume chain, or as the one file's applied record
     # stream. Returns a String and only the frontend prints, the way {Friction}
     # does. Nothing is re-scanned: the files already hold placeholders where a
-    # read was masked, and this reads them.
+    # read was masked, and this reads them; the html also masks the chat's known values.
     class Export
       FORMATS = %i[html jsonl].freeze
 
@@ -14,11 +14,14 @@ module Lain
       # @param paths [Paths]
       # @param project [Project]
       # @param records [#call] the Journal reader, given raw lines, of the one file or of the whole chain
-      def initialize(selector:, paths:, project:, records: Journal.method(:records))
+      # @param secrets [#to_a] values the html masks wherever they stand; the jsonl stays raw
+      def initialize(selector:, paths:, project:, records: Journal.method(:records),
+                     secrets: Sensitivity::Secrets::Source::DEFAULT)
         @selector = selector
         @paths = paths
         @project = project
         @records = records
+        @secrets = secrets
       end
 
       # @param format [Symbol] :html or :jsonl
@@ -42,7 +45,7 @@ module Lain
       def released = redactions.released
 
       # @return [Integer] regions masked as placeholders, the count the html footer shows
-      def masked = redactions.masked
+      def masked = html.masked
 
       private
 
@@ -67,7 +70,10 @@ module Lain
         raise Lain::Error, "#{out} exists; pass --force to overwrite it"
       end
 
-      def html = Html.new(records: chain_applied, redactions:, home: Dir.home, root: @project.root.to_s)
+      def html
+        @html ||= Html.new(records: chain_applied, redactions:, home: Dir.home, root: @project.root.to_s,
+                           secrets: @secrets)
+      end
 
       def render_jsonl
         kept = file_applied.to_h { |record| [record, true] }.compare_by_identity

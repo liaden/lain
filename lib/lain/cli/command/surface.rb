@@ -50,10 +50,12 @@ module Lain
         # `gh_account:` is the process's one {Forge::Gh::Account}, built by
         # {Wiring}, so `/review-submit` and `/share` share 1 token ask.
         # `paths:` is the chat's own, which the budget table's trust is read under.
+        # `secrets:` is the chat's secret source, which `/share` masks its page with.
         def initialize(agent:, replies:, supervisor:, role_spawn:, chronicle:, status_feed:,
                        model_switch:, mode_switch:, library:, ledger:, sensitivity:, snapshots:, window:,
                        gh_account:, paths:, approvals: nil, root: Dir.pwd, cwd: Dir.pwd,
                        approval_prompt: nil, goal_driver: GoalDriver::Null,
+                       secrets: Sensitivity::Secrets::Source::DEFAULT,
                        epic: nil, middleware: Lain::Config::Middleware.empty, rail: Held::NoRail,
                        herdr: Wiring::HerdrBinding::Null.new, profile: RunProfile.from_options({}))
           @role_spawn = role_spawn
@@ -66,6 +68,7 @@ module Lain
           @library = library
           @ledger = ledger
           @sensitivity = sensitivity
+          @secrets = secrets
           # The inline drain shares Frontend::ApprovalPolicy's prompt loop;
           # Wiring hands in one whose reader routes through the conductor.
           @approval_prompt = approval_prompt || Frontend::ApprovalPolicy.new
@@ -213,7 +216,7 @@ module Lain
         # `/share` publishes the session record, which only a chat with a file has. Its own group for
         # #builtins' reason; the export is opened per call because promotion renames the file.
         def share_commands
-          exports = ->(file) { Export.new(selector: file, paths: @paths, project: place) }
+          exports = ->(file) { Export.new(selector: file, paths: @paths, project: place, secrets: @secrets) }
           [Share.new(exports:, journal: @env.chronicle.record_journal, account: @gh_account)]
         end
 

@@ -156,4 +156,29 @@ RSpec.describe Lain::CLI::Export::Html do
     expect(html).to include("branch")
     expect(html).not_to include("out.txt")
   end
+
+  describe "with known secret values" do
+    let(:value) { "hunter2xyz" }
+    let(:records) do
+      call = { "type" => "tool_use", "id" => "t", "name" => "bash", "input" => { "command" => "echo #{value}" } }
+      [turn("d1", "user", [text("my password is #{value}")]), turn("d2", "assistant", [call], parent: "d1")]
+    end
+
+    it "masks the value in every piece with ordinals running across them" do
+      html = render(records, secrets: [value])
+
+      expect(html).not_to include(value)
+      expect(html.scan(/&lt;redacted:(\d+)&gt;/).flatten).to include("1", "2")
+    end
+
+    it "counts the regions it masked beside the ones the session already masked" do
+      page = described_class.new(records:, redactions: redactions(1, 0), secrets: [value])
+
+      expect([page.masked, page.render]).to match([3, include("3 regions were masked")])
+    end
+
+    it "prints the page as before when it knows no values" do
+      expect(render(records)).to include(value)
+    end
+  end
 end

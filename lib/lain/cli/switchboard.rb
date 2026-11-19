@@ -350,7 +350,7 @@ module Lain
       # own snapshot, including what has to change should the slot ever become
       # re-bindable.
       def surface_kwargs(conductor:)
-        { model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:,
+        { model_switch:, mode_switch:, ledger:, sensitivity:, snapshots:, secrets: guard_inputs.secrets,
           approval_prompt: prompt(conductor:) }
       end
 
