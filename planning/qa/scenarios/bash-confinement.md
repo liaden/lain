@@ -181,21 +181,23 @@ Narrowing them is incremental work, driven by what the QA rounds measure:
 - run `qa-lain bench approval-replay --tripwire --labels FILE SESSIONS...` over them;
 - report the false-trip rate per shape, and any `STOPPING` signal above 1 in 100 sessions.
 
-## 3c: A command lain cannot read withdraws the next build grant
+## 3c: A command lain cannot read parks the next networked build, naming it
 
-Under the workspace sandbox, a lone `cargo build --locked` (or `cargo fetch`, `bundle install`, `git fetch`) from a trusted toolchain gets the network ports its tool needs, but only while nothing under the project root has changed during the session's lineage (this session and the sessions it resumed from). A write lain can name is journaled as a `file_written` record and judged path by path. A bash command lain cannot parse into named writes has no such record, so what it wrote could be anywhere. Such a call now journals a `writes_unread` record (its `tool_use_id` and `cwd`), and once the lineage holds one, every root counts as changed and the grant is withdrawn.
+Under the workspace sandbox, a lone `cargo build --locked` (or `cargo fetch`, `bundle install`, `git fetch`) from a trusted toolchain gets the network ports its tool needs, but only while nothing under the project root has changed during the session's lineage (this session and the sessions it resumed from). A write lain can name is journaled as a `file_written` record and judged path by path. A bash command lain cannot parse into named writes has no such record, so what it wrote could be anywhere. Such a call journals a `writes_unread` record (its `tool_use_id`, `cwd` and the `command` as written), and once the lineage holds one, every root counts as changed and the grant is withdrawn. So that the withdrawal is not silent, the next build that would otherwise get its ports is held for a human, with a reason naming that command. A human's `y` vouches for the project: that build runs with its ports, and so does the next, until another unreadable command runs.
 
 Drive it in a scratch cargo workspace with a committed `Cargo.lock` and a dependency not yet in `CARGO_HOME` (the sandbox's `XDG_*` and a fresh `CARGO_HOME` do that), under `--approval ask`, approving each call by hand:
 
 1. Ask for `cargo build --locked`, as its own call, before anything else. Expect the dependency to download and the build to pass, and `jr writes_unread` to print nothing.
-2. In a new session, first ask for one call lain cannot read, for example `eval "touch generated.txt"`, and approve it. Expect exactly 1 `writes_unread` record naming that call's `tool_use_id` and the project directory, written even though the call also wrote a file.
-3. Ask for `cargo build --locked` again in that session. Expect no network grant: the download fails the way an offline build does.
-4. Resume the session and ask for the same build once more. The mark lives in the journal, so the grant is still withdrawn after the resume.
+2. In a new session, first ask for one call lain cannot read that writes nothing at the project's top level, for example `eval "echo x > $QA/elsewhere.txt"`, and approve it. Expect exactly 1 `writes_unread` record naming that call's `tool_use_id`, the project directory and the command. Do not use `eval "touch generated.txt"`: a new entry at the project's top changes the root on its own rule, which withholds the grant whatever a human says, so no bar can show.
+3. Ask for `cargo build --locked` again in that session. Expect it to park, even under `--approval auto`, with a reason that names `` `eval "echo x > $QA/elsewhere.txt"` `` and says the build gets its network only once a human approves. Answer `y`: the dependency downloads and the build passes. Ask once more. Under `--approval auto` it runs without parking. Under `--approval ask` it parks as every bash call does there, but its reason no longer names the unread command. Under `--approval bypass` the build is refused instead, naming the same command and saying to switch to `/mode ask`.
+4. Resume the session and ask for the same build once more. The mark lives in the journal and a vouch does not, so the first build after the resume parks once more, naming the command. After the `y`, the next one runs.
 5. A call killed by the bash timeout is marked too: run an unreadable command that sleeps past the timeout and check `jr writes_unread` shows its record, since a killed command may already have written.
 
 Control: in a new session whose only earlier write is a readable `cat > notes.txt` inside the project, `cargo build --locked` is refused its network by the old per-path rule (a changed file under the root). A readable write outside the project, such as `cat > $QA/elsewhere.txt`, leaves the grant in place, and no `writes_unread` record is written for it. A `writes_unread` record from a readable command is the defect.
 
-Automated by `spec/lain/shell/executable/fresh_spec.rb`, `spec/lain/tools/bash_spec.rb` and `spec/lain/telemetry/writes_unread_spec.rb`. Not driven by a human yet.
+A crate with no `target/` yet: the sandbox makes `target/` itself on the first workspace call, and that is no change a human must vouch for. It journals an `entry_made` record when it does, so the bar still holds after a resume: the resumed session's first build parks, naming the command, rather than going to the judge unbarred. With the mark standing, the first `cargo build` in such a crate still parks, and after a `y` it gets its ports. If it runs with no network and no park, that is the defect.
+
+Automated by `spec/lain/middleware/bar_unread_build_spec.rb`, `spec/lain/shell/executable/fresh_spec.rb`, `spec/lain/confine/profiles_spec.rb`, `spec/lain/tools/bash_spec.rb`, `spec/lain/telemetry/writes_unread_spec.rb` and `spec/lain/telemetry/entry_made_spec.rb`. Not driven by a human yet.
 
 ## 4: A refused exec ends with the wording, and is journaled as a refusal
 

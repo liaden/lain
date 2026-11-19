@@ -275,7 +275,8 @@ RSpec.describe LainCLI do
        Lain::Middleware::RedactSecretReads,
        Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
        Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
-       Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
+
+       Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild, Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
     end
 
     def wired_tool_stack(tripwire)

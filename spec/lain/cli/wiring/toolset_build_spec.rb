@@ -1352,7 +1352,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         request = Lain::Confine::Request.new(ruling:, executables: [git], argv: [%w[git fetch]], cwd: @checkout,
                                              root: @checkout, tool_use_id: "toolu_1")
         profiles = bash_exec(built(reader, **over)).instance_variable_get(:@profiles)
-        profiles.instance_variable_get(:@build).program(request, @checkout)
+        profiles.instance_variable_get(:@granting).build_grant_for(request)
       end
 
       it "grants a quiet lineage's fetch, reading the freshness it was given" do

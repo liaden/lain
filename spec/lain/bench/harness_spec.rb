@@ -97,7 +97,7 @@ RSpec.describe Lain::Bench::Harness do
         [Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
          Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
          Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
-         Lain::Middleware::RememberedDenials,
+         Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
          Lain::Middleware::Sensitivity, Lain::Middleware::Gate]
       )
     end

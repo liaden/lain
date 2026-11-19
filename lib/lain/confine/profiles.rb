@@ -93,6 +93,15 @@ module Lain
         # @param _root [String]
         # @return [true]
         def self.any_under?(_root) = true
+
+        # @param _root [String]
+        # @return [true]
+        def self.changed_under?(_root) = true
+
+        # @param path [String]
+        # @yieldparam path [String]
+        # @return [Object] the block's value
+        def self.making(path) = yield(path)
       end
 
       # What a parked call is told before its programs resolve: the first half of {BuildGrant#program}, read off
@@ -129,7 +138,7 @@ module Lain
         @env = env
         @classifier = classifier
         @sealed = Sealed.new(home:, tmpdir:)
-        @build = BuildGrant.new(fresh:, home:)
+        @granting = Granting.over(fresh:, home:, root:)
       end
 
       # @param request [Request]
@@ -191,10 +200,12 @@ module Lain
       # lain-fence grants only a dir that exists when it starts, so a first `cargo test` could not run what it
       # builds. cargo would make this same dir anyway; no other build output is made, since an empty
       # node_modules or .venv changes how npm and venv tools behave. A link there is left alone, and runs nothing.
+      # The lineage makes it and journals that it did, so the dir withholds no build's grant, after a resume too.
       def built_by_cargo(project)
-        return unless File.file?(File.join(project, "Cargo.toml"))
+        target = File.join(project, "target")
+        return if !File.file?(File.join(project, "Cargo.toml")) || File.symlink?(target) || File.exist?(target)
 
-        Dir.mkdir(File.join(project, "target"))
+        @fresh.making(target) { Dir.mkdir(_1) }
       rescue SystemCallError
         nil
       end
@@ -246,7 +257,7 @@ module Lain
       def ported(request)
         root = root_of(request)
         sealed = @sealed.for(root, trace: traceable?)
-        program = @build.program(request, root)
+        program = @granting.build_grant_for(request)
         program ? sealed.granting(program, home: @home, env: @env) : sealed
       end
 
@@ -381,13 +392,14 @@ module Lain
 
         # @param request [Request]
         # @param root [String]
+        # @param vouched [Boolean] whether a human's vouch lifts the lineage's unread mark under `root`
         # @return [String, nil] a key of `Confine::Profile::GRANTS`
-        def program(request, root)
+        def program(request, root, vouched: false)
           stage, argv = sole(request)
           name = argv && self.class.asked(argv)
           return unless name && trusted?(stage, name) && inside?(request.cwd, root)
 
-          name unless @fresh.any_under?(root)
+          name unless vouched ? @fresh.changed_under?(root) : @fresh.any_under?(root)
         end
 
         # @param argv [Array<String>]
@@ -419,7 +431,46 @@ module Lain
 
         def inside?(cwd, root) = cwd.nil? || Landing.under?(Profile.landing(cwd), Profile.landing(root))
       end
-      private_constant :BuildGrant
+
+      Granting = Data.define(:grant, :root) do
+        # @param fresh [#any_under?, #changed_under?] the lineage's freshness
+        # @param home [String] absolute
+        # @param root [String] absolute
+        # @return [Granting]
+        def self.over(fresh:, home:, root:) = new(grant: BuildGrant.new(fresh:, home:), root:)
+
+        # @param request [Request]
+        # @param vouched [Boolean] whether to answer as if a human had vouched for the lineage's unread command
+        # @return [String, nil] a key of `Confine::Profile::GRANTS`
+        def build_grant_for(request, vouched: false) = grant.program(request, request.root || root, vouched:)
+
+        # @param argvs [Array<Array<String>>] each stage's words, as {Tools::Bash#planned_argvs} reads them
+        # @return [Boolean] whether the words alone ask for a build a grant could cover, before anything resolves
+        def asks?(argvs) = argvs.one? && !BuildGrant.asked(argvs.first).nil?
+      end
+
+      # The one answer to whether a build gets its tool's ports, at the root a request names or the session's.
+      # The sandbox asks it as a call runs, and a layer ahead of the gate asks it over the same lineage.
+      #
+      # @!attribute [r] grant
+      #   @return [BuildGrant]
+      # @!attribute [r] root
+      #   @return [String] absolute; the session's project, for a request that names no root of its own
+      class Granting
+        # A session whose sandbox grants no build its ports: no workspace sandbox wraps its bash.
+        module NONE
+          # @return [nil]
+          def self.root = nil
+
+          # @param _request [Request]
+          # @return [nil]
+          def self.build_grant_for(_request, **) = nil
+
+          # @param _argvs [Array<Array<String>>]
+          # @return [false]
+          def self.asks?(_argvs) = false
+        end
+      end
 
       # A workspace profile with no masks and no programs, kept per landed root
       # and trace: building one asks git where its dirs are and which config

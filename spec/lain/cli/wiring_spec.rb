@@ -911,6 +911,14 @@ RSpec.describe Lain::CLI::Wiring do
           expect(board.approvals.to_a).to be_empty
         end
 
+        it "gives the unread build bar no build grant, since the sandbox never wraps a container" do
+          offering_every_layer
+
+          board = outside_a_git_hook { docked_on_path(workspace_wiring(exec: "docker")) { _1 } }
+
+          expect(board.guard_inputs.granting).to be(Lain::Confine::Profiles::Granting::NONE)
+        end
+
         it "keeps a git log from the judge, since the sandbox never wraps a container" do
           offering_every_layer
 
@@ -940,6 +948,42 @@ RSpec.describe Lain::CLI::Wiring do
 
           expect(outside_a_git_hook { judge_asked_about_git_log(board_on_path("/usr/bin", workspace_wiring)) })
             .to eq([])
+        end
+      end
+
+      # The bar on a build after an unread command asks what the sandbox would grant, so it reads the
+      # sandbox's own lineage, and asks only where the toolset built a workspace sandbox around bash.
+      describe "the build grant the unread build bar asks" do
+        def wired_board(wiring)
+          outside_a_git_hook { [board_on_path("/usr/bin", wiring), wiring] }
+        end
+
+        it "reads the lineage the sandbox reads, in the stack every chat call runs through", :seam do
+          offering_every_layer
+          board, wiring = wired_board(workspace_wiring)
+          sandboxed = wiring.instance_variable_get(:@toolset_build).instance_variable_get(:@sandbox)
+
+          expect(board.guard_inputs.fresh).to be(wiring.send(:observers).fresh)
+          expect(sandboxed.instance_variable_get(:@profiling).fetch(:fresh)).to be(board.guard_inputs.fresh)
+          expect(board.guard_inputs.granting).not_to be(Lain::Confine::Profiles::Granting::NONE)
+          expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.grep(Lain::Middleware::BarUnreadBuild).size)
+            .to eq(1)
+        end
+
+        it "grants nothing when the box cannot build the sandbox" do
+          allow(Lain::Confine::Probe).to receive(:new).and_wrap_original do |original, **kwargs|
+            original.call(**kwargs, runner: ->(_argv) { ["", false] })
+          end
+
+          expect(wired_board(workspace_wiring).first.guard_inputs.granting)
+            .to be(Lain::Confine::Profiles::Granting::NONE)
+        end
+
+        it "grants nothing with the workspace switch off" do
+          offering_every_layer
+
+          expect(wired_board(workspace_wiring(confine: "reader")).first.guard_inputs.granting)
+            .to be(Lain::Confine::Profiles::Granting::NONE)
         end
       end
 
@@ -5870,8 +5914,8 @@ RSpec.describe Lain::CLI::Wiring do
         expect(runner.middleware.to_a.map(&:class))
           .to eq([WiringSpecToolStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
-                  Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
-                  Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
+                  Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                  Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
                   Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       end
     end
@@ -6207,7 +6251,8 @@ RSpec.describe Lain::CLI::Wiring do
             .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
+                    Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                    Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
                     Lain::Middleware::Sensitivity,
                     Lain::Middleware::Gate])
           expect(listing_guard(board).filter).to be(board.sensitivity.filter)
@@ -6724,7 +6769,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
@@ -6813,7 +6859,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
                 Lain::Effect::Handler::Live])
       expect(gate_asks?(board.policy_switch, runner.middleware,

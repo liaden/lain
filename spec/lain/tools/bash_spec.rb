@@ -1221,7 +1221,8 @@ RSpec.describe Lain::Tools::Bash do
           before = fresh.any_under?(project)
           run_in(scratch, %(sh -c "echo x > notes.txt"), journal:)
 
-          expect(unread(events).map { [_1.tool_use_id, _1.cwd] }).to eq([["tu_u", scratch]])
+          expect(unread(events).map { [_1.tool_use_id, _1.cwd, _1.command] })
+            .to eq([["tu_u", scratch, %(sh -c "echo x > notes.txt")]])
           expect([before, fresh.any_under?(project)]).to eq([false, true])
         end
       end

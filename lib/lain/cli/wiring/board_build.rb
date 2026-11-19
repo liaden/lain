@@ -64,6 +64,8 @@ module Lain
         # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
         #   whether bash can run a call that reads secrets
         #   contained, as {ToolsetBuild#board_inputs} answers; unstated by default
+        # @param fresh [Lain::Shell::Executable::Fresh, Lain::Shell::Executable::Fresh::Unmarked] the lineage the
+        #   toolset's sandbox reads, whose unread command bars a build; none by default
         # @param human [Human] who answers this session, handed on to {Switchboard.for}
         # @option options [String] :approval the session's starting approval level,
         #   read by {Switchboard.for}, never here
@@ -74,7 +76,7 @@ module Lain
                 arms: Lain::CLI::Arms::OFF, request: Lain::Approval::Judge::Unrequested,
                 child_env: Lain::Exec::ChildEnv::DEFAULT, stops: Lain::Tripwire::Stops::None,
                 masks: Lain::Approval::Judgement::Unmasked, containment: Lain::Confine::Sandbox::Containment::NONE,
-                **identity)
+                fresh: Lain::Shell::Executable::Fresh::Unmarked, **identity)
           # Compiled once: the exemption check stats the disk.
           table = rules(project:, paths:)
           # The SAME factory reaches both the triage rung and the approving
@@ -91,9 +93,23 @@ module Lain
                           test_layout: test_layout(project:, paths:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root, paths:),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,
-                          request:, containment:,
+                          request:, containment:, fresh:, granting: granting(masks, fresh:, project:, paths:),
                           secrets: secrets(project:, sensitivity:, child_env:, journal: chronicle.record_journal),
                           denied_tools: config.approval.deny_tools, stops:, masks:, memo: judge_memo(config))
+        end
+
+        # Masks are on exactly where the toolset wrapped bash in the workspace sandbox, the one sandbox that grants
+        # a build its ports, so that is where a layer ahead of the gate may ask what it would grant.
+        #
+        # @param masks [Approval::Judgement::Masking, Approval::Judgement::Unmasked] as on {.for}
+        # @param fresh [Lain::Shell::Executable::Fresh, Lain::Shell::Executable::Fresh::Unmarked] the sandbox's lineage
+        # @param project [Project]
+        # @param paths [Paths] whose home the sandbox reads the toolchains under
+        # @return [Lain::Confine::Profiles::Granting, Lain::Confine::Profiles::Granting::NONE]
+        def granting(masks, fresh:, project:, paths:)
+          return Lain::Confine::Profiles::Granting::NONE unless masks.on?
+
+          Lain::Confine::Profiles::Granting.over(fresh:, home: paths.home, root: project.root)
         end
 
         # One for the board, so every judged rung it builds, a leased worker's included, shares it.

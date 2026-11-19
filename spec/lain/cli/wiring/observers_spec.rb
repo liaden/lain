@@ -42,6 +42,30 @@ RSpec.describe Lain::CLI::Wiring::Observers do
     expect(observers.fresh.fresh?(file)).to be(true)
   end
 
+  # A resume folds what the sandbox made only if the record reached the session's own journal.
+  describe "an entry the sandbox makes" do
+    # The crate is made a coarse tick before the lineage starts, so making its target/ is quiet.
+    def made_records(resumed)
+      crate = File.join(@state, "crate").tap { FileUtils.mkdir_p(_1) }
+      sleep 0.05
+      io = StringIO.new
+      durable = Lain::CLI::Chronicle.new(journal: Lain::Journal.new(io:))
+      observers = described_class.register(chronicle: durable, paths:, project:, resumed:, arms:)
+      observers.fresh.making(File.join(crate, "target")) { Dir.mkdir(_1) }
+      entries_made(io.string)
+    end
+
+    def entries_made(journaled) = journaled.lines.map { JSON.parse(_1) }.select { _1["type"] == "entry_made" }
+
+    it "lands in the chronicle's journal for a resumed chat" do
+      expect(made_records(lineage("first.ndjson")).map { _1["entry"] }).to eq(["target"])
+    end
+
+    it "lands in the chronicle's journal for a fresh chat" do
+      expect(made_records(nil).map { _1["entry"] }).to eq(["target"])
+    end
+  end
+
   describe "a chat started from another directory with --root" do
     let(:root) { File.realpath(FileUtils.mkdir_p(File.join(@state, "project")).first) }
     let(:elsewhere) { File.realpath(FileUtils.mkdir_p(File.join(@state, "elsewhere")).first) }

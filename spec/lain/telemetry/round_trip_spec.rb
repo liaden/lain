@@ -44,6 +44,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     EditApplied: { path: "lib/a.rb", removed: ["old"], added: ["new"], hidden: 0 },
     EgressRefused: { host: "example.com", count: 2, turn: 1 },
     "EgressRefused::Flagged": { host: "example.com", regions: 2, values: 3 },
+    EntryMade: { directory: "/r", entry: "target", ctime: 1_700_000_000_000_000_000 },
     ExecImage: { image: "/bin/ls", id: "sha256:abc", listed: true, reason: "listed" },
     ExecRecord: { tool_use_id: "tu_1", profile: :traced, execs: [{ "path" => "/bin/ls", "argv0" => "ls", "rc" => 0 }],
                   refusals: [], fd_execs: [], truncated: false, incomplete: true,
@@ -135,7 +136,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
                       window_tokens: 8192, stands_on: d, model: "m", spawn: d },
     WorktreeReap: { action: :reaped, subject: :worktree, name: "w-1", reason: "stale", anchors: ["refs/lain/anchor"] },
     WriteRefused: { tool_use_id: "tu_1", pattern: "aws key" },
-    WritesUnread: { tool_use_id: "tu_1", cwd: "/r/sub" }
+    WritesUnread: { tool_use_id: "tu_1", cwd: "/r/sub", command: "cd sub && make" }
   }.freeze
   population = arguments.to_h do |name, keywords|
     build = lambda do

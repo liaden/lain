@@ -120,7 +120,7 @@ RSpec.describe Lain::Exec::Docker::Resolver do
 
   # A session freshness that has lost its rule answers every path fresh, and an image path must still not be.
   it "reads an image path as never fresh and a mounted one by the session's freshness" do
-    fresh = Lain::Shell::Executable::Fresh.unknown(StandardError.new("lineage unreadable"), faults: [])
+    fresh = Lain::Shell::Executable::Fresh.unknown(StandardError.new("lineage unreadable"), journal: [])
     resolver = resolver_over(client, fresh:)
 
     expect([stage(resolver, "ls").fresh, stage(resolver, "bin/check").fresh]).to eq([false, true])

@@ -122,14 +122,21 @@ module Lain
         end
 
         # A chain that cannot be walked is one whose writes are unknown.
-        def self.lineage_fresh(paths, project, resumed, faults)
-          return Shell::Executable::Fresh.for_lineage([], faults:) if resumed.nil?
+        #
+        # @param paths [Paths] resolves the sessions directory a resume chains through
+        # @param project [Project] the chat's own, whose directories hold the sessions
+        # @param resumed [Resume::Result, nil] nil for a fresh chat
+        # @param journal [#<<] the durable journal, where a fault lands and the lineage records what the sandbox
+        #   made
+        # @return [Shell::Executable::Fresh]
+        def self.lineage_fresh(paths, project, resumed, journal)
+          return Shell::Executable::Fresh.for_lineage([], journal:) if resumed.nil?
 
           dir = paths.filing_dir(root: project.root)
           chain = Resume::ChainWalk.new(paths:, dir:).paths(Paths.session_file(resumed.file, dir:))
-          Shell::Executable::Fresh.for_lineage(chain, faults:)
+          Shell::Executable::Fresh.for_lineage(chain, journal:)
         rescue Resume::Refusal, SystemCallError => e
-          Shell::Executable::Fresh.unknown(e, faults:)
+          Shell::Executable::Fresh.unknown(e, journal:)
         end
 
         private_class_method :lineage_fresh

@@ -172,13 +172,45 @@ RSpec.describe Lain::CLI::ToolGuard do
 
   describe "the stack it builds" do
     it "puts the scope, write, read, listing, test layout and automatic output guards first, then the " \
-       "remembered denials, the path refusal and the gate" do
+       "remembered denials, the unread build bar, the path refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
-                Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
+                Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild, Lain::Middleware::Sensitivity,
+                Lain::Middleware::Gate])
+    end
+
+    # The bar sits innermost but for the gate, so the gate's ruling must still reach it through every layer.
+    it "hears a human's allow through the whole stack, so the build it held keeps its grant", :seam do
+      Dir.mktmpdir do |dir|
+        base = File.realpath(dir)
+        project, bin = %w[project bin].map { File.join(base, _1).tap { |made| FileUtils.mkdir_p(made) } }
+        File.write(File.join(project, "Cargo.toml"), "[package]\n")
+        File.write(File.join(bin, "cargo"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "cargo")) }
+        fresh = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                   stat: Lain::Shell::Executable::Stat.new)
+        fresh << Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_0", cwd: project, command: "make")
+        human = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "y", authority: :human)
+        board = ToolGuardSpecBoard.new(approvals: queue, policy: ToolGuardSpecPolicy.new(ruling: human))
+        asking = Struct.new(:approval).new(Lain::Mode::Approval.for(:ask))
+        inputs = board.guard_inputs.with(fresh:, mode: asking, granting: Lain::Confine::Profiles::Granting.over(
+          fresh:, home: File.join(base, "home"), root: project
+        ))
+        board.define_singleton_method(:guard_inputs) { inputs }
+        bash = Lain::Tools::Bash.new(resolver: Lain::Shell::Executable::Resolver.new(root: project, fresh:))
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: project, env: { "PATH" => bin }),
+                                    root: project)
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cargo build" })
+        ran = described_class.stack(chronicle, board).call({ effect:, tool: bash, context: session }) do |env|
+          env.merge(result: Lain::Tool::Result.ok("ran"))
+        end
+
+        expect(ran.fetch(:result).content).to eq("ran")
+        expect(board.policy.contexts.sole.automatic_approval_barred?).to be(true)
+        expect(fresh.unread_command(project)).to be_nil
+      end
     end
 
     describe "a grep through the main agent's stack" do
@@ -606,8 +638,8 @@ RSpec.describe Lain::CLI::ToolGuard do
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
-                Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials, Lain::Middleware::Sensitivity,
-                Lain::Middleware::Gate])
+                Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
+                Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
     end
 
     it "has the guards judge the path it passes on, as if the model had named it" do
@@ -1529,6 +1561,33 @@ RSpec.describe Lain::CLI::ToolGuard do
         .to eq(guards(ToolGuardSpecBoard.new).map(&:class))
     end
 
+    # A leased child's lineage is its lease's, which no journal marks unread, so its builds are never barred.
+    it "bars a leased run's build by its own lease's lineage, not by the inputs' one", :seam do
+      Dir.mktmpdir do |dir|
+        base = File.realpath(dir)
+        root, bin = %w[project bin].map { File.join(base, _1).tap { |made| FileUtils.mkdir_p(made) } }
+        File.write(File.join(root, "Cargo.toml"), "[package]\n")
+        File.write(File.join(bin, "cargo"), "#!/bin/sh\n").then { File.chmod(0o755, File.join(bin, "cargo")) }
+        marked = Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [],
+                                                    stat: Lain::Shell::Executable::Stat.new)
+        marked << Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_0", cwd: root, command: "make")
+        granting = Lain::Confine::Profiles::Granting.over(fresh: marked, home: root, root:)
+        inputs = described_class.detached(journal:).guard_inputs.with(fresh: marked, granting:)
+        bash = Lain::Tools::Bash.new(resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: marked))
+        build = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "cargo build" })
+        unleased = Lain::WorkerEnv.new(cwd: root, env: { "PATH" => bin })
+        told = [unleased, unleased.with(checkout: root)].map do |worker_env|
+          stack = described_class::Detached.new(chronicle:, guard_inputs: inputs).call(worker_env)
+          stack.call({ effect: build, tool: bash, context: Lain::Session.new(worker_env:) }) do |env|
+            env.merge(result: Lain::Tool::Result.ok("ran"))
+          end.fetch(:result).content
+        end
+
+        expect(told.first).to include("`make` ran earlier")
+        expect(told.last).not_to include("ran earlier")
+      end
+    end
+
     it "holds a leased run inside its checkout, behind the chat's own scope guard" do
       Dir.mktmpdir do |dir|
         leased = Lain::WorkerEnv.new(cwd: dir, env: {}, checkout: dir)
@@ -1863,7 +1922,7 @@ RSpec.describe Lain::CLI::ToolGuard do
       inputs = described_class.detached(journal:).guard_inputs.with(sensitivity:)
       worker_env = Lain::WorkerEnv.new(cwd: lease, env: {}, checkout: lease)
       stack = described_class.leased(chronicle, inputs, worker_env,
-                                     fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                     fresh: described_class::LEASES.for(worker_env),
                                      resolver: Lain::Shell::Executable::Resolver::NULL)
       Sync do
         dispatch_call("bash", { "command" => command }, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),

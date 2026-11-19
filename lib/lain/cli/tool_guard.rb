@@ -32,6 +32,8 @@ module Lain
     # only when no human approved the call. {Middleware::RememberedDenials}
     # sits after it, ahead of the gate's two layers, refusing a call on a path
     # a human already denied its requester before the gate can park it again.
+    # {Middleware::BarUnreadBuild} sits after that, holding a build for a
+    # human once the lineage ran a command lain could not read.
     #
     # Then the gate's two layers: {Middleware::Sensitivity} refuses a path no
     # approval can lift, and {Middleware::Gate} asks about what a human may
@@ -124,13 +126,17 @@ module Lain
       # project's sensitive paths hold in git history; a run with no project
       # reads the process default and no history. `stops` is who the tripwire
       # stopped, and `mode` the approval level a paused main is held under; a
-      # run with no tripwire stop stops no one.
+      # run with no tripwire stop stops no one. `fresh` is the lineage the
+      # sandbox reads and `granting` what that sandbox would grant a build;
+      # a run with neither bars no build.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
-                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode) do
+                           :scope, :middleware, :secrets, :denied_tools, :stops, :mode, :fresh,
+                           :granting) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
                        secrets: Lain::Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                        stops: Tripwire::Stops::None,
-                       mode: Middleware::TripwireStop::NoMode, **)
+                       mode: Middleware::TripwireStop::NoMode, fresh: Shell::Executable::Fresh::Unmarked,
+                       granting: Confine::Profiles::Granting::NONE, **)
           super
         end
       end
@@ -622,7 +628,8 @@ module Lain
       # @param worker_env [WorkerEnv] the leased child's, naming its checkout
       # @param requester [Requester, String, nil] who the gate is asked for
       # @param task [String, nil] what the child was spawned to do
-      # @param fresh [#fresh?] whether a path was written during the lease
+      # @param fresh [Shell::Executable::Fresh] the lease's lineage: whether a path was written during the lease,
+      #   and the build bar's unread mark, which no journal sets on a lease
       # @param resolver [#for] what a command's programs resolve to, over `fresh`
       # @param cell [Sensitivity::Bounds::Cell, nil] as on {.child_stack}
       # @param spawn [String, nil] as on {.child_stack}
@@ -634,7 +641,7 @@ module Lain
                                   allow: inputs.policy_for.call(worker_env), home: inputs.sensitivity.home,
                                   resolver:, fresh:)
         asking = named(policy, requester, task:, cell:, spawn:)
-        layered(chronicle, held, inputs.test_layout.roots_for(worker_env), asking,
+        layered(chronicle, held.with(fresh:), inputs.test_layout.roots_for(worker_env), asking,
                 requester:, held: held_for(bounded, home: inputs.sensitivity.home))
       end
 
@@ -664,7 +671,7 @@ module Lain
         inputs.with(sensitivity: inputs.sensitivity.confined(held))
       end
 
-      # The configured members, then the eight guards over one set of inputs,
+      # The configured members, then the nine guards over one set of inputs,
       # the layout held at `roots`, and the gate's two layers asking `policy`
       # -- checked closed as it is built, the one check a child's stack from
       # any builder is also held to.
@@ -687,8 +694,16 @@ module Lain
       def closing(inputs, policy, journal, requester)
         stopping = Middleware::TripwireStop.new(stops: inputs.stops, journal:, mode: inputs.mode,
                                                 attended: !inputs.approvals.nil?, requester:)
-        [stopping, remembered(inputs, requester, journal),
+        [stopping, remembered(inputs, requester, journal), unread_build(inputs, journal, requester),
          *gating(inputs, stopping.over(policy), journal, requester)]
+      end
+
+      # Last before the gate's two layers: a call the tripwire or a remembered denial refuses is no build to hold,
+      # and the gate hands its ruling to this layer's context, which hands it on outward.
+      def unread_build(inputs, journal, requester)
+        Middleware::BarUnreadBuild.new(fresh: inputs.fresh, granting: inputs.granting,
+                                       secrets: inputs.secrets, journal:, mode: inputs.mode,
+                                       attended: !inputs.approvals.nil?, requester:)
       end
 
       def withheld(inputs)

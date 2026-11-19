@@ -227,6 +227,22 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(board.guard_inputs.secrets).to be(secrets)
       end
 
+      it "carries the lineage and the build grant it is given among the guard's inputs, by identity" do
+        fresh = Lain::Shell::Executable::Fresh.for_lineage([])
+        granting = Lain::Confine::Profiles::Granting.over(fresh:, home: "/home/tester", root: "/home/tester/project")
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: layout_run, fresh:, granting:)
+
+        expect([board.guard_inputs.fresh, board.guard_inputs.granting]).to eq([fresh, granting])
+        expect(board.guard_inputs.fresh).to be(fresh)
+      end
+
+      it "carries a lineage that bars nothing and no build grant when none is given" do
+        expect([board_for.guard_inputs.fresh, board_for.guard_inputs.granting])
+          .to eq([Lain::Shell::Executable::Fresh::Unmarked, Lain::Confine::Profiles::Granting::NONE])
+      end
+
       it "carries the default secrets source when none is given" do
         expect(board_for.guard_inputs.secrets).to be(Lain::Sensitivity::Secrets::Source::DEFAULT)
       end

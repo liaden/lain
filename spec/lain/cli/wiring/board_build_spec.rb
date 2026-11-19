@@ -290,6 +290,44 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    describe "the lineage and the build grant the unread build bar asks" do
+      def build_of(root)
+        Lain::Confine::Request.new(ruling: Lain::Confine::Request::UNRULED, executables: [cargo(root)],
+                                   argv: [%w[cargo build]], cwd: root, root: nil, tool_use_id: "tu_1")
+      end
+
+      def cargo(root)
+        Lain::Shell::Executable.new(name: "cargo", resolved: File.join(root, "../bin/cargo"),
+                                    realpath: File.join(root, "../bin/cargo"), chain: [], shadowed: [], anomalies: [],
+                                    klass: :user, fresh: false, run_files: [], wrappers: [])
+      end
+
+      let(:quiet) do
+        Lain::Shell::Executable::Fresh.new(start: Time.now + 3600, written: [], stat: Lain::Shell::Executable::Stat.new)
+      end
+
+      it "hands the guard stack the lineage it is given" do
+        in_tree do |root, home|
+          expect(board_for(root, home, fresh: quiet).guard_inputs.fresh).to be(quiet)
+        end
+      end
+
+      it "grants over that lineage at the project's root when the sandbox masks a judged call" do
+        in_tree do |root, home|
+          masks = Lain::Approval::Judgement::Masking.new(Object.new)
+          granting = board_for(root, home, fresh: quiet, masks:).guard_inputs.granting
+
+          expect([granting.root, granting.build_grant_for(build_of(root))]).to eq([root, "cargo"])
+        end
+      end
+
+      it "grants nothing when no sandbox wraps a judged call" do
+        in_tree do |root, home|
+          expect(board_for(root, home, fresh: quiet).guard_inputs.granting).to be(Lain::Confine::Profiles::Granting::NONE)
+        end
+      end
+    end
+
     it "journals one capability_degraded naming only the file when a credentials file will not decrypt" do
       in_tree do |root, home|
         FileUtils.mkdir_p(File.join(root, "config"))

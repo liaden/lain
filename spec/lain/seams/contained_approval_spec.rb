@@ -169,7 +169,10 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
     cargo = File.join(Dir.home, ".cargo/bin/cargo")
     skip("cargo is not installed at #{cargo}") unless File.executable?(cargo)
     File.write(File.join(@root, "Cargo.toml"), "[package]\nname = \"c\"\nversion = \"0.1.0\"\n")
-    quiet = Module.new { def self.any_under?(_root) = false }
+    quiet = Module.new do
+      def self.any_under?(_root) = false
+      def self.making(path) = yield(path)
+    end
     box, exec = contained_where_possible(workspace: true, lineage: quiet)
 
     prompt, result = answered("y\n", exec:, containment: box.containment, command: "cargo fetch .env")

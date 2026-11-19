@@ -14,8 +14,21 @@ RSpec.describe Lain::Telemetry::WritesUnread do
         .to eq('{"type":"writes_unread","tool_use_id":"tu_1","cwd":"/srv/project"}')
     end
 
+    it "journals the command it ran when one is given" do
+      named = described_class.new(tool_use_id: "tu_1", cwd: "/srv/project", command: "cd sub && make")
+
+      expect(JSON.generate(named.to_journal))
+        .to eq('{"type":"writes_unread","tool_use_id":"tu_1","cwd":"/srv/project","command":"cd sub && make"}')
+    end
+
+    it "reads back a record written before it named its command" do
+      line = { "type" => "writes_unread", "tool_use_id" => "tu_1", "cwd" => "/srv/project" }
+
+      expect(Lain::Telemetry.read(line)).to eq(record)
+    end
+
     it "is deeply frozen when built from mutable input" do
-      expect(described_class.new(tool_use_id: +"tu_1", cwd: +"/srv/project")).to be_deeply_frozen
+      expect(described_class.new(tool_use_id: +"tu_1", cwd: +"/srv/project", command: +"make")).to be_deeply_frozen
     end
 
     it "refuses a missing cwd, naming it" do

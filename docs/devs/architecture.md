@@ -1096,7 +1096,9 @@ first, and a planted `<root>/bin/cat` ran under a `ComposedTerm` approval. A bas
    the lineage's first record. ctime, because `touch -d` sets mtime back and nothing unprivileged sets ctime.
    A lineage that cannot be read answers every path fresh. A command the shell reader cannot read (`Named#opaque?`) journals a
    `writes_unread` record, and once the lineage holds one every root counts as changed for a build grant,
-   while each path keeps its own rule. Every bash call
+   while each path keeps its own rule. When the sandbox makes an entry at a project's top, such as a fresh
+   crate's `target/`, an `entry_made` record settles that directory's ctime for the lineage, so a resumed
+   lineage reads it the same way. Every bash call
    journals an `exec_resolution` record before it runs, whatever the arms, and the child env drops
    `LD_PRELOAD`, `LD_AUDIT`, `BASH_FUNC_*` and `CDPATH` (`Exec::ChildEnv`) so an exported function never
    reaches the shell. `LD_LIBRARY_PATH` is dropped too, and passed only by name (`LAIN_ENV_PASS`).

@@ -22,7 +22,9 @@ module Lain
       # A {Telemetry::WritesUnread} record stands for writes no record names,
       # so once the lineage holds one every root has changed beneath it, while
       # each path keeps its own rule: answering those fresh too would refuse
-      # every program for one opaque command.
+      # every program for one opaque command. A human who approves a build
+      # under a root vouches for it ({#vouch!}), which lifts only that mark,
+      # only there, until the next such command runs.
       #
       # It fails closed. A record it cannot fold, or a lineage it cannot read,
       # leaves it answering every path fresh, since the journal reports an
@@ -34,6 +36,24 @@ module Lain
         WRITTEN_MARK = %("type":"#{WRITTEN}").freeze
         UNREAD = "writes_unread"
         UNREAD_MARK = %("type":"#{UNREAD}").freeze
+        MADE = "entry_made"
+        MADE_MARK = %("type":"#{MADE}").freeze
+        MARKS = [WRITTEN_MARK, UNREAD_MARK, MADE_MARK].freeze
+        # A record from before the command was kept names none, and a bar still has to say what it waits on.
+        UNNAMED = "a command an older lain did not name"
+        # Far above any kernel tick, so it only bounds a clock that stopped.
+        TICK_BOUND = 0.05
+
+        # The lineage of a stack that reads none, which no command has marked unread.
+        module Unmarked
+          # @param _root [String]
+          # @return [nil]
+          def self.unread_command(_root) = nil
+
+          # @param _root [String]
+          # @return [Unmarked]
+          def self.vouch!(_root, **) = self
+        end
 
         # Both the lineage and a live record name a path this way, so a record
         # that names none degrades the same wherever it is read.
@@ -43,6 +63,16 @@ module Lain
         end
         private_constant :PATH_OF
 
+        # A torn record degrades the lineage rather than settle a directory on a guess.
+        MADE_OF = lambda do |record|
+          directory = record.fetch("directory")
+          ctime = record.fetch("ctime")
+          raise TypeError, "#{MADE} is torn: #{record.inspect}" unless directory.is_a?(String) && ctime.is_a?(Integer)
+
+          [directory, ctime]
+        end
+        private_constant :MADE_OF
+
         # Relative to the root: what a build writes, left out of the ctime check only.
         UNWATCHED = %w[target .git/objects].freeze
         # Where a cargo workspace keeps its members, each watched by its own ctime.
@@ -51,24 +81,25 @@ module Lain
         # @param paths [Array<String>] the lineage's session files, oldest first
         # @param stat [Stat] the filesystem port
         # @param clock [#call] the lineage's start when it has no file yet
-        # @param faults [#<<] where the reason lands when the lineage cannot be read
+        # @param journal [#<<] the session's durable journal: where the reason lands when the lineage cannot be
+        #   read, and where an entry the sandbox makes is recorded, for a resume to fold
         # @return [Fresh]
-        def self.for_lineage(paths, stat: Stat.new, clock: -> { Time.now }, faults: Channel::Null.instance)
-          written, unread = folded(paths)
-          new(start: paths.empty? ? clock.call : first_ts(paths.first), written:, unread:, stat:)
+        def self.for_lineage(paths, stat: Stat.new, clock: -> { Time.now }, journal: Channel::Null.instance)
+          written, unread, made = folded(paths)
+          new(start: paths.empty? ? clock.call : first_ts(paths.first), written:, unread:, made:, stat:, journal:)
         rescue StandardError => e
-          unknown(e, faults:, stat:)
+          unknown(e, journal:, stat:)
         end
 
         # What a lineage that cannot be read answers: every path fresh, with
         # the reason recorded, so a run that lost the rule says so.
         #
         # @param error [StandardError] why the lineage could not be read
-        # @param faults [#<<] where the reason lands
+        # @param journal [#<<] where the reason lands
         # @param stat [Stat]
         # @return [Fresh]
-        def self.unknown(error, faults:, stat: Stat.new)
-          faults << { "type" => "journal_error", "observer" => name, "error" => "#{error.class}: #{error.message}" }
+        def self.unknown(error, journal:, stat: Stat.new)
+          journal << { "type" => "journal_error", "observer" => name, "error" => "#{error.class}: #{error.message}" }
           new(start: Time.at(0), written: [], stat:, degraded: true)
         end
 
@@ -80,21 +111,27 @@ module Lain
         # A marked line that does not parse is a torn record, and so a fault
         # rather than a line to skip.
         #
-        # @return [Array(Array<String>, Boolean)] the written paths, and whether any write went unread
+        # @return [Array(Array<String>, String, nil, Hash{String=>Integer})] the written paths, the last command
+        #   whose writes went unread, and each directory's ctime once the sandbox made an entry there
         def self.folded(paths)
           paths.lazy.flat_map { |path| File.foreach(path, encoding: Encoding::UTF_8).lazy }
-               .select { |line| line.include?(WRITTEN_MARK) || line.include?(UNREAD_MARK) }
+               .select { |line| MARKS.any? { line.include?(_1) } }
                .map { |line| JSON.parse(line) }
-               .inject([[], false]) { |(written, unread), record| fold(record, written, unread) }
+               .inject([[], nil, {}]) { |(written, unread, made), record| fold(record, written, unread, made) }
         end
 
-        def self.fold(record, written, unread)
+        def self.fold(record, written, unread, made)
           case record["type"]
-          when WRITTEN then [written << PATH_OF.call(record), unread]
-          when UNREAD then [written, true]
-          else [written, unread]
+          when WRITTEN then [written << PATH_OF.call(record), unread, made]
+          when UNREAD then [written, named(record["command"]), made]
+          when MADE then [written, unread, made.merge([MADE_OF.call(record)].to_h)]
+          else [written, unread, made]
           end
         end
+
+        # @param command [Object] what a record names
+        # @return [String]
+        def self.named(command) = command.is_a?(String) ? command : UNNAMED
 
         private_class_method :first_ts, :folded, :fold
 
@@ -102,13 +139,19 @@ module Lain
         # @param written [Array<String>] the paths the lineage's write records name
         # @param stat [Stat]
         # @param degraded [Boolean] whether to answer every path fresh
-        # @param unread [Boolean] whether the lineage ran a command whose writes no record names
-        def initialize(start:, written:, stat:, degraded: false, unread: false)
+        # @param unread [String, nil] the last command the lineage ran whose writes no record names
+        # @param made [Hash{String=>Integer}] each directory's ctime, in nanoseconds, once the sandbox made an entry
+        #   there
+        # @param journal [#<<] where an entry the sandbox makes is recorded
+        def initialize(start:, written:, stat:, degraded: false, unread: nil, made: {}, journal: Channel::Null.instance)
           @start = nanoseconds(start)
           @written = Set.new(written)
           @stat = stat
           @degraded = degraded
-          @unread = unread
+          @unread = unread&.dup&.freeze
+          @made = made.transform_values { at_or_after_start(_1) }
+          @journal = journal
+          @vouched = Set.new
           @lock = Mutex.new
         end
 
@@ -121,7 +164,8 @@ module Lain
         def <<(event)
           path = written_path(event)
           @lock.synchronize { @written << path } if path
-          @unread = true if marks_unread?(event)
+          command = unread_command_of(event)
+          @lock.synchronize { marked(command) } if command
           self
         rescue StandardError
           @degraded = true
@@ -161,9 +205,15 @@ module Lain
         #
         # @param root [String] absolute; the checkout
         # @return [Boolean] true when degraded, when the lineage ran a command
-        #   lain could not read, or when the root cannot be read
-        def any_under?(root)
-          return true if @degraded || @unread
+        #   lain could not read that no human vouched for here, or when the root cannot be read
+        def any_under?(root) = !unread_command(root).nil? || changed_under?(root)
+
+        # {#any_under?} by every rule but the unread mark, which is what a human's vouch leaves standing.
+        #
+        # @param root [String] absolute; the checkout
+        # @return [Boolean]
+        def changed_under?(root)
+          return true if @degraded
 
           real = @stat.real(root)
           roots = [root, real].uniq
@@ -171,6 +221,40 @@ module Lain
             watched_entries(real).any? { changed?(_1) }
         rescue StandardError
           true
+        end
+
+        # @param root [String] absolute; the checkout
+        # @return [String, nil] the last command whose writes went unread, unless a human vouched for `root` since
+        def unread_command(root)
+          command = @unread
+          command unless command.nil? || vouched?(root)
+        end
+
+        # A human approved a call under `root` knowing the lineage's unread command, so its mark no longer
+        # withholds a grant there. Every other rule stands. The mark is matched by identity, under the lock: a
+        # command that ran while the human was asked, the same words again included, is one they never saw.
+        #
+        # @param root [String] absolute; the checkout
+        # @param command [String] the command the human was shown, as {#unread_command} answered it
+        # @return [self]
+        def vouch!(root, command:)
+          real = @stat.real(root)
+          @lock.synchronize { @vouched << real if @unread.equal?(command) }
+          self
+        end
+
+        # Makes an entry the sandbox itself needs, such as a crate's first `target/`, so that making it is no
+        # change a human must vouch for: the parent's ctime it leaves becomes that dir's start, unless the
+        # parent had changed already. That start is journaled, so a resume folds it too. The coarse clock is
+        # waited past it, so an entry made later still counts.
+        #
+        # @param path [String] absolute; the entry to make
+        # @yieldparam path [String]
+        # @return [Object] the block's value
+        def making(path)
+          parent = @stat.real(File.dirname(path))
+          quiet = !changed?(parent)
+          yield(path).tap { made(parent, File.basename(path)) if quiet }
         end
 
         private
@@ -201,14 +285,59 @@ module Lain
           PATH_OF.call(Journal.parse(event))
         end
 
-        def marks_unread?(event) = event.is_a?(Telemetry::WritesUnread) || journal_type(event) == UNREAD
+        def unread_command_of(event)
+          return self.class.named(event.command) if event.is_a?(Telemetry::WritesUnread)
+
+          self.class.named(Journal.parse(event)["command"]) if journal_type(event) == UNREAD
+        end
+
+        # A new unread command may have written under a root vouched for already, so every vouch lapses.
+        def marked(command)
+          @unread = command.dup.freeze
+          @vouched = Set.new
+        end
+
+        # Settled here, not by folding the record back: the live session holds the value already, and only a
+        # resume needs the record.
+        def made(directory, entry)
+          ctime = nanoseconds(@stat.lstat(directory).ctime)
+          @lock.synchronize { @made[directory] = at_or_after_start(ctime) }
+          record(Telemetry::EntryMade.new(directory:, entry:, ctime:))
+          past_coarse_clock(ctime)
+        end
+
+        # The coarse clock can stamp a ctime before the lineage's start, and a settlement must never read a
+        # change from before the lineage began as one inside it.
+        def at_or_after_start(ctime) = [ctime, @start].max
+
+        # A record that cannot land costs only a resume's settlement, which then fails closed: the root reads
+        # changed, as it did before the entry was made.
+        def record(entry)
+          @journal << entry
+        rescue StandardError
+          nil
+        end
+
+        def past_coarse_clock(floor)
+          deadline = RunClock::MONOTONIC.call + TICK_BOUND
+          sleep(0.0005) until coarse_now > floor || RunClock::MONOTONIC.call > deadline
+        end
+
+        def coarse_now = Process.clock_gettime(Process::CLOCK_REALTIME_COARSE, :nanosecond)
+
+        def vouched?(root)
+          real = @stat.real(root)
+          @lock.synchronize { @vouched.include?(real) }
+        rescue StandardError
+          false
+        end
 
         def journal_type(event) = event.is_a?(Hash) ? (event["type"] || event[:type]).to_s : nil
 
         def written?(path) = @lock.synchronize { @written.include?(path) }
 
         def changed?(path)
-          nanoseconds(@stat.lstat(path).ctime) > @start
+          nanoseconds(@stat.lstat(path).ctime) > @lock.synchronize { @made.fetch(path, @start) }
         rescue Errno::ENOENT, Errno::ENOTDIR
           false
         end

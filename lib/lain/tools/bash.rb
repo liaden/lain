@@ -292,6 +292,34 @@ module Lain
       # @return [Shell::Verdict::Decision] the arm, its reason, and the term
       def decision_for(input, parsed: nil) = decided(input.command, parsed)
 
+      # The words each stage of this call would run as argv, read before the call is approved and without
+      # resolving a program, which is the cheap half of {#planned_request}.
+      #
+      # @param input [Hash] the call's input, as the model sent it
+      # @param context [#worker_env, nil] the session the call runs in
+      # @return [Array<Array<String>>] none on the string arm
+      # @raise [Tool::InvalidInput] when the input does not validate
+      def planned_argvs(input, context)
+        _, decision = planned(input, context)
+        argv_on(arm_for(decision), decision)
+      end
+
+      # The request a run of this call would hand its exec, built the same way and before the call is approved,
+      # so a layer ahead of the gate can ask the sandbox's own questions of it. It journals nothing.
+      #
+      # @param input [Hash] the call's input, as the model sent it
+      # @param context [#worker_env, nil] the session the call runs in
+      # @param tool_use_id [String]
+      # @return [Confine::Request]
+      # @raise [Tool::InvalidInput] when the input does not validate
+      def planned_request(input, context, tool_use_id:)
+        checked, decision = planned(input, context)
+        session = context || Session::Null.instance
+        cwd = session.worker_env.resolve(checked.cwd)
+        stages = resolve(checked.command, decision, session.worker_env.with(cwd:))
+        request_for(stages, session, cwd, argv_on(arm_for(decision), decision), tool_use_id:)
+      end
+
       protected
 
       # Exit status rides in the returned content, NOT `is_error`: a nonzero
@@ -388,9 +416,14 @@ module Lain
       def journalled_confinement(parse, decision, invocation, cwd, arm)
         parsed = parsed_stages(parse, decision, invocation, cwd)
         stages = journal_resolution(parse.source, decision, invocation, cwd, arm, parsed:)
-        shadows = SessionShadows.new(session_of(invocation).worker_env.with(cwd:))
-        confinement_for(shadows.over(stages), invocation, cwd, argv_on(arm, decision),
-                        grants: shadows.over(parsed&.map(&:executable) || []))
+        request_for(stages, session_of(invocation), cwd, argv_on(arm, decision),
+                    tool_use_id: invocation.tool_use_id, grants: parsed&.map(&:executable) || [])
+      end
+
+      def planned(input, context)
+        checked = validate_input!(input)
+        command = checked.command
+        [checked, decided(command, Middleware::ParsedCommand.carried(command, context))]
       end
 
       # Written before the exec, so a call that times out still leaves the account.
@@ -424,12 +457,13 @@ module Lain
         SHELL_RUNS_ITSELF.include?(entry["name"]) ? entry.merge("resolved" => nil, "builtin" => true) : entry
       end
 
-      # A context no ladder ruled through gets the ruling that allowed nothing.
-      def confinement_for(stages, invocation, cwd, argv, grants:)
-        context = session_of(invocation)
+      # The one place a request is built, the run's and a plan's alike. A context no ladder ruled through gets
+      # the ruling that allowed nothing.
+      def request_for(stages, context, cwd, argv, tool_use_id:, grants: [])
+        shadows = SessionShadows.new(context.worker_env.with(cwd:))
         ruling = context.respond_to?(:ruling) ? context.ruling : Confine::Request::UNRULED
-        Confine::Request.new(ruling:, executables: stages, argv:, cwd:, root: context.worker_env.checkout,
-                             tool_use_id: invocation.tool_use_id, grants:)
+        Confine::Request.new(ruling:, executables: shadows.over(stages), argv:, cwd:, root: context.worker_env.checkout,
+                             tool_use_id:, grants: shadows.over(grants))
       end
 
       # On the string arm a shell reads the words, so none are vouched for.
@@ -458,12 +492,12 @@ module Lain
         before = paths.to_h { |path| [path, identity(path)&.last] }
         yield
       ensure
-        journal_unread(options[:cwd], invocation) if named&.opaque?
+        journal_unread(options[:cwd], invocation, parse.source) if named&.opaque?
         journal_writes(paths, before, invocation)
       end
 
-      def journal_unread(cwd, invocation)
-        journal_record(Telemetry::WritesUnread.new(tool_use_id: invocation.tool_use_id, cwd:))
+      def journal_unread(cwd, invocation, command)
+        journal_record(Telemetry::WritesUnread.new(tool_use_id: invocation.tool_use_id, cwd:, command:))
       end
 
       # Only a file that is new or whose inode or ctime moved is journalled, so

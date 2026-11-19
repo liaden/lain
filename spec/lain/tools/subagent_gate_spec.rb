@@ -298,7 +298,8 @@ RSpec.describe "Subagent gating" do
     let(:guards) do
       [Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
        Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
-       Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials]
+       Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+       Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild]
     end
 
     def child(posture: :schema, sensitivity: path_policy, role: :dev)
@@ -587,7 +588,8 @@ RSpec.describe "Subagent gating" do
         .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout,
-                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop, Lain::Middleware::RememberedDenials,
+                Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
+                Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate])
       expect(child_layers.map(&:class)).to eq(parent_layers.map(&:class))
       expect(runner.handler).to be_a(Lain::Effect::Handler::Live)

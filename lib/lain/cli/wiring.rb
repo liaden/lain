@@ -791,7 +791,7 @@ module Lain
       # untouched, so every path answers fresh.
       def observers
         @observers ||= Observers.new(fresh: Lain::Shell::Executable::Fresh.unknown(
-          Lain::Error.new("wire_agent has not registered the lineage"), faults: Lain::Channel::Null.instance
+          Lain::Error.new("wire_agent has not registered the lineage"), journal: Lain::Channel::Null.instance
         ))
       end
 
@@ -910,7 +910,7 @@ module Lain
                                         model: backend.model, middleware: backend.middleware, display: @channel,
                                         options:, human: @human, resolver: exec_resolver, worker_env: chat_env,
                                         stops: observers.stops, toolset:, project:, verdict:, config:, paths: @paths,
-                                        arms:, **chat_reads)
+                                        arms:, fresh: observers.fresh, **chat_reads)
       end
 
       # A chat assembled with no toolset build, as a spec's, leaves the board its defaults.

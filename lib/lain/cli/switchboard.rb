@@ -122,6 +122,10 @@ module Lain
       # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
       #   whether the toolset's bash can run a call that reads
       #   secrets contained, which the queue's rows say and a plain approval needs; unstated by default
+      # @param fresh [Shell::Executable::Fresh, Shell::Executable::Fresh::Unmarked] the lineage the sandbox reads,
+      #   whose unread command bars a build every tool stack would otherwise run without its grant; none by default
+      # @param granting [Confine::Profiles::Granting, Confine::Profiles::Granting::NONE] what the toolset's sandbox
+      #   would grant a build; none by default
       # @param human [Human] who answers this session, built once by the chat from
       #   its launch flags. Required: a default would hand a headless caller a
       #   queue nobody drains
@@ -137,10 +141,11 @@ module Lain
                    request: Approval::Judge::Unrequested, secrets: Sensitivity::Secrets::Source::DEFAULT,
                    denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
                    masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT,
-                   memo: Approval::JudgeMemo.off, containment: Confine::Sandbox::Containment::NONE)
+                   memo: Approval::JudgeMemo.off, containment: Confine::Sandbox::Containment::NONE,
+                   fresh: Shell::Executable::Fresh::Unmarked, granting: Confine::Profiles::Granting::NONE)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
-            request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:,
+            request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:, fresh:, granting:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !human.ladder_refuses?, approval: options.fetch(:approval, :ask))
       end
@@ -253,6 +258,9 @@ module Lain
       # @param memo [Approval::JudgeMemo, Approval::JudgeMemo::Off] as on {.for}; none by default
       # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
       #   as on {.for}; unstated by default
+      # @param fresh [Shell::Executable::Fresh, Shell::Executable::Fresh::Unmarked] as on {.for}; none by default
+      # @param granting [Confine::Profiles::Granting, Confine::Profiles::Granting::NONE] as on {.for}; none by
+      #   default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -263,7 +271,8 @@ module Lain
                      secrets: Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                      stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
                      silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off,
-                     containment: Confine::Sandbox::Containment::NONE)
+                     containment: Confine::Sandbox::Containment::NONE, fresh: Shell::Executable::Fresh::Unmarked,
+                     granting: Confine::Profiles::Granting::NONE)
         @attended = attended
         @journal = journal
         @spike = spike
@@ -280,7 +289,7 @@ module Lain
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
                                               scope: @scoping, middleware:, secrets:, denied_tools:,
-                                              stops:, mode: @mode_switch)
+                                              stops:, mode: @mode_switch, fresh:, granting:)
       end
 
       # The main agent's context grafted over the live model slot -- the ONLY

