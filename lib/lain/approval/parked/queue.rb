@@ -47,6 +47,9 @@ module Lain
         # hurry -- an abandoned session must eventually refuse.
         DEFAULT_TIMEOUT = 300
 
+        # Takes the text alone for a {Pending}'s mask and the text and its context for the queue's.
+        UNMASKED = ->(text, _context = nil) { text }
+
         # Who a gated call is asked on behalf of when neither the call nor the
         # session names anyone: the parent's own turn.
         REQUESTER = Requester.main
@@ -209,11 +212,13 @@ module Lain
           # they are read off the command when first asked. `containment` is what
           # a plain approval of this call does when it reads secrets; a call that
           # reads none is handed the unstated one, and is offered no network answer.
+          # `mask` takes the face's text alone and returns it with known secrets masked.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
                          silence: Silence::DENY, spawn: nil, named: nil,
-                         containment: ::Lain::Confine::Sandbox::Containment::NONE)
+                         containment: ::Lain::Confine::Sandbox::Containment::NONE, mask: UNMASKED)
+            @mask = mask
             @spawn = spawn
             @containment = containment
             @timeout = timeout
@@ -338,7 +343,7 @@ module Lain
           def tool_call? = true
 
           # @return [String] the question a surface asks, in its own words
-          def call_face = ["#{tool}(#{input.inspect})", cwd_face].compact.join(" ")
+          def call_face = @mask.call(["#{tool}(#{input.inspect})", cwd_face].compact.join(" "))
 
           # Where a relative path in the call lands, so a surface says it beside the call.
           #
@@ -576,11 +581,15 @@ module Lain
         # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
         #   whether the session can run a call that reads secrets
         #   contained, which a plain approval of one does; unstated, the row says nothing of it
+        # @param mask [#call] `(text, context)` to the text with the session's known secrets masked; it only
+        #   changes what a surface shows, never what the call runs
         # @param verdict [Shell::Verdict] the session's one shell verdict, which decides whether bash runs a call
         #   as argv, so whether a build tool's ports could be granted
         def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
                        wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE, silence: Silence::DENY,
-                       containment: Confine::Sandbox::Containment::NONE, verdict: ::Lain::Shell::Verdict.new(home:))
+                       containment: Confine::Sandbox::Containment::NONE, verdict: ::Lain::Shell::Verdict.new(home:),
+                       mask: UNMASKED)
+          @mask = mask
           @journal = journal
           @containment = containment
           @verdict = verdict
@@ -730,7 +739,8 @@ module Lain
                                 cwd: ::Lain::Session.cwd_of(context),
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
                                 file_facts: @file_facts, silence: @silence,
-                                spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:)
+                                spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:,
+                                mask: ->(text) { @mask.call(text, context) })
           park(pending)
         end
 

@@ -1785,7 +1785,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
                 %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named],
-                %i[key containment]])
+                %i[key containment], %i[key mask]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed
@@ -1993,6 +1993,36 @@ RSpec.describe Lain::Approval::Parked::Queue do
 
     it "still holds its own regions frozen" do
       expect(described_class.new(path: "/repo/.env", regions: regions.to_a).regions).to be_frozen
+    end
+  end
+
+  describe "masking the face a surface shows" do
+    let(:value) { "zq7lowentropyprobevalue42" }
+    let(:mask) { ->(text, _context) { text.gsub(value, "<redacted:1>") } }
+    let(:call) { tool_call("bash", { "command" => "curl -H #{value} x" }) }
+
+    def parked_by(queue)
+      Sync do |task|
+        run = task.async { queue.adjudicate(call, Object.new) }
+        pending = queue.dequeue
+        shown = pending.call_face
+        pending.approve(surface: "spec", authority: :human)
+        run.wait
+        [pending, shown]
+      end
+    end
+
+    it "shows a placeholder where the call holds a known value, and keeps the real input" do
+      pending, shown = parked_by(described_class.new(journal:, mask:))
+
+      expect(shown).to include("<redacted:1>").and(satisfy { !_1.include?(value) })
+      expect(pending.input.fetch("command")).to include(value)
+    end
+
+    it "shows the call as it is when no mask is given" do
+      _, shown = parked_by(queue)
+
+      expect(shown).to include(value)
     end
   end
 

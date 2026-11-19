@@ -30,6 +30,16 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     expect(output.string).to include("bash").and include("rm -rf /tmp/x")
   end
 
+  it "masks what the mask hides in the [y/N] line" do
+    token = "zq7lowentropyprobevalue42"
+    call = Lain::Effect::ToolCall.new(tool_use_id: "tu_m", name: "bash", input: { command: "curl #{token}" })
+    held = Lain::Approval::Parked::Queue::Pending.new(effect: call, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                      mask: ->(text) { text.gsub(token, "<redacted:1>") })
+    policy_for("n\n").decide(held)
+
+    expect(output.string).to include("<redacted:1>").and(satisfy { !_1.include?(token) })
+  end
+
   it "names the directory a relative path lands in, and stays quiet for an absolute one" do
     relative = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "bash", input: { command: "mkdir downloads" })
     absolute = Lain::Effect::ToolCall.new(tool_use_id: "tu_3", name: "bash",

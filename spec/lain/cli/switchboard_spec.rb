@@ -245,6 +245,26 @@ RSpec.describe Lain::CLI::Switchboard do
         expect(channel.events.map(&:bytes).join).to eq("<redacted:1>\n")
       end
 
+      it "masks a parked call's face over the secrets its guard's inputs carry" do
+        token = "zq7lowentropyprobevalue42"
+        child_env = Lain::Exec::ChildEnv.new(env: { "PROBE_API_TOKEN" => token })
+        secrets = Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null)
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),
+                                    chronicle:, judge:, options: {}, model: "claude-opus-4-8", toolset: base,
+                                    test_layout: layout_run, secrets:)
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_f", name: "bash", input: { "command" => "echo #{token}" })
+        face = Sync do |task|
+          run = task.async { board.approvals.adjudicate(call, nil) }
+          pending = task.with_timeout(1) { board.approvals.dequeue }
+          shown = pending.call_face
+          pending.approve(surface: "spec", authority: :human)
+          run.wait
+          shown
+        end
+
+        expect(face).to include("<redacted:1>").and(satisfy { !_1.include?(token) })
+      end
+
       it "carries the configured middleware among the guard's inputs, by identity" do
         middleware = Lain::Config::Middleware.new
         board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal),

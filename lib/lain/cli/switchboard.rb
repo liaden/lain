@@ -518,7 +518,13 @@ module Lain
       # Over the path policy's own file facts, so a remembered denial lands where the gate's paths do.
       def queue_over(sensitivity, timeout, silence, containment)
         Approval::Parked::Queue.new(journal: @journal, timeout:, home: sensitivity.home,
-                                    file_facts: sensitivity.file_facts, silence:, containment:, verdict: @verdict)
+                                    file_facts: sensitivity.file_facts, silence:, containment:, verdict: @verdict,
+                                    mask: method(:face_mask))
+      end
+
+      # Display has no text-level mask, so this goes straight to the TextMask it wraps, over the same secrets.
+      def face_mask(text, context)
+        Sensitivity::TextMask.text(text, secrets: guard_inputs.secrets.for(context))
       end
 
       # Every launch journals the mode it started in: the session header
