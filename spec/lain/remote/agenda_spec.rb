@@ -449,14 +449,55 @@ RSpec.describe Lain::Remote::Agenda do
       expect(recording.answers).to eq([[:approve, "blake3:research", nil, "remote:pixel"]])
     end
 
-    it "answers every issue-less row at the stage with the one key" do
+    it "approves only the newest revision of the stage, which supersedes the older" do
       recording = AgendaSpecSupport::RecordingGates.new(nil, nil, stage: "research", digests: %w[blake3:r0 blake3:r1])
       gated = described_class.new(queue:, gates: recording, replies:)
 
-      expect(listed_in(gated, "GateQuestion").issues).to eq(%w[research])
+      expect(listed_in(gated, "GateQuestion")).to have_attributes(issues: %w[research], digests: %w[blake3:r1])
+      gated.answer(listed_in(gated, "GateQuestion").id, { "research" => Lain::Approval::Verdict::Approve.new })
+
+      expect(recording.answers.map { _1.take(2) }).to eq([[:approve, "blake3:r1"]])
+    end
+
+    it "denies every revision of the stage, because a denial supersedes none" do
+      recording = AgendaSpecSupport::RecordingGates.new(nil, nil, stage: "research", digests: %w[blake3:r0 blake3:r1])
+      gated = described_class.new(queue:, gates: recording, replies:)
+
       gated.answer(listed_in(gated, "GateQuestion").id, { "research" => Lain::Approval::Verdict::Deny.new })
 
       expect(recording.answers.map { _1.take(2) }).to eq([[:deny, "blake3:r0"], [:deny, "blake3:r1"]])
+    end
+
+    it "keeps the item's id when the desk decides the older revision, and the answer still lands" do
+      [digest_a, digest_b].each do |digest|
+        Lain::Journal.open(paths:, root:) do |journal|
+          journal.record(Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "research",
+                                                      verdict: Lain::Epic::GateDecision::Deferred.new,
+                                                      answered_by: "deferred", policy: "deferred", latency: 0.0))
+        end
+      end
+      id = listed("GateQuestion").id
+
+      gates.deny(digest_a, reason: "stale")
+
+      expect(listed("GateQuestion").id).to eq(id)
+      expect(agenda.answer(id, { "research" => Lain::Approval::Verdict::Approve.new })).to be(true)
+      expect(gate_records.last).to include("artifact_digest" => digest_b, "verdict" => "approve")
+    end
+
+    it "lands a denial on the newest revision when the desk already denied the older" do
+      [digest_a, digest_b].each do |digest|
+        Lain::Journal.open(paths:, root:) do |journal|
+          journal.record(Lain::Epic::GateDecision.new(artifact_digest: digest, epic_slug: "alpha", stage: "research",
+                                                      verdict: Lain::Epic::GateDecision::Deferred.new,
+                                                      answered_by: "deferred", policy: "deferred", latency: 0.0))
+        end
+      end
+      id = listed("GateQuestion").id
+      gates.deny(digest_a, reason: "stale")
+
+      expect(agenda.answer(id, { "research" => Lain::Approval::Verdict::Deny.new })).to be(true)
+      expect(gate_records.select { _1["verdict"] == "deny" }.map { _1["artifact_digest"] }).to eq([digest_a, digest_b])
     end
 
     it "journals an answer keyed by that name as `lain epic deny` would" do

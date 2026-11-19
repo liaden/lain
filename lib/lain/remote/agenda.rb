@@ -131,7 +131,9 @@ module Lain
       end
 
       # The deferred gates, one item per epic and stage, so a wave is one
-      # question with an issue list. A changed wave is a new item.
+      # question with an issue list. An issue's newest parked revision stands for
+      # the key, so a desk decision on an older one leaves the item as it was; a
+      # newer revision is a new item.
       class Waves
         # A deferred gate already waits, so a hold would answer nothing and the phone would show it landed.
         HOLD_REFUSAL = "a gate cannot be held: it already waits for an answer, so approve or deny it"
@@ -144,16 +146,22 @@ module Lain
         # A journal the gate fold refuses must not blind the calls and questions
         # beside it, so the refusal is listed as the one gate item a human can read.
         def sightings
-          @gates.each.group_by { [_1.epic, _1.stage] }.map do |(epic, stage), rows|
-            Sighting.new(key: [:gate, epic, stage, *rows.map(&:digest)], build: ->(id) { item(id, rows) },
-                         route: ->(answer, surface) { decide(rows, answer, surface) })
-          end
+          @gates.each.group_by { [_1.epic, _1.stage] }.map { |(epic, stage), rows| sighting(epic, stage, rows) }
         rescue JournalUnreadable => e
           [Sighting.new(key: [:unreadable, e.message], build: ->(id) { unreadable(id, e.message) },
                         route: ->(_answer, _surface) { raise ArgumentError, unanswerable(e.message) })]
         end
 
         private
+
+        def sighting(epic, stage, rows)
+          newest = newest_per_key(rows)
+          Sighting.new(key: [:gate, epic, stage, *newest.map(&:digest)], build: ->(id) { item(id, newest) },
+                       route: ->(answer, surface) { decide(rows, answer, surface) })
+        end
+
+        # A row is parked oldest first within its partition, so the last of a key is its newest revision.
+        def newest_per_key(rows) = rows.group_by { key_of(_1) }.values.map(&:last)
 
         # Not false: false says another surface answered first, and this item stays listed.
         def unanswerable(message)
@@ -181,23 +189,33 @@ module Lain
         # first is no longer parked, so the answer is false even when rows
         # before it were already written.
         def decide(rows, answer, surface)
-          ordered(verdicts(rows, answer)).each do |row, verdict|
-            @gates.public_send(verdict.approved? ? :approve : :deny, row.digest, reason: verdict.note,
-                                                                                 answered_by: surface)
+          newest = newest_per_key(rows)
+          ordered(verdicts(rows, answer, newest)).each do |row, verdict|
+            settle(row, verdict, surface, required: newest.include?(row))
           end
           true
         rescue CLI::EpicQueue::UnknownDigest
           false
         end
 
+        # An older revision the desk already decided is nothing left to answer; only the newest must land.
+        def settle(row, verdict, surface, required:)
+          @gates.public_send(verdict.approved? ? :approve : :deny, row.digest, reason: verdict.note,
+                                                                               answered_by: surface)
+        rescue CLI::EpicQueue::UnknownDigest
+          raise if required
+        end
+
         def ordered(verdicts) = verdicts.partition { |_row, verdict| verdict.approved? }.flatten(1)
 
         # Refused rather than taken: an answer that decides nothing reads as
         # landed, and the item would then wait with no surface able to answer it.
-        def verdicts(rows, answer)
+        # An approval of the newest revision supersedes the older ones in the fold, so only a denial,
+        # which supersedes none, is journaled for each.
+        def verdicts(rows, answer, newest)
           raise ArgumentError, "a gate answer names no issue; answer #{keys(rows)}" if answer == {}
 
-          pairs = paired(rows, answer)
+          pairs = paired(rows, answer).reject { |row, verdict| verdict.approved? && newest.exclude?(row) }
           raise ArgumentError, HOLD_REFUSAL if pairs.any? { |_row, verdict| verdict.held? }
 
           pairs
