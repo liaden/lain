@@ -131,7 +131,7 @@ module Lain
         @bell = Bell.new(output:, layers:, tmux: written_by(@countdown, tmux))
         @wall_clock = wall_clock
         @warmth = Warmth.new(path: state_path, clock: wall_clock)
-        @inbox = Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp), fit: method(:wrapped))
+        @inbox = inbox_on(output:, pastel:, wall_clock:)
         @notes = Notes.new(output:, writer: @countdown)
         # Built here, CLAIMED in #run: constructing a TTY must not rebind the
         # human's keys. Draws through {Countdown#draw}, the existing owner of
@@ -324,6 +324,16 @@ module Lain
 
       def render_error(message) = render_line(:error, "error: #{message}")
 
+      # Lines lain shows that quote the model's own words are masked; what the
+      # human types is not.
+      #
+      # @param mask [#call] takes text and answers it with secrets masked
+      # @return [self]
+      def mask_with(mask)
+        @mask = mask
+        self
+      end
+
       # Surface a question the agent has put to the human (ask_human).
       # Synchronous and Channel-bypassing for the same reason {#render_response}
       # is: the reply-path shows the question and reads the answer inline, a
@@ -331,7 +341,7 @@ module Lain
       def render_question(question)
         @indicator.clear
         @output.puts(@theme.paint(:question_label, "the agent asks:"))
-        @output.puts(wrapped(@theme.paint(:question, question)))
+        @output.puts(wrapped(@theme.paint(:question, @mask.call(question))))
         @output.flush
       end
 
@@ -542,6 +552,13 @@ module Lain
       def ring_for(decorator)
         note = decorator.note if decorator.respond_to?(:note)
         @bell.ring(note) if note
+      end
+
+      # The mask is read at each print, so {#mask_with} reaches an inbox built before it.
+      def inbox_on(output:, pastel:, wall_clock:)
+        @mask = :itself.to_proc
+        Inbox.new(output:, pastel:, clock: wall_clock, stamp: method(:stamp), fit: method(:wrapped),
+                  mask: ->(text) { @mask.call(text) })
       end
 
       def indicator_on(countdown, clock:)
@@ -795,7 +812,9 @@ module Lain
         # @param clock [#call] absolute (wall) time for ages, {Warmth}'s seam
         # @param stamp [#call] puts the time on an arrival note
         # @param fit [#call] breaks a printed block to the terminal's width
-        def initialize(output:, pastel:, clock:, stamp:, fit: :itself.to_proc)
+        # @param mask [#call] masks the model's words before they are printed
+        def initialize(output:, pastel:, clock:, stamp:, fit: :itself.to_proc, mask: :itself.to_proc)
+          @mask = mask
           @stamp = stamp
           @output = output
           @pastel = pastel
@@ -812,7 +831,7 @@ module Lain
         #
         # @return [String] the note, unpainted, for whatever else announces it
         def arrival(question, from: nil, pointer: POINTER)
-          Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{pointer}")
+          @mask.call(Tools::AskHuman::InboxRow.one_line("? #{asker(from)}#{summarized(question)}  -- #{pointer}"))
         end
 
         def announce(note)
@@ -829,7 +848,7 @@ module Lain
           if listed?(question) && shown.size > MAX_HEADLINES + 1
             shown = shown.first(MAX_HEADLINES) << "... #{shown.size - MAX_HEADLINES} more in /inbox"
           end
-          shown.each { |line| @output.puts(@fit.call(@pastel.yellow("  #{line}"))) }
+          shown.each { |line| @output.puts(@fit.call(@pastel.yellow(@mask.call("  #{line}")))) }
           @output.flush
         end
 
@@ -839,7 +858,7 @@ module Lain
         def document(question)
           return unless question.is_a?(Tools::AskHuman::Announcement)
 
-          @output.puts(@fit.call(document_for(question, gesture: TYPED_GESTURE).join("\n")))
+          @output.puts(@fit.call(@mask.call(document_for(question, gesture: TYPED_GESTURE).join("\n"))))
           @output.flush
         end
 

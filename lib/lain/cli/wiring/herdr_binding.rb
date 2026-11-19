@@ -68,6 +68,7 @@ module Lain
 
         def bind(tty, notifier)
           @reporter.mask_with(notifier.mask)
+          tty.mask_with(notifier.mask)
           @notes.bind(tty.method(:render_warning))
         end
       end

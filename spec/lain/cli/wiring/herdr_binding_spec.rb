@@ -11,9 +11,14 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
   let(:notes) { Lain::Herdr::HeldNotes.new }
   let(:clock) { instance_double(Lain::RunClock, elapsed: 0.0) }
   let(:screen) { [] }
+  let(:masks) { [] }
   let(:tty) do
     said = screen
-    Object.new.tap { |tty| tty.define_singleton_method(:render_warning) { |line| said << line } }
+    masked = masks
+    Object.new.tap do |tty|
+      tty.define_singleton_method(:render_warning) { |line| said << line }
+      tty.define_singleton_method(:mask_with) { |mask| masked << mask }
+    end
   end
 
   after { FileUtils.remove_entry(@root) if @root }
@@ -76,6 +81,12 @@ RSpec.describe Lain::CLI::Wiring::HerdrBinding do
 
     expect(messages.sole).to start_with("bash: psql --password")
     expect(messages.sole).not_to include("zq7Rk2mWvP9x")
+  end
+
+  it "masks the terminal's own lines with the chat's secrets" do
+    build_terminal(described_class.new(notes:, reporter: reporter(stub_herdr), resolver: nobody), chat_secrets)
+
+    expect(masks.sole.call("the password is zq7Rk2mWvP9x")).not_to include("zq7Rk2mWvP9x")
   end
 
   it "says a note held before the terminal existed, and every later one, through the terminal's warning" do

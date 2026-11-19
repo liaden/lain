@@ -862,6 +862,50 @@ RSpec.describe Lain::Frontend::TTY do
     end
   end
 
+  describe "#mask_with" do
+    let(:masking) { ->(text) { text.gsub("hunter2-shapeless", "[redacted]") } }
+    let(:question) { "is hunter2-shapeless the password?" }
+
+    it "masks the question block" do
+      tty.mask_with(masking)
+      tty.render_question(question)
+
+      expect(output.string).to include("[redacted]")
+      expect(output.string).not_to include("hunter2-shapeless")
+    end
+
+    it "masks the arrival line" do
+      tty.mask_with(masking)
+      tty.render_arrival(question)
+
+      expect(output.string).to include("[redacted]")
+      expect(output.string).not_to include("hunter2-shapeless")
+    end
+
+    it "masks the headlines listed under a multi-question arrival" do
+      tty.mask_with(masking)
+      tty.render_arrival(announced("db", "region", body: "is hunter2-shapeless ok?"))
+
+      expect(output.string).to include("[redacted]")
+      expect(output.string).not_to include("hunter2-shapeless")
+    end
+
+    it "masks the question a plain chat answers at its prompt" do
+      tty.mask_with(masking)
+      tty.render_asked(announced("hunter2-shapeless"))
+
+      expect(output.string).to include("[redacted]")
+      expect(output.string).not_to include("hunter2-shapeless")
+    end
+
+    it "prints byte for byte with no mask" do
+      tty.render_question(question)
+      tty.render_arrival(question)
+
+      expect(output.string).to include(question)
+    end
+  end
+
   # A question ARRIVES as a one-line note -- never the modal inline block
   # render_question prints -- so the human keeps their prompt and drains at
   # their own pace (/inbox, or the nvim buffer).
