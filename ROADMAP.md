@@ -2290,6 +2290,12 @@ XDG path relative, which put machine state back inside the user's repository)
     nothing, a disclosure on the row, and contained human approvals with an explicit network answer; `Epic::GateView`
     over the `Signoff` fold for every gate reader; `Backend::Tier` for every secondary model call, paying into
     `--max-cost`; `ChildArgv` for every lain child command line; checked git reads. Then the copies are deleted.
+76. **Planned (2026-11-19, panel-reviewed)**: `planning/specs/round30-fixes.md`, 39 cards in 6 streams from
+    `planning/qa-findings-round30-2026-11-18.md`, MEDIUM and up plus the LOWs that share a fix. Oracle inputs rendered
+    as data; a reply that is not a tool turn keeps no call; a read-starved chat hands off; the known secret values
+    masked on every surface through `TextMask`; a human `y` runs a project script contained; an unreadable lineage
+    parks the next networked build; a headless run takes the requester's provider; only a new build replaces the
+    daemon, and a project can add its own review poll.
 
 ## Map of the documents
 
