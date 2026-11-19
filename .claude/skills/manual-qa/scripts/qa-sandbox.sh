@@ -31,7 +31,7 @@ cat > "$QA/env.sh" <<EOF
 export QA="$QA"
 export LAIN_REPO="$REPO"
 export QA_SOCK="$SOCK"
-eval "\$(mise env -s bash ruby@4.0.9)"
+eval "\$(mise env -s bash ruby@4.0.10)"
 export XDG_CONFIG_HOME="\$QA/xdg/config"
 export XDG_STATE_HOME="\$QA/xdg/state"
 export XDG_CACHE_HOME="\$QA/xdg/cache"
@@ -52,7 +52,7 @@ chmod 700 "$QA/tmux"
 for shim in lain:exe/lain qa-lain:bin/qa-lain; do
   cat > "$QA/shim/${shim%%:*}" <<EOF
 #!/usr/bin/env bash
-eval "\$(mise env -s bash ruby@4.0.9)"
+eval "\$(mise env -s bash ruby@4.0.10)"
 exec "$REPO/${shim#*:}" "\$@"
 EOF
   chmod +x "$QA/shim/${shim%%:*}"

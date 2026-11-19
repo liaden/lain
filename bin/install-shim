@@ -3,7 +3,7 @@
 #
 #   bin/install-shim [target-dir]
 #
-# Run it from a shell where `ruby` is the project's (4.0.9 from mise), so the shim
+# Run it from a shell where `ruby` is the project's (4.0.10 from mise), so the shim
 # carries that interpreter instead of whatever the caller's PATH resolves later.
 set -euo pipefail
 

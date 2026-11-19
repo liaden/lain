@@ -2,7 +2,7 @@
 
 This is the Lain repo. Its CLAUDE.md holds the binding rules; these are the ones a run breaks most often.
 
-Toolchain: the shell's default `ruby` is wrong. Every command first runs `eval "$(mise env -s bash ruby@4.0.9)"`, exports `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib`, and sets `TMPDIR` to a directory on the repo's filesystem, one per agent. Set `LAIN_SPEC_WORKERS=12`. `bin/verify` does all of this and runs the suite.
+Toolchain: the shell's default `ruby` is wrong. Every command first runs `eval "$(mise env -s bash ruby@4.0.10)"`, exports `LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib`, and sets `TMPDIR` to a directory on the repo's filesystem, one per agent. Set `LAIN_SPEC_WORKERS=12`. `bin/verify` does all of this and runs the suite.
 
 Commits go on `main`, in dependency order, leaf first. A new lib file and its spec land in the same commit, because the commit hook stashes unstaged tracked changes and leaves untracked files alone, so a staged spec whose subject is untracked passes the hook and lands a HEAD that cannot load. If the hook fails the files stay staged; unstage them before the next `git add`. Stage by explicit path, never from `git diff --name-only`. Do not run git in a way that changes a worktree while the hook is running: its autostash is repo-wide, so another worktree's `git status` lies until it ends.
 

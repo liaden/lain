@@ -99,14 +99,14 @@ RSpec.describe QALain do
   end
 
   describe "the QA sandbox shims", :seam do
-    it "writes a lain and a qa-lain shim, each under ruby 4.0.9" do
+    it "writes a lain and a qa-lain shim, each under ruby 4.0.10" do
       Dir.mktmpdir("qa-shim") do |home|
         script = File.join(root, ".claude/skills/manual-qa/scripts/qa-sandbox.sh")
         _, err, status = Open3.capture3({ "HOME" => home }, "bash", script, "shimtag", root)
         shims = %w[lain qa-lain].map { File.read(File.join(home, "tmp/lain-qa-shimtag/shim", _1)) }
 
         expect(status.success?).to be(true), err
-        expect(shims.map { _1[/ruby@[\d.]+/] }).to eq(["ruby@4.0.9"] * 2)
+        expect(shims.map { _1[/ruby@[\d.]+/] }).to eq(["ruby@4.0.10"] * 2)
         expect(shims.map { _1[%r{exec "[^"]+/(exe/lain|bin/qa-lain)"}, 1] }).to eq(%w[exe/lain bin/qa-lain])
       end
     end

@@ -2,7 +2,7 @@
 
 ## Setup
 
-lain is developed on Ruby 4.0.9 from mise. 4.0.6 is the oldest that works: 4.0.5 crashes under
+lain is developed on Ruby 4.0.10 from mise. 4.0.6 is the oldest that works: 4.0.5 crashes under
 `rake pspec`.
 
 ```bash

@@ -19,12 +19,12 @@ links to its own:
 
 ## Toolchain
 
-The shell's default `ruby` is the wrong one. This project needs **4.0.9, from mise**; 4.0.6 is the floor, because 4.0.5
+The shell's default `ruby` is the wrong one. This project needs **4.0.10, from mise**; 4.0.6 is the floor, because 4.0.5
 crashes the VM under `rake pspec`. `.envrc` handles an interactive shell that has `cd`'d in;
 non-interactive callers (agents, scripts) prefix with `direnv exec .` or export it themselves:
 
 ```bash
-eval "$(mise env -s bash ruby@4.0.9)"
+eval "$(mise env -s bash ruby@4.0.10)"
 export LD_LIBRARY_PATH=/home/linuxbrew/.linuxbrew/lib   # OpenSSL; see toolchain-traps
 export TMPDIR="$HOME/tmp/lain"                          # same filesystem as the repo, required
 export LAIN_SPEC_WORKERS=12                             # .envrc is gitignored; a worktree gets none
