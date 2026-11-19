@@ -140,15 +140,36 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
       expect(records(two).map(&:excerpt)).to eq([cut])
     end
 
-    it "strips a cut that follows complete calls, and the calls still run" do
+    it "strips a cut that follows complete calls, and reads the length cut rather than a tool turn" do
       calls = %w[read_file grep glob].map { |name| { "function" => { "name" => name, "arguments" => {} } } }
       after_calls = body(content: "Reading.\n<tool_call>\n<function=bash", tool_calls: calls, done_reason: "length")
       response = decode(after_calls)
 
-      expect(response.tool_uses.map(&:name)).to eq(%w[read_file grep glob])
-      expect(response).to stop_with(Lain::StopReason::TOOL_USE)
+      expect(response).to stop_with(Lain::StopReason::MAX_TOKENS)
       expect(response.text).to eq("Reading.")
       expect(records(after_calls).map(&:kind)).to eq([:cut_tool_call])
+    end
+  end
+
+  describe "a length cut that holds complete tool calls" do
+    let(:calls) { %w[bash bash bash].map { |name| { "function" => { "name" => name, "arguments" => {} } } } }
+
+    def cut_body(eval_count)
+      body(content: "", tool_calls: calls, done_reason: "length").merge("eval_count" => eval_count)
+    end
+
+    it "is a context_full stop below the ceiling, so no call runs" do
+      expect(decode(cut_body(40), [], 64)).to stop_with(Lain::StopReason::CONTEXT_FULL)
+    end
+
+    it "is a max_tokens stop at the ceiling" do
+      expect(decode(cut_body(64), [], 64)).to stop_with(Lain::StopReason::MAX_TOKENS)
+    end
+
+    it "leaves a finished tool turn a tool turn" do
+      two = calls.first(2)
+      expect(decode(body(content: "", tool_calls: two, done_reason: "stop"), [], 64))
+        .to stop_with(Lain::StopReason::TOOL_USE)
     end
   end
 

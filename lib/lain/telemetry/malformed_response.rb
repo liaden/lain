@@ -83,8 +83,9 @@ module Lain
     # record is still written, so the silence is on the file either way.
     #
     # A third kind, `:cut_tool_call`, is the exception to the stop reason too: the
-    # token ceiling landed inside an envelope, the turn keeps `:max_tokens`, the
-    # cut tail is quoted here and left off the chain. A fourth, `:bare_tool_call`,
+    # token ceiling landed inside an envelope, the turn keeps its length cut
+    # (`:max_tokens`, or `:context_full`) even beside complete calls, the cut
+    # tail is quoted here and left off the chain. A fourth, `:bare_tool_call`,
     # is its sibling at a normal stop: a call the model opened and stopped
     # without closing, stripped from the text while the wire's reason stands.
     #

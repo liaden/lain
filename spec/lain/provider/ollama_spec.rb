@@ -805,6 +805,15 @@ RSpec.describe Lain::Provider::Ollama do
       expect(response).to stop_with(:context_full)
     end
 
+    it "reads a length stop holding tool calls as a cut, not a tool turn" do
+      calls = [{ "function" => { "name" => "bash", "arguments" => { "command" => "ls" } } }]
+      body = { "message" => { "role" => "assistant", "content" => "", "tool_calls" => calls },
+               "done_reason" => "length", "eval_count" => 7 }
+      response = described_class.new(transport: transport_sync(body)).complete(request(max_tokens: 64))
+
+      expect(response).to stop_with(:context_full)
+    end
+
     it "maps the empty-string (connection-closed) reason to :unknown" do
       body = { "message" => { "role" => "assistant", "content" => "" }, "done_reason" => "" }
       expect(described_class.new(transport: transport_sync(body)).complete(request)).to stop_with(:unknown)

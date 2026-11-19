@@ -282,8 +282,10 @@ module Lain
         # - `"done" => false` is a stream that ended with no terminal frame,
         #   which no wire reason can say. It wins over a tool call, because a
         #   half-received turn must not act.
-        # - Presence of tool_calls forces :tool_use, since done_reason stays
-        #   "stop" on a tool turn.
+        # - A `"length"` cut wins over the calls it holds, so none of them runs;
+        #   the arguments may be whole and the turn still was not finished.
+        # - Presence of tool_calls otherwise forces :tool_use, since done_reason
+        #   stays "stop" on a tool turn.
         # - A prose envelope reads :malformed whatever done_reason says, since
         #   "stop" is exactly the lie it tells.
         # - Silence may not settle as an answer.
@@ -291,6 +293,7 @@ module Lain
         #   ceiling already names a cause a caller can act on.
         def decode_stop_reason(body, message, envelope, silent, ceiling)
           return StopReason::TRUNCATED if body["done"] == false
+          return wire_stop_reason(body, ceiling) if body["done_reason"] == "length"
           return StopReason::TOOL_USE unless Array(message["tool_calls"]).empty?
           return StopReason::MALFORMED unless envelope.nil?
 

@@ -966,6 +966,20 @@ RSpec.describe Lain::Agent do
         expect(a.timeline.head.meta).to eq({ "stop_reason" => "context_full" })
       end
 
+      it "runs no tool call held by a reply cut at the length limit" do
+        calls = Array.new(5) do |i|
+          { "type" => "tool_use", "id" => "tu_#{i}", "name" => "echo", "input" => { "text" => "x" } }
+        end
+        journal = []
+        a = described_class.new(provider: CoreGraph.provider(cut_off(:context_full, calls)), toolset:, context:,
+                                journal:)
+        a.ask("hi")
+
+        expect(journal.grep(Lain::Telemetry::ExecRecord)).to be_empty
+        results = a.timeline.to_a.flat_map(&:content).select { |block| block["type"] == "tool_result" }
+        expect(results).to all(include("is_error" => true, "content" => include("never ran")))
+      end
+
       it "tells the model on the next request, after the fragment" do
         provider = CoreGraph.provider(cut_off(:truncated, [{ "type" => "text", "text" => "partial answ" }]),
                                       text_response("fine"))
