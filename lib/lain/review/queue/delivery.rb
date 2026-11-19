@@ -48,12 +48,15 @@ module Lain
 
           mark = Mark.of(row)
           answer = sent(request, mark)
-          return result(@pending.hold(request, mark)) unless answer&.fetch("session", nil)
+          return result(@pending.hold(request, mark)) unless opened_by_chat?(answer)
 
           delivered(answer)
         end
 
         private
+
+        # A chat with no editor answers `plain`: it showed nothing, so the review is held for a cockpit.
+        def opened_by_chat?(answer) = answer&.fetch("session", nil) && answer["outcome"] != "plain"
 
         def result(outcome, chat: nil, others: [], field: nil)
           Result.new(outcome:, chat:, others:, field:)

@@ -376,7 +376,14 @@ RSpec.describe Lain::CLI::Queue, :seam do
 
     it "holds the review for the next cockpit when no chat runs in the checkout, and says so" do
       expect(run("open", feature))
-        .to eq([0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n", ""])
+        .to eq([0, "no lain cockpit is running in #{@repo}; the review opens with the next lain up --nvim there\n", ""])
+    end
+
+    it "holds the review for the next cockpit when the chat there has no editor, and says so" do
+      stand_in(reply: { "outcome" => "plain" })
+
+      expect(run("open", feature))
+        .to eq([0, "no lain cockpit is running in #{@repo}; the review opens with the next lain up --nvim there\n", ""])
     end
 
     context "when the daemon cannot be reached" do
@@ -384,7 +391,7 @@ RSpec.describe Lain::CLI::Queue, :seam do
 
       it "holds the review as if no chat ran, and says why on stderr" do
         expect(run("open", feature)).to eq(
-          [0, "no lain chat is running in #{@repo}; the review opens with the next lain up --nvim there\n",
+          [0, "no lain cockpit is running in #{@repo}; the review opens with the next lain up --nvim there\n",
            "cannot offer the review through lain-daemon: lain-daemon did not answer\n"]
         )
       end
@@ -409,7 +416,7 @@ RSpec.describe Lain::CLI::Queue, :seam do
       started = with_env(herdr('{"result":{"root_pane":{"pane_id":"w9:p1"}}}')) { run("open", feature) }
 
       expect(started)
-        .to eq([0, "no lain chat is running in #{@repo}; started lain up --nvim there in a herdr workspace\n", ""])
+        .to eq([0, "no lain cockpit is running in #{@repo}; started lain up --nvim there in a herdr workspace\n", ""])
     end
 
     it "says it replaced a held review and started a cockpit for it, inside herdr" do
@@ -432,8 +439,8 @@ RSpec.describe Lain::CLI::Queue, :seam do
     it "keeps the review held, and says herdr started nothing, when herdr fails" do
       failed = with_env(herdr("")) { run("open", feature) }
 
-      expect(failed).to eq([0, "no lain chat is running in #{@repo}; herdr did not start a workspace, so the review " \
-                               "opens with the next lain up --nvim there\n", ""])
+      expect(failed).to eq([0, "no lain cockpit is running in #{@repo}; herdr did not start a workspace, " \
+                               "so the review opens with the next lain up --nvim there\n", ""])
     end
 
     it "refuses a critique for a row that is not a pull request" do

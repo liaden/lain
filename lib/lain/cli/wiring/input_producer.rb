@@ -43,8 +43,11 @@ module Lain
         def call(rail, tty)
           return Lain::Frontend::StdinPump::Idle unless @attended
 
-          producer = queue_offers(@human.socket_name ? input_socket(rail, tty) : stdin_pump(rail, tty), rail, tty)
-          @cockpit ? @pending.offering(producer, root: @root, rail:, notice: tty.method(:render_warning)) : producer
+          producer = @human.socket_name ? input_socket(rail, tty) : stdin_pump(rail, tty)
+          return PlainOffers.new(producer, registration: @registration) unless @cockpit
+
+          producer = queue_offers(producer, rail, tty)
+          @pending.offering(producer, root: @root, rail:, notice: tty.method(:render_warning))
         end
 
         # What the input pane draws above its prompt: the one HUD line every
@@ -84,6 +87,38 @@ module Lain
         def live_layers
           in_force = @switchboard.mode_switch.layers
           Lain::Frontend::InputPane::LAYERS.select { |layer| in_force.include?(layer) }
+        end
+
+        # The producer of a chat with no editor, which cannot open a review: it
+        # answers every offer plain, so the daemon stops asking and holds the
+        # review for the next cockpit; no notice path exists, so a failed reply is dropped.
+        class PlainOffers < SimpleDelegator
+          # @param producer [#start, #stop] the chat's input producer
+          # @param registration [#on, #call] the chat's place in the daemon's list
+          def initialize(producer, registration:)
+            super(producer)
+            @registration = registration
+          end
+
+          # @param task [Async::Task]
+          # @return [self]
+          def start(task)
+            @started = __getobj__.start(task)
+            @registration.on("offer") { |params| plain(params.first) }
+            self
+          end
+
+          # @return [void]
+          def stop(**) = @started&.stop(**)
+
+          private
+
+          def plain(push)
+            offer_id = push["offer_id"] if push.is_a?(Hash)
+            @registration.call("offer.reply", "outcome" => "plain", "offer_id" => offer_id)
+          rescue StandardError
+            nil
+          end
         end
 
         # The chat's input producer, which also puts each review the daemon

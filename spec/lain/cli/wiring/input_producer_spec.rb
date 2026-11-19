@@ -263,6 +263,60 @@ RSpec.describe Lain::CLI::Wiring::InputProducer do
       end
     end
 
+    context "with a cockpit chat" do
+      subject(:offers) do
+        human = Lain::CLI::Wiring::HumanInput.new(input: nil, attended: true, stdin: StringIO.new, paths:, cwd: state)
+        held = Class.new { def offering(producer, **) = producer }.new
+        Lain::CLI::Wiring::InputProducer.new(human:, attended: true, cockpit: true, pending: held, stdin: StringIO.new,
+                                             notes: StringIO.new, paths:, root: state, status_feed: nil,
+                                             switchboard: nil, commands: -> { [] }, registration:)
+                                        .call(rail, Struct.new(:render_warning).new(->(word) { said << word }))
+      end
+
+      it "shows the offer to the human, and replies held because it is showing" do
+        offer
+
+        expect([reply, rail.published.kind])
+          .to eq([["offer.reply", { "offer_id" => 7, "outcome" => "held" }], :human])
+      end
+    end
+
+    context "with a chat that has no editor to open a review in" do
+      subject(:offers) do
+        human = Lain::CLI::Wiring::HumanInput.new(input: nil, attended: true, stdin: StringIO.new, paths:, cwd: state)
+        Lain::CLI::Wiring::InputProducer.new(human:, attended: true, cockpit: false, pending: nil, stdin: StringIO.new,
+                                             notes: StringIO.new, paths:, root: state, status_feed: nil,
+                                             switchboard: nil, commands: -> { [] }, registration:)
+                                        .call(rail, Struct.new(:render_warning).new(->(word) { said << word }))
+      end
+
+      it "replies plain, shows nothing, and leaves the row unseen" do
+        offer
+
+        expect([reply, rail.published.kind, log.seen?(queued)])
+          .to eq([["offer.reply", { "offer_id" => 7, "outcome" => "plain" }], nil, false])
+      end
+
+      it "replies plain with no offer id for a push that is not a hash" do
+        registration.push("offer", "junk")
+
+        expect(reply).to eq(["offer.reply", { "offer_id" => nil, "outcome" => "plain" }])
+      end
+
+      context "with a daemon connection that fails" do
+        let(:registration) do
+          Class.new(InputProducerSpecSupport::Registration) do
+            def call(*) = raise(IOError, "connection lost")
+          end.new
+        end
+
+        it "says nothing and raises nothing, since a plain chat has no notice path" do
+          expect { offer }.not_to raise_error
+          expect(said.size).to eq(0)
+        end
+      end
+    end
+
     context "with a rail that fails while it builds the offer" do
       subject(:offers) do
         described_class.new(producer, registration:, rail:, log:, notice: ->(word) { said << word })

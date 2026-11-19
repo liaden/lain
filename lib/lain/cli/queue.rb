@@ -132,9 +132,9 @@ module Lain
       TURNED_AWAY = { crowded: "the chat is showing another offer; try again when it is answered",
                       repeat: "already offered" }.freeze
       HELD = {
-        pending: "no lain chat is running in %<root>s; the review opens with the next lain up --nvim there",
-        started: "no lain chat is running in %<root>s; started lain up --nvim there in a herdr workspace",
-        herdr_failed: "no lain chat is running in %<root>s; herdr did not start a workspace, so the review opens " \
+        pending: "no lain cockpit is running in %<root>s; the review opens with the next lain up --nvim there",
+        started: "no lain cockpit is running in %<root>s; started lain up --nvim there in a herdr workspace",
+        herdr_failed: "no lain cockpit is running in %<root>s; herdr did not start a workspace, so the review opens " \
                       "with the next lain up --nvim there",
         replaced: "replaced the review held for %<root>s; it opens with the next lain up --nvim there",
         replaced_started: "replaced the review held for %<root>s; started lain up --nvim there in a herdr workspace",

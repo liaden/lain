@@ -325,6 +325,15 @@ RSpec.describe Lain::Review::Queue::Delivery, :seam do
       expect([result.outcome, result.chat.session_id, log.seen?(row(pull))]).to eq([:silent, "old", false])
     end
 
+    it "holds the review for the next cockpit when the chat has no editor to open it in" do
+      chat = record("old", api, "2026-11-16T11:00:00Z").to_h
+      source, = daemon_answering({ "session" => chat, "others" => [], "outcome" => "plain", "field" => nil })
+      result = described_class.new(account:, pending:, notes:, shell_out_factory:, daemon: source).call(row(pull))
+
+      expect([result.outcome, pending.take(api, notice: lambda { |_|
+      })&.request&.to_h]).to eq([:pending, { "kind" => "pr", "url" => url }])
+    end
+
     it "is silent for an outcome no chat says" do
       chat = record("old", api, "2026-11-16T11:00:00Z").to_h
       source, = daemon_answering({ "session" => chat, "others" => [], "outcome" => "taken\e[2J", "field" => nil })
