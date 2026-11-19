@@ -364,6 +364,14 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       expect(said).to eq(["phone surface off: the daemon's phone relay is unavailable"])
     end
 
+    it "says a relay that degrades right after launch once, and not again on a second degrade" do
+      registered
+      degraded(:remote_surface, "no relay is configured")
+      degraded(:remote_surface, "the relay hung up")
+
+      expect(said).to eq(["phone surface off: no relay is configured"])
+    end
+
     it "says nothing of another capability going off" do
       registered
       degraded(:sandbox, "lacks bwrap")

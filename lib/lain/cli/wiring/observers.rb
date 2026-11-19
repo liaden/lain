@@ -45,16 +45,24 @@ module Lain
           NOTICE = "phone surface off: %<reason>s"
 
           # @param say [#call] shows a line in the chat
-          def initialize(say) = @say = say
+          def initialize(say)
+            @say = say
+            @said = false
+          end
 
           # @param event [Hash, #to_journal] a journal record
           # @return [self]
           def <<(event)
-            @say.call(format(NOTICE, reason: event.provider)) if off?(event)
+            say(event.provider) if off?(event) && !@said
             self
           end
 
           private
+
+          def say(reason)
+            @said = true
+            @say.call(format(NOTICE, reason:))
+          end
 
           def off?(event)
             event.is_a?(Telemetry::CapabilityDegraded) && event.capability == Approval::RemoteSurface::CAPABILITY
