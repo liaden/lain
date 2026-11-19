@@ -493,6 +493,7 @@ module Lain
         def spawn_seam(backend:, provider:, parent:, journal:, supervisor:, switchboard:, chronicle:, isolation:,
                        handback:, middleware:, display:)
           Lain::Tools::Subagent::Seam.new(provider:, context_factory: -> { backend.context }, parent:,
+                                          context_window: backend.context_window,
                                           tool_middleware: guard(chronicle, switchboard),
                                           journal:, telemetry: chronicle.instrumentation.journal,
                                           display_channel: display,

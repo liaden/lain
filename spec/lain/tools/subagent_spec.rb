@@ -2840,6 +2840,51 @@ RSpec.describe Lain::Tools::Subagent do
       end
     end
 
+    describe "sizing a child's window" do
+      let(:telemetry) { Lain::Channel.new }
+      let(:probed) { Lain::ContextWindow.new(windows: {}, fallback: 32_768) }
+
+      def fill_of(tokens, book: Lain::ContextWindow::DEFAULT) = book.occupancy(tokens, model: child_context.model).ratio
+
+      def fills_with(**seam)
+        provider = mock(text_response("done", usage: Lain::Usage.new(input_tokens: 3_777, output_tokens: 20)))
+        build_subagent(provider:, telemetry:, **seam).call({ "prompt" => "go" }, invocation)
+        telemetry.drain.grep(Lain::Telemetry::ChildProgress).filter_map(&:occupancy)
+      end
+
+      it "measures a child's occupancy against the seam's window" do
+        expect(fills_with(context_window: probed)).to eq([fill_of(3_777, book: probed)])
+        expect(fill_of(3_777, book: probed)).to eq(Rational(3_777, 32_768))
+      end
+
+      it "keeps the default book for a seam built without a window" do
+        expect(fills_with).to eq([fill_of(3_777)])
+        expect(Lain::Tools::Subagent::Seam.members).to include(:context_window)
+        expect(described_class.new(provider: mock, context_factory: -> { child_context }, toolset: union,
+                                   policy: spawn_policy, parent:, tool_middleware: ToolRegistry::UNGUARDED)
+                              .seam.context_window).to be(Lain::ContextWindow.default)
+      end
+
+      it "reaches a child through the production seam, sized by the backend's probed window" do
+        channel = Lain::Channel.new
+        backend = Lain::CLI::Backend.new({ provider: "ollama", model: nil, max_tokens: 64 }, root: Dir.pwd)
+        allow(backend).to receive(:context_window).and_return(probed)
+        built = Lain::CLI::Wiring::ToolsetBuild.new(
+          backend:, provider: mock, chronicle: Lain::CLI::Chronicle::Null.new, options: {},
+          supervisor: Lain::Supervisor.new(journal: channel),
+          parent: -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) }, journal: channel,
+          library: backend.library, epic: SpecNulls.unmounted_epic, root: tmpdir,
+          switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+          **SpecNulls.unloaded_project, human: Lain::CLI::Human.new(kind: :terminal)
+        )
+
+        ask_human = Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline })
+        seam = built.build(Lain::Memory::Recorder.new, ask_human:).fetch("subagent").seam
+
+        expect(seam.context_window).to be(probed)
+      end
+    end
+
     describe "reporting a child's writes" do
       let(:display) { Lain::Channel.new }
       let(:telemetry) { Lain::Channel.new }

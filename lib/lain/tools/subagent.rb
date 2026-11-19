@@ -177,7 +177,7 @@ module Lain
       # dispatched alone and the rest release the instant its first token
       # arrives, so N cache-siblings pay one template WRITE and N-1 READs
       # instead of N cold prefills. The observer each unit threads is what
-      # {Agent#ask} forwards down the child's provider round trip, so the gate
+      # {Lain::Agent#ask} forwards down the child's provider round trip, so the gate
       # opens on the CHILD's real stream-start, not a simulated one; the
       # releases -- `:stream_started`, or the `:degraded` valve for a child that
       # never streams -- land in this tool's journal.
@@ -901,7 +901,7 @@ module Lain
         # the run has already paid for -- on the one-shot path the completion
         # would record a failed child in place of the answer, and on the actor
         # path the raise lands in `@failure`, so no settled note ever reaches
-        # the parent's mailbox. {Agent}'s own torn-turn rule is the governing
+        # the parent's mailbox. {Lain::Agent}'s own torn-turn rule is the governing
         # one: work that was paid for stays in the record rather than vanishing
         # with the raise. `Async::Stop` is not a StandardError, so cancellation
         # still flows past this untouched.
@@ -1621,7 +1621,7 @@ module Lain
         end
       end
 
-      # The room an agent has left to grant a child ({Agent#room}). Depth is
+      # The room an agent has left to grant a child ({Lain::Agent#room}). Depth is
       # how many levels it may still spawn below itself.
       module Holder
         # @param depth [Integer, nil] how many levels below the holder may spawn
@@ -1632,7 +1632,7 @@ module Lain
         # wired with no room of its own has always had.
         ROOT = at(1)
 
-        # @param agent [#call] answers the holding {Agent}, late-bound because
+        # @param agent [#call] answers the holding {Lain::Agent}, late-bound because
         #   the union a holder spawns from is built before the Agent is
         # @return [Proc] answering that agent's room at each read
         def self.of(agent) = -> { agent.call.room }
@@ -1660,7 +1660,7 @@ module Lain
       # {Ext::Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins, :holder, :spend, :bounds, :command) do
+                         :twins, :holder, :spend, :bounds, :command, :context_window) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1745,6 +1745,9 @@ module Lain
         # answering it: where each checkout leased to a child is taken as a
         # lease the holder may read. It is late-bound because the holder's tool
         # stack, which reads the cell, is built after the union this seam rides in.
+        #
+        # `context_window` is the book a child's occupancy and tool-round room are measured
+        # against: the run's probed one in a chat, so a child is not sized by the 8k fallback.
         def initialize(provider:, context_factory:, parent:, tool_middleware:, journal: Channel::Null.instance,
                        telemetry: Channel::Null.instance, display_channel: Channel::Null.instance,
                        supervisor: Supervisor::Null, observer: NO_OBSERVER,
@@ -1752,7 +1755,8 @@ module Lain
                        escalation: [AskHuman::HUMAN].freeze, scope: UNSCOPED,
                        attachments: Middleware::ResolveAttachments::Unwired,
                        middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT,
-                       spend: Budget::Shared::Null, bounds: NO_BOUNDS, command: nil)
+                       spend: Budget::Shared::Null, bounds: NO_BOUNDS, command: nil,
+                       context_window: ContextWindow.default)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -2100,6 +2104,7 @@ module Lain
             model_middleware: child_budget,
             tool_middleware: child_stack(session.worker_env, allowed, chain, task:, cell:),
             session:, budget: @budget, accounting: child_accounting(chain, spend), pipeline_source:, mailbox:,
+            context_window: @seam.context_window,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
         end
