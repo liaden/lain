@@ -121,12 +121,22 @@ module Lain
 
         private
 
-        def read_fills(dir) = region_fills(dir, known: KNOWN, level: "slot file")
+        def read_fills(dir)
+          refuse_unknown_directories!(dir, known: %w[role skill], level: "slot directory")
+          region_fills(dir, known: KNOWN, level: "slot file")
+        end
 
         def read_role_fills(dir)
+          refuse_unknown_directories!(dir, known: [], level: "role slot directory")
           region_fills(dir, known: shipped_role_templates.keys, level: "role slot file") do |path, name|
             misspelt!(path, name, shipped_role_templates)
             refuse_approval_role!(path, name)
+          end
+        end
+
+        def refuse_unknown_directories!(dir, known:, level:)
+          Dir.glob(File.join(dir, "*")).select { |path| File.directory?(path) }.each do |path|
+            refuse_unknown!(path, File.basename(path), known:, level:)
           end
         end
 

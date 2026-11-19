@@ -349,6 +349,49 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
+  describe "an unknown directory under the slots is loud" do
+    def load_with_file(relative)
+      Dir.mktmpdir do |root|
+        path = File.join(root, ".lain", "slots", relative)
+        FileUtils.mkdir_p(File.dirname(path))
+        File.write(path, "x")
+        yield root
+      end
+    end
+
+    it "names a misspelled region directory and suggests the region" do
+      load_with_file("roles/reviewer.md") do |root|
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+            expect(e.message).to include("roles", "did you mean \"role\"")
+          }
+      end
+    end
+
+    it "names a directory inside the role region and says nothing is declared there" do
+      load_with_file("role/extra/x.md") do |root|
+        expect { described_class.load(root:) }
+          .to raise_error(Lain::Prompt::UnknownSlot) { |e|
+            expect(e.message).to include("extra", "nothing is declared there")
+          }
+      end
+    end
+
+    it "does not refuse a dot-directory" do
+      load_with_file(".git/x.md") { |root| expect { described_class.load(root:) }.not_to raise_error }
+    end
+
+    it "still reads the role and skill regions" do
+      Dir.mktmpdir do |root|
+        base = File.join(root, ".lain", "slots")
+        FileUtils.mkdir_p(File.join(base, "role"))
+        File.write(File.join(base, "role", "researcher.md"), "R")
+        FileUtils.mkdir_p(File.join(base, "skill"))
+        expect(described_class.load(root:).render_role(:researcher)).to eq("R")
+      end
+    end
+  end
+
   # The role namespace is a second, independent filename check (slots.rb:114) --
   # a typo here must be as loud as a top-level one, naming the file and the
   # full shipped roster rather than being silently dropped as an unreadable
