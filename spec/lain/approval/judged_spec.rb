@@ -1828,4 +1828,204 @@ RSpec.describe Lain::Approval::Judged do
       expect(scripted.prompts.size).to eq(1)
     end
   end
+
+  describe "a human's allow of the exact call, remembered" do
+    let(:replay) { Lain::Approval::RememberedAllow.new(queue:) }
+    let(:asked_human) { [] }
+
+    def remembering(scripted, **) = rung(scripted, allows: replay, **)
+
+    def approved_by_human(subject, effect = bash, within: context)
+      ruled(subject, effect, within:) do |pending|
+        asked_human << pending
+        pending.approve(surface: "human_spec", authority: :human)
+      end
+    end
+
+    def denied_by_human(subject, effect = bash, within: context)
+      ruled(subject, effect, within:) do |pending|
+        asked_human << pending
+        pending.deny(surface: "human_spec", authority: :human)
+      end
+    end
+
+    def project_stage(fresh:, name: "bin/rails")
+      Lain::Shell::Executable.new(name:, resolved: "#{root}/#{name}", realpath: "#{root}/#{name}",
+                                  chain: [], shadowed: [], anomalies: [], klass: :project, fresh:, run_files: [],
+                                  wrappers: [])
+    end
+
+    it "allows the repeat as the human's, asking neither the judge nor the human" do
+      scripted = answering("defer")
+      approved_by_human(remembering(scripted))
+
+      repeat = ruled(remembering(scripted), bash)
+
+      expect([repeat.verdict, repeat.authority, repeat.rung]).to eq([:allow, :human, "auto"])
+      expect([scripted.prompts.size, asked_human.size]).to eq([1, 1])
+    end
+
+    it "parks the repeat for the human once the program it runs was rewritten" do
+      rewritten = false
+      facts = ->(*, **) { Lain::Approval::Judge::Facts.new([project_stage(fresh: rewritten)]) }
+      scripted = answering("defer")
+      approved_by_human(remembering(scripted, facts:), bash("bin/rails test"))
+      rewritten = true
+
+      repeat = denied_by_human(remembering(scripted, facts:), bash("bin/rails test"))
+
+      expect([repeat.verdict, asked_human.size]).to eq([:deny, 2])
+      expect(escalations.last).to include("reason" => "bar",
+                                          "bar" => ["bin/rails -> #{root}/bin/rails: written this session"])
+    end
+
+    it "parks the repeat for the human when its context bars automatic approval" do
+      scripted = answering("defer")
+      approved_by_human(remembering(scripted))
+
+      repeat = denied_by_human(remembering(scripted), bash, within: context.with(automatic_approval_barred: true))
+
+      expect([repeat.verdict, asked_human.size]).to eq([:deny, 2])
+    end
+
+    it "tells the display the human's earlier yes ran it, never the judge" do
+      told = []
+      scripted = answering("defer")
+      approved_by_human(remembering(scripted))
+
+      ruled(remembering(scripted, display: told), bash)
+
+      expect(told).to eq([Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "make test"})',
+                                                          verdict: "human_remembered")])
+    end
+
+    describe "for a call the judge cannot weigh" do
+      around do |example|
+        Dir.mktmpdir("lain-judged-replay") do |dir|
+          @base = File.realpath(dir)
+          example.run
+        end
+      end
+
+      let(:home) { File.join(@base, "home") }
+      let(:root) { File.join(home, "project") }
+      let(:opaque) { "the judge did not look: #{described_class::OPAQUE}" }
+
+      before do
+        FileUtils.mkdir_p(File.join(root, ".git", "objects"))
+        File.write(File.join(root, ".git", "config"), "[core]\n")
+        File.write(File.join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
+      end
+
+      def remembering(scripted = answering("approve"), **)
+        rung(scripted, allows: Lain::Approval::RememberedAllow.new(queue:), **)
+      end
+
+      def answered(command, approve: true, **)
+        ruled(remembering(**), bash(command)) do |pending|
+          asked_human << pending
+          approve ? pending.approve(surface: "human_spec", authority: :human) : pending.deny(surface: "human_spec")
+        end
+      end
+
+      it "replays for git push, which reads the object store" do
+        answered("git push")
+
+        repeat = ruled(remembering, bash("git push"))
+
+        expect([repeat.verdict, repeat.authority, asked_human.size]).to eq([:allow, :human, 1])
+      end
+
+      it "replays for a checkout-local write run below the top level" do
+        FileUtils.mkdir_p(File.join(root, "lib"))
+        answered("cd lib && git add -A")
+
+        repeat = ruled(remembering, bash("cd lib && git add -A"))
+
+        expect([repeat.verdict, repeat.authority, asked_human.size]).to eq([:allow, :human, 1])
+      end
+
+      it "replays for a glob with more matches than the judge weighs" do
+        many = File.join(root, "many")
+        FileUtils.mkdir_p(many)
+        (described_class::Reach::MATCHES + 1).times { File.write(File.join(many, "f#{_1}.txt"), "") }
+        answered("cat many/*.txt")
+
+        repeat = ruled(remembering, bash("cat many/*.txt"))
+
+        expect([repeat.verdict, repeat.authority, asked_human.size]).to eq([:allow, :human, 1])
+      end
+
+      it "parks git push again once the program it runs was rewritten" do
+        fresh = false
+        facts = ->(*, **) { Lain::Approval::Judge::Facts.new([project_stage(fresh:, name: "git")]) }
+        answered("git push", facts:)
+        fresh = true
+
+        answered("git push", approve: false, facts:)
+
+        expect(asked_human.size).to eq(2)
+      end
+
+      it "parks again a glob with too many matches that also names a protected target" do
+        many = File.join(root, "many")
+        FileUtils.mkdir_p(many)
+        (described_class::Reach::MATCHES + 1).times { File.write(File.join(many, "f#{_1}.txt"), "") }
+        answered("cat many/*.txt .env")
+
+        answered("cat many/*.txt .env", approve: false)
+
+        expect(asked_human.size).to eq(2)
+      end
+
+      it "parks again a search of the object store that also names a protected target" do
+        answered("grep -r needle . .env")
+
+        answered("grep -r needle . .env", approve: false)
+
+        expect(asked_human.size).to eq(2)
+      end
+
+      it "resolves no program for a call no human said yes to" do
+        resolved = 0
+        facts = lambda do |*, **|
+          resolved += 1
+          Lain::Approval::Judge::Facts::NONE
+        end
+
+        answered("git push", approve: false, facts:)
+
+        expect([resolved, asked_human.size]).to eq([0, 1])
+      end
+
+      it "parks an opaque command again, whose exact text can mean another call" do
+        answered('cargo test "$X"')
+
+        answered('cargo test "$X"', approve: false)
+
+        expect([asked_human.size, asked_human.last.notes]).to eq([2, [opaque]])
+      end
+
+      it "parks a call naming a protected target again" do
+        read = call("read_file", { "path" => ".env" })
+        2.times do
+          ruled(remembering, read) do |pending|
+            asked_human << pending
+            pending.approve(surface: "human_spec", authority: :human)
+          end
+        end
+
+        expect(asked_human.size).to eq(2)
+      end
+    end
+
+    it "replays nothing when it was built with no memory" do
+      scripted = answering("defer")
+      approved_by_human(rung(scripted))
+
+      approved_by_human(rung(scripted))
+
+      expect([scripted.prompts.size, asked_human.size]).to eq([2, 2])
+    end
+  end
 end

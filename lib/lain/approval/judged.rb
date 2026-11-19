@@ -56,6 +56,9 @@ module Lain
       BASH = "bash"
       CALL = "%<tool>s(%<input>s)"
       NOTHING_NAMED = ::Lain::Shell::Named.new(paths: [].freeze, opaque: false)
+      # Unweighable for their size or kind alone, so their exact text is still the exact call a human allowed.
+      REPLAYABLE = %i[git_store below_top too_many].freeze
+      HUMAN_REMEMBERED = "human_remembered"
       UNWEIGHED = { opaque: OPAQUE, barred: BARRED, below_top: BELOW_TOP, git_store: GIT_STORE,
                     too_many: TOO_MANY }.freeze
 
@@ -225,10 +228,12 @@ module Lain
       # @param denials [DenialBreaker, DenialBreaker::Unbroken] what a judge's deny does; applied by default
       # @param masks [Judgement::Masking, Judgement::Unmasked] the sandbox a call the judge approves runs under
       # @param memo [JudgeMemo, JudgeMemo::Off] the approvals an exact repeat is settled by; none by default
+      # @param allows [RememberedAllow, RememberedAllow::None] a human's allows an exact repeat is settled by
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
                      facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off,
-                     masks: Judgement::Unmasked, memo: JudgeMemo.off)
+                     masks: Judgement::Unmasked, memo: JudgeMemo.off, allows: RememberedAllow::None)
         @judge = judge
+        @allows = allows
         @memo = memo
         @masks = masks
         @denials = denials
@@ -250,7 +255,8 @@ module Lain
       def call(effect, context)
         case judgement_of(effect, context)
         in Judgement::Unweighable(reason: :barred, details: [_, *] => bar) then resolved_bar(effect, context, bar)
-        in Judgement::Unweighable => unweighed then unjudged(effect, context, format(UNLOOKED, why: why(unweighed)))
+        in Judgement::Unweighable => unweighed
+          replayable(unweighed, effect, context) || unjudged(effect, context, format(UNLOOKED, why: why(unweighed)))
         in Judgement::Weighable(facts:) then weigh(effect, context, facts)
         end
       end
@@ -268,7 +274,32 @@ module Lain
         UNWEIGHED.fetch(unweighed.reason) { format(UNWEIGHABLE, path: unweighed.details.first) }
       end
 
+      # A weighable call has passed the resolved-program bar already.
       def weigh(effect, context, facts)
+        replayed(effect, @allows.call(effect, context)) || judged(effect, context, facts)
+      end
+
+      # These calls stopped before the resolved-program bar and the protected-target check, so both are read
+      # here, and only for a remembered yes.
+      def replayable(unweighed, effect, context)
+        return unless REPLAYABLE.include?(unweighed.reason)
+
+        ruling = @allows.call(effect, context)
+        replayed(effect, ruling) if ruling && !protected_target?(effect, context) &&
+                                    facts_for(effect, context).bar.empty?
+      end
+
+      def protected_target?(effect, context)
+        named_paths(effect, context, ::Lain::Session.cwd_of(context))
+          .any? { |path, _| !verdict_on(path, context).oracle_approvable? }
+      end
+
+      def replayed(effect, ruling)
+        show(effect, HUMAN_REMEMBERED) if ruling
+        ruling
+      end
+
+      def judged(effect, context, facts)
         return noted(effect, context, BROKEN, BROKEN_NOTE) if @denials.tripped?(requester_of(context))
 
         place = place_for(effect, context, facts)

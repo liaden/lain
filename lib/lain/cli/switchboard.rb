@@ -240,7 +240,7 @@ module Lain
       # @param middleware [Config::Middleware] as on {.for}; none by default
       # @param approval_timeout [Numeric] as on {.for}
       # @param silence [Approval::Silence::Hold, Approval::Silence::Deny] as on {.for}
-      # @param judge [#call] the {Approval::Judge} `auto` approval asks before
+      # @param judge [#call] the `Approval::Judge` `auto` approval asks before
       #   anyone else. {DEFERRING} by default, so a board built with no model
       #   behind it parks under `auto` exactly as under `ask`
       # @param display [#<<] as on {.for}
@@ -591,7 +591,12 @@ module Lain
         asking = attended_asking || Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
                              facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks,
-                             memo: @memo)
+                             memo: @memo, allows: remembered_allows)
+      end
+
+      # With no queue no human answered, so nothing stands to be replayed.
+      def remembered_allows
+        @approvals ? Approval::RememberedAllow.new(queue: @approvals) : Approval::RememberedAllow::None
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

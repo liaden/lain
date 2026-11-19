@@ -616,6 +616,25 @@ RSpec.describe Lain::Approval::Escalation do
                                          "reason" => held)
       end
 
+      it "names the human's earlier answer, never the judge, when it parks a replay of their yes" do
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1, containment: unable)
+        replay = Struct.new(:name) do
+          def call(*) = Lain::Approval::Escalation::Ruling.allow(rung: name, because: "replayed", authority: :human)
+        end.new(Lain::Approval::Judged::NAME)
+        attended = described_class.new([replay], journal:, containment: unable,
+                                                 asking: described_class::Surfaces.new(queue))
+        parked = Sync do |task|
+          ruled = task.async { attended.rule(effect, context) }
+          task.with_timeout(1) { queue.dequeue }.tap do |pending|
+            pending.deny(surface: "tty", authority: :human)
+            task.with_timeout(1) { ruled.wait }
+          end
+        end
+
+        expect(parked.reasons.map(&:to_s)).to include(format(described_class::HELD, who: "your earlier answer"))
+        expect(parked.reasons.join).not_to include("the judge")
+      end
+
       it "refuses it where nobody is attended, for good, and never tells the model a human could answer" do
         unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)
 

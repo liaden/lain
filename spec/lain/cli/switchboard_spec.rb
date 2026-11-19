@@ -586,6 +586,45 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(parked_under(board)).to be_a(Lain::Approval::Parked::Queue::Pending)
     end
 
+    describe "a human's allow of the exact call" do
+      let(:cargo) { Lain::Effect::ToolCall.new(tool_use_id: "tu_c", name: "bash", input: { "command" => "cargo test" }) }
+
+      def ruled(board, context, &human)
+        Sync do |task|
+          ruling = task.async { board.policy_switch.rule(cargo, context) }
+          human&.call(task.with_timeout(1) { board.approvals.dequeue })
+          task.with_timeout(1) { ruling.wait }
+        ensure
+          ruling&.stop
+        end
+      end
+
+      def approve(pending) = pending.approve(surface: "spec", authority: :human)
+
+      it "allows the repeat under auto with neither the judge nor the human asked, contained as the first ran" do
+        asked = []
+        board = switchboard(approval: :auto, judge: judge_answering(:defer, asked),
+                            containment: Lain::Confine::Sandbox::Containment::ABLE)
+        first = ruled(board, secret_context) { approve(_1) }
+
+        repeat = ruled(board, secret_context)
+
+        expect([first.contained?, repeat.verdict, repeat.authority, repeat.contained?])
+          .to eq([true, :allow, :human, true])
+        expect(asked).to eq(["bash"])
+      end
+
+      it "parks the repeat again under ask" do
+        board = switchboard(approval: :ask)
+        ruled(board, secret_context) { approve(_1) }
+        parked = []
+
+        ruled(board, secret_context) { parked << _1.tap { |pending| approve(pending) } }
+
+        expect(parked.size).to eq(1)
+      end
+    end
+
     # A board nobody handed a judge must not approve on a model's behalf.
     it "defers when no judge was given, so the call parks" do
       expect(parked_under(switchboard(approval: :auto))).to be_a(Lain::Approval::Parked::Queue::Pending)

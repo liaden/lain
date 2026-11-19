@@ -89,6 +89,7 @@ module Lain
       HELD = "%<who>s allowed this call, but it reads secrets and lain cannot run it contained here, so it is " \
              "not run automatically"
       UNSTATED = ::Lain::Confine::Sandbox::Containment::NONE
+      EARLIER = "your earlier answer"
 
       # What one rung said, and everything a journal needs to attribute it.
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
@@ -377,13 +378,17 @@ module Lain
 
       # The rung's allow is journaled before the park, so the stream still says which rung would have run it.
       def uncontainable(ruling, effect, context)
-        held = format(HELD, who: allower(ruling.rung))
+        held = format(HELD, who: allower(ruling))
         record(Ruling.abstain(rung: ruling.rung, because: held, rule: ruling.rule), effect, context)
         @asking.call(effect, Noted.new(context, Parked::Queue::Reason.own(held)))
       end
 
-      def allower(rung)
-        { Judged::NAME => "the judge", Rules::NAME => "a rule", Bypass::NAME => "bypass" }.fetch(rung, rung)
+      # A human's allow here is their earlier yes replayed, which the judge never gave.
+      def allower(ruling)
+        return EARLIER if ruling.human?
+
+        { Judged::NAME => "the judge", Rules::NAME => "a rule", Bypass::NAME => "bypass" }.fetch(ruling.rung,
+                                                                                                 ruling.rung)
       end
 
       def containable?(ruling)

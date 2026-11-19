@@ -5,12 +5,13 @@ module Lain
     # The answers a human wrote into the config, applied so the same question
     # is never put to them twice.
     #
-    # Nothing writes an answer from the prompt: the human edits the config by
-    # hand, and this rule only reads what they left. Almost every tool-approval
-    # UI offers permanent-YES and nothing else, so a user repeatedly asked about
-    # something they will never want answers `n` forever or eventually answers
-    # `y` out of fatigue. BOTH directions are rememberable here, at Emacs' three
-    # strengths.
+    # Nothing writes an answer from the prompt into the config: the human edits
+    # it by hand, and this rule only reads what they left. A prompt's answer is
+    # held for the session alone, by {Parked::Queue} and {RememberedAllow}.
+    # Almost every tool-approval UI offers permanent-YES and nothing else, so a
+    # user repeatedly asked about something they will never want answers `n`
+    # forever or eventually answers `y` out of fatigue. BOTH directions are
+    # rememberable here, at Emacs' three strengths.
     #
     # == What each strength actually covers
     #

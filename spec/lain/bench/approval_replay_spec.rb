@@ -751,6 +751,14 @@ RSpec.describe Lain::Bench::ApprovalReplay do
       expect(report).to include("parsed only by the shell reading, not the verdict: 1 (11.0 s)")
     end
 
+    it "leaves out a call the human's remembered yes settled, which no judge was asked about" do
+      replayed = [{ "type" => "escalation", "rung" => "auto", "verdict" => "allow", "authority" => "human",
+                    "ts" => "2026-11-01T10:00:04Z" }]
+      yours = call("tu_9", "bash", { "command" => "git push" }, rulings: replayed).with(place: live)
+
+      expect(removed_report([*calls, yours])).to include("  judged in the record: 5\n")
+    end
+
     it "counts a judged call with no ruling before the judge's as no wait" do
       alone = call("tu_1", "bash", { "command" => "pwd" }, rulings: [judged_at("x", "2026-11-01T10:00:04Z").last])
 

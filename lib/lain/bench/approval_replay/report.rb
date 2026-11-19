@@ -73,11 +73,14 @@ module Lain
         def removed_wait(arm, rows)
           return [] unless arm.approval == :auto
 
-          judged = rows.map { [@calls.fetch(@replay.key(_1)), _1] }.select { |call, _| call.judged }
+          judged = rows.map { [@calls.fetch(@replay.key(_1)), _1] }.select { |call, _| asked_judge?(call) }
           settled = judged.select { |_, row| row.judge.nil? }.map(&:first)
           admitted = (judged.map(&:first) - settled).select { composed?(_1) }
           wait_lines(judged.size, settled, admitted)
         end
+
+        # A human's remembered yes is recorded on the judged rung, though no judge was asked.
+        def asked_judge?(call) = call.judged && call.judged["authority"] != "human"
 
         def wait_lines(judged, settled, admitted)
           parsed = (settled + admitted).select { parsed_only_by_reading?(_1) }

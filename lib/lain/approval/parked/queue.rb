@@ -34,10 +34,24 @@ module Lain
         # by the cancellation itself.
         ABANDONED_SURFACE = "abandoned"
 
-        # What the queue holds against an exact repeat: the words the model is
-        # told, and whose no it was, so a refusal from memory journals the clock's
-        # no as the clock's.
-        Remembered = Data.define(:reason, :authority)
+        Remembered = Data.define(:reason, :authority, :contained, :secrets)
+
+        # What the queue holds of an exact repeat, and whose answer it was, so a
+        # refusal from memory journals the clock's no as the clock's. A denial
+        # keeps the words the model is told; an allow keeps whether it ran
+        # contained and what of the call's reads bore secrets when the human said yes.
+        class Remembered
+          def initialize(authority:, reason: nil, contained: false, secrets: []) = super
+        end
+
+        # What a human's yes to a call was shown of its secrets: each file holding a region, and each read not
+        # scanned whole.
+        #
+        # @param disclosure [Disclosure]
+        # @return [Array<String>] sorted, each once
+        def self.secrets_of(disclosure)
+          [*disclosure.holdings.select { _2.positive? }.keys, *disclosure.unscanned].uniq.sort.freeze
+        end
 
         # Who stood behind an answer. Declared by the surface that gave it, never
         # read off the surface's name, so a surface nobody classified is a machine.
@@ -212,12 +226,14 @@ module Lain
           # they are read off the command when first asked. `containment` is what
           # a plain approval of this call does when it reads secrets; a call that
           # reads none is handed the unstated one, and is offered no network answer.
-          # `mask` takes the face's text alone and returns it with known secrets masked.
+          # `mask` takes the face's text alone and returns it with known secrets masked. `secrets` is what of the
+          # call's reads bore secrets when it parked, which a human's yes was shown, as {Queue.secrets_of} names it.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
                          silence: Silence::DENY, spawn: nil, named: nil,
-                         containment: ::Lain::Confine::Sandbox::Containment::NONE, mask: UNMASKED)
+                         containment: ::Lain::Confine::Sandbox::Containment::NONE, mask: UNMASKED, secrets: [])
+            @secrets = secrets.dup.freeze
             @mask = mask
             @spawn = spawn
             @containment = containment
@@ -323,6 +339,9 @@ module Lain
           private :resolve
 
           def humans_only? = @humans_only
+
+          # @return [Array<String>] what of the call's reads bore secrets when it parked
+          attr_reader :secrets
 
           # @return [Boolean] whether a surface offers the network answer: the call reads secrets and the
           #   session confines such a call
@@ -618,8 +637,7 @@ module Lain
           # queue_concurrency_spec.rb can only pass by adding a lock here, the
           # claim has failed -- escalate, don't patch.
           @parked = []
-          @denials = {}
-          @calls = {}
+          remember_nothing
         end
 
         # @param seconds [Numeric]
@@ -704,6 +722,17 @@ module Lain
         # @return [Remembered, nil] nil when no such denial was given
         def denied_call(requester:, tool:, input:, cwd:) = @calls.fetch(requester, {})[[tool, input, cwd]]
 
+        # A human's plain allow of this requester's exact call, run from the same
+        # directory: never a network answer or a released secret, and gone once
+        # the human denies the same call.
+        #
+        # @param requester [String] as {.identity_for} names it
+        # @param tool [String] as the call named it
+        # @param input [Object] the call's input, compared whole
+        # @param cwd [String] absolute; the session's directory for the call
+        # @return [Remembered, nil] nil when no such allow was given
+        def allowed_call(requester:, tool:, input:, cwd:) = @allows.fetch(requester, {})[[tool, input, cwd]]
+
         # A human's line is the answer the silence rule's denials lacked, so
         # each of them parks again when resent. A human's own denial stays.
         #
@@ -734,6 +763,12 @@ module Lain
 
         private
 
+        def remember_nothing
+          @denials = {}
+          @calls = {}
+          @allows = {}
+        end
+
         # Journaled BEFORE the pending is parked, never between the two mutations
         # below: the record is a write, a write can yield the fiber, and @parked's
         # lock-freedom rests on `<<` and `enqueue` staying straight-line with no
@@ -750,6 +785,7 @@ module Lain
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
                                 file_facts: @file_facts, silence: @silence,
                                 spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:,
+                                secrets: Queue.secrets_of(disclosure),
                                 mask: ->(text) { @mask.call(text, context) })
           park(pending)
         end
@@ -806,7 +842,9 @@ module Lain
         def remember(pending)
           return unless pending.outstanding.none?
 
-          if human_denial?(pending)
+          if human_allow?(pending)
+            remember_allow(pending)
+          elsif human_denial?(pending)
             reason = pending.reason.to_s
             denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = reason }
             remember_call(pending, reason)
@@ -816,9 +854,16 @@ module Lain
         end
 
         def remember_call(pending, reason)
-          (@calls[pending.requester] ||= {})[[pending.tool, pending.input, pending.cwd]] =
-            Remembered.new(reason:, authority: pending.authority)
+          @allows.fetch(pending.requester, {}).delete(call_key(pending))
+          (@calls[pending.requester] ||= {})[call_key(pending)] = Remembered.new(reason:, authority: pending.authority)
         end
+
+        def remember_allow(pending)
+          (@allows[pending.requester] ||= {})[call_key(pending)] =
+            Remembered.new(authority: :human, contained: pending.contained?, secrets: pending.secrets)
+        end
+
+        def call_key(pending) = [pending.tool, pending.input, pending.cwd]
 
         # A command's file word that is a link to a directory names a file to
         # the human, so the tree it lands on is not held against later calls.
@@ -861,6 +906,9 @@ module Lain
         # judgement about a path, and a hold is a person's "not yet", so none of
         # these is held against a later call's paths.
         def human_denial?(pending) = pending.tool_call? && pending.human? && pending.decision == :deny
+
+        # A network answer is consent for that run only, so it is asked again.
+        def human_allow?(pending) = pending.tool_call? && pending.human? && pending.approved? && !pending.network?
 
         def silence_denial?(pending) = pending.tool_call? && pending.timed_out? && pending.decision == :deny
 

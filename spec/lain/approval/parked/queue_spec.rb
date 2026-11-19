@@ -780,10 +780,14 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(queue.denied(requester: "agent", path: "/home")).to eq("")
     end
 
-    it "remembers nothing for an approval" do
-      settled(lists("/home")) { |pending| pending.approve(surface: "spec") }
+    it "holds no path against an approval, and remembers a human's allow only as the exact call" do
+      settled(lists("/home"), in_dir("/srv/p")) { |pending| pending.approve(surface: "spec", authority: :human) }
 
       expect(queue.denied(requester: "agent", path: "/home")).to be_nil
+      expect(queue.denied_call(requester: "agent", tool: "list_files", input: { "path" => "/home" }, cwd: "/srv/p"))
+        .to be_nil
+      expect(queue.allowed_call(requester: "agent", tool: "list_files", input: { "path" => "/home" }, cwd: "/srv/p"))
+        .to have_attributes(authority: :human, contained: false)
     end
 
     # Scenario: a postpone is not a remembered denial
@@ -1157,6 +1161,89 @@ RSpec.describe Lain::Approval::Parked::Queue do
       Sync { |task| task.async { queue.adjudicate(lists("/tmp/x"), nil) }.stop }
 
       expect(queue.denied(requester: "agent", path: "/tmp/x")).to be_nil
+    end
+  end
+
+  describe "the exact call a human allowed" do
+    def in_dir(cwd, requester: nil)
+      session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd:, env: {}))
+      requester ? Lain::Approval::Parked::PolicySwitch::Requested.new(session, requester) : session
+    end
+
+    let(:reads_env) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+    let(:able) { described_class.new(journal:, containment: Lain::Confine::Sandbox::Containment::ABLE) }
+
+    def runs(command) = tool_call("bash", { "command" => command })
+
+    def allowed(command, within: queue, requester: "agent", cwd: "/srv/p")
+      within.allowed_call(requester:, tool: "bash", input: { "command" => command }, cwd:)
+    end
+
+    def answered(effect, context, within: queue)
+      Sync do |task|
+        run = task.async { within.adjudicate(effect, context) }
+        yield task.with_timeout(1) { within.dequeue }
+        run.wait
+      end
+    end
+
+    def secret_in(cwd)
+      held = reads_env
+      SimpleDelegator.new(in_dir(cwd)).tap { |context| context.define_singleton_method(:disclosure) { held } }
+    end
+
+    it "answers the same call from the same requester in the same directory, and nothing else" do
+      answered(runs("cargo test"), in_dir("/srv/p")) { _1.approve(surface: "spec", authority: :human) }
+
+      expect(allowed("cargo test")).to have_attributes(authority: :human, contained: false, secrets: [])
+      expect([allowed("cargo build"), allowed("cargo test", requester: "researcher"),
+              allowed("cargo test", cwd: "/srv/q")]).to all(be_nil)
+    end
+
+    it "keeps that a plain allow of a call that reads secrets ran contained" do
+      answered(runs("cargo test"), secret_in("/srv/p"), within: able) do |pending|
+        pending.approve(surface: "spec", authority: :human)
+      end
+
+      expect(allowed("cargo test", within: able))
+        .to have_attributes(authority: :human, contained: true, secrets: [".env"])
+    end
+
+    it "remembers no network answer" do
+      answered(runs("cargo test"), secret_in("/srv/p"), within: able) do |pending|
+        pending.decide(Lain::Approval::Verdict::Approve.new(network: true), surface: "spec", authority: :human)
+      end
+
+      expect(allowed("cargo test", within: able)).to be_nil
+    end
+
+    it "remembers no approval that released detected regions" do
+      regions = Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
+      outstanding = described_class::Outstanding.new(path: "/srv/creds.txt", regions:)
+      read = tool_call("read_file", { "path" => "/srv/creds.txt" })
+      Sync do |task|
+        run = task.async { queue.adjudicate(read, in_dir("/srv/p"), outstanding:) }
+        queue.dequeue.approve(surface: "spec", authority: :human)
+        run.wait
+      end
+
+      expect(queue.allowed_call(requester: "agent", tool: "read_file", input: { "path" => "/srv/creds.txt" },
+                                cwd: "/srv/p")).to be_nil
+    end
+
+    it "remembers no allow a machine gave" do
+      answered(runs("cargo test"), in_dir("/srv/p")) { _1.approve(surface: "spec") }
+
+      expect(allowed("cargo test")).to be_nil
+    end
+
+    it "forgets the allow once the human denies the same call" do
+      answered(runs("cargo test"), in_dir("/srv/p")) { _1.approve(surface: "spec", authority: :human) }
+      answered(runs("cargo test"), in_dir("/srv/p")) { _1.deny(surface: "spec", authority: :human) }
+
+      expect(allowed("cargo test")).to be_nil
+      expect(queue.denied_call(requester: "agent", tool: "bash", input: { "command" => "cargo test" }, cwd: "/srv/p"))
+        .to have_attributes(authority: :human)
     end
   end
 
@@ -1785,7 +1872,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
                 %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named],
-                %i[key containment], %i[key mask]])
+                %i[key containment], %i[key mask], %i[key secrets]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

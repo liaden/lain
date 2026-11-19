@@ -21,6 +21,15 @@ RSpec.describe Lain::Frontend::Decorators::JudgeRuled do
     expect(described_class.new(remembered).render(theme)).to eq("the judge approved this earlier: bash({})")
   end
 
+  it "names a replay of the human's own yes as theirs, never the judge's, dimmed" do
+    dyed = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: true))
+    yours = Lain::Telemetry::JudgeRuled.new(call: 'bash({"command" => "git push"})', verdict: "human_remembered")
+
+    expect(described_class.new(yours).render(theme)).to eq('you approved this earlier: bash({"command" => "git push"})')
+    expect(described_class.new(yours).render(dyed))
+      .to eq(dyed.paint(:label, 'you approved this earlier: bash({"command" => "git push"})'))
+  end
+
   it "dims a remembered approval and leaves the judge's own line plain" do
     dyed = Lain::Frontend::Theme.new(pastel: Pastel.new(enabled: true))
     remembered = Lain::Telemetry::JudgeRuled.new(call: "bash({})", verdict: "remembered")
