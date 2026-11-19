@@ -1008,24 +1008,63 @@ RSpec.describe Lain::Agent do
           a = described_class.new(provider:, toolset:, context:)
           a.ask("hi")
 
-          expect(a.timeline.head.content.map { |block| block["type"] }).to eq(%w[text text])
+          expect(a.timeline.head.content.map { |block| block["type"] }).to eq(%w[text text text])
           expect(a.ask("again").text).to eq("fine")
           expect(provider.call_count).to eq(2)
         end
       end
 
-      it "answers a tool call in a cut-off reply so the next request is well formed" do
-        provider = CoreGraph.provider(cut_off(:truncated, [{ "type" => "tool_use", "id" => "toolu_1",
-                                                             "name" => "echo", "input" => { "text" => "x" } }]),
+      it "keeps a cut reply's text and counts its calls instead of keeping them" do
+        calls = Array.new(943) do |i|
+          { "type" => "tool_use", "id" => "tu_#{i}", "name" => "echo", "input" => { "text" => "x" } }
+        end
+        a = agent(cut_off(:context_full, [{ "type" => "text", "text" => "Running the suite" }, *calls]))
+        a.ask("hi")
+
+        expect(a.timeline.head.content).to eq([{ "type" => "text", "text" => "Running the suite" },
+                                               { "type" => "text", "text" => full_text },
+                                               { "type" => "text",
+                                                 "text" => "943 tool calls were cut off and not run." }])
+        expect(a.timeline.head.role).to eq("assistant")
+      end
+
+      it "sends a next request that fits a 32768-token window after a 943-call cut" do
+        calls = Array.new(943) do |i|
+          { "type" => "tool_use", "id" => "tu_#{i}", "name" => "echo", "input" => { "text" => "x" * 400 } }
+        end
+        provider = CoreGraph.provider(cut_off(:context_full, [{ "type" => "text", "text" => "Running" }, *calls]),
                                       text_response("fine"))
         a = described_class.new(provider:, toolset:, context:)
         a.ask("hi")
         a.ask("again")
 
-        result = sent_blocks(provider).find { |block| block["type"] == "tool_result" }
-        expect(result).to include("tool_use_id" => "toolu_1", "is_error" => true)
-        expect(result["content"]).to include("cut off").and include("never ran")
-        expect(Lain::Context::Conversation.new(provider.last_request.messages).violations).to be_empty
+        estimated_tokens = JSON.generate(provider.last_request.messages).bytesize / 4
+        expect(estimated_tokens).to be < 32_768
+      end
+
+      it "commits no call from a max_tokens reply and sends no repair on the next ask" do
+        calls = Array.new(2) do |i|
+          { "type" => "tool_use", "id" => "tu_#{i}", "name" => "echo", "input" => { "text" => "x" } }
+        end
+        provider = CoreGraph.provider(cut_off(:max_tokens, [{ "type" => "text", "text" => "part" }, *calls]),
+                                      text_response("fine"))
+        a = described_class.new(provider:, toolset:, context:)
+        a.ask("hi")
+        a.ask("again")
+
+        types = sent_blocks(provider).map { |block| block["type"] }
+        expect(types).to eq(%w[text text text text])
+        expect(sent_blocks(provider).filter_map { |block| block["text"] })
+          .to include("2 tool calls were cut off and not run.")
+      end
+
+      it "says 1 tool call in the singular" do
+        call = { "type" => "tool_use", "id" => "tu_0", "name" => "echo", "input" => {} }
+        a = agent(cut_off(:truncated, [call]))
+        a.ask("hi")
+
+        expect(a.timeline.head.content.last).to eq({ "type" => "text",
+                                                     "text" => "1 tool call was cut off and not run." })
       end
     end
 

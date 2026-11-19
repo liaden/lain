@@ -700,7 +700,6 @@ module Lain
         # paid for, so it stays in the record rather than vanishing with the
         # raise.
         account(response)
-        answer_stranded_cut(response)
       end
     end
 
@@ -710,20 +709,24 @@ module Lain
     # told its last reply was partial.
     def commit_reply(response, inbox)
       cut = CUT_OFF_NOTICES[response.stop_reason]
-      content = cut ? [*pairable(response.content), { "type" => "text", "text" => cut }] : response.content
+      calls, kept = split_calls(response)
+      kept = [*kept, text_block(cut)] if cut
+      kept = [*kept, text_block(calls_cut_notice(calls.size))] if calls.any?
       meta = cut ? { "stop_reason" => response.stop_reason.to_s } : {}
-      @timeline.commit(role: :assistant, content:, meta:, causal_parents: inbox.folded)
+      @timeline.commit(role: :assistant, content: kept, meta:, causal_parents: inbox.folded)
     end
 
-    # A call severed before its id arrived can never be paired with a result,
-    # and keeping it would wedge every later ask.
-    def pairable(content)
-      content.reject { |block| block["type"] == "tool_use" && block["id"].to_s.empty? }
+    # Only a tool turn is ever dispatched, so a call in any other reply could
+    # never be answered and would stay in every later prompt.
+    def split_calls(response)
+      return [[], response.content] if response.stop_reason == :tool_use
+
+      response.content.partition { |block| block["type"] == "tool_use" }
     end
 
-    def answer_stranded_cut(response)
-      answer_stranded(:cut_off) if CUT_OFF_NOTICES.key?(response.stop_reason)
-    end
+    def text_block(text) = { "type" => "text", "text" => text }
+
+    def calls_cut_notice(count) = "#{count} tool #{count == 1 ? "call was" : "calls were"} cut off and not run."
 
     # The turn is settled into the record ahead of its usage, because the usage
     # record and everything the tool round goes on to write -- a memory root, a
