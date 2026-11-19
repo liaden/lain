@@ -1,6 +1,7 @@
 # Round 30 fixes
 
-status: draft
+status: in-progress
+base: 9e083c2d090aebfff2d4c56e38b9dc07a4f1c805
 commit-mode: orchestrator-commits
 language: ruby (T25, T31 and T33 also touch Rust in `crates/lain-daemon` and `crates/lain-wire`)
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson); Rust (Raph Levien, Andrew Gallant, Frank McSherry) join for T25, T31, T33
@@ -2145,3 +2146,14 @@ After the last card lands:
 - Update `planning/qa/scenarios/` for every behaviour that changed (memory `qa-scenarios-track-features.md`): `daemon.md` (replace rule, project poll), `rails-blog.md` (contained `y` runs Rails, the `secrets` answer), `secret-boundary.md` (decoy masks, the post-run scan), `repl-commands.md` (fork approval), `notifications.md` (blocked notice text).
 
 ## Execution log
+- Run started 2026-11-19. Base main at 9e083c2d (2 plan commits over the Grounding base 898c63c1; no lib, spec, crates or ext change between them, so Grounding holds).
+- Start state: worktree nyotes/implement-readiness at ~/w/ir and stale branches (flake/review, spike/combined*, test-selection*) left alone. Snapshots in the session scratchpad (start-status.txt, start-worktrees.txt, start-branches.txt, start-submodules.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: git add .gitmodules references/repos/cliffcompaction references/repos/pi
+- Hook (config unchanged): pre-commit hygiene hooks, gitleaks, lychee and vale (docs), shellcheck, cargo fmt/clippy/test (rust files), cargo deny (Cargo/deny files), `bundle exec rake compile daemon:build check` (rubocop whole repo + pspec, about 121s), daemon-tier (`rspec --tag core --tag daemon`, for crates/lain-(rpc|daemon|wire) and lib/lain/daemon paths), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg), bin/lint-price-freshness. Example count: the hook log's first pass or tmp/parallel_runtime_rspec.log.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <ruby paths>; Rust cards: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test, with their own CARGO_TARGET_DIR.
+- Ratchet specs: bundle exec rspec spec/*_spec.rb (32 top-level scanners), plus spec/lain/rust/binding_coverage_spec.rb, spec/lain/telemetry/round_trip_spec.rb, spec/lain/review/journal_discriminators_spec.rb, spec/lain/sensitivity_spec.rb, spec/lain/comment_census_spec.rb, spec/lain/zeitwerk_census_spec.rb, spec/lain/cli_spec.rb, spec/lain/project/root_defaults_spec.rb.
+- Build outputs a worktree needs: lib/lain/lain.so (Nov 18 20:25, after the last ext change), target/release/lain-fence, target/release/lain-daemon, tmp/parallel_runtime_rspec.log.
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo (test|build|clippy)|rake (pspec|check|compile|daemon)|tmp/probes/'.
+- Worktree prefix: tmp/worktrees/r30-T<id>, branch card/r30-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/r30-T<id>.
+- Memory 15 GB with swap full (3.1 of 4 GB) at start: at most 4 agents at once, landing counted as 1. Landings run LAIN_SPEC_WORKERS=10.
+- No path needs user approval.
