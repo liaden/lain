@@ -634,6 +634,31 @@ RSpec.describe Lain::CLI::Wiring do
       expect(attended).to eq([false])
     end
 
+    # With nobody at the terminal a signal must interrupt at once, so the conductor is told who is there.
+    { remote: false, none: false, terminal: true }.each do |kind, attended|
+      it "opens the Conductor of a #{kind} human with attended #{attended}", :seam do
+        seen = []
+        opener = lambda do |**kwargs|
+          seen << kwargs[:attended]
+          Lain::CLI::Conductor.open(**kwargs)
+        end
+
+        Dir.mktmpdir("wiring-attended") do |dir|
+          terminal = lambda do |channel:, **|
+            Lain::Frontend::TTY.new(channel:, output: StringIO.new, history_path: File.join(dir, "history"))
+          end
+          wiring = new_wiring(options: { grace: 5, prompt: "hello", non_interactive: true, human: kind.to_s },
+                              human: Lain::CLI::Human.new(kind:), chronicle:, status_feed:,
+                              stdin: StringIO.new, tty_factory: terminal, conductor_opener: opener,
+                              paths: Lain::Paths.new(env: { "XDG_STATE_HOME" => dir, "HOME" => dir }))
+          Timeout.timeout(20) { wiring.run(backend:, resumed: nil, nvim: nil) }
+          wiring.conductor.close(reason: :exit)
+        end
+
+        expect(seen).to eq([attended])
+      end
+    end
+
     # The board reads what the Repl hears, so both must hold the one Heard, and a
     # --prompt seed must reach it through the run's own path.
     it "hands the board and the Repl one Heard, which hears the --prompt seed", :seam do

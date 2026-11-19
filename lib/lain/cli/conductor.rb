@@ -161,8 +161,10 @@ module Lain
       # A conductor over a fresh {Signals} installer it also owns, so the exe
       # carries neither the installer nor its lifecycle (see {#guard}).
       def self.open(tty:, chronicle:, rail:, grace: Shutdown::GRACE_DEFAULT, supervisor: Supervisor::Null,
-                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered, stops: NoStops)
-        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:, stops:)
+                    run_clock: RunClock.new, countdown: RailCountdown::Unoffered, stops: NoStops,
+                    attended: true)
+        new(tty:, chronicle:, signals: Signals.new, rail:, grace:, supervisor:, run_clock:, countdown:, stops:,
+            attended:)
       end
 
       # `supervisor:` answers `#drain(within:)` with an Enumerable of
@@ -177,12 +179,15 @@ module Lain
       # `rail:` is where the human's lines come from; a fresh one with nothing
       # feeding it by default, for a conductor that supervises and never reads.
       #
+      # `attended:` is whether someone sits at this run's terminal; false makes
+      # every terminating signal interrupt at once instead of opening the grace window.
+      #
       # `stops:` answers `#close` by giving back the checkouts stopped children
       # kept live for a resume, which nothing resumes once the run ends.
       def initialize(tty:, chronicle:, signals:, rail: Frontend::Intake.new, grace: Shutdown::GRACE_DEFAULT,
                      supervisor: Supervisor::Null, run_clock: RunClock.new,
                      clock: RunClock::MONOTONIC, tick: DEFAULT_TICK, countdown: RailCountdown::Unoffered,
-                     stops: NoStops)
+                     stops: NoStops, attended: true)
         @tty = tty
         @chronicle = chronicle
         @signals = signals
@@ -190,6 +195,7 @@ module Lain
         @grace = grace
         @supervisor = supervisor
         @stops = stops
+        @attended = attended
         @run_clock = run_clock
         @clock = clock
         @ticker = CountdownTicker.new(tty:, tick:)
@@ -571,7 +577,7 @@ module Lain
       # A settle that hits the cap is journaled (drain_timed_out), never silent.
       def build_shutdown(run)
         Shutdown.new(run_task: run, closer: self, clock: @clock, grace: @grace,
-                     actors: @supervisor.drain(within: @grace))
+                     actors: @supervisor.drain(within: @grace), attended: @attended)
       end
 
       # Returned as a pair so {#supervise}'s ensure can tear both down even if

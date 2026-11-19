@@ -309,7 +309,8 @@ module Lain
       def open_conductor(tty, rail)
         @conductor_opener.call(tty:, chronicle:, rail:, grace: @options[:grace], supervisor:, run_clock:,
                                countdown: Conductor::RailCountdown.where(rail:, socketed: human_input.socket_name),
-                               stops: Conductor::Stops.new(@toolset_build.spawn_leases, @switchboard, tty:))
+                               stops: Conductor::Stops.new(@toolset_build.spawn_leases, @switchboard, tty:),
+                               attended: @human.answers_at_terminal?)
       end
 
       # @param resumed [#recorder, #session, nil] the resumed chat, nil when fresh
@@ -770,8 +771,7 @@ module Lain
                                           verdict:, isolation: fleet_isolation, exec: exec_backend.backend,
                                           handback:, epic: epic_mount(notice),
                                           attachments:, middleware: backend.middleware, paths: @paths,
-                                          display: @channel, config:, arms:, human: @human,
-                                          **lineage_reads)
+                                          display: @channel, config:, arms:, human: @human, **lineage_reads)
         @toolset_build.build(recorder, ask_human:, stops:)
       end
 

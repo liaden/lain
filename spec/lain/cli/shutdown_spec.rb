@@ -101,8 +101,9 @@ RSpec.describe Lain::CLI::Shutdown do
     Lain::Agent.new(provider:, toolset:, context:, journal:)
   end
 
-  def build_coordinator(run_task:, agent:, clock:, grace: 60)
-    described_class.new(run_task:, closer:, interrupt: agent.method(:interrupt), clock:, grace:, on_transition:)
+  def build_coordinator(run_task:, agent:, clock:, grace: 60, **rest)
+    described_class.new(run_task:, closer:, interrupt: agent.method(:interrupt), clock:, grace:, on_transition:,
+                        **rest)
   end
 
   describe "sigterm starts a grace window; the clock passing the deadline interrupts" do
@@ -216,6 +217,33 @@ RSpec.describe Lain::CLI::Shutdown do
       expect(closer.reasons).to eq(%i[exit])
       expect(agent.timeline.to_a.map(&:role)).to eq(%w[user assistant])
       expect(journal.records.size).to eq(1)
+    end
+  end
+
+  describe "a signal with nobody at the keyboard" do
+    %i[sigint sigterm].each do |input|
+      it "interrupts at once on #{input}, never arming grace" do
+        entered = Async::Queue.new
+        release = Async::Queue.new
+        agent = build_agent(park_on: 1, entered:, release:, responses: [text_response])
+        returned = :never_returned
+
+        Sync do |task|
+          run = task.async { returned = agent.ask("hi") }
+          entered.dequeue
+          shutdown = build_coordinator(run_task: run, agent:, clock: clock_returning(1000.0), attended: false)
+          coordinator = task.async { shutdown.coordinate }
+
+          shutdown.signal(input)
+          expect(transitions.dequeue).to eq(:draining)
+          expect(transitions.dequeue).to eq(:closed)
+          coordinator.wait
+          shutdown.dispose
+        end
+
+        expect(returned).to eq(:never_returned)
+        expect(closer.reasons).to eq(%i[interrupted])
+      end
     end
   end
 

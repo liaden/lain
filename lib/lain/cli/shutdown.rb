@@ -10,7 +10,8 @@ module Lain
     # state machine is `running -> grace(deadline) -> draining -> closed`; a
     # terminating signal opens a grace window instead of interrupting at once,
     # so an in-flight model call gets a chance to finish (or the user a chance
-    # to change their mind) before the run is stopped.
+    # to change their mind) before the run is stopped. A run with nobody at the
+    # terminal opens no window and interrupts at once.
     #
     # Signals arrive through {Ingress}, the self-pipe (see its comment for the
     # trap-safety reasoning); this class is pure policy over the symbols the
@@ -49,8 +50,9 @@ module Lain
 
       # Which policy method each input drives. `sigint`/`sigterm` request a
       # graceful window (or promote if one is already counting down);
-      # `sigquit`/`promote` interrupt at once; `stop` ends the ask and leaves
-      # the session open.
+      # `sigquit`/`promote` interrupt at once, and so does a signal in a run
+      # with nobody at the terminal; `stop` ends the ask and leaves the
+      # session open.
       HANDLERS = {
         sigint: :request_grace, sigterm: :request_grace,
         sigquit: :interrupt_now, promote: :interrupt_now,
@@ -86,12 +88,16 @@ module Lain
       #   so `settle` is safe); none by default, and unwired in production. The
       #   supervisor's bounded drain view is expected to wire the actor
       #   registry here.
+      # @param attended [Boolean] whether a human at this terminal could change
+      #   their mind in the window; with nobody there a countdown only lets a
+      #   parked call lapse into a silence postpone and another completion start
       # @param on_transition [#call] notified `(state, deadline)` after each
       #   transition -- the seam a countdown UI renders on, unwired in
       #   production because {CLI::Conductor::CountdownTicker} polls instead
       def initialize(run_task:, closer:, interrupt: Agent.method(:interrupt),
                      clock: RunClock::MONOTONIC,
-                     grace: GRACE_DEFAULT, actors: [].freeze, on_transition: ->(_state, _deadline) {})
+                     grace: GRACE_DEFAULT, actors: [].freeze, attended: true,
+                     on_transition: ->(_state, _deadline) {})
         raise ArgumentError, "grace must be a positive Numeric, got #{grace.inspect}" unless positive?(grace)
 
         @run_task = run_task
@@ -100,6 +106,7 @@ module Lain
         @clock = clock
         @grace = grace
         @actors = actors
+        @attended = attended
         @on_transition = on_transition
         seed_policy
       end
@@ -158,8 +165,10 @@ module Lain
       # A terminating signal during a countdown promotes to an immediate
       # interrupt -- the second sigint; from running it opens the window.
       def request_grace
-        counting_down? ? interrupt_now : arm_grace
+        interrupt_at_once? ? interrupt_now : arm_grace
       end
+
+      def interrupt_at_once? = counting_down? || !@attended
 
       def arm_grace
         @deadline = @clock.call + @grace

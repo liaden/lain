@@ -95,9 +95,9 @@ RSpec.describe Lain::CLI::Conductor do
   end
 
   def build_conductor(grace:, clock:, signals:, tick: 0.005, run_clock: Lain::RunClock.new,
-                      countdown: described_class::RailCountdown::Unoffered, rail: self.rail)
+                      countdown: described_class::RailCountdown::Unoffered, rail: self.rail, **rest)
     described_class.new(tty:, chronicle:, signals:, rail:, grace:, clock:, tick:,
-                        run_clock:, countdown:)
+                        run_clock:, countdown:, **rest)
   end
 
   def while_terming_at_prompt
@@ -168,6 +168,52 @@ RSpec.describe Lain::CLI::Conductor do
       expect(chronicle.events)
         .to eq([:catch_up, [:interrupted, head, :grace_expired], %i[close grace_expired]])
       expect(tty.stops).to be >= 1
+    ensure
+      signals.uninstall
+    end
+  end
+
+  describe "SIGTERM with nobody at the terminal" do
+    it "interrupts at once and closes interrupted, with no grace window" do
+      entered = Async::Queue.new
+      release = Async::Queue.new
+      agent = build_agent(entered:, release:, responses: [text_response])
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:, attended: false)
+
+      outcome = supervise_and_signal(agent:, conductor:, entered:, os_name: "TERM")
+
+      expect(outcome.closed?).to be(true)
+      head = agent.timeline.head_digest
+      expect(chronicle.events).to eq([:catch_up, [:interrupted, head, :interrupted], %i[close interrupted]])
+    ensure
+      signals.uninstall
+    end
+  end
+
+  describe "SIGINT with a call parked and nobody at the terminal" do
+    it "cancels the parked call, which denies, and journals no postpone" do
+      journal_io = StringIO.new
+      queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: journal_io), timeout: 30,
+                                                silence: Lain::Approval::Silence::HOLD)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "make deploy" })
+      signals = Lain::CLI::Signals.new.install
+      conductor = build_conductor(grace: 60, clock: clock_returning(1000.0), signals:, attended: false)
+      agent = build_agent(entered: Async::Queue.new, release: Async::Queue.new, responses: [])
+      approved = :never_returned
+
+      Sync do |task|
+        driver = task.async do
+          task.with_timeout(5) { queue.dequeue }
+          Process.kill("INT", Process.pid)
+        end
+        conductor.supervise(task, -> { agent.timeline }) { approved = queue.adjudicate(call, nil).approved? }
+        driver.wait
+      end
+
+      decisions = journal_io.string.lines.map { JSON.parse(_1) }.select { _1["type"] == "approval_decision" }
+                            .map { _1.values_at("verdict", "surface") }
+      expect([approved, decisions]).to eq([:never_returned, [%w[deny abandoned]]])
     ensure
       signals.uninstall
     end
