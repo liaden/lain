@@ -15,7 +15,7 @@ module Lain
 
         def call(_args, _env) = :quit
 
-        def returns_action? = true
+        def returns_action?(_args) = true
       end
     end
   end

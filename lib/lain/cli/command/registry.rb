@@ -67,13 +67,15 @@ module Lain
 
         # Whether the command +text+ names returns a Repl action (`:quit` or `:restart`) rather than an
         # answer. Asked BEFORE the call by a surface that cannot honour an action, because a
-        # command that arms something and then returns one would leave it armed.
+        # command that arms something and then returns one would leave it armed. The command is told
+        # the arguments, since `/review` returns one only for `--critique`.
         #
         # @param text [String] the line as the human typed it
         # @return [Boolean] false for prose, a role-bound line, and every command that never declares it
         def returns_action?(text)
-          command = named(text)
-          command.respond_to?(:returns_action?) && command.returns_action?
+          invocation = command_invocation(text)
+          command = invocation && @commands.fetch(invocation.skill)
+          command.respond_to?(:returns_action?) && command.returns_action?(invocation.args)
         end
 
         # What a line typed while a run holds the chat is: a control command

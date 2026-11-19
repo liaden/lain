@@ -25,6 +25,28 @@ class CritiqueSeamRefusal < Lain::Error
   BODY = '{"error":"model requires more system memory than is available"}'
 end
 
+# The frontend's review half, reduced to what `/review` asks of it: the REAL text surface and a view whose
+# render inlet swallows every call, because no editor is attached in this seam.
+class CritiqueSeamEditor
+  class Inlet
+    def method_missing(_name, *) = nil
+    def respond_to_missing?(*) = true
+  end
+
+  def initialize(sink)
+    @surface = Lain::Review::Surface::Text.new(sink:)
+    diff = Lain::Frontend::Neovim::ChangesetDiff.new(rpc: Inlet.new)
+    @view = Lain::Frontend::Neovim::ReviewView.new(changesets: diff)
+  end
+
+  attr_reader :view
+
+  def held_review_notes = 0
+  def review_surface = @surface
+  def review_view = @view
+  def bind_changeset_review(_review) = nil
+end
+
 RSpec.describe "a critique of a held review", :seam do
   def marker = "UNCOMMITTED MARKER nobody reviewed"
 
@@ -337,19 +359,27 @@ RSpec.describe "a critique of a held review", :seam do
     end
   end
 
+  # What runs just before the first prompt: the round held directly, or an editor attached for `/review` to open one.
+  def held_before_first_prompt(editor)
+    return -> { held_outbox(@wiring.command_surface.outbox) } unless editor
+
+    -> { @wiring.command_surface.env.replies.bind_review_editor(editor) }
+  end
+
   # The whole chat, run to its end over one typed `/critique`.
-  def run_chat(provider, max_tokens: 256, grace: 5)
+  def run_chat(provider, max_tokens: 256, grace: 5, stdin: StringIO.new("/critique\nquit\n"), editor: nil,
+               record: nil)
     output = StringIO.new
     holds = []
     project = Lain::Project.new(root: @repo, cwd: @repo, kind: :project, detected_by: :flag)
     @wiring = Lain::CLI::Wiring.new(human: Lain::CLI::Human.new(kind: :terminal),
-                                    options: { grace: }, chronicle: Lain::CLI::Chronicle::Null.new, project:,
+                                    options: { grace: }, chronicle: record || Lain::CLI::Chronicle::Null.new, project:,
                                     herdr: Lain::CLI::Wiring::HerdrBinding::Null.new(
                                       tty_factory: tty_factory(output, holds)
                                     ),
                                     status_feed: instance_double(Lain::StatusFeed, bind_store: nil),
-                                    stdin: StringIO.new("/critique\nquit\n"))
-    holds << -> { held_outbox(@wiring.command_surface.outbox) }
+                                    stdin:)
+    holds << held_before_first_prompt(editor)
     backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: }, mock: provider)
     Timeout.timeout(60) { @wiring.run(backend:, resumed: nil, nvim: nil) }
     @wiring.conductor.close(reason: :exit)
@@ -449,6 +479,71 @@ RSpec.describe "a critique of a held review", :seam do
       expect(@requests).to eq([2])
       expect(worktrees).to eq(1)
       expect(output).not_to include("a finding")
+    end
+  end
+
+  # `/review --critique` typed at the real chat: the round opens in the command, and the critique then runs
+  # as the line the repl was handed, inside the same supervision a typed `/critique` gets.
+  describe "a critique that /review asked for, through the production chat wiring" do
+    around do |example|
+      saved = Lain::CLI::Signals::MAP.keys.to_h { |name| [name, Signal.trap(name, "DEFAULT")] }
+      example.run
+    ensure
+      saved.each { |name, handler| Signal.trap(name, handler) }
+    end
+
+    before { commit({ "lib.rb" => "reviewed line\n" }, "the reviewed change") }
+
+    let(:review_line) { "/review feature --base #{@base} --critique=critics=3" }
+    let(:recording) do
+      records = Class.new(Array) { def record(entry) = push(entry) }.new
+      @records = records
+      Class.new(Lain::CLI::Chronicle::Null) { define_method(:record_journal) { records } }.new
+    end
+
+    # A line the human finishes while the critique runs. The pipe a pump reads takes no line off a terminal
+    # mid-ask, and the wiring has no reader for its rail, so the rail is reached where a producer would.
+    def typed_at_the_rail(text)
+      @wiring.instance_variable_get(:@rail) << Lain::Frontend::Intake::Line.new(text:, generation: 0)
+    end
+
+    # Counts each critic that starts, and the first parks the way a slow model does until a stop ends it.
+    def parking_first(started, on_first: nil)
+      Class.new(provider_class) do
+        define_method(:complete) do |request, **kwargs|
+          started << :started
+          if started.size == 1 && on_first
+            on_first.call
+            Async::Task.current.sleep(30)
+          end
+          super(request, **kwargs)
+        end
+      end.new(responses: [text("a finding")])
+    end
+
+    it "stops the running critic on /stop, starts no other, and does not say no ask is running" do
+      started = []
+      provider = parking_first(started, on_first: -> { typed_at_the_rail("/stop") })
+
+      output = run_chat(provider, stdin: StringIO.new("#{review_line}\nquit\n"),
+                                  editor: CritiqueSeamEditor.new(StringIO.new), record: recording)
+
+      expect(started).to eq([:started])
+      expect(output).not_to include(Lain::CLI::Command::Stop::NOTHING_RUNNING)
+      expect(worktrees).to eq(1)
+    end
+
+    it "lets all 3 critics answer when nobody stops it, and the round holds their notes" do
+      started = []
+      provider = parking_first(started)
+
+      output = run_chat(provider, stdin: StringIO.new("#{review_line}\nquit\n"),
+                                  editor: CritiqueSeamEditor.new(StringIO.new), record: recording)
+
+      expect(started.size).to eq(3)
+      expect(@records.select { |entry| entry.respond_to?(:outcome) }.map(&:outcome)).to eq(%w[answered] * 3)
+      expect(@wiring.command_surface.outbox).to be_open
+      expect(output).to include("3 critics read this chunk")
     end
   end
 end

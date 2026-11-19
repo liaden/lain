@@ -914,6 +914,41 @@ RSpec.describe Lain::CLI::HumanReplies do
       expect(ask_human.last_answer.body["answer"]).to include("go left")
     end
 
+    describe "a /review typed at a reply prompt" do
+      let(:review) do
+        Lain::CLI::Command::Review.new(outbox: Object.new, ledger: Lain::Sensitivity::Ledger.new,
+                                       gh_account: Lain::Forge::Gh::Account::None.new, paths: Lain::Paths.new)
+      end
+
+      let(:env) do
+        instance_double(Lain::CLI::Command::Env, replies: instance_double(described_class, review_surface: nil))
+      end
+
+      before { registry.register(review) }
+
+      it "refuses --critique by name, before any round could open" do
+        typed = ["/review feature --critique", "go left"]
+        allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+        Sync { announced(ask_human, "which db?") }
+        with_surfaces { ask_human.last_answer }
+
+        expect(output.string).to include("/review is a session command and cannot run at a reply prompt")
+        expect(ask_human.last_answer.body["answer"]).to include("go left")
+      end
+
+      it "does not refuse a plain review as a session command" do
+        typed = ["/review feature", "go left"]
+        allow(conductor).to receive(:read_reply) { typed.shift.to_s }
+
+        Sync { announced(ask_human, "which db?") }
+        with_surfaces { ask_human.last_answer }
+
+        expect(output.string).to include("no editor is attached")
+        expect(output.string).not_to include("session command")
+      end
+    end
+
     it "still answers the question with prose" do
       allow(conductor).to receive(:read_reply).and_return("go left")
 

@@ -12,6 +12,13 @@ module Lain
       # done: the next chat in the same window is the one it waits for.
       EXITS = %i[quit restart].freeze
 
+      # What a command returns to have the repl run a line it composed, after saying `said`. The line
+      # goes through the middleware phase, so it is supervised and a stop reaches it, which a command's
+      # own call never is.
+      Followup = Data.define(:line, :said) do
+        def initialize(line:, said: nil) = super
+      end
+
       # The keywords with no default are required for one reason: a defaulted
       # Null would let a mis-wired session silently lose its session record, its
       # command surface or its reply drain, with no error anywhere.
@@ -289,12 +296,18 @@ module Lain
       def settle_command(returned, text)
         @restarting = true if returned == :restart
         return returned if returned.nil? || EXITS.include?(returned)
+        return follow(returned) if returned.is_a?(Followup)
         return deliver_text(returned) if returned.is_a?(String)
         return deliver_rendered(returned) if returned.is_a?(Renderable)
 
         @tty.render_error("command #{called(text)} returned neither a renderable, " \
                           "rendered text, nor a Repl action: #{returned.inspect}")
         nil
+      end
+
+      def follow(followup)
+        deliver_text(followup.said) if followup.said
+        middleware_turn(followup.line)
       end
 
       # The `/word` the human typed, so a breach says WHICH command misbehaved.

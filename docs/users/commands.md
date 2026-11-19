@@ -1351,9 +1351,10 @@ nothing is open.
 
 `--critique` is written bare or as `--critique=FOCUS`; the space form (`--critique focus`) is
 refused. The focus runs to the end of the line and takes `/critique`'s own options (`critics=`,
-`model=`), so put it last. A refusal the critique can only find after the review opens (an
-unserved model, no window, a chunk past the room) leaves the review open, with
-`the critique did not run: <reason>` under the headline.
+`model=`), so put it last. The critique runs as `/critique` does, so `/stop` reaches it. A refusal it can only find
+after the review opens (an unserved model, no window, a chunk past the room) leaves the review open, with
+the error line under the headline. At a reply prompt `/review --critique` is refused before it opens a round;
+a plain `/review` still runs there.
 
 Same editor rule as `/survey`: no editor is a refusal, not a Null surface. Same one-surface rule
 too, from the other side.

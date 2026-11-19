@@ -457,11 +457,6 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
         raise Lain::Error, "the critique's own refusal" if args.include?("unspawnable")
 
         lambda do
-          events << [:ran, outbox.open?]
-          raise Lain::Tools::Subagent::ModelChoice::Unserved, "no such model served" if args.include?("unserved")
-          raise Lain::Review::Critique::Refused, "no window is known" if args.include?("windowless")
-          raise Lain::Error, "the provider fell over" if args.include?("broken")
-
           "critique findings"
         end
       end
@@ -492,29 +487,34 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       expect(answer).not_to include("critique findings")
     end
 
-    it "opens the round first, then critiques it with the focus, and shows the findings after the headline" do
+    it "opens the round first, then hands the repl the critique line to run supervised" do
       answer = command.call("#{number} --critique=migration safety", env)
 
-      expect(events).to eq([[:checked, "migration safety", false], [:ran, true]])
-      expect(answer).to include("pull request #{number}").and end_with("critique findings")
+      expect(events).to eq([[:checked, "migration safety", false]])
+      expect(outbox.open?).to be(true)
+      expect(answer).to be_a(Lain::CLI::Repl::Followup)
+      expect(answer.line).to eq("/critique migration safety")
+      expect(answer.said).to include("pull request #{number}")
     end
 
-    it "critiques with no focus when none is given" do
-      command.call("#{number} --critique", env)
+    it "hands over a bare /critique when no focus is given" do
+      answer = command.call("#{number} --critique", env)
 
-      expect(events).to eq([[:checked, "", false], [:ran, true]])
+      expect(events).to eq([[:checked, "", false]])
+      expect(answer.line).to eq("/critique")
     end
 
     it "reads the focus to the end of the line, flags and all" do
-      command.call("#{number} --permissive --critique=critics=2 the error paths", env)
+      answer = command.call("#{number} --permissive --critique=critics=2 the error paths", env)
 
       expect(events.first).to eq([:checked, "critics=2 the error paths", false])
+      expect(answer.line).to eq("/critique critics=2 the error paths")
     end
 
     it "still opens the review for a good critics count" do
       command.call("#{number} --critique=critics=3 the error paths", env)
 
-      expect(events).to eq([[:checked, "critics=3 the error paths", false], [:ran, true]])
+      expect(events).to eq([[:checked, "critics=3 the error paths", false]])
     end
 
     it "refuses with the critique's own refusal before opening anything" do
@@ -526,28 +526,15 @@ RSpec.describe Lain::CLI::Command::Review, :seam do
       expect(events).to eq([[:checked, "unspawnable", false]])
     end
 
-    it "keeps the review open and shows the headline when the critique refuses once the round is open" do
-      answer = command.call("#{number} --critique=model=nope unserved", env)
-
-      expect(outbox.open?).to be(true)
-      expect(answer).to include("pull request #{number}").and include("no such model served")
-      expect(answer.lines.last).to include("critique did not run")
-    end
-
-    it "treats a critique refusal of any other kind the same way" do
-      answer = command.call("#{number} --critique=windowless", env)
-
-      expect(answer).to include("pull request #{number}").and end_with("no window is known")
-    end
-
-    it "does not answer a failure that is not a refusal as though the critique had simply not run" do
-      expect { command.call("#{number} --critique=broken", env) }
-        .to raise_error(Lain::Error, "the provider fell over")
-    end
-
     it "refuses the space form, naming the flag, rather than reviewing a branch called after it" do
       expect { command.call("#{number} --critique migration", env) }.to raise_error(Lain::Error, /--critique/)
       expect(outbox.open?).to be(false)
+    end
+
+    it "declares an action only for a line asking for the critique" do
+      expect(command.returns_action?("#{number} --critique=the error paths")).to be(true)
+      expect(command.returns_action?("#{number} --permissive")).to be(false)
+      expect(command.returns_action?("close")).to be(false)
     end
 
     it "advertises the flag" do

@@ -152,7 +152,7 @@ RSpec.describe Lain::CLI::Command::Registry do
       Struct.new(:name) do
         def usage = "/#{name} -- probe"
         def call(_args, _env) = :quit
-        def returns_action? = true
+        def returns_action?(_args) = true
       end.new("leave")
     end
 
@@ -165,6 +165,20 @@ RSpec.describe Lain::CLI::Command::Registry do
 
       expect(acting_registry.returns_action?("/leave")).to be(true)
       expect(acting_registry.bind(env).returns_action?("/leave")).to be(true)
+    end
+
+    it "asks the command with the arguments typed after its name" do
+      asked = []
+      probing = Struct.new(:name, :asked) do
+        def usage = "/#{name} -- probe"
+        def call(_args, _env) = nil
+        def returns_action?(args) = asked.push(args) && args.include?("--now")
+      end.new("probe", asked)
+      probing_registry = described_class.new([probing])
+
+      expect(probing_registry.returns_action?("/probe later")).to be(false)
+      expect(probing_registry.returns_action?("/probe --now")).to be(true)
+      expect(asked).to eq(["later", "--now"])
     end
 
     it "is false for prose and for a line no command claims" do

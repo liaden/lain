@@ -61,12 +61,6 @@ module Lain
         # it is cut off before the rest is split into words.
         CRITIQUE_FLAG = /(?:\A|\s)--critique(?:=(?<focus>.*))?\z/m
 
-        # What the critique raises once it runs, as opposed to before: a refusal
-        # of its own, and the one a model the provider does not serve gets.
-        CRITIQUE_REFUSALS = [Lain::Review::Critique::Refused, Lain::Tools::Subagent::ModelChoice::Unserved].freeze
-
-        CRITIQUE_NOT_RUN = "the critique did not run: %<reason>s"
-
         # The collaborator a command built without one gets. A critique asked for
         # from a command that was never given a way to run one is refused, not
         # skipped: the human typed the flag expecting findings.
@@ -208,6 +202,10 @@ module Lain
 
         def name = "review"
 
+        # Only a review asking for the critique hands the repl a follow-up, and a reply prompt cannot
+        # run one, so it is refused before the round opens rather than left half done.
+        def returns_action?(args) = CRITIQUE_FLAG.match?(args.to_s)
+
         # The offered scopes are the registered ones, so a strategy that ships
         # is advertised without a second list to edit -- and one that stops
         # shipping stops being advertised.
@@ -216,8 +214,8 @@ module Lain
         # @param args [String] the target, and this command's flags
         # @param env [Env] read for the run's {HumanReplies} (the editor, and
         #   both rails) and its {Chronicle} (the journal this round lands in)
-        # @return [String] the headline and where to read the review, or what
-        #   a close let go of
+        # @return [String, Repl::Followup] the headline and where to read the review, or what
+        #   a close let go of; with --critique, the follow-up that says the headline and runs /critique
         # @raise [Lain::Error] no editor, an unknown flag, an unresolvable ref,
         #   an ambiguous target, an undeclared scope, a changeset past a
         #   ceiling, nothing open to close -- each already worded by whoever
@@ -264,22 +262,16 @@ module Lain
                      scope: parsed.pairs["scope"], critique: critique && critique[:focus].to_s, **parsed.switches)
         end
 
-        # The critique is prepared first, so what can be known up front refuses
-        # before the round exists, and run once the round is held, which is what
-        # it reads. A refusal only the run can find (an unserved model, no window,
-        # a chunk past the room) leaves the review open, so the headline is kept
-        # and the refusal sits under it rather than replacing it.
+        # The critique is prepared first, so what can be known up front refuses before the round
+        # exists. It is run by the repl, not here: a command's call is outside the supervision a
+        # /stop reaches, and the round is already open when the repl reads the line.
         def critiqued(parsed, env)
-          prepared = @critique.call(parsed.critique)
+          refuse_ahead(parsed.critique)
           headline = opened(parsed, env, policy: policy_for(parsed))
-          [headline, ran(prepared)].join("\n")
+          Lain::CLI::Repl::Followup.new(line: "/critique #{parsed.critique}".strip, said: headline)
         end
 
-        def ran(prepared)
-          prepared.call
-        rescue *CRITIQUE_REFUSALS => e
-          format(CRITIQUE_NOT_RUN, reason: e.message)
-        end
+        def refuse_ahead(focus) = @critique.call(focus)
 
         # A flag at the end of the line has nil for a value, which read as
         # "absent" would silently review against the default base the human just

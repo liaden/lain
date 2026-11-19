@@ -28,7 +28,7 @@ RSpec.describe Lain::CLI::Command::ResumeSession do
   it "is the /resume command and describes itself" do
     expect(command.name).to eq("resume")
     expect(command.usage).to include("/resume")
-    expect(command.returns_action?).to be(true)
+    expect(command.returns_action?("")).to be(true)
   end
 
   it "arms a restart resuming the named session and hands the Repl its :restart action" do

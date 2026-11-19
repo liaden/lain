@@ -27,7 +27,7 @@ module Lain
 
         def usage = USAGE
 
-        def returns_action? = true
+        def returns_action?(_args) = true
 
         def call(args, env)
           path = chosen(args.to_s.strip, env)

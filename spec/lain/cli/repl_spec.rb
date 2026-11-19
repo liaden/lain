@@ -2389,6 +2389,61 @@ RSpec.describe Lain::CLI::Repl do
       expect(@supervisions).to eq([:supervised])
     end
 
+    it "runs the line a command hands back as a follow-up, supervised, so a stop reaches it" do
+      conductor = conductor_over(["/starts-a-run"])
+      commands = Struct.new(:nothing) do
+        def dispatch(_text) = Lain::CLI::Repl::Followup.new(line: "/the-follow-up")
+        def serves_replies?(_text) = false
+      end.new(nil)
+
+      converse(parked("INT", "INT"), conductor, commands:)
+
+      expect(log).to eq(%i[entered unwound])
+      expect(@supervisions).to eq([:supervised])
+      expect(chronicle.events).to eq([%i[interrupted interrupted], %i[close interrupted]])
+    end
+
+    it "says the follow-up's headline before the middleware runs its line" do
+      conductor = conductor_over(["/starts-a-run"])
+      commands = Struct.new(:nothing) do
+        def dispatch(_text) = Lain::CLI::Repl::Followup.new(line: "/the-follow-up", said: "the headline")
+        def serves_replies?(_text) = false
+      end.new(nil)
+      said_before = nil
+      screen = out
+      middleware = Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &_app|
+          said_before = screen.string.include?("the headline")
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "ran" }],
+                                                 stop_reason: :end_turn))
+        end
+      end
+
+      converse(middleware.new, conductor, commands:)
+
+      expect(said_before).to be(true)
+    end
+
+    it "hands the follow-up's own line to the middleware, not the line the command was typed as" do
+      conductor = conductor_over(["/starts-a-run"])
+      commands = Struct.new(:nothing) do
+        def dispatch(_text) = Lain::CLI::Repl::Followup.new(line: "/the-follow-up")
+        def serves_replies?(_text) = false
+      end.new(nil)
+      seen = []
+      echoing = Class.new(Lain::Middleware::Base) do
+        define_method(:call) do |env, &_app|
+          seen << env.fetch(:text)
+          env.merge(response: Lain::Response.new(content: [{ "type" => "text", "text" => "ran" }],
+                                                 stop_reason: :end_turn))
+        end
+      end.new
+
+      converse(echoing, conductor, commands:)
+
+      expect(seen).to eq(["/the-follow-up"])
+    end
+
     it "renders a middleware's refusal as one line, with no interrupted record and no unhandled-task warning" do
       conductor = conductor_over(["/refused"])
       noise = Tempfile.create("lain-repl-supervised-stderr") do |file|

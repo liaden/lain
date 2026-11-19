@@ -24,7 +24,7 @@ module Lain
 
         def usage = USAGE
 
-        def returns_action? = true
+        def returns_action?(_args) = true
 
         def call(_args, _env)
           raise Error, refusal unless restarting?
