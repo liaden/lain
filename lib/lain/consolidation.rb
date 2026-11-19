@@ -10,7 +10,7 @@ module Lain
   # INHERIT the parent's prompt, "reading a record" would silently become
   # "continuing a conversation" and the premise collapses. Every spawn therefore
   # starts a FRESH Timeline root over a new Store, asserted here rather than
-  # assumed of {Role#spawn_policy}'s default.
+  # assumed of the spawn policy's default.
   #
   # THE GUARD DOES NOT COME FREE. The role-spawn seam builds a child's dispatch
   # WITHOUT tool middleware, so a credential-shaped `memory_write` would reach the
@@ -233,14 +233,16 @@ module Lain
         <<~PROMPT
           You are consolidating one completed subagent lineage into durable memory.
 
-          Lineage spawn (cite this as the evidence/source of every memory you write): #{spawn}
+          Lineage spawn: #{spawn}
+          The spawn is recorded as each memory's author for you. Do not cite it as a source:
+          `sources` takes project file paths only.
           Spawned from parent turn: #{lineage.spawned_from}
           Turns in this lineage: #{turn_count}
 
           Transcript:
           #{transcript}
 
-          Write the memories worth keeping from this lineage, each sourced to the lineage spawn above.
+          Write the memories worth keeping from this lineage.
         PROMPT
       end
 

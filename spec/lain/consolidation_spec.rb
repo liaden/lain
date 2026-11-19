@@ -122,6 +122,24 @@ RSpec.describe Lain::Consolidation do
       expect(seen.any? { |text| text.include?(spawn_b) }).to be(true)
     end
 
+    it "tells the clerk the spawn is recorded as author and sources take file paths only" do
+      scaffold = described_class::Scaffold.new(lineages.first)
+
+      expect(scaffold.render).to include("recorded as each memory's author", "project file paths only", scaffold.spawn)
+      expect(scaffold.render).not_to include("cite this as the evidence/source")
+    end
+
+    it "stores a clerk's items, authored by the clerk and the spawn, when it follows the scaffold" do
+      provider = Lain::Provider::Mock.new(responses: [tool_response(memory_write("lineage-a", "login bug")),
+                                                      text_response("clerked A"),
+                                                      tool_response(memory_write("lineage-b", "payment path")),
+                                                      text_response("clerked B")])
+
+      consolidation(provider).call(lineages)
+
+      expect(recorder.index.fetch("lineage-a").author).to have_attributes(kind: "clerk", spawn: spawn_a)
+    end
+
     it "hands each clerk its child's transcript, never the parent's conversation" do
       scaffold = described_class::Scaffold.new(lineages.first)
 
