@@ -257,6 +257,40 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
+    describe "a refusal after a human approved the call contained" do
+      let(:planted) { "/srv/project/bin/x" }
+
+      def approved(authority, executables: [])
+        ruled = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority:,
+                                                         contained: true)
+        Lain::Confine::Request.new(ruling: ruled, executables:, cwd: root, root:, tool_use_id: "toolu_1")
+      end
+
+      def refused_exec = %(10 execve("#{planted}", ["x"], 0x0 /* 0 vars */) = -1 EACCES (Permission denied))
+
+      it "says the human approved it contained, names what cannot run, and offers network" do
+        stderr = run(confinement: approved(:human, executables: [executable("x", planted, :project)])).stderr
+
+        expect(stderr).to include("approved it contained", as_shown(planted), "answer network")
+        expect(stderr).not_to include("ask the human to approve it")
+      end
+
+      it "says the same of a program the trace saw refused" do
+        writing(refused_exec)
+        stderr = run(confinement: approved(:human)).stderr
+
+        expect(stderr).to include("approved it contained", "answer network")
+        expect(stderr).not_to include("ask the human to approve it")
+      end
+
+      it "keeps the plain refusal for a contained ruling from the judge" do
+        writing(refused_exec)
+
+        expect(run(confinement: approved(:automatic)).stderr)
+          .to include(format(described_class::REFUSED, path: planted))
+      end
+    end
+
     it "reads what the trace holds once the call is over" do
       writing('10 execve("/usr/bin/cat", ["cat"], 0x0 /* 0 vars */) = 0')
       run

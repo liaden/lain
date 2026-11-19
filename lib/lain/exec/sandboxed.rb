@@ -39,6 +39,10 @@ module Lain
       REFUSED = "REFUSED by the sandbox, not a transient error: this call may not run %<path>s. Retrying, or " \
                 "running the same effect another way, will be refused again. Stop and ask the human to approve " \
                 "it, then wait for the answer."
+      REFUSED_CONTAINED = "REFUSED by the sandbox, not a transient error: a human approved it contained, " \
+                          "so this call may not run %<path>s there. Retrying, or running the same effect " \
+                          "another way, will be refused again. Stop and tell the human they can answer network to " \
+                          "run it unconfined, then wait for the answer."
       OVERMASKED = "REFUSED by the sandbox, not a transient error: the listed link %<names>s lands on %<path>s, " \
                    "which this call needs to run, so hiding it would leave the call nothing to run on. Retrying " \
                    "will be refused again. Stop and ask the human to remove or rename the link, then wait for the " \
@@ -209,7 +213,7 @@ module Lain
           raise
         end
         record = journal_trace(channels, confinement, profile, nil)
-        profile.confined? ? worded(capture, record, profile, run[:cwd]) : capture
+        profile.confined? ? worded(capture, record, profile, run[:cwd], confinement) : capture
       ensure
         channels&.close
       end
@@ -225,8 +229,8 @@ module Lain
       # Over the ceiling the line replaces the output rather than being cut
       # with it: the line is what the model must see, and the bash tool's
       # spill, fed from the live sinks, never carries it.
-      def worded(capture, record, profile, cwd)
-        line = notice(capture, record, profile, cwd)
+      def worded(capture, record, profile, cwd, confinement)
+        line = notice(capture, record, profile, cwd, confinement)
         line.empty? ? capture : appended(capture, line)
       end
 
@@ -237,8 +241,8 @@ module Lain
         Capture::Bounded.new(ceiling: @ceiling).take(:stderr, line).finish(capture.exit_status)
       end
 
-      def notice(capture, record, profile, cwd)
-        line = refused_paths(record).map { "#{phrased(REFUSED, path: printable(_1))}\n" }.join
+      def notice(capture, record, profile, cwd, confinement)
+        line = refused_paths(record).map { "#{phrased(refused_text(confinement), path: printable(_1))}\n" }.join
         return line unless line.empty? && denied_read?(capture, profile, cwd)
 
         "#{format(DENIED_READ, profile: profile.name)}\n"
@@ -286,7 +290,12 @@ module Lain
           @journal << Telemetry::ExecRecord.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                                 execs: [], refusals: [], fd_execs: [], truncated: false)
         end
-        refusal(phrased(REFUSED, path:), sinks)
+        refusal(phrased(refused_text(confinement), path:), sinks)
+      end
+
+      def refused_text(confinement)
+        ruling = confinement.ruling
+        ruling.human? && ruling.contained? ? REFUSED_CONTAINED : REFUSED
       end
 
       def overmasked(confinement, overmask, sinks)
