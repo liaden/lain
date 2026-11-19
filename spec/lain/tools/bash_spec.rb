@@ -1475,10 +1475,11 @@ RSpec.describe Lain::Tools::Bash do
 
     def resolutions = journal.events.grep(Lain::Telemetry::ExecResolution)
 
+    # A planted binary: a script's shebang would resolve to its interpreter instead.
     def plant(dir, name)
       FileUtils.mkdir_p(File.join(dir, "bin"))
       File.join(dir, "bin", name).tap do |path|
-        File.write(path, "#!/bin/sh\n")
+        File.binwrite(path, "\x7FELF".b)
         File.chmod(0o755, path)
       end
     end

@@ -6,7 +6,7 @@ require "tmpdir"
 
 module Lain
   module Confine
-    # Chooses the {Profile} a call runs under. The ruling decides, never the
+    # Chooses the `Confine::Profile` a call runs under. The ruling decides, never the
     # resolution: an approval by {Approval::ComposedTerm} rested on the call
     # only reading, so it runs under the reader profile. One that builds writes
     # its target dir, so with the workspace switch on it runs under the workspace
@@ -15,16 +15,18 @@ module Lain
     # workspace profile, since no person saw the command. A plain allow of a
     # call that reads secrets, a surface's or an automatic rung's, runs
     # contained, under the workspace profile with the switch on and the
-    # reader's with it off, and in a private network either way. Any other
+    # reader's with it off, and in a private network either way; a human's
+    # may run the call's own project scripts. Any other
     # allow is traced and not confined: a human's that chose network, and a
     # surface's of a call that read no secret, whose machine answers stand
     # beside a person's in the same queue.
     #
     # A workspace call earns its build tool's ports, the grant profile, only
     # through {BuildGrant}: one fetching stage of a trusted program, while
-    # nothing in the project is fresh. Freshness gates only the reader's exec:
-    # a workspace program whose ctime moved mid-run still runs, and the
-    # tripwire records it.
+    # nothing in the project is fresh. Freshness gates only the reader's exec,
+    # and never a project script a human's plain approval vouches for: a
+    # workspace program whose ctime moved mid-run still runs, and the tripwire
+    # records it.
     #
     # What this kernel lacks narrows the profile: no trace leaves a reader
     # confined and untraced, and every other call unwatched.
@@ -298,10 +300,19 @@ module Lain
       # On the string arm the one executable is the unresolved command, so a
       # reader runs what the grants name: Bash's own parse, which agrees with the
       # stages ComposedTerm read because its reading admits only literal commands.
-      # A term-arm call carries no grants.
+      # A term-arm call carries no grants. A project script a human vouched for
+      # is dropped under a mask as a guess is.
       def programs(request, masks, fresh_gates:)
-        [*placed(request.executables, fresh_gates:),
-         *placed(request.grants, fresh_gates:).reject { masked?(_1.realpath, masks) }]
+        unmasked = [*placed(request.grants, fresh_gates:), *vouched(request)].reject { masked?(_1.realpath, masks) }
+        [*placed(request.executables, fresh_gates:), *unmasked]
+      end
+
+      # A human's approval reaches a profile only contained, so it vouches for the call's own project scripts,
+      # one this lineage wrote included: the call has no network to send what they read.
+      def vouched(request)
+        return [] unless request.ruling.human?
+
+        [*request.executables, *request.grants].flat_map(&:programs).select { _1.klass == :project && _1.realpath }
       end
 
       # A program the call resolved to outside /usr may run, unless the project
@@ -370,7 +381,7 @@ module Lain
 
         # @param request [Request]
         # @param root [String]
-        # @return [String, nil] a key of {Profile::GRANTS}
+        # @return [String, nil] a key of `Confine::Profile::GRANTS`
         def program(request, root)
           stage, argv = sole(request)
           name = argv && self.class.asked(argv)
@@ -415,7 +426,7 @@ module Lain
       # files it read, about 4 ms. It is rebuilt once any seal's path or config
       # file has appeared, gone, or changed, so a path made absent or present
       # between calls is never served stale, and nor is a hooks dir an
-      # included file names; so is each path {Profile.watched} names, such as
+      # included file names; so is each path `Confine::Profile.watched` names, such as
       # a `target/` the last call made. At most {KEPT} roots are kept.
       class Sealed
         KEPT = 64

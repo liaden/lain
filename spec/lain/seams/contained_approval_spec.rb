@@ -199,6 +199,97 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
     expect(prompt).not_to include("443")
   end
 
+  describe "a project script, such as bin/rails" do
+    let(:key) { "#{SecureRandom.hex(16)}\n" }
+    # Reading a file that holds a secret is what makes the row offer network, so a plain y is a contained one.
+    let(:runner) { "bin/rails runner 'p 1' < deploy.conf" }
+
+    def plant_rails
+      FileUtils.mkdir_p(File.join(@root, "config"))
+      File.write(File.join(@root, "config/master.key"), key)
+      rails = File.join(@root, "bin/rails")
+      FileUtils.mkdir_p(File.dirname(rails))
+      File.write(rails, <<~SH)
+        #!/bin/sh
+        echo "rails ran $*"
+        cat config/master.key
+        curl -s -m 2 http://127.0.0.1:#{listener.addr[1]}/ </dev/null
+        echo "curl exit $?"
+      SH
+      File.chmod(0o755, rails)
+    end
+
+    def tripwire_detail_by_signal
+      tripwires = RecordingChannel.new
+      ledger = Lain::Tripwire::Ledger.new(journal: tripwires, fresh:, home: Dir.home)
+      journal.events.each { ledger << _1 }
+      tripwires.events.map { Lain::Journal.hash_of(_1) }.select { _1["type"] == "tripwire" }
+               .to_h { [_1["signal"], _1["evidence"].last["detail"]] }
+    end
+
+    def resolved_stages = journal.events.grep(Lain::Telemetry::ExecResolution).flat_map(&:stages)
+
+    it "runs on a human's y, contained under the workspace profile, with no network and the key masked" do
+      plant_rails
+      box, exec = contained_where_possible(workspace: true)
+
+      _, result = answered("y\n", exec:, containment: box.containment, command: runner)
+
+      expect(sandbox_records.first).to have_attributes(profile: :workspace, network: false)
+      expect(result.content).to include("rails ran runner p 1", "curl exit 7")
+      expect(result.content).not_to include(key.chomp)
+      expect(tripwire_detail_by_signal.keys).not_to include("refused_exec")
+      expect(tripwire_detail_by_signal.values.flatten).not_to include("bin/rails")
+    end
+
+    it "runs on a human's y when this lineage wrote the script, still with no network" do
+      box, exec = contained_where_possible(workspace: true)
+      plant_rails
+
+      _, result = answered("y\n", exec:, containment: box.containment, command: runner)
+
+      wrappers = resolved_stages.flat_map { _1["wrappers"] }
+      expect(wrappers).to include(a_hash_including("name" => "bin/rails", "fresh" => true))
+      expect(sandbox_records.first).to have_attributes(profile: :workspace, network: false)
+      expect(result.content).to include("rails ran runner p 1", "curl exit 7")
+    end
+
+    it "runs a script named as a word of the call's own, on the term arm" do
+      plant_rails
+      box, exec = contained_where_possible(workspace: true)
+
+      _, result = answered("y\n", exec:, containment: box.containment, command: "bin/rails runner p deploy.conf")
+
+      expect(journal.events.grep(Lain::Telemetry::ShellArm).map(&:arm)).to eq([:term])
+      expect(sandbox_records.first).to have_attributes(profile: :workspace, network: false)
+      expect(result.content).to include("rails ran runner p deploy.conf", "curl exit 7")
+    end
+
+    it "runs a script whose shebang finds its interpreter through env, on the Ruby the call's PATH names" do
+      rails = File.join(@root, "bin/rails")
+      FileUtils.mkdir_p(File.dirname(rails))
+      File.write(rails, "#!/usr/bin/env ruby\nputs \"ruby \#{RUBY_VERSION}\"\n")
+      File.chmod(0o755, rails)
+      box, exec = contained_where_possible(workspace: true)
+
+      _, result = answered("y\n", exec:, containment: box.containment, command: runner)
+
+      expect(result.content).to include("ruby #{RUBY_VERSION}")
+      expect(tripwire_detail_by_signal.keys).not_to include("refused_exec")
+    end
+
+    it "runs on a human's y under --confine reader, with no network" do
+      plant_rails
+      box, exec = contained_where_possible(workspace: false)
+
+      _, result = answered("y\n", exec:, containment: box.containment, command: runner)
+
+      expect(sandbox_records.first).to have_attributes(profile: :reader, network: false)
+      expect(result.content).to include("rails ran runner p 1", "curl exit 7")
+      expect(result.content).not_to include(key.chomp)
+    end
+  end
+
   it "says on the row that the call will run unconfined when confinement is off" do
     received
 

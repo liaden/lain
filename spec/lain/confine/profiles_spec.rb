@@ -1444,6 +1444,91 @@ RSpec.describe Lain::Confine::Profiles do
 
         expect(profiles.for(request(human(network: true)))).to eq(Lain::Confine::Profile::TRACED)
       end
+
+      describe "the call's own project scripts" do
+        let(:workspace) { described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch) }
+        let(:key) { File.join(root, "config/master.key") }
+        let(:masked) { [mask(key)] }
+
+        def script(relative)
+          File.join(root, relative).tap do |path|
+            FileUtils.mkdir_p(File.dirname(path))
+            File.write(path, "#!/bin/sh\n")
+          end
+        end
+
+        before do
+          answers["lain-fence"] = netted
+          script("config/master.key")
+        end
+
+        it "exec-grants bin/rails under the workspace profile, with no network and the key still masked" do
+          rails = script("bin/rails")
+
+          profile = workspace.for(request(human(contained: true), grants: [executable("bin/rails", rails, :project)]))
+
+          expect(profile).to have_attributes(name: :workspace, private_net: true, connect_ports: [])
+          expect(profile.exec_files).to include(rails)
+          expect(profile.masks).to include(key)
+        end
+
+        it "exec-grants a script this lineage wrote, since the call has no network" do
+          rails = script("bin/rails")
+          written = executable("bin/rails", rails, :project).with(fresh: true)
+
+          profile = workspace.for(request(human(contained: true), grants: [written]))
+
+          expect(profile).to have_attributes(name: :workspace, private_net: true)
+          expect(profile.exec_files).to include(rails)
+        end
+
+        it "grants no project script on an automatic contained allow" do
+          rails = script("bin/rails")
+          judged = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged",
+                                                            contained: true)
+
+          profile = workspace.for(request(judged, grants: [executable("bin/rails", rails, :project)]))
+
+          expect(profile.exec_files).not_to include(rails)
+        end
+
+        it "grants the call's own programs for that call only, and nothing else under the project" do
+          rails, other, bystander = %w[bin/rails bin/other bin/bystander].map { script(_1) }
+          own = [executable("bin/rails", rails, :project), executable("bin/other", other, :project)]
+
+          granted = workspace.for(request(human(contained: true), executables: own))
+          later = workspace.for(request(human(contained: true)))
+
+          expect(granted.exec_files).to include(rails, other)
+          expect(granted.exec_files).not_to include(bystander)
+          expect(later.exec_files).not_to include(rails, other)
+        end
+
+        it "grants no project script a mask lands on" do
+          profile = workspace.for(request(human(contained: true), grants: [executable("key", key, :project)]))
+
+          expect(profile.exec_files).not_to include(key)
+        end
+
+        it "grants no program of another class that the reader's own test refuses" do
+          rg = File.join(home, ".local/bin/rg")
+          shadowing = executable("rg", rg, :user).with(shadowed: ["/usr/bin/rg"])
+
+          profile = workspace.for(request(human(contained: true), grants: [shadowing]))
+
+          expect(profile.exec_files).not_to include(rg)
+        end
+
+        it "exec-grants the script, fresh or not, under the reader profile with no network when the switch is off" do
+          rails, other = %w[bin/rails bin/other].map { script(_1) }
+          own = [executable("bin/rails", rails, :project), executable("bin/other", other, :project).with(fresh: true)]
+
+          profile = profiles.for(request(human(contained: true), grants: own))
+
+          expect(profile).to have_attributes(name: :reader, private_net: true, connect_ports: [])
+          expect(profile.exec_files).to include(rails, other)
+        end
+      end
     end
   end
 end

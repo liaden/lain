@@ -21,9 +21,10 @@ RSpec.describe Lain::Shell::Executable::Resolver do
   let(:host_env) { {} }
   let(:resolver) { described_class.new(root:, fresh:, host_env:) }
 
+  # A planted binary: a script's shebang would resolve to its interpreter instead.
   def plant(path)
     FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, "#!/bin/sh\n")
+    File.binwrite(path, "\x7FELF".b)
     File.chmod(0o755, path)
     path
   end
@@ -312,6 +313,154 @@ RSpec.describe Lain::Shell::Executable::Resolver do
 
       expect(stage.name).to eq("cat")
       expect(stage.wrappers.sole).to have_attributes(resolved: nice, klass: :project)
+    end
+  end
+
+  describe "a project script's shebang" do
+    def script(first_line, path: "#{root}/bin/rails")
+      plant(path).tap { File.write(_1, "#{first_line}\nputs 1\n") }
+    end
+
+    let(:ruby) { plant("#{home}/.local/share/mise/installs/ruby/4.0.10/bin/ruby") }
+
+    it "runs the interpreter env names, found on the call's PATH, as `ruby bin/rails` would" do
+      rails = script("#!/usr/bin/env ruby")
+
+      stage = resolve(%w[bin/rails runner x], path: "#{File.dirname(ruby)}:/usr/bin").sole
+
+      expect(stage).to have_attributes(name: "ruby", resolved: ruby, klass: :user)
+      expect(stage.run_files.map(&:path)).to include(rails)
+      expect(stage.wrappers.sole).to have_attributes(name: "bin/rails", resolved: rails, klass: :project)
+    end
+
+    it "runs an interpreter named by its absolute path" do
+      rails = script("#!#{ruby}")
+
+      stage = resolve(%w[bin/rails runner x], path: "/usr/bin").sole
+
+      expect(stage).to have_attributes(name: ruby, resolved: ruby, klass: :user)
+      expect(stage.run_files.map(&:path)).to include(rails)
+      expect(stage.wrappers.map(&:resolved)).to eq([rails])
+    end
+
+    it "keeps an outer wrapper outermost" do
+      rails = script("#!/usr/bin/env ruby")
+
+      stage = resolve(%w[nice bin/rails runner x], path: "#{File.dirname(ruby)}:/usr/bin").sole
+
+      expect(stage.name).to eq("ruby")
+      expect(stage.wrappers.map(&:resolved)).to eq(["/usr/bin/nice", rails])
+    end
+
+    it "carries the script's freshness on its wrapper and its run file" do
+      script("#!/usr/bin/env ruby")
+      fresh_paths << "#{root}/bin/rails"
+
+      stage = resolve(%w[bin/rails], path: "#{File.dirname(ruby)}:/usr/bin").sole
+
+      expect(stage.wrappers.sole.fresh).to be(true)
+      expect(stage.run_files.find { _1.path == "#{root}/bin/rails" }.fresh).to be(true)
+    end
+
+    it "keeps today's resolution for env with flags, a line with an argument, no shebang, or no interpreter" do
+      lines = ["#!/usr/bin/env -S ruby -w", "#!#{ruby} -w", "puts 1", "#!/usr/bin/env no-such-interpreter-here"]
+      stages = lines.each_with_index.map do |line, at|
+        script(line, path: "#{root}/bin/s#{at}")
+        resolve(["bin/s#{at}"], path: "#{File.dirname(ruby)}:/usr/bin").sole
+      end
+
+      expect(stages.map { [_1.name, _1.klass, _1.wrappers] }).to eq((0..3).map { ["bin/s#{_1}", :project, []] })
+    end
+
+    it "keeps today's resolution when the env a shebang names is the project's own" do
+      env = plant("#{root}/bin/env")
+      script("#!#{env} ruby")
+
+      stage = resolve(%w[bin/rails], path: "#{File.dirname(ruby)}:/usr/bin").sole
+
+      expect(stage).to have_attributes(name: "bin/rails", resolved: "#{root}/bin/rails", klass: :project, wrappers: [])
+    end
+
+    it "keeps the script a run file of an interpreter whose own run files it does not know" do
+      rails = script("#!/usr/bin/env cat")
+
+      stage = resolve(%w[bin/rails], path: "/usr/bin").sole
+
+      expect(stage).to have_attributes(name: "cat", klass: :system)
+      expect(stage.run_files.map(&:path)).to include(rails)
+    end
+
+    it "reads no shebang off a project link whose file lies outside the project" do
+      outside = plant("#{home}/real-rails").tap { File.write(_1, "#!/usr/bin/env ruby\n") }
+      FileUtils.mkdir_p("#{root}/bin")
+      File.symlink(outside, "#{root}/bin/rails")
+
+      stage = resolve(%w[bin/rails], path: "#{File.dirname(ruby)}:/usr/bin").sole
+
+      expect(stage).to have_attributes(name: "bin/rails", realpath: outside, klass: :project, wrappers: [])
+    end
+
+    it "keeps today's resolution when env is handed an option or an assignment, even one a PATH file is named" do
+      dir = "#{home}/odd"
+      ["-S", "A=1"].each { plant(File.join(dir, _1)) }
+      stages = ["#!/usr/bin/env -S", "#!/usr/bin/env A=1"].each_with_index.map do |line, at|
+        script(line, path: "#{root}/bin/o#{at}")
+        resolve(["bin/o#{at}"], path: "#{dir}:/usr/bin").sole
+      end
+
+      expect(stages.map { [_1.name, _1.klass, _1.wrappers] }).to eq((0..1).map { ["bin/o#{_1}", :project, []] })
+    end
+
+    it "keeps today's resolution for an interpreter path that is not UTF-8, so the stage still journals" do
+      odd = File.join(home.b, "b\xFF".b, "ruby".b)
+      FileUtils.mkdir_p(File.dirname(odd))
+      File.binwrite(odd, "\x7FELF".b)
+      File.chmod(0o755, odd)
+      plant("#{root}/bin/rails").tap { File.binwrite(_1, "#!".b + odd + "\n".b) }
+
+      stage = resolve(%w[bin/rails], path: "/usr/bin").sole
+
+      expect(stage).to have_attributes(name: "bin/rails", klass: :project, wrappers: [])
+      expect { JSON.generate(stage.to_journal) }.not_to raise_error
+    end
+
+    describe "a FIFO swapped in where a script stood" do
+      let(:fifo_as_file) { Class.new(Lain::Shell::Executable::Stat) { def executable?(path) = File.exist?(path) } }
+      let(:resolver) { described_class.new(root:, fresh:, host_env:, stat: fifo_as_file.new) }
+      let(:fifo) { "#{root}/bin/s".tap { FileUtils.mkdir_p(File.dirname(_1)) }.tap { File.mkfifo(_1) } }
+
+      it "keeps today's resolution, reading nothing, with no writer" do
+        fifo
+
+        stage = Timeout.timeout(5) { resolve(%w[bin/s], path: "/usr/bin").sole }
+
+        expect(stage).to have_attributes(name: "bin/s", klass: :project, wrappers: [])
+      end
+
+      # A writer opens only beside a reader, so one is held just long enough to open it.
+      it "keeps today's resolution, never waiting, while a writer holds it open in silence" do
+        writer = File.open(fifo, File::RDONLY | File::NONBLOCK) { File.open(fifo, File::WRONLY | File::NONBLOCK) }
+
+        stage = Timeout.timeout(5) { resolve(%w[bin/s], path: "/usr/bin").sole }
+
+        expect(stage).to have_attributes(name: "bin/s", klass: :project, wrappers: [])
+      ensure
+        writer&.close
+      end
+    end
+
+    it "keeps today's resolution for a binary file" do
+      File.binwrite(plant("#{root}/bin/tool"), "\x7FELF\x02\x01\x01".b)
+
+      expect(resolve(%w[bin/tool], path: "/usr/bin").sole).to have_attributes(name: "bin/tool", klass: :project)
+    end
+
+    it "reads no shebang off a program outside the project" do
+      tool = plant("#{home}/bin/tool")
+      File.write(tool, "#!/usr/bin/env ruby\n")
+
+      expect(resolve(%w[tool], path: "#{home}/bin:#{File.dirname(ruby)}:/usr/bin").sole)
+        .to have_attributes(name: "tool", resolved: tool, wrappers: [])
     end
   end
 

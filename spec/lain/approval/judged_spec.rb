@@ -771,7 +771,8 @@ RSpec.describe Lain::Approval::Judged do
 
         expect([ruling.verdict, ruling.rung]).to eq([:deny, "surfaces"])
         expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain", "reason" => "bar",
-                                            "bar" => ["./bin/cat -> #{project}/bin/cat: written this session"])
+                                            "bar" => ["./bin/cat -> #{project}/bin/cat: written this session",
+                                                      "/bin/sh runs #{project}/bin/cat: written this session"])
       end
     end
   end

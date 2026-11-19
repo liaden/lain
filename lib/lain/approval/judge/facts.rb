@@ -64,10 +64,15 @@ module Lain
            (HISTORY if @history)].compact
         end
 
+        # A project script that runs its interpreter is a wrapper of it, named with what it shadows; its run file
+        # line would only repeat it.
         def stage_lines(stage)
-          [program_line(safe(stage.name), stage),
-           *stage.run_files.map { |file| line(safe(File.basename(file.path)), file.path, tags(file)) }]
+          scripts = stage.wrappers.select { _1.klass == :project }
+          [program_line(safe(stage.name), stage), *scripts.map { program_line(safe(_1.name), _1) },
+           *run_file_lines(stage.run_files.reject { |file| scripts.any? { _1.resolved == file.path } })]
         end
+
+        def run_file_lines(files) = files.map { |file| line(safe(File.basename(file.path)), file.path, tags(file)) }
 
         def program_line(name, program)
           line(name, program.realpath || program.resolved, [*tags(program), *shadows(program.shadowed)])

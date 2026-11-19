@@ -16,9 +16,10 @@ RSpec.describe Lain::Approval::Judge::Facts do
   let(:fresh) { Struct.new(:root) { def fresh?(path) = path.start_with?("#{root}/bin/") }.new(root) }
   let(:resolver) { Lain::Shell::Executable::Resolver.new(root:, fresh:, host_env: {}) }
 
-  def plant(path, body = "#!/bin/sh\n")
+  # A planted binary: a script's shebang would resolve to its interpreter instead.
+  def plant(path, body = "\x7FELF".b)
     FileUtils.mkdir_p(File.dirname(path))
-    File.write(path, body)
+    File.binwrite(path, body)
     File.chmod(0o755, path)
     path
   end
@@ -42,6 +43,15 @@ RSpec.describe Lain::Approval::Judge::Facts do
     expect(lines_of(facts_of("cat README.md", path: "#{root}/tools:/usr/bin")))
       .to include("facts (computed by lain, not by the model):",
                   "cat -> #{root}/tools/cat [project; unchanged since before session; shadows /usr/bin/cat]")
+  end
+
+  it "shows a project script as the interpreter it runs, then the script" do
+    plant(File.join(root, "tools", "cat"), "#!/bin/sh\n")
+
+    lines = facts_of("cat README.md", path: "#{root}/tools:/usr/bin").lines
+
+    expect(lines).to eq(["/bin/sh -> #{File.realpath("/bin/sh")} [system]",
+                         "cat -> #{root}/tools/cat [project; unchanged since before session; shadows /usr/bin/cat]"])
   end
 
   it "reads the parse the gate carried rather than parsing the command again" do

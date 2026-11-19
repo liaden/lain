@@ -24,9 +24,12 @@ module Lain
         @programs = Array(stages).flat_map { programs(_1) }
       end
 
+      # The trace records an exec as the call spelled it, so a relative path is read from the cwd its stage
+      # resolved in; a stage that may run somewhere else matches none.
+      #
       # @param path [String]
       # @return [Boolean] whether a stage resolved to it, by any link on its way
-      def ran?(path) = @programs.any? { paths(_1).include?(path) }
+      def ran?(path) = @programs.any? { paths(_1).include?(spelled(path, _1["cwd"])) }
 
       # @param path [String]
       # @return [Boolean] whether an unchanged program a reader profile may grant resolved to it
@@ -55,7 +58,16 @@ module Lain
 
       private
 
-      def programs(stage) = [*Array(stage["wrappers"]).flat_map { programs(_1) }, stage]
+      # A wrapper runs where its stage does.
+      def programs(stage, cwd = stage["cwd"])
+        [*Array(stage["wrappers"]).flat_map { programs(_1, cwd) }, stage.merge("cwd" => cwd)]
+      end
+
+      def spelled(path, cwd)
+        return path if path.start_with?("/")
+
+        cwd && File.expand_path(path, cwd)
+      end
 
       def paths(program) = [program["resolved"], program["realpath"], *program["chain"]].compact
 

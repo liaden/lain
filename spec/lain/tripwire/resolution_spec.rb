@@ -26,6 +26,28 @@ RSpec.describe Lain::Tripwire::Resolution do
     Lain::Tripwire::Hit.of_resolution({ "tool_use_id" => "tu_1" }, resolution).to_h { [_1.name, _1.detail] }
   end
 
+  describe "#ran?" do
+    let(:rails) { written(File.join(root, "bin/rails")) }
+
+    def parsed(cwd)
+      { "name" => "bin/rails", "resolved" => rails, "realpath" => rails, "chain" => [], "klass" => "project",
+        "fresh" => false, "run_files" => [], "basis" => "parsed", "cwd" => cwd }
+    end
+
+    it "reads a relative exec path from the cwd its stage resolved in, as the trace records it" do
+      expect(described_class.new([parsed(root)]).ran?("bin/rails")).to be(true)
+    end
+
+    it "matches no relative path for a stage that may run somewhere else, not even from the process's cwd" do
+      rails
+      Dir.chdir(root) { expect(described_class.new([parsed(nil)]).ran?("bin/rails")).to be(false) }
+    end
+
+    it "matches no relative path that lands elsewhere from that cwd" do
+      expect(described_class.new([parsed(File.join(root, "sub"))]).ran?("bin/rails")).to be(false)
+    end
+  end
+
   describe "a fresh run file under the project's build output" do
     let(:built) { written(File.join(root, ".venv/bin/pytest")) }
     let(:planted) { written(File.join(root, "plant.py")) }

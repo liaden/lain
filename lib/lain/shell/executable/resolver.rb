@@ -49,6 +49,11 @@ module Lain
           # A word still holding an expansion was never a literal program name.
           EXPANSION = /[$`]/
 
+          # The kernel reads a script's first line for the program it runs; one word, or env and one word, is
+          # all this reads, since a flag such as `env -S` changes what runs in ways the words alone do not show.
+          SHEBANG = %r{\A#![ \t]*(/\S+)(?:[ \t]+(\S+))?[ \t]*\n}n
+          SHEBANG_BYTES = 256
+
           # @param roots [Array<String>] the project root, as given and as its realpath
           # @param fresh [#fresh?]
           # @param stat [Stat]
@@ -86,7 +91,7 @@ module Lain
 
             files += found
             peel = Peel.of(argv, env)
-            return with_run_files(resolve(argv.first.to_s, env, wrappers), files) unless peel
+            return interpreted(argv, env, wrappers, files) unless peel
 
             inner = [*wrappers, resolve(argv.first, env, [])]
             case peel.outcome
@@ -94,6 +99,48 @@ module Lain
             when :hidden_env then hidden(peel, env, inner, files)
             else with_run_files(unresolved(argv.first, env, inner), files)
             end
+          end
+
+          # A project script resolves as `ruby bin/rails` does: the interpreter its shebang names is the
+          # program, and the script one of its run files. The script stays a wrapper too, since the kernel
+          # execs it first, so what runs a script the project holds is never classed by its interpreter alone.
+          def interpreted(argv, env, wrappers, files)
+            script = resolve(argv.first.to_s, env, [])
+            interpreter = shebang(script, env)
+            found = interpreter && resolve(interpreter, env, [*wrappers, script])
+            return with_run_files(script.with(wrappers:), files) if found.nil? || found.klass == :unresolved
+
+            with_run_files(found, [*files, *@run_files.of([interpreter, script.resolved, *argv.drop(1)]),
+                                   script.resolved])
+          end
+
+          # Read on the host, not through the Stat port, and only a file inside the root, which the project's
+          # mount holds. Only a system env searches for the name it is given, and never an option or assignment
+          # it would read instead; any other two-word line runs its own program.
+          #
+          # @return [String, nil] the interpreter, by path or by the name env searches for; nil to keep the script
+          def shebang(script, env)
+            return unless script.klass == :project && inside_root?(script.realpath)
+
+            program, operand = shebang_words(script.realpath)
+            return program if operand.nil?
+
+            operand if File.basename(program) == "env" && !operand.start_with?("-") && !operand.include?("=") &&
+                       resolve(program, env, []).klass == :system
+          end
+
+          # A path that is not UTF-8 could not be journaled, so it keeps the script. Only a regular file is
+          # read, checked on the opened descriptor: a FIFO swapped in after the resolve would wait on its writer.
+          # The open is nonblocking because opening a FIFO with no writer waits too.
+          def shebang_words(path)
+            words = head(path).match(SHEBANG)&.captures.to_a.compact.map { _1.dup.force_encoding(Encoding::UTF_8) }
+            words if words.any? && words.all?(&:valid_encoding?)
+          rescue SystemCallError, IOError
+            nil
+          end
+
+          def head(path)
+            File.open(path, File::RDONLY | File::NONBLOCK) { |io| io.binmode.read(SHEBANG_BYTES) if io.stat.file? }.to_s
           end
 
           # What the wrapper's own env hides is the program, but its words still name files.

@@ -75,11 +75,12 @@ RSpec.describe Lain::Shell::Stages do
   end
 
   describe "a leading assignment" do
+    # A planted binary: a script's shebang would resolve to its interpreter instead.
     def bin(*names)
       dir = File.join(@root, "bin")
       FileUtils.mkdir_p(dir)
       names.each do |name|
-        File.write(File.join(dir, name), "#!/bin/sh\n")
+        File.binwrite(File.join(dir, name), "\x7FELF".b)
         File.chmod(0o755, File.join(dir, name))
       end
       dir
