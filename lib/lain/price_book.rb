@@ -51,34 +51,39 @@ module Lain
       ),
       "claude-fable-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25),
       "claude-mythos-5-1" => Price.per_mtok(input: 10, output: 50, cache_creation: 12.5, cache_read: 0.25),
-      # Ollama Cloud, read 2026-10-23 from ollama.com/pricing. Cached input is
-      # left at 0 because an ollama response reports only prompt_eval_count, so
-      # a cached rate could never be applied. DeepSeek bills half outside 12:00
-      # to 18:00 UTC on weekdays.
+      # Ollama Cloud, read 2026-10-23 from ollama.com/pricing. No cached rate was
+      # read from that page, so cache_read is the input rate: a conservative bound
+      # that bills a warm turn as the cold one did, now that a response reports
+      # prompt_eval_cached_count and the usage carries it. DeepSeek bills half
+      # outside 12:00 to 18:00 UTC on weekdays.
       "deepseek-v4.1-flash:cloud" => Price.per_mtok(
-        input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0,
-        off_peak: Price::OffPeak.new(price: Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0))
+        input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0.3,
+        off_peak: Price::OffPeak.new(
+          price: Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0.15)
+        )
       ),
       "deepseek-v4-pro:cloud" => Price.per_mtok(
-        input: 1.32, output: 3.96, cache_creation: 0, cache_read: 0,
-        off_peak: Price::OffPeak.new(price: Price.per_mtok(input: 0.66, output: 1.98, cache_creation: 0, cache_read: 0))
+        input: 1.32, output: 3.96, cache_creation: 0, cache_read: 1.32,
+        off_peak: Price::OffPeak.new(
+          price: Price.per_mtok(input: 0.66, output: 1.98, cache_creation: 0, cache_read: 0.66)
+        )
       ),
-      "gemma4:cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0),
-      "gemma4:31b-cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0),
-      "glm-5.3:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 0),
-      "glm-5.3-flash:cloud" => Price.per_mtok(input: 0.15, output: 0.5, cache_creation: 0, cache_read: 0),
-      "glm-5.2:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 0),
-      "gpt-oss:120b-cloud" => Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0),
-      "gpt-oss:20b-cloud" => Price.per_mtok(input: 0.07, output: 0.3, cache_creation: 0, cache_read: 0),
-      "kimi-k3:cloud" => Price.per_mtok(input: 3, output: 15, cache_creation: 0, cache_read: 0),
-      "kimi-k2.7-code:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0),
-      "kimi-k2.6:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0),
-      "nemotron-3-nano:30b-cloud" => Price.per_mtok(input: 0.06, output: 0.24, cache_creation: 0, cache_read: 0),
-      "nemotron-3-super:cloud" => Price.per_mtok(input: 0.015, output: 0.6, cache_creation: 0, cache_read: 0),
-      "nemotron-3-ultra:cloud" => Price.per_mtok(input: 0.1, output: 3, cache_creation: 0, cache_read: 0),
-      "mistral-large-3:675b-cloud" => Price.per_mtok(input: 0.5, output: 1.5, cache_creation: 0, cache_read: 0),
-      "minimax-m2.7:cloud" => Price.per_mtok(input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0),
-      "minimax-m3:cloud" => Price.per_mtok(input: 0.6, output: 2.4, cache_creation: 0, cache_read: 0)
+      "gemma4:cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0.14),
+      "gemma4:31b-cloud" => Price.per_mtok(input: 0.14, output: 0.4, cache_creation: 0, cache_read: 0.14),
+      "glm-5.3:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 1.4),
+      "glm-5.3-flash:cloud" => Price.per_mtok(input: 0.15, output: 0.5, cache_creation: 0, cache_read: 0.15),
+      "glm-5.2:cloud" => Price.per_mtok(input: 1.4, output: 4.4, cache_creation: 0, cache_read: 1.4),
+      "gpt-oss:120b-cloud" => Price.per_mtok(input: 0.15, output: 0.6, cache_creation: 0, cache_read: 0.15),
+      "gpt-oss:20b-cloud" => Price.per_mtok(input: 0.07, output: 0.3, cache_creation: 0, cache_read: 0.07),
+      "kimi-k3:cloud" => Price.per_mtok(input: 3, output: 15, cache_creation: 0, cache_read: 3),
+      "kimi-k2.7-code:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0.95),
+      "kimi-k2.6:cloud" => Price.per_mtok(input: 0.95, output: 4, cache_creation: 0, cache_read: 0.95),
+      "nemotron-3-nano:30b-cloud" => Price.per_mtok(input: 0.06, output: 0.24, cache_creation: 0, cache_read: 0.06),
+      "nemotron-3-super:cloud" => Price.per_mtok(input: 0.015, output: 0.6, cache_creation: 0, cache_read: 0.015),
+      "nemotron-3-ultra:cloud" => Price.per_mtok(input: 0.1, output: 3, cache_creation: 0, cache_read: 0.1),
+      "mistral-large-3:675b-cloud" => Price.per_mtok(input: 0.5, output: 1.5, cache_creation: 0, cache_read: 0.5),
+      "minimax-m2.7:cloud" => Price.per_mtok(input: 0.3, output: 1.2, cache_creation: 0, cache_read: 0.3),
+      "minimax-m3:cloud" => Price.per_mtok(input: 0.6, output: 2.4, cache_creation: 0, cache_read: 0.6)
     }.freeze
 
     # @return [PriceBook] the bench's default map

@@ -81,11 +81,11 @@ module Lain
           @tool_calls = []
           @frames = 0
           @terminated = false
-          # The done line's four fields on one chain: nil is immutable, so it
+          # The done line's five fields on one chain: nil is immutable, so it
           # cannot be aliased into a shared accumulator the way the Strings
           # above could be, and they are one fact -- what the terminal frame
           # said -- that goes whole or leaves a splice behind.
-          @model = @done_reason = @prompt_eval_count = @eval_count = nil
+          @model = @done_reason = @prompt_eval_count = @prompt_eval_cached_count = @eval_count = nil
           self
         end
 
@@ -195,7 +195,7 @@ module Lain
           @scanned = @buffer.bytesize
         end
 
-        # `::Encoding` is qualified: the sibling {Ollama::Encoding} mixin shadows
+        # `::Encoding` is qualified: the sibling `Ollama::Encoding` mixin shadows
         # the top-level constant by lexical lookup from inside this class.
         def ingest(line)
           text = line.force_encoding(::Encoding::UTF_8).strip
@@ -226,6 +226,7 @@ module Lain
           @terminated = true
           @done_reason = data["done_reason"]
           @prompt_eval_count = data["prompt_eval_count"]
+          @prompt_eval_cached_count = data["prompt_eval_cached_count"]
           @eval_count = data["eval_count"]
         end
 
@@ -238,7 +239,8 @@ module Lain
           message["thinking"] = @thinking unless @thinking.empty?
           message["tool_calls"] = @tool_calls unless @tool_calls.empty?
           { "model" => @model, "message" => message, "done" => @terminated, "done_reason" => @done_reason,
-            "prompt_eval_count" => @prompt_eval_count, "eval_count" => @eval_count }
+            "prompt_eval_count" => @prompt_eval_count, "prompt_eval_cached_count" => @prompt_eval_cached_count,
+            "eval_count" => @eval_count }
         end
       end
     end

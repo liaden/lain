@@ -305,4 +305,16 @@ RSpec.describe Lain::Provider::Ollama::StreamAssembler do
       expect(assembler.result.dig("message", "thinking")).to eq("a\nb")
     end
   end
+
+  describe "#result, the cached share of the prompt" do
+    it "carries the terminal frame's prompt_eval_cached_count into the body" do
+      body = fed(content_lines + [done_line(prompt_eval_cached_count: 6998)]).result
+
+      expect(body).to include("prompt_eval_cached_count" => 6998)
+    end
+
+    it "carries nil for a terminal frame with no cached count" do
+      expect(fed(content_lines + [done_line]).result).to include("prompt_eval_cached_count" => nil)
+    end
+  end
 end

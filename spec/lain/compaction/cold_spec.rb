@@ -178,6 +178,37 @@ RSpec.describe Lain::Compaction::Cold do
     end
   end
 
+  describe "an ollama turn decoded from its own wire frame" do
+    def decoded_usage(**counts)
+      body = { "model" => "qwen3:4b", "done" => true, "done_reason" => "stop",
+               "message" => { "role" => "assistant", "content" => "hi" },
+               "eval_count" => 5 }.merge(counts.transform_keys(&:to_s))
+      Class.new { include Lain::Provider::Ollama::Decoding }.new.send(:build_response, body, nil, []).usage
+    end
+
+    def observe_decoded(cold, **counts)
+      cold.observe(Lain::Telemetry::TurnUsage.new(digest: "blake3:turn", model: "qwen3:4b", stop_reason: :end_turn,
+                                                  usage: decoded_usage(**counts).to_h))
+    end
+
+    it "is not confirmed cold when the response reports cached tokens" do
+      cold = described_class.new(cache_profile: { ttl: 0 }, journal:)
+
+      observe_decoded(cold, prompt_eval_count: 7353, prompt_eval_cached_count: 6998)
+
+      expect(cold.cold?).to be(false)
+      expect(records).to be_empty
+    end
+
+    it "is confirmed cold when the response reports no cached tokens" do
+      cold = described_class.new(cache_profile: { ttl: 0 }, journal:)
+
+      observe_decoded(cold, prompt_eval_count: 7353, prompt_eval_cached_count: 0)
+
+      expect(records.map { |r| r["type"] }).to eq(["cache_cold_confirmed"])
+    end
+  end
+
   describe "the default journal" do
     # A TTL-less profile confirms cold off the zero read ALONE, so the unwired
     # instance has a record to push and genuinely exercises `@journal <<`.

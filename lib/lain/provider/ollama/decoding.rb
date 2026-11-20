@@ -318,8 +318,13 @@ module Lain
           body["done_reason"] == "length" && !ceiling.nil? && generated.positive? && generated < ceiling
         end
 
+        # Anthropic's input_tokens excludes cache reads but Ollama's prompt_eval_count includes
+        # them, so subtracting keeps Usage#total_input_tokens equal to what the server reported.
         def build_usage(body)
-          Usage.new(input_tokens: body["prompt_eval_count"], output_tokens: body["eval_count"])
+          prompt = body["prompt_eval_count"].to_i
+          cached = body["prompt_eval_cached_count"].to_i.clamp(0, prompt)
+          Usage.new(input_tokens: prompt - cached, output_tokens: body["eval_count"],
+                    cache_read_input_tokens: cached)
         end
       end
     end

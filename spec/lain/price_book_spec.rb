@@ -195,6 +195,13 @@ RSpec.describe Lain::PriceBook do
       expect(billed).to eq(page_rates.transform_values { |pair| pair.map { BigDecimal(_1.to_s) } })
     end
 
+    it "bills a warm turn the same as a cold one with the same prompt, until a cached rate is known" do
+      cold = usage(input: 100_000)
+      warm = usage(input: 1_000, read: 99_000)
+
+      expect(page_rates.keys.reject { |tag| book.cost(tag, cold) == book.cost(tag, warm) }).to be_empty
+    end
+
     it "has a row for exactly the cloud tags the table lists" do
       expect(described_class::DEFAULTS.keys.grep(/cloud\z/)).to match_array(page_rates.keys)
     end
@@ -215,10 +222,10 @@ RSpec.describe Lain::PriceBook do
       expect { book.price("gemma4:e4b") }.to raise_error(described_class::UnknownModel)
     end
 
-    it "carries no cached-input rate on any cloud row" do
+    it "bills a cache read at the input rate and a cache write at nothing on every cloud row" do
       cloud = described_class::DEFAULTS.select { |key, _| key.end_with?("cloud") }
       expect(cloud).not_to be_empty
-      expect(cloud.values.map { [_1.cache_creation, _1.cache_read] }.uniq).to eq([[0, 0]])
+      expect(cloud.values.map { [_1.cache_creation, _1.cache_read == _1.input] }.uniq).to eq([[0, true]])
     end
 
     it "gives a friction report a dollar figure for a cloud run" do

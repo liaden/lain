@@ -158,6 +158,32 @@ RSpec.describe Lain::StatusFeed do
       expect(published["cache_deadline"]).to eq((t2 + described_class::DEFAULT_CACHE_PROFILE[:ttl]).iso8601)
     end
 
+    it "publishes no deadline when the profile has no positive ttl, even for a usage with cache reads" do
+      now = Time.utc(2026, 7, 17, 12, 0, 0)
+      feed = described_class.new(path:, clock: -> { now }, cache_profile: Lain::CacheProfile::NO_CACHING)
+
+      feed << turn_usage(cache_read: 6998)
+
+      expect(published["cache_deadline"]).to be_nil
+    end
+
+    it "resolves a callable profile on the first cache activity only, and once" do
+      resolved = 0
+      profile = lambda {
+        resolved += 1
+        { ttl: 60 }
+      }
+      now = Time.utc(2026, 7, 17, 12, 0, 0)
+      feed = described_class.new(path:, clock: -> { now }, cache_profile: profile)
+
+      feed << turn_usage(cache_read: 0)
+      expect(resolved).to eq(0)
+
+      2.times { feed << turn_usage(cache_read: 10) }
+
+      expect([resolved, published["cache_deadline"]]).to eq([1, (now + 60).iso8601])
+    end
+
     # The scheduler must read a provider's actual cache mechanics, not
     # a fixed guess -- Anthropic's TTL differs from a future OpenAI-compatible
     # arm's, so pinning the ttl at 60 (not the 300s default) is what proves

@@ -59,7 +59,9 @@ module Lain
       # @param status_feed_factory [#call] the HUD's feed. Takes a
       #   `context_window:` so published occupancy divides by the window the
       #   provider says it is serving rather than by {ContextWindow}'s
-      #   conservative fallback -- see {Backend#context_window}.
+      #   conservative fallback -- see {Backend#context_window}. Also takes
+      #   a callable `cache_profile:` answering the provider's, resolved on the first cache activity so
+      #   building the feed builds no provider.
       # @param gc_schedule_factory [#call] builds the daily reap's {GcSchedule}
       #   for the project's root; the real one spawns with the real process
       #   spawner
@@ -86,8 +88,8 @@ module Lain
                      run_clock_factory: -> { Lain::RunClock.new },
                      project_factory: Lain::Project::Resolver.public_method(:default_project),
                      gc_schedule_factory: GcSchedule.public_method(:new),
-                     status_feed_factory: lambda { |run_clock:, context_window:, agent_states:|
-                       Lain::StatusFeed.new(run_clock:, context_window:, agent_states:)
+                     status_feed_factory: lambda { |run_clock:, context_window:, agent_states:, cache_profile:|
+                       Lain::StatusFeed.new(run_clock:, context_window:, agent_states:, cache_profile:)
                      },
                      middleware_reader: Config.public_method(:middleware),
                      paths: Paths.new,
@@ -228,7 +230,8 @@ module Lain
       # this line. So Wiring hands it over ({Lain::StatusFeed#bind_store});
       # until then an empty Store resolves nothing and the count only climbs.
       def status_feed
-        @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window, agent_states:)
+        @status_feed ||= @status_feed_factory.call(run_clock:, context_window: backend.context_window, agent_states:,
+                                                   cache_profile: -> { backend.provider.cache_profile })
       end
 
       def agent_states = @agent_states ||= Lain::AgentStates::Tracker.new(clock: run_clock)

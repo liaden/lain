@@ -10,7 +10,7 @@ module Lain
   # for the tmux status-right / TTY prompt / nvim lualine renderers
   # (planning/interface-integration.md § "One state feed, three renderers").
   # {Publication} lands it on disk; deriving and writing change for different
-  # reasons. The path resolves through {ProjectDir} and is deliberately NOT in
+  # reasons. The path resolves through `ProjectDir` and is deliberately NOT in
   # the project: this struct is rewritten every turn, and writing it beside the
   # code left permanent `git status` noise with no ignore path.
   #
@@ -189,10 +189,10 @@ module Lain
 
     # @param path [String] where the state struct is atomically published;
     #   defaults to this project's file under `$XDG_STATE_HOME/lain` via
-    #   {ProjectDir#state_path}.
+    #   `ProjectDir#state_path`.
     # @param clock [#call] answers the current Time; injectable so a spec never
     #   races the real clock to compute a deadline.
-    # @param cache_profile [Hash] a provider's `#cache_profile`; only `:ttl` is
+    # @param cache_profile [Hash, #call] a provider's `#cache_profile`, or a callable answering it; only `:ttl` is
     #   read here, defaulting to {DEFAULT_CACHE_PROFILE}.
     # @param run_clock [RunClock] the RUN's clock, not this object's: the
     #   {CLI::Conductor} records a user prompt on the same instance, so an
@@ -521,9 +521,16 @@ module Lain
     end
 
     def slide_cache_deadline(usage)
-      return unless usage.cache_active?
+      return unless usage.cache_active? && cache_ttl.positive?
 
-      @cache_deadline = (@clock.call + @cache_profile[:ttl]).utc.iso8601
+      @cache_deadline = (@clock.call + cache_ttl).utc.iso8601
+    end
+
+    # A callable profile is resolved here, on first use, so a feed built before the provider
+    # exists does not force one to be built.
+    def cache_ttl
+      @cache_profile = @cache_profile.call if @cache_profile.respond_to?(:call)
+      @cache_profile[:ttl].to_i
     end
 
     # @return [Float, nil] the reading, or nil for the ABSENCE of one. Two

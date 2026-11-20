@@ -246,6 +246,17 @@ RSpec.describe Lain::Provider::Ollama, "streaming" do
       expect(streamed.usage).to eq(synchronous.usage)
     end
 
+    it "reports a warm streamed prompt's cached tokens the way the non-streaming path does" do
+      counts = { "prompt_eval_count" => 7353, "prompt_eval_cached_count" => 6998 }
+      lines = stream_lines.tap { |all| all.last.merge!(counts) }
+      streamed = described_class.new(transport: stream_transport([ndjson(lines)])).complete(request(stream: true))
+      synchronous = described_class.new(transport: transport_sync(single_body.merge(counts)))
+                                   .complete(request(stream: false))
+
+      expect(streamed.usage).to eq(synchronous.usage)
+      expect([streamed.usage.input_tokens, streamed.usage.cache_read_input_tokens]).to eq([355, 6998])
+    end
+
     # At the provider seam: an awkward split cannot corrupt the Response.
     it "produces the same Response no matter how the stream is chunked" do
       one_shot = described_class.new(transport: stream_transport([ndjson(stream_lines)]))

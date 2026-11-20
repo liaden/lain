@@ -348,7 +348,8 @@ RSpec.describe "a whole recorded run", :seam, records: :ollama,
     expect(run.answer.text).to eq(T14RecordedRun::REPLY)
     expect(run.answer.model).to eq(T14RecordedRun::MODEL)
     expect(run.answer).to stop_with(:end_turn)
-    expect([run.answer.usage.input_tokens, run.answer.usage.output_tokens]).to eq([5_408, 229])
+    expect([run.answer.usage.total_input_tokens, run.answer.usage.output_tokens]).to eq([5_408, 229])
+    expect(run.answer.usage.cache_read_input_tokens).to eq(5_360)
   end
 
   # The first assertion the cassette cannot fake: a tool_result is

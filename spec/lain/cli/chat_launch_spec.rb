@@ -594,9 +594,9 @@ RSpec.describe Lain::CLI::ChatLaunch do
     # `spec/lain/project_dir_spec.rb` forbids `lib/` from rebuilding.
     it "publishes the state feed when telemetry flows, under --journal even with no --nvim" do
       Dir.mktmpdir do |dir|
-        with_env("XDG_STATE_HOME" => dir) do
+        with_env("XDG_STATE_HOME" => dir, "ANTHROPIC_API_KEY" => "sk-spec") do
           Dir.chdir(dir) do
-            instance = launch({ journal: true })
+            instance = launch({ journal: true, provider: "anthropic" })
             instance.open_chronicle
 
             chronicle = instance.chronicle
@@ -653,7 +653,7 @@ RSpec.describe Lain::CLI::ChatLaunch do
         with_env("XDG_STATE_HOME" => dir) do
           given = []
           instance = launch({ journal: false, nvim: "/tmp/lain-cli-spec.sock" },
-                            status_feed_factory: lambda { |run_clock:, context_window:, agent_states:|
+                            status_feed_factory: lambda { |run_clock:, context_window:, agent_states:, **|
                               given << agent_states
                               Lain::StatusFeed.new(run_clock:, context_window:, agent_states:)
                             },
@@ -740,6 +740,30 @@ RSpec.describe Lain::CLI::ChatLaunch do
       instance.call { |_notice| nil }
 
       expect(given_to_feed).to be_a(Lain::RunClock).and be(given_to_wiring)
+    end
+  end
+
+  describe "the cache profile the state feed publishes against" do
+    def feed_profile(options)
+      given = nil
+      instance = launch(options, status_feed_factory: lambda { |run_clock:, context_window:, cache_profile:, **|
+        given = cache_profile
+        Lain::StatusFeed.new(run_clock:, context_window:, cache_profile:)
+      })
+      [instance, instance.tap(&:status_feed) && given]
+    end
+
+    it "builds no provider while the feed is built, so a launch with no credential still reaches its own refusal" do
+      _instance, given = feed_profile({ journal: false })
+
+      expect(given).to respond_to(:call)
+    end
+
+    it "is the provider's own once asked, so a provider with no prompt cache publishes no deadline" do
+      instance, given = feed_profile({ journal: false, provider: "ollama", model: "qwen3:4b", max_tokens: 64 })
+
+      expect(given.call).to eq(instance.backend.provider.cache_profile)
+      expect(given.call[:ttl]).to eq(0)
     end
   end
 

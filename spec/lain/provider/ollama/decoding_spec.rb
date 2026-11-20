@@ -440,4 +440,24 @@ RSpec.describe Lain::Provider::Ollama::Decoding do
       expect(response.content).to eq([{ "type" => "thinking", "thinking" => "still weighing the options" }])
     end
   end
+
+  describe "usage, with the prompt cache's share of the prompt" do
+    def usage_of(**counts) = decode(body(content: "hi").merge(counts.transform_keys(&:to_s))).usage
+
+    it "splits a warm prompt into fresh input and cache reads that sum to the prompt" do
+      usage = usage_of(prompt_eval_count: 7353, prompt_eval_cached_count: 6998)
+
+      expect([usage.input_tokens, usage.cache_read_input_tokens, usage.total_input_tokens]).to eq([355, 6998, 7353])
+    end
+
+    it "reads a frame with no cached count as all fresh input" do
+      usage = usage_of(prompt_eval_count: 7353)
+
+      expect([usage.input_tokens, usage.cache_read_input_tokens]).to eq([7353, 0])
+    end
+
+    it "never reports a negative input when the cached count exceeds the prompt" do
+      expect(usage_of(prompt_eval_count: 10, prompt_eval_cached_count: 12).input_tokens).to eq(0)
+    end
+  end
 end
