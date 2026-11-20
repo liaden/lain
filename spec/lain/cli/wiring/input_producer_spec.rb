@@ -69,6 +69,27 @@ RSpec.describe Lain::CLI::Wiring::InputProducer do
         expect(header).to end_with(" rv 3+1?")
       end
     end
+
+    it "ends with the project's count when the project has github settings of its own" do
+      Dir.mktmpdir do |home|
+        paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => File.join(home, "state"),
+                                       "XDG_CONFIG_HOME" => File.join(home, "config") })
+        root = File.join(home, "project")
+        FileUtils.mkdir_p(File.join(root, ".lain"))
+        File.write(File.join(root, ".lain", "config.rb"), "github orgs: %w[acme]\n")
+        Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:, paths:), paths:).grant!
+        [paths.review_counts, paths.review_counts(root)].zip(["rv 5", "rv 3"]).each do |path, hud|
+          FileUtils.mkdir_p(File.dirname(path))
+          File.write(path, JSON.generate("hud" => hud, "stale" => false))
+        end
+        header = described_class.new(human: nil, attended: true, cockpit: false, pending: nil, stdin: nil, notes: nil,
+                                     paths:, root:, switchboard: nil, commands: -> { [] }, registration: nil,
+                                     status_feed: instance_double(Lain::StatusFeed, state: { "inbox_count" => 0 }))
+                                .hud_line
+
+        expect(header).to end_with(" rv 3")
+      end
+    end
   end
 
   describe "the chat it builds for an attended human" do

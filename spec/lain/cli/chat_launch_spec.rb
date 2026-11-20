@@ -2411,3 +2411,53 @@ RSpec.describe Lain::CLI::ChatLaunch, "--human remote" do
     end
   end
 end
+
+RSpec.describe Lain::CLI::ChatLaunch, "the project poll request" do
+  around do |example|
+    Dir.mktmpdir("lain-chat-poll") do |dir|
+      @dir = File.realpath(dir)
+      example.run
+    end
+  end
+
+  let(:paths) { Lain::Paths.new(env: SpecHome.env({ "XDG_STATE_HOME" => File.join(@dir, "state") })) }
+
+  def write_project_config(body)
+    FileUtils.mkdir_p(File.join(@dir, ".lain"))
+    File.write(File.join(@dir, ".lain", "config.rb"), body)
+    Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: @dir, paths:), paths:).grant!
+  end
+
+  def registered_record
+    record = nil
+    allow(Lain::Config).to receive(:think).and_return(nil)
+    allow(Lain::Daemon::Registration).to receive(:new).and_wrap_original do |original, **kwargs|
+      record = kwargs.fetch(:record)
+      original.call(**kwargs)
+    end
+    launch_quietly
+    record
+  end
+
+  def launch_quietly
+    wiring = instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0,
+                                                run: nil)
+    project = throwaway_project(@dir)
+    described_class.new({ journal: false }, wiring_factory: ->(**) { wiring }, project_factory: -> { project },
+                                            paths:, env: SpecHome.env({}),
+                                            gc_schedule_factory: ->(**) { instance_spy(Lain::CLI::GcSchedule) })
+                   .call { |_notice| nil }
+  end
+
+  it "asks for its project's poll when the project's config has a github verb" do
+    write_project_config("github orgs: %w[acme]\n")
+
+    expect(registered_record.project_poll).to be(true)
+  end
+
+  it "does not when the project's config has none" do
+    write_project_config("# nothing\n")
+
+    expect(registered_record.project_poll).to be(false)
+  end
+end

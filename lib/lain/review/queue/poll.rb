@@ -22,13 +22,26 @@ module Lain
         # only a count is let through: nothing else can reach a status bar as an escape or a tmux format.
         #
         # @param paths [Paths]
+        # @param root [String, nil] a project root whose own poll wrote the file; nil for the user's
         # @return [String] empty when there is no counts file or it holds anything but a count
-        def self.hud(paths:)
-          counts = JSON.parse(File.read(paths.review_counts))
+        def self.hud(paths:, root: nil)
+          counts = JSON.parse(File.read(paths.review_counts(root)))
           line = counts.is_a?(Hash) ? counts["hud"] : nil
           COUNT.match?(line.to_s) ? "#{line}#{"?" if counts["stale"] == true}" : ""
         rescue SystemCallError, JSON::ParserError, Paths::NonAbsoluteHome
           ""
+        end
+
+        # The root whose counts file a HUD should read: the project's when it polls on settings of its own,
+        # else nil, which reads the user's. A config that is untrusted or will not run is not the HUD's to refuse.
+        #
+        # @param root [String] a project root
+        # @param paths [Paths]
+        # @return [String, nil]
+        def self.counts_root(root:, paths:)
+          root if Config.project_github?(root:, paths:)
+        rescue Lain::Error, SystemCallError
+          nil
         end
 
         # @param reads [Forge::Gh::Reads]

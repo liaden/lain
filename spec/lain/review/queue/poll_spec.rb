@@ -173,6 +173,15 @@ RSpec.describe Lain::Review::Queue::Poll do
       expect(hud).to eq("rv 7+2?")
     end
 
+    it "reads a project's own file when given its root" do
+      root = File.join(@dir, "project")
+      FileUtils.mkdir_p(File.dirname(paths.review_counts(root)))
+      File.write(paths.review_counts(root), JSON.generate("hud" => "rv 3", "stale" => false))
+      File.write(counts_file, JSON.generate("hud" => "rv 5", "stale" => false))
+
+      expect([described_class.hud(paths:, root:), hud]).to eq(["rv 3", "rv 5"])
+    end
+
     it "is empty for a file that is not JSON" do
       File.write(counts_file, "{")
 
@@ -220,6 +229,39 @@ RSpec.describe Lain::Review::Queue::Poll do
     poll.call
 
     expect(queries).to eq(["is:open is:pr review-requested:@me archived:false"])
+  end
+
+  describe ".counts_root" do
+    let(:paths) do
+      Lain::Paths.new(env: { "HOME" => @dir, "XDG_STATE_HOME" => @dir, "XDG_CONFIG_HOME" => File.join(@dir, "config") })
+    end
+    let(:root) { File.join(@dir, "project") }
+
+    def write_config(body, trusted: true)
+      FileUtils.mkdir_p(File.join(root, ".lain"))
+      File.write(File.join(root, ".lain", "config.rb"), body)
+      Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root:, paths:), paths:).grant! if trusted
+    end
+
+    it "is the root when the project has github settings of its own" do
+      write_config("github orgs: %w[acme]\n")
+
+      expect(described_class.counts_root(root:, paths:)).to eq(root)
+    end
+
+    it "is nil when it has none" do
+      write_config("# nothing\n")
+
+      expect(described_class.counts_root(root:, paths:)).to be_nil
+    end
+
+    it "is nil, rather than a refusal, for a config that is untrusted or will not run" do
+      write_config("github orgs: %w[acme]\n", trusted: false)
+      expect(described_class.counts_root(root:, paths:)).to be_nil
+
+      write_config("raise 'broken'\n")
+      expect(described_class.counts_root(root:, paths:)).to be_nil
+    end
   end
 
   describe "orgs" do

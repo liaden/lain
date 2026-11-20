@@ -408,7 +408,8 @@ module Lain
         writer = Liveness::Writer.current
         LiveSessions::Record.new(session_id:, pid: writer.pid, start: writer.start, host: writer.host,
                                  root: project.root, cwd: project.cwd, input_socket:, journal: chronicle.journal_path,
-                                 attended: human.answers_at_terminal?, started_at: Time.now.utc.iso8601(6))
+                                 attended: human.answers_at_terminal?, started_at: Time.now.utc.iso8601(6),
+                                 project_poll: Config.project_github?(root: project.root, paths: @paths))
       end
 
       # ONE reading of `--non-interactive` and `--human`, handed to the wiring, so the record, the Repl, the

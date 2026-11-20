@@ -3875,3 +3875,84 @@ RSpec.describe Lain::CLI::Up, "the phone relay" do
     expect(described_class.const_defined?(:Relay, false)).to be(false)
   end
 end
+
+RSpec.describe Lain::CLI::Up, "the review count its HUD reads" do
+  around do |example|
+    Dir.mktmpdir("lain-up-counts") do |dir|
+      @dir = File.realpath(dir)
+      example.run
+    end
+  end
+
+  let(:project) { File.join(@dir, "project") }
+  let(:paths) do
+    Lain::Paths.new(env: SpecHome.env({ "HOME" => @dir, "XDG_STATE_HOME" => File.join(@dir, "state"),
+                                        "XDG_CONFIG_HOME" => File.join(@dir, "config") }))
+  end
+  let(:state_path) { File.join(@dir, "state.json") }
+  let(:socket) { "lain-spec-counts-#{Process.pid}-#{object_id}" }
+
+  before do
+    skip("tmux not found on PATH") unless system("tmux", "-V", out: File::NULL, err: File::NULL)
+    FileUtils.mkdir_p(File.join(project, ".git"))
+    File.write(state_path, JSON.generate("hud" => "state "))
+    write_counts(paths.review_counts, "rv 5")
+  end
+
+  after { system("tmux", "-L", socket, "kill-server", out: File::NULL, err: File::NULL) }
+
+  def write_counts(path, hud)
+    FileUtils.mkdir_p(File.dirname(path))
+    File.write(path, JSON.generate("hud" => hud, "stale" => false))
+  end
+
+  def write_project_config(body)
+    FileUtils.mkdir_p(File.join(project, ".lain"))
+    File.write(File.join(project, ".lain", "config.rb"), body)
+    Lain::Project::Trust.for(project_dir: Lain::ProjectDir.new(root: project, paths:), paths:).grant!
+  end
+
+  def hud_line(cwd: project, chat_args: [])
+    described_class.new(session: "lain", socket:, cwd:, state_path:, paths:, chat_args:,
+                        chat_preflight: ->(_args) { [] }, gc_schedule: -> {}).call(env: { "HOME" => @dir })
+    raw = Open3.capture2("tmux", "-L", socket, "show-options", "-v", "-t", "lain", "status-right").first
+    Open3.capture3("sh", "-c", raw.strip.delete_prefix("#(").delete_suffix(")")).first.strip
+  end
+
+  it "is the project's when the project has a poll of its own" do
+    write_project_config("github orgs: %w[acme]\n")
+    write_counts(paths.review_counts(project), "rv 3")
+
+    expect(hud_line).to eq("state rv 3")
+  end
+
+  it "is the user's when the project has none" do
+    expect(hud_line).to eq("state rv 5")
+  end
+
+  it "is the project's that --root names, whatever directory up was run from" do
+    write_project_config("github orgs: %w[acme]\n")
+    write_counts(paths.review_counts(project), "rv 3")
+    elsewhere = File.join(@dir, "elsewhere")
+    FileUtils.mkdir_p(elsewhere)
+
+    expect(hud_line(cwd: elsewhere, chat_args: ["--root", project])).to eq("state rv 3")
+  end
+
+  it "is the project's that --root names, with --cwd inside it" do
+    write_project_config("github orgs: %w[acme]\n")
+    write_counts(paths.review_counts(project), "rv 3")
+    inner = File.join(project, "lib")
+    FileUtils.mkdir_p(inner)
+
+    expect(hud_line(cwd: @dir, chat_args: ["--root=#{project}", "--cwd", inner])).to eq("state rv 3")
+  end
+
+  it "is the user's when the project's config will not run" do
+    write_project_config("github orgs: %w[acme]\n")
+    write_counts(paths.review_counts(project), "rv 3")
+    File.write(File.join(project, ".lain", "config.rb"), "raise 'broken'\n")
+
+    expect(hud_line).to eq("state rv 5")
+  end
+end

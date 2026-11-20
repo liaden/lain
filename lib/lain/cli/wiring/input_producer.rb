@@ -58,11 +58,15 @@ module Lain
         #
         # @return [String]
         def hud_line
-          Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now) +
-            Lain::Review::Queue::Poll.hud(paths: @paths)
+          Lain::StatusFeed::Reading.new(@status_feed.state).hud(now: Time.now) + review_count
         end
 
         private
+
+        def review_count
+          poll = Lain::Review::Queue::Poll
+          poll.hud(paths: @paths, root: poll.counts_root(root: @root, paths: @paths))
+        end
 
         def stdin_pump(rail, tty)
           Lain::Frontend::StdinPump.new(rail:, screen: tty, input: @stdin, notes: @notes,

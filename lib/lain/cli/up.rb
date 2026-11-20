@@ -1238,7 +1238,7 @@ module Lain
         @cwd = cwd
         @paths = paths
         @panes = Panes.new(tmux: @tmux, session: @session, window: chat_target)
-        @hud = Hud.new(state_path:, interval: status_interval, reviews_path: paths.review_counts)
+        @hud = Hud.new(state_path:, interval: status_interval, reviews_path: review_counts(cwd:, paths:, chat_args:))
         @chat_args = chat_args
         @chat_command = chat_command
         @input_command = input_command
@@ -1586,6 +1586,30 @@ module Lain
         @tmux.act("set-window-option", "-t", chat_target, "pane-border-status", "top")
         @panes.title
         enable_extended_keys
+      end
+
+      # The project the chat will open, read from `--root` and `--cwd` as the chat reads them, so the bar counts
+      # what the chat's own HUD counts.
+      def review_counts(cwd:, paths:, chat_args:)
+        root = chat_root(cwd:, paths:, chat_args:)
+        paths.review_counts(::Lain::Review::Queue::Poll.counts_root(root:, paths:))
+      rescue Lain::Error, SystemCallError
+        paths.review_counts
+      end
+
+      def chat_root(cwd:, paths:, chat_args:)
+        flagged = ->(flag) { flag_value(chat_args, flag)&.then { |path| File.expand_path(path, cwd) } }
+        root = flagged.call("--root")
+        Project::Resolver.new(home: paths.home_or_nil, paths:).call(cwd: flagged.call("--cwd") || root || cwd, root:)
+                         .project.root
+      end
+
+      def flag_value(args, flag)
+        joined = args.find { |arg| arg.start_with?("#{flag}=") }
+        return joined.delete_prefix("#{flag}=") if joined
+
+        index = args.index(flag)
+        args[index + 1] if index
       end
 
       # A reattach already has a chat running, and a hint must never stop the launch it decorates.
