@@ -168,7 +168,8 @@ module Lain
             replies:, fork_point: ForkPoint.new(dir: @paths.filing_dir(root: place.root)),
             tmux_surface: herdr.window_surface, agent:, chronicle:,
             model_switch:, mode_switch:, role_spawn: @role_spawn, snapshots:, epic_driver:,
-            reporter: herdr.reporter, child_argv: ChildArgv.for(root: @root, cwd: @cwd, chronicle:, profile:)
+            reporter: herdr.reporter, child_argv: ChildArgv.for(root: @root, cwd: @cwd, chronicle:, profile:,
+                                                                mode: -> { mode_switch.current })
           )
         end
 

@@ -125,7 +125,7 @@ module Lain
       #   Channel to; absent means no nvim sink and no Channel is built at all
       def initialize(options:, chronicle:, status_feed:, agent_states:, window_surface: TmuxSurface.new,
                      child_argv: ChildArgv.new(root: nil, cwd: nil, journal_path: -> { chronicle.journal_path },
-                                               typed: {}, chat_flags: []))
+                                               typed: {}, mode: -> { Lain::Mode.new }))
         @options = options
         @channel = Lain::Channel::DropOldest.new if options[:nvim]
         # Built BEFORE the tee (it goes IN it), then pointed AT the tee's own

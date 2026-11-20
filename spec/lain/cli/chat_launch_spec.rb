@@ -361,6 +361,45 @@ RSpec.describe Lain::CLI::ChatLaunch do
                wiring_factory: ->(**) { wiring }, env:, project_factory: -> { project }, **factories)
       end
 
+      def wiring_holding(mode_switch)
+        instance_double(Lain::CLI::Wiring, conductor: instance_spy(Lain::CLI::Conductor), exit_status: 0,
+                                           command_surface: mode_switch && Object.new,
+                                           command_env: Struct.new(:mode_switch).new(mode_switch))
+      end
+
+      def resume_words_during_run(options, mode_switch: nil)
+        words = []
+        wiring = wiring_holding(mode_switch)
+        project = throwaway_project(@herdr_dir)
+        instance = launch({ journal: true, provider: "ollama", **options }, env: herdr_env(unlinked),
+                                                                            project_factory: -> { project },
+                                                                            wiring_factory: ->(**) { wiring })
+        target = Lain::Herdr::Target.new(bin: "herdr", pane: "w1:p1", socket: "s", via: :env)
+        allow(wiring).to receive(:run) do
+          words << instance.send(:herdr_reporter).resume_words(target)
+          mode_switch&.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
+          words << instance.send(:herdr_reporter).resume_words(target)
+        end
+        instance.call { |_notice| nil }
+        words
+      end
+
+      it "writes the resume command at the approval the run holds when it is written, not at launch" do
+        switch = Lain::Mode::Switch.new(Lain::Mode.new(approval: :auto), journal: instance_spy(Lain::Journal))
+        before, after = resume_words_during_run({ approval: "auto" }, mode_switch: switch)
+
+        expect(before.each_cons(2).find { |flag, _| flag == "--approval" }.last).to eq("auto")
+        expect(after.each_cons(2).find { |flag, _| flag == "--approval" }.last).to eq("bypass")
+      end
+
+      # Mirrors Switchboard.for's own default (`options.fetch(:approval, :ask)`): until the command
+      # surface exists the launch flag is all there is to read.
+      it "falls back to the launch approval, ask when none was typed, before the command surface exists" do
+        before, = resume_words_during_run({})
+
+        expect(before.each_cons(2).find { |flag, _| flag == "--approval" }.last).to eq("ask")
+      end
+
       it "does not refuse --windows when the lain plugin is linked" do
         instance = launch_windows(herdr_env(linked))
 

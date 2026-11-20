@@ -73,11 +73,12 @@ RSpec.describe Lain::Herdr::Reporter, :seam do
     let(:via) { :env }
 
     it "stores a command that resumes the same session from another directory" do
-      argv = Lain::CLI::ChildArgv.new(root: dir, cwd: dir, journal_path: -> { journal_path }, typed: {},
-                                      chat_flags: [])
+      argv = Lain::CLI::ChildArgv.new(root: dir, cwd: dir, journal_path: -> { journal_path }, typed: {}, mode: lambda {
+        Lain::Mode.new(approval: :bypass)
+      })
       words = described_class.new(resolver:, session: chronicle, child_argv: argv).resume_words(target)
 
-      expect(words).to eq(["lain", "chat", "--root", dir, "--cwd", dir, "--resume", name])
+      expect(words).to eq(["lain", "chat", "--root", dir, "--cwd", dir, "--approval", "bypass", "--resume", name])
       expect(resolved(words, words[words.index("--root") + 1])).to eq(journal_path)
     end
   end

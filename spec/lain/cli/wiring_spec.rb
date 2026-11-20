@@ -4718,8 +4718,15 @@ RSpec.describe Lain::CLI::Wiring do
       argv = env.child_argv.chat("--fork", "s.ndjson@abc")
 
       expect(argv).to eq(["chat", "--root", project_dir, "--cwd", project_dir, "--provider", "ollama",
-                          "--fork", "s.ndjson@abc"])
+                          "--approval", "ask", "--fork", "s.ndjson@abc"])
       expect(Lain::CLI::ChildArgv.printable(argv)).to start_with("lain chat --root #{project_dir} --cwd #{project_dir}")
+    end
+
+    it "starts a fork at the approval the run holds after a flip, read through the real mode switch", :seam do
+      env = run_wiring.command_env
+      env.mode_switch.switch(Lain::Mode.new(approval: :bypass), surface: "spec")
+
+      expect(env.child_argv.chat("--fork", "s.ndjson@abc")).to include("--approval", "bypass")
     end
 
     it "assembles the frozen Command::Env once, nil-free, from the collaborators it wired", :seam do

@@ -246,8 +246,17 @@ module Lain
         @herdr_reporter ||= Herdr::Reporter.new(resolver: herdr_resolver, session: chronicle,
                                                 up_command: Herdr::Reporter::CockpitSession.new(env: @env),
                                                 child_argv: ChildArgv.for(root: project.root, cwd: project.cwd,
-                                                                          chronicle:, profile:),
+                                                                          chronicle:, profile:,
+                                                                          mode: method(:live_mode)),
                                                 notes: herdr_notes)
+      end
+
+      # The switchboard is built after the reporter, so the live mode is read per command and the
+      # launch flag stands in until the command surface exists.
+      def live_mode
+        return Mode.new(approval: @options.fetch(:approval, :ask)) unless @wiring&.command_surface
+
+        @wiring.command_env.mode_switch.current
       end
 
       def herdr_notes = @herdr_notes ||= Herdr::HeldNotes.new

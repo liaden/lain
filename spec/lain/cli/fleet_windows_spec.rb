@@ -561,7 +561,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "watches the chat it was opened from, naming that session in the window" do
       child_argv = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { "/tmp/somewhere.ndjson" },
-                                            typed: {}, chat_flags: [])
+                                            typed: {}, mode: -> { Lain::Mode.new })
       elsewhere = described_class.new(surface:, notice: notices, spawner:, child_argv:)
       elsewhere << spawn_record
       elsewhere.drain_pending
@@ -572,7 +572,7 @@ RSpec.describe Lain::CLI::FleetWindows do
 
     it "names the chat's session in a capped actor's printed line too" do
       child_argv = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { "/tmp/second.ndjson" },
-                                            typed: {}, chat_flags: [])
+                                            typed: {}, mode: -> { Lain::Mode.new })
       second = described_class.new(surface:, notice: notices, spawner:, child_argv:)
       5.times { |i| second << spawn_record(digest: format("blake3:%04x111122223333", i)) }
       second << usage_record
@@ -1057,7 +1057,7 @@ RSpec.describe Lain::CLI::FleetWindows do
     it "leaves a window running the watch subcommand alive, with nothing reported dead" do
       session_file = plant_session
       tailing = Lain::CLI::ChildArgv.new(root: nil, cwd: nil, journal_path: -> { session_file }, typed: {},
-                                         chat_flags: [])
+                                         mode: -> { Lain::Mode.new })
       as_a_pane_would(program: lain_exe) do
         Sync do
           fleet = described_class.new(child_argv: tailing, surface: real_surface,

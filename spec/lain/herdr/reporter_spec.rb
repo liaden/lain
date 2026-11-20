@@ -203,11 +203,12 @@ RSpec.describe Lain::Herdr::Reporter do
 
     it "restarts a chat in a plain herdr pane on the root and directory it runs in" do
       argv = Lain::CLI::ChildArgv.new(root: dir, cwd: File.join(dir, "sub"), journal_path: -> {}, typed: {},
-                                      chat_flags: [])
+                                      mode: -> { Lain::Mode.new(approval: :bypass) })
       run(reporter(resolver: fixed(target), child_argv: argv), [request])
 
       expect(resume_of(reports.first))
-        .to eq(["lain", "chat", "--root", dir, "--cwd", File.join(dir, "sub"), "--resume", "s.ndjson"])
+        .to eq(["lain", "chat", "--root", dir, "--cwd", File.join(dir, "sub"), "--approval", "bypass", "--resume",
+                "s.ndjson"])
     end
 
     it "is left out for a cockpit that stored no command" do
@@ -249,7 +250,7 @@ RSpec.describe Lain::Herdr::Reporter do
     it "is left out for a word carrying URL credentials, and says why without printing them" do
       credential = "https://user:fake-pw@host.test/v1"
       argv = Lain::CLI::ChildArgv.new(root: dir, cwd: dir, journal_path: -> {}, typed: { api_base: credential },
-                                      chat_flags: [])
+                                      mode: -> { Lain::Mode.new })
       run(reporter(resolver: fixed(target), child_argv: argv), [request])
 
       expect(reports.map { [flag(_1, "--state"), resume_of(_1)] }).to eq([["working", nil]])
@@ -428,6 +429,7 @@ RSpec.describe Lain::Herdr::Reporter do
       lambda do |chronicle:, **|
         Object.new.tap do |wiring|
           wiring.define_singleton_method(:conductor) { nil }
+          wiring.define_singleton_method(:command_surface) { nil }
           wiring.define_singleton_method(:run) do |**|
             chronicle.start(context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 16),
                             toolset: Lain::Toolset.new, sections: SessionSections.complete)
@@ -551,7 +553,8 @@ RSpec.describe Lain::Herdr::Reporter do
       expect(File.exist?(File.join(dir, "made"))).to be(true), output
       expect(reports.map { flag(_1, "--state") }).to eq(%w[working idle working blocked working idle]), output
       expect(resume_of(reports.last)).to eq(["lain", "chat", "--root", dir, "--cwd", dir, "--provider", "ollama",
-                                             "--resume", File.basename(File.read(File.join(dir, "journal_path")))])
+                                             "--approval", "ask", "--resume",
+                                             File.basename(File.read(File.join(dir, "journal_path")))])
       expect(calls.count { _1.first(2) == %w[pane release-agent] }).to eq(1)
       expect(calls.map { _1.first(2) }.uniq).to contain_exactly(%w[agent get], %w[pane report-agent],
                                                                 %w[pane release-agent])

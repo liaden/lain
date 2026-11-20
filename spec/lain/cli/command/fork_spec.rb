@@ -10,7 +10,7 @@ RSpec.describe Lain::CLI::Command::Fork do
   let(:head) { "blake3:#{"ab12" * 16}" }
   let(:session) { "2026-07-23T10-00-00Z-chat.ndjson" }
   let(:selector) { "#{session}@#{head}" }
-  let(:command_line) { "lain chat --fork #{selector}" }
+  let(:command_line) { "lain chat --approval auto --fork #{selector}" }
 
   let(:calls) { [] }
   # A settled head: the mid-tool gate reads role/content off the head turn
@@ -62,21 +62,22 @@ RSpec.describe Lain::CLI::Command::Fork do
       fork_command.call("", env)
 
       expect(tmux_surface).to have_received(:window)
-        .with(command: Lain::CLI::PaneCommand.call("chat", "--fork", selector),
+        .with(command: Lain::CLI::PaneCommand.call("chat", "--approval", "auto", "--fork", selector),
               name: "fork-ab12ab12ab12", cwd: Dir.pwd)
     end
 
     it "pins the live run's root, so a chat started with --root from elsewhere forks into that project" do
       argv = Lain::CLI::ChildArgv.new(root: "/proj", cwd: "/proj", journal_path: -> { "/sessions/#{session}" },
-                                      typed: {}, chat_flags: [])
+                                      typed: {}, mode: -> { Lain::Mode.new(approval: :ask) })
       rooted = build_command_env(agent:, chronicle:, fork_point:, tmux_surface:, supervisor:, child_argv: argv)
 
       text = fork_command.call("", rooted)
 
       expect(tmux_surface).to have_received(:window)
-        .with(command: Lain::CLI::PaneCommand.call("chat", "--root", "/proj", "--cwd", "/proj", "--fork", selector),
+        .with(command: Lain::CLI::PaneCommand.call("chat", "--root", "/proj", "--cwd", "/proj", "--approval", "ask",
+                                                   "--fork", selector),
               name: "fork-ab12ab12ab12", cwd: Dir.pwd)
-      expect(text).to include("lain chat --root /proj --cwd /proj --fork #{selector}")
+      expect(text).to include("lain chat --root /proj --cwd /proj --approval ask --fork #{selector}")
     end
 
     it "proves the selector resolves through the SAME ForkPoint the child will use, before any window opens" do

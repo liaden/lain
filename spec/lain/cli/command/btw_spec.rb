@@ -37,7 +37,7 @@ RSpec.describe Lain::CLI::Command::Btw do
     it "runs the child through Up's pane recipe (never a bare `lain chat`), rooted at this project's cwd" do
       selector = "#{File.basename(journal_path)}@#{head}"
       expect(tmux_surface).to receive(:popup) do |command:, cwd:, **|
-        expect(command).to eq(Lain::CLI::PaneCommand.call("chat", "--btw", "--fork", selector,
+        expect(command).to eq(Lain::CLI::PaneCommand.call("chat", "--approval", "auto", "--btw", "--fork", selector,
                                                           "--prompt", "why is the build red?"))
         expect(cwd).to eq(Dir.pwd)
         placement
@@ -50,11 +50,12 @@ RSpec.describe Lain::CLI::Command::Btw do
 
     it "pins the live run's root, cwd and typed flags, in the popup and in the printed fallback" do
       argv = Lain::CLI::ChildArgv.new(root: "/proj", cwd: "/proj/app", journal_path: -> { journal_path },
-                                      typed: { provider: "ollama" }, chat_flags: [])
+                                      typed: { provider: "ollama" }, mode: -> { Lain::Mode.new(approval: :bypass) })
       rooted = build_command_env(chronicle:, agent:, supervisor: Lain::Supervisor::Null, tmux_surface:,
                                  child_argv: argv)
       selector = "#{File.basename(journal_path)}@#{head}"
-      words = ["chat", "--root", "/proj", "--cwd", "/proj/app", "--provider", "ollama", "--btw", "--fork", selector,
+      words = ["chat", "--root", "/proj", "--cwd", "/proj/app", "--provider", "ollama", "--approval", "bypass",
+               "--btw", "--fork", selector,
                "--prompt", "why?"]
       expect(tmux_surface).to receive(:popup).with(hash_including(command: Lain::CLI::PaneCommand.call(*words)))
                                              .and_raise(Lain::CLI::TmuxSurface::TmuxUnavailable, "no tmux")
@@ -176,7 +177,7 @@ RSpec.describe Lain::CLI::Command::Btw do
 
       text = command.call("why?", env)
 
-      expect(text).to include("lain chat --btw --fork")
+      expect(text).to include("lain chat --approval auto --btw --fork")
       expect(text).to include("tmux not found on PATH")
     end
   end

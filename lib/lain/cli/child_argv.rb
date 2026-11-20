@@ -34,10 +34,11 @@ module Lain
         # @param cwd [String] where the run sits inside the root
         # @param profile [RunProfile] the run's resolved profile, of which only the typed fields travel
         # @param chronicle [#journal_path] the run's session file, read at each use
+        # @param mode [#call] answers the run's {Lain::Mode} now, because the approval moves after launch
         # @return [ChildArgv] a child launches with no --nvim, --windows or --input, which stay the parent's
-        def for(root:, cwd:, chronicle:, profile:)
+        def for(root:, cwd:, chronicle:, profile:, mode:)
           new(root:, cwd:, journal_path: -> { chronicle.journal_path },
-              typed: profile.to_options.slice(*profile.typed), chat_flags: [])
+              typed: profile.to_options.slice(*profile.typed), mode:)
         end
 
         # A child's argv keeps what the human typed, as the parent's own does; a line lain SHOWS
@@ -52,27 +53,29 @@ module Lain
         def mask(text) = text.gsub(%r{(://)[^/\s@]*@}, '\1***@')
 
         # A command line for a run that resolved no project and keeps no journal.
-        def bare = new(root: nil, cwd: nil, journal_path: -> {}, typed: {}, chat_flags: [])
+        def bare
+          new(root: nil, cwd: nil, journal_path: -> {}, typed: {}, mode: -> { Lain::Mode.new(approval: :auto) })
+        end
       end
 
       # @param root [String, nil] the live run's project root, which a child started elsewhere cannot guess
       # @param cwd [String, nil] where the live run sits inside the root
       # @param journal_path [#call] answers the session file now, because `/keep` moves it after promotion
       # @param typed [Hash{Symbol=>Object}] the model flags the human typed, by profile field
-      # @param chat_flags [Array<String>] the chat's own flags as launched
-      def initialize(root:, cwd:, journal_path:, typed:, chat_flags:)
+      # @param mode [#call] answers the live run's {Lain::Mode}, so a child starts at the approval held now
+      def initialize(root:, cwd:, journal_path:, typed:, mode:)
         @root = root
         @cwd = cwd
         @journal_path = journal_path
         @typed = typed
-        @chat_flags = chat_flags
+        @mode = mode
         freeze
       end
 
       # @param extra [Array<String>] words kept as given, after the live run's flags
-      # @return [Array<String>] a `chat` command line, `--resume`, `--fork` and `--prompt` left off the run's flags
+      # @return [Array<String>] a `chat` command line carrying the run's root, cwd, typed flags and live approval
       def chat(*extra)
-        ["chat", *pins("--root" => @root, "--cwd" => @cwd), *typed_flags, *self.class.fresh(@chat_flags), *extra]
+        ["chat", *pins("--root" => @root, "--cwd" => @cwd), *typed_flags, *approval_flag, *extra]
       end
 
       # @return [Array<String>] a `watch` command line tailing this chat's session
@@ -81,6 +84,8 @@ module Lain
       private
 
       def pins(flags) = flags.compact.flat_map { |flag, value| [flag, value.to_s] }
+
+      def approval_flag = pins("--approval" => @mode.call.approval.name)
 
       def typed_flags = pins(@typed.transform_keys { |field| "--#{field.to_s.tr("_", "-")}" })
     end
