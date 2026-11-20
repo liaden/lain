@@ -285,6 +285,18 @@ RSpec.describe Lain::Sensitivity::RailsCredentials do
     end
   end
 
+  describe ".seal" do
+    it "seals text in the format its reader opens, under the key it is given" do
+      key = generate_key
+      FileUtils.mkdir_p(File.join(@root, "config"))
+      File.write(File.join(@root, "config/master.key"), key)
+      File.write(File.join(@root, "config/credentials.yml.enc"),
+                 described_class.seal("a:\n  b: sealed-here-leaf-5\n", key:))
+
+      expect([leaves, reports]).to eq([["sealed-here-leaf-5"], []])
+    end
+  end
+
   # A fresh ruby, so what an earlier example loaded cannot hide a load here.
   it "reads the leaves without loading ActiveSupport's JSON extensions, which reshape every later to_json" do
     encrypt("a: fresh-ruby-leaf-1\n", "config/credentials.yml.enc", key_path: "config/master.key")

@@ -50,6 +50,20 @@ module Lain
         text.force_encoding(Encoding::UTF_8)
       end
 
+      # Text sealed the way Rails seals its credentials, so Rails and {#leaves} both open it.
+      #
+      # @param text [String] the YAML the credentials hold
+      # @param key [String] 32 hex digits
+      # @return [String] `data--iv--tag`, each strict base64
+      def self.seal(text, key:)
+        cipher = OpenSSL::Cipher.new(CIPHER).encrypt
+        cipher.key = [key].pack("H*")
+        nonce = cipher.random_iv
+        cipher.auth_data = ""
+        data = cipher.update(Marshal.dump(text.encode(Encoding::UTF_8))) + cipher.final
+        [data, nonce, cipher.auth_tag(TAG_BYTES)].map { [_1].pack("m0") }.join("--")
+      end
+
       def self.tail_ok?(tail, wrapped) = wrapped ? ENCODING_TAIL.include?(tail) : tail.empty?
 
       # Marshal's small-integer encoding, non-negative values only.

@@ -130,6 +130,96 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
     expect(result.content).to include(Lain::Exec::Sandboxed::CONTAINED)
   end
 
+  it "shows an approved call a masked file as empty, and the result says masked files read so" do
+    box, exec = contained_where_possible(workspace: true)
+
+    _, result = answered("y\n", exec:, containment: box.containment, command: "cat .env; echo rc=$?")
+
+    expect(result.content).to include("--- stdout ---\nrc=0\n", "masks read as empty or as a decoy")
+    expect(result.content).not_to include(planted)
+  end
+
+  describe "a commit from a contained call, in a repo that tracks a masked file" do
+    def git(*args) = SeedRepo.git(@root, "-c", "user.name=s", "-c", "user.email=s@x", *args).stdout
+
+    def blob(path, rev = ":") = git("rev-parse", "#{rev}#{path}").chomp
+
+    # Plumbing reads the index's sizes and times as they are, where git status refreshes them first.
+    def quiet_diffs
+      [%w[diff-files], %w[diff-index HEAD]].map { system(SeedRepo::SCRUB, "git", "-C", @root, *_1, "--quiet") }
+    end
+
+    # Reading .env is what parks the call, so the human's y runs it contained, where it may write the repo.
+    def committed(script)
+      box, exec = contained_where_possible(workspace: true)
+      command = "cat .env > /dev/null; #{script}"
+      answered("y\n", exec:, containment: box.containment, command:).last
+    end
+
+    let(:commit) { "git -c user.name=a -c user.email=a@b commit -qam x" }
+
+    def track(*paths)
+      paths.each do |path|
+        FileUtils.mkdir_p(File.dirname(File.join(@root, path)))
+        File.write(File.join(@root, path), "real #{path}\n") unless File.exist?(File.join(@root, path))
+      end
+      File.write(File.join(@root, "app.rb"), "app\n")
+      git("add", "-f", *paths, "app.rb")
+      git("commit", "-qm", "seed")
+      paths.to_h { [_1, blob(_1)] }
+    end
+
+    it "stores the real credentials file when the call commits everything" do
+      FileUtils.mkdir_p(File.join(@root, "config"))
+      File.write(File.join(@root, "config/master.key"), "#{SecureRandom.hex(16)}\n")
+      before = track("config/credentials.yml.enc")
+
+      result = committed("echo more >> app.rb; #{commit}")
+
+      expect(result.content).to start_with("exit status: 0")
+      expect(blob("config/credentials.yml.enc", "HEAD:")).to eq(before.fetch("config/credentials.yml.enc"))
+      expect(git("log", "-1", "--format=%s")).to eq("x\n")
+      expect(quiet_diffs).to eq([true, true])
+      expect(git("status", "--porcelain", "--untracked-files=no")).to eq("")
+    end
+
+    it "stores the real .env when the call commits everything under an empty mask" do
+      before = track(".env")
+
+      committed("echo more >> app.rb; #{commit}")
+
+      expect(git("log", "-1", "--format=%s")).to eq("x\n")
+      expect(blob(".env", "HEAD:")).to eq(before.fetch(".env"))
+      expect(quiet_diffs).to eq([true, true])
+      expect(git("status", "--porcelain", "--untracked-files=no")).to eq("")
+    end
+
+    it "takes back out of the index the empty .env a call staged where git did not track it, and says so" do
+      track
+
+      result = committed("git add -f .env")
+
+      expect(git("ls-files", "--", ".env")).to eq("")
+      expect(result.content).to include(".env", "back out of git's index")
+    end
+
+    it "puts the recorded blob back in the index when a .gitattributes the call wrote defeats the filter" do
+      before = track(".env")
+
+      committed("printf '.env -filter\\n' > .gitattributes; git add -A")
+
+      expect(blob(".env")).to eq(before.fetch(".env"))
+    end
+
+    it "names a commit that holds the empty mask past the filter, and says how to amend it" do
+      track(".env")
+
+      result = committed("printf '.env -filter\\n' > .gitattributes; git add -A; #{commit}")
+
+      expect(result.content).to include(git("rev-parse", "HEAD").chomp, ".env", "git commit --amend")
+    end
+  end
+
   it "runs it under the reader profile with no network under --confine reader" do
     box, exec = contained_where_possible(workspace: false)
     sent = received

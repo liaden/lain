@@ -234,8 +234,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       parked_secret { nil }
 
       expect(rpc.last[:lines].last)
-        .to eq("-- y runs a call that reads secrets contained, without network, where files lain masks cannot " \
-               "be read; network runs it unconfined, with network; n deny  " \
+        .to eq("-- y runs a call that reads secrets contained, without network, where files lain masks read as " \
+               "empty or as a decoy; network runs it unconfined, with network; n deny  " \
                "(:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])")
     end
 

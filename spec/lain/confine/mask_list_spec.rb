@@ -1185,26 +1185,29 @@ RSpec.describe Lain::Confine::MaskList, :seam do
     def confined(*argv)
       masks = listed_masks
       profile = Lain::Confine::Profile.workspace(root: project, home: Dir.home, tmpdir: File.join(@plain, "t"), masks:)
-      wrapped = Lain::Confine::Bwrap.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3)
-      run(wrapped.stages.first.argv)
+      launcher = Lain::Confine::Bwrap.new(fence:)
+      bound = launcher.masked(profile).bind(stages: 1, first_fd: 4)
+      run(launcher.wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3, bound:).stages.first.argv, bound.fds)
+    ensure
+      bound&.close
     end
 
-    def run(argv)
+    def run(argv, fds)
       reader, writer = IO.pipe
-      out, err, status = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: project, 3 => writer)
+      out, err, status = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: project, 3 => writer, **fds)
       [out, err, status.success?]
     ensure
       writer&.close
       reader&.close
     end
 
-    it "keeps the child from reading .env, and lets it read an ordinary file" do
+    it "shows the child .env as an empty file, and lets it read an ordinary file" do
       File.write(File.join(project, ".env"), "SECRET=1\n")
       File.write(File.join(project, "config", "master.key"), "KEY\n")
       File.write(File.join(project, "README.md"), "the readme\n")
 
       expect([confined("cat", ".env"), confined("cat", "README.md")])
-        .to match([["", /No such file|Permission denied/, false], ["the readme\n", "", true]])
+        .to eq([["", "", true], ["the readme\n", "", true]])
     end
   end
 end

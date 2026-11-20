@@ -3,6 +3,7 @@
 
 ENV["BUNDLE_GEMFILE"] ||= File.expand_path("../Gemfile", __dir__)
 require "bundler/setup"
+require "fileutils"
 require "lain"
 require "open3"
 require "pathname"
@@ -51,6 +52,7 @@ module HotPathBench
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
     "bash_true_workspace" => 17.8,
+    "bash_true_workspace_masked" => nil,
     "request_100000" => 1.17,
     "request_1000000" => 2.98,
     "request_guarded_1000000" => 5.49,
@@ -123,7 +125,58 @@ module HotPathBench
 
   def measure
     hot_paths = HotPaths.new
-    puts JSON.generate([*hot_paths.rows, *credential_scan_rows(hot_paths), *spawn_rows(hot_paths)].map(&:to_h))
+    puts JSON.generate([*hot_paths.rows, *masked_bash_rows(hot_paths), *credential_scan_rows(hot_paths),
+                        *spawn_rows(hot_paths)].map(&:to_h))
+  end
+
+  MASKED_REPS = 50
+  MASKED_RULING = Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "bench")
+
+  # bash_true_workspace runs with no masks; this is the same call in a Rails-shaped repo whose key, tracked
+  # credentials and .env are masked, so it pays the mask descriptors and the git guard a real project pays.
+  def masked_bash_rows(hot_paths)
+    Dir.mktmpdir("hot-path-masked") do |dir|
+      root = File.realpath(dir)
+      masked_repo(root)
+      exec, request = masked_call(root)
+      call = -> { exec.call(command: "true", cwd: root, env: {}, timeout: 10, confinement: request) }
+      ran = call.call
+      return [masked_skipped("the masked call exited #{ran.exit_status}: #{ran.stderr.lines.first}")] unless
+        ran.exit_status.zero?
+
+      [hot_paths.measure(MASKED_REPS, name: "bash_true_workspace_masked") { call.call }]
+    end
+  rescue Lain::Error => e
+    [masked_skipped(e.message)]
+  end
+
+  def masked_repo(root)
+    files = { "config/master.key" => "#{"0" * 32}\n", "config/credentials.yml.enc" => "sealed\n",
+              ".env" => "SECRET=1\n", "app.rb" => "app\n" }
+    files.each do |path, text|
+      FileUtils.mkdir_p(File.dirname(File.join(root, path))) && File.write(File.join(root, path), text)
+    end
+    git = ->(*args) { system(Lain::Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, *args, exception: true) }
+    git.call("init", "-q")
+    git.call("add", "config/credentials.yml.enc", "app.rb")
+    git.call("-c", "user.name=bench", "-c", "user.email=bench@x", "commit", "-qm", "seed")
+  end
+
+  def masked_call(root)
+    journal = Lain::Channel::Null.instance
+    fence = Lain::Confine::Bwrap.fence_binary
+    policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: Dir.home, cwd: root))
+    masks = Lain::Confine::MaskList.new(root:, policy: -> { policy })
+    box = Lain::Confine::Sandbox.new(root:, home: Dir.home, masks:, fence:, journal:, workspace: true,
+                                     probe: Lain::Confine::Probe.new(fence:, journal:),
+                                     tmpdir: File.join(root, "tmp").tap { FileUtils.mkdir_p(_1) })
+    exec = box.wrap(Lain::Exec::Local.new, requirer: "bin/hot-path-bench")
+    box.prime
+    [exec, Lain::Confine::Request.new(ruling: MASKED_RULING, executables: [], cwd: root, root:, tool_use_id: "bench")]
+  end
+
+  def masked_skipped(why)
+    HotPaths::Row.new(name: "bash_true_workspace_masked", median_ms: nil, spread_ms: nil, reps: 0, skipped: why)
   end
 
   # A backtracking shape stalls every read and write it guards on a long unbroken line; Ruby cannot

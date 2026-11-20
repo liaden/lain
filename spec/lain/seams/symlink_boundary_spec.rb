@@ -264,7 +264,7 @@ RSpec.describe "A symlink is judged where it lands", :seam do
 
       capture = run_confined("cat .ssh/config")
 
-      expect(capture.stdout + capture.stderr).to include("Permission denied")
+      expect(capture).to have_attributes(exit_status: 0, stdout: "")
       expect(capture.stdout + capture.stderr).not_to include("SECRETBYTES")
       expect(policy.judge(File.join(@repo, ".ssh", "config"), cwd: @repo)).to be_gated
     end

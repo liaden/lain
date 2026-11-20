@@ -77,11 +77,22 @@ module Lain
                    "phone answers its calls, so a bash call runs outside the sandbox only when a human approved it " \
                    "and lain can trace it, and this call would run outside it otherwise. Retrying will be refused " \
                    "again. Stop and tell the human, then wait for the answer."
-      CONTAINED = "This call ran contained, as it was approved without network: files lain masks cannot be read " \
-                  "in the sandbox, and it had no network. To see a masked file's values, use read_file."
-      CONTAINED_PORTED = "This call ran contained, as it was approved: files lain masks cannot be read in the " \
-                         "sandbox, and it could reach the host's network only on TCP ports %<ports>s, which its " \
-                         "build tool fetches over. To see a masked file's values, use read_file."
+      MASKED_IN_GIT = "files lain masks read as empty or as a decoy in the sandbox, so git status may list " \
+                      "each tracked one as M there though git holds it unchanged"
+      CONTAINED = "This call ran contained, as it was approved without network: #{MASKED_IN_GIT}, and it had no " \
+                  "network. To see a masked file's values, use read_file.".freeze
+      CONTAINED_PORTED = "This call ran contained, as it was approved: #{MASKED_IN_GIT}, and it could reach the " \
+                         "host's network only on TCP ports %<ports>s, which its build tool fetches over. To see a " \
+                         "masked file's values, use read_file.".freeze
+      RESTORED = "lain put git's index entry for %<path>s back: an empty file or a decoy was staged there in " \
+                 "place of the masked file."
+      UNSTAGED = "lain took %<path>s back out of git's index: an empty file or a decoy was staged there in place " \
+                 "of the masked file, which git did not track."
+      UNDONE = "lain could not undo it when an empty file or a decoy was staged at %<path>s, so git's index " \
+               "still holds it in place of the masked file; `%<command>s` undoes it."
+      DECOY_COMMIT = "Commit %<commit>s holds the empty file or decoy this call read for %<path>s, not the masked " \
+                     "file. Once git's index is put back, `git commit --amend --no-edit` repairs the commit when " \
+                     "it is the last one; an earlier one needs a rebase."
       # Each profile build that refuses for a path, and the sentence that says why.
       UNBUILT = { Confine::Profiles::NoTmpdir => NO_TMPDIR, Confine::Profile::HomeTmpdir => HOME_TMPDIR,
                   Confine::Profile::HoldsState => HOLDS_STATE, Confine::Profile::Tampered => TAMPERED }.freeze
@@ -152,10 +163,40 @@ module Lain
                                            network: confinement.ruling.network?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
-        run = { command:, cwd:, env:, timeout:, launch: launch(profile), pinned_env: pinned_env(profile), **sinks }
-        told_contained(confinement, profile) do
-          profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
+        guarded(profile, stages(command)) do |bound, guard|
+          run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard), **sinks }
+          told_contained(confinement, profile) do
+            profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
+          end
         end
+      end
+
+      # The masks are bound from descriptors numbered after every stage's trace, and the guard settles even
+      # when the call raised, so no stand-in it staged stays in the index.
+      def guarded(profile, stages)
+        masked = @launcher.masked(profile)
+        guard = Confine::DecoyGuard.before(root: profile.read_dirs.first, masks: masked.files)
+        bound = masked.bind(stages:, first_fd: TRACE_FD + stages, also: guard.binds)
+        begin
+          capture = yield(bound, guard)
+        ensure
+          bound.close
+          settled = guard.settle
+        end
+        guard_notice(settled).then { _1.empty? ? capture : appended(capture, _1) }
+      end
+
+      def spawn_options(profile, bound, guard)
+        { launch: launch(profile, bound), pinned_env: pinned_env(profile).merge(guard.env),
+          **(bound.fds.empty? ? {} : { fds: bound.fds }) }
+      end
+
+      def guard_notice(settled)
+        [*settled.restored.map { phrased(RESTORED, path: printable(_1)) },
+         *settled.unstaged.map { phrased(UNSTAGED, path: printable(_1)) },
+         *settled.failed.map { |path, command| phrased(UNDONE, path: printable(path), command:) },
+         *settled.commits.map { |commit, path| phrased(DECOY_COMMIT, commit:, path: printable(path)) }]
+          .map { "#{_1}\n" }.join
       end
 
       def told_contained(confinement, profile)
@@ -187,10 +228,10 @@ module Lain
 
       def reaped(profile) = unreaped?(profile) ? Confine::Profile::NONE : profile
 
-      def launch(profile)
+      def launch(profile, bound)
         return Shell::Pipeline::AS_WRITTEN if unreaped?(profile)
 
-        ->(term) { @launcher.wrap(term, profile, trace_fd: TRACE_FD) }
+        ->(term) { @launcher.wrap(term, profile, trace_fd: TRACE_FD, bound:) }
       end
 
       def stages(command) = command.is_a?(String) ? 1 : command.stages.size
@@ -207,7 +248,7 @@ module Lain
       def traced(confinement, profile, run, stages)
         channels = Channels.new(stages, first_fd: TRACE_FD)
         begin
-          capture = @inner.call(**run, fds: channels.writers)
+          capture = @inner.call(**run, fds: channels.writers.merge(run.fetch(:fds, {})))
         rescue Exception => e # rubocop:disable Lint/RescueException
           journal_trace(channels, confinement, profile, e)
           raise

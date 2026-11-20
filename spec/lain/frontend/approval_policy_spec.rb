@@ -985,7 +985,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     context "when lain can contain it" do
       it "says once that a y runs it contained, without network, and offers the network answer" do
         seen = shown
-        choice = "y runs it contained, without network, where files lain masks cannot be read; " \
+        choice = "y runs it contained, without network, where files lain masks read as empty or as a decoy; " \
                  "network runs it unconfined, with network [y/N/network] "
 
         expect(seen.to_s).to end_with("approve bash(#{effect.input.inspect})? #{choice}")

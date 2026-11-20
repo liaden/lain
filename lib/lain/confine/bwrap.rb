@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "pathname"
+require "tempfile"
 
 module Lain
   module Confine
@@ -18,6 +19,7 @@ module Lain
       include Launcher
 
       STRING_BYTES = 256
+      HOST_TMP = "/tmp"
 
       # @param env [Hash] where CARGO_TARGET_DIR is read from, see {Paths::Shipped.cargo_target}
       # @return [String] where `rake compile` writes the fence
@@ -42,40 +44,64 @@ module Lain
       # @param fence [String] the lain-fence binary
       # @param bwrap [String, nil]
       # @param strace [String, nil]
-      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace")
+      # @param decoys [Decoys] what a masked file reads as
+      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace", decoys: Decoys.new)
         @fence = fence
         @bwrap = bwrap
         @strace = strace
+        @decoys = decoys
         @seal_binds = SealBinds.new
+      end
+
+      # The kind is read here, the last moment before bwrap binds, because a
+      # mask list keeps a path, not what it was when judged; a hidden path is
+      # kept only while it is there, since bwrap aborts on a mount at nothing.
+      # A directory gets an empty read-only tmpfs. A mask inside a masked
+      # directory is left out: bwrap cannot bind into the read-only tmpfs.
+      #
+      # @param profile [Profile]
+      # @return [Masked] each mask, with the bytes a file reads as or nil for a directory
+      def masked(profile)
+        masks = [*profile.masks, *profile.hidden.select { File.exist?(_1) }]
+        dirs = masks.select { File.directory?(_1) }
+        kept = masks.reject { |mask| dirs.any? { mask != _1 && Landing.under?(mask, _1) } }
+        files = kept - dirs
+        Masked.new(entries: [*kept, *@decoys.partners(files)].map { [_1, shown(_1, dirs, files)].freeze }.freeze,
+                   own_tmp: profile.read_dirs.first != HOST_TMP)
       end
 
       # @param term [Shell::Term]
       # @param profile [Profile]
       # @param trace_fd [Integer] the first stage's trace descriptor; stage i,
       #   counted across every pipeline, writes to `trace_fd + i`
+      # @param bound [Bound] the profile's masks, bound for every stage of the term
       # @return [Shell::Term]
-      def wrap(term, profile, trace_fd:)
-        stage_fds = (trace_fd..).each
+      def wrap(term, profile, trace_fd:, bound:)
+        stages = (0..).each
         Shell::Term.new(pipelines: term.pipelines.map do |pipeline|
           Shell::Term::Pipeline.new(stages: pipeline.stages.map do |stage|
-            Shell::Term::Stage.new(argv: prefix(profile, stage_fds.next) + stage.argv, discards: stage.discards)
+            index = stages.next
+            Shell::Term::Stage.new(argv: prefix(profile, trace_fd + index, bound.argv(index)) + stage.argv,
+                                   discards: stage.discards)
           end)
         end)
       end
 
       # @param private_net [Boolean]
       # @return [Array<String>] the bwrap argv a confined call runs under, through its closing "--"
-      def namespace_argv(private_net:) = namespace(Profile.new(name: :reader, trace: false, private_net:))
+      def namespace_argv(private_net:) = namespace(Profile.new(name: :reader, trace: false, private_net:), [])
 
       private
 
-      def prefix(profile, own)
+      def shown(mask, dirs, files) = (@decoys.bytes_for(mask, masks: files) unless dirs.include?(mask))
+
+      def prefix(profile, own, masking)
         return [*trace(profile, own), @fence, "--reap-only", "--"] unless profile.confined?
 
-        [*namespace(profile), *trace(profile, own), *fence(profile)]
+        [*namespace(profile, masking), *trace(profile, own), *fence(profile)]
       end
 
-      def namespace(profile)
+      def namespace(profile, masking)
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
          "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
          *("--unshare-net" if profile.private_net),
@@ -83,7 +109,7 @@ module Lain
          *writable(profile).flat_map { |dir| ["--bind-try", dir, dir] },
          *profile.homes.flat_map { housing(_1, profile) },
          *@seal_binds.for(profile.sealed, writable(profile)),
-         *masking([*profile.masks, *profile.hidden.select { File.exist?(_1) }]), "--"]
+         *masking, "--"]
       end
 
       # The fence decides what may be written; this only lifts bwrap's
@@ -107,20 +133,6 @@ module Lain
       end
 
       def back(flag, home, name) = File.join(home.path, name).then { [flag, _1, _1] }
-
-      # The kind is read here, the last moment before bwrap binds, because a
-      # mask list keeps a path, not what it was when judged; a hidden path is
-      # kept only while it is there, since bwrap aborts on a mount at nothing.
-      # bwrap cannot bind /dev/null over a directory, so a directory gets an
-      # empty read-only tmpfs. A mask inside a masked directory is left out: bwrap cannot bind
-      # into the read-only tmpfs, and on a writable one the bind would put the
-      # name back.
-      def masking(masks)
-        dirs = masks.select { File.directory?(_1) }
-        masks.reject { |mask| dirs.any? { mask != _1 && Landing.under?(mask, _1) } }.flat_map do |mask|
-          dirs.include?(mask) ? ["--tmpfs", mask, "--remount-ro", mask] : ["--ro-bind", "/dev/null", mask]
-        end
-      end
 
       # The private /tmp hides whatever the host had there, a project or a
       # granted program included; a project that is /tmp itself takes the host's
@@ -156,6 +168,80 @@ module Lain
                    "--connect-port" => profile.connect_ports, "--unix-dir" => profile.unix_dirs }
         [@fence, *("--private-net" if profile.private_net),
          *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
+      end
+
+      # A call's masks, read for their kind and bytes.
+      # `own_tmp` is false where the project is /tmp itself: the host's /tmp is then bound back read-only over
+      # the call's own, and bwrap could not make another file there.
+      Masked = Data.define(:entries, :own_tmp) do
+        # @return [Hash{String => String}] each masked file and the bytes it reads as
+        def files = entries.reject { _2.nil? }.to_h
+
+        # @param stages [Integer] how many stages the term runs
+        # @param first_fd [Integer] the first descriptor free after every stage's trace
+        # @param also [Hash{String => String}] more files to bind as data under /tmp, after the masks
+        # @return [Bound]
+        def bind(stages:, first_fd:, also: {}) = Bound.new([*entries, *(also if own_tmp)], stages:, first_fd:)
+      end
+
+      # Every mask bound from a descriptor, never a path: bwrap follows a link
+      # at a source, so a link planted there would read any host file at a
+      # project path. bwrap reads each descriptor to its end and closes it,
+      # so every mask of every stage gets its own. Mode 0400 keeps an empty file bound
+      # over a hidden program from running as an empty script. Each stage
+      # inherits every stage's descriptors, as it does the traces, and the
+      # fence closes all of them above stderr before the command runs.
+      class Bound
+        # @param entries [Array<Array(String, String, nil)>] each path, with its bytes or nil for a directory
+        # @param stages [Integer]
+        # @param first_fd [Integer]
+        def initialize(entries, stages:, first_fd:)
+          @opened = []
+          @fds = {}
+          sources = entries.map { |path, bytes| [path, bytes && readers(bytes, stages)] }
+          numbers = (first_fd..).each
+          @argv = Array.new(stages) do |stage|
+            sources.flat_map do |path, readers|
+              readers ? data(numbers.next, readers.fetch(stage), path) : ["--tmpfs", path, "--remount-ro", path]
+            end
+          end
+          @empty = entries.empty?
+        rescue StandardError
+          close
+          raise
+        end
+
+        # @return [Hash{Integer => IO}] what the spawn hands each stage, at its descriptor
+        attr_reader :fds
+
+        # @param stage [Integer] counted across every pipeline
+        # @return [Array<String>] the stage's mask flags
+        def argv(stage) = @empty ? [] : @argv.fetch(stage)
+
+        # @return [void]
+        def close = @opened.each { _1.close unless _1.closed? }
+
+        private
+
+        def data(number, reader, path)
+          @fds[number] = reader
+          ["--perms", "0400", "--ro-bind-data", number.to_s, path]
+        end
+
+        # One reader per stage, each with its own offset, from a file removed once they are open: no writer
+        # outlives the spawn, and the bytes may be any size, as an attributes file over many masks can be.
+        # Reopened through the descriptor it was written by, never its path, which a link could replace.
+        def readers(bytes, stages)
+          return Array.new(stages) { opened(File::NULL) } if bytes.empty?
+
+          Tempfile.create("lain-mask", binmode: true) do |file|
+            file.write(bytes)
+            file.flush
+            Array.new(stages) { opened("/proc/self/fd/#{file.fileno}") }
+          end
+        end
+
+        def opened(path) = File.new(path, "rb").tap { @opened << _1 }
       end
 
       # The binds that keep a workspace's seals in place: each directory

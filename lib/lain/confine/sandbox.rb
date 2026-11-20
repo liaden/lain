@@ -68,10 +68,10 @@ module Lain
       # whose build tools keep their ports, and `ports` the ones a parked call could earn.
       class Containment
         NETWORK_CHOICE = "network runs it unconfined, with network"
-        ABLE_CHOICE = "y runs %<call>s contained, without network, where files lain masks cannot be read; " \
-                      "#{NETWORK_CHOICE}".freeze
-        PORTED_CHOICE = "y runs %<call>s contained, where files lain masks cannot be read, and its build tool may " \
-                        "reach the host's network on TCP ports %<ports>s; #{NETWORK_CHOICE}".freeze
+        ABLE_CHOICE = "y runs %<call>s contained, without network, where files lain masks read as empty or as a " \
+                      "decoy; #{NETWORK_CHOICE}".freeze
+        PORTED_CHOICE = "y runs %<call>s contained, where files lain masks read as empty or as a decoy, and its " \
+                        "build tool may reach the host's network on TCP ports %<ports>s; #{NETWORK_CHOICE}".freeze
         UNABLE_CHOICE = "y will not run %<call>s; #{NETWORK_CHOICE}".freeze
         UNABLE_NOTE = "lain cannot contain it here (%<because>s)"
         OFF_NOTE = "it will run unconfined, with network, because %<because>s"

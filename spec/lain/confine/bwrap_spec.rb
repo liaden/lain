@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "open3"
+require "securerandom"
 require "tmpdir"
 
 RSpec.describe Lain::Confine::Bwrap do
@@ -8,15 +9,29 @@ RSpec.describe Lain::Confine::Bwrap do
 
   let(:term) { Lain::Shell::Term.of(%w[cat README.md]) }
   let(:reader) { Lain::Confine::Profile.reader(root: "/p", home: "/h", masks: ["/p/.env"], exec_files: ["/h/.local/bin/grep"]) }
+  let(:opened) { [] }
 
   def argv_of(wrapped) = wrapped.stages.first.argv
 
+  after { opened.each(&:close) }
+
+  # Each stage's mask descriptors, opened as Exec::Sandboxed opens them: numbered after every stage's trace.
+  def wrapping(launcher, term, profile, trace_fd: 3)
+    stages = term.stages.size
+    bound = launcher.masked(profile).bind(stages:, first_fd: trace_fd + stages)
+    opened << bound
+    launcher.wrap(term, profile, trace_fd:, bound:)
+  end
+
+  # What the last wrap hands its spawn, beside the trace descriptor.
+  def handed = opened.last&.fds || {}
+
   describe "#wrap" do
     it "puts the reader profile's call inside bwrap, then strace, then the fence" do
-      expect(argv_of(launcher.wrap(term, reader, trace_fd: 3))).to eq(
+      expect(argv_of(wrapping(launcher, term, reader, trace_fd: 3))).to eq(
         %W[/usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc
            --size #{Lain::Confine::Profile::TMPFS_BYTES} --tmpfs /tmp --unshare-pid --die-with-parent
-           --ro-bind /dev/null /p/.env --
+           --perms 0400 --ro-bind-data 4 /p/.env --
            /usr/bin/strace -DD -f -s 256 --seccomp-bpf -e trace=execve,execveat,connect,sendto,sendmsg,sendmmsg
            -o /dev/fd/3 --
            /f/lain-fence --exec-dir /usr --exec-dir /h/.rustup/toolchains --exec-file /h/.local/bin/grep
@@ -28,13 +43,83 @@ RSpec.describe Lain::Confine::Bwrap do
       )
     end
 
+    describe "the files it binds beside the masks" do
+      let(:extra) { { "/tmp/.extra" => "a" * 200_000 } }
+
+      it "binds one of any size, each stage reading it whole from a descriptor of its own" do
+        bound = launcher.masked(reader).bind(stages: 2, first_fd: 5, also: extra)
+        opened << bound
+
+        expect(bound.fds.values_at(6, 8).map { _1.read.bytesize }).to eq([200_000, 200_000])
+      end
+
+      # The project's own /tmp is then bound back read-only, where bwrap could not make the file.
+      it "binds none where the project is /tmp itself" do
+        at_tmp = Lain::Confine::Profile.reader(root: "/tmp", home: "/h", masks: ["/tmp/.env"])
+        bound = launcher.masked(at_tmp).bind(stages: 1, first_fd: 4, also: extra)
+        opened << bound
+
+        expect([bound.argv(0), bound.fds.keys]).to eq([%w[--perms 0400 --ro-bind-data 4 /tmp/.env], [4]])
+      end
+
+      it "reads each file from what it wrote, though a link replaced its path before the reopen" do
+        Dir.mktmpdir("lain-host") do |host|
+          File.write(secret = File.join(host, "secret"), "host secret\n")
+          allow(Tempfile).to receive(:create).and_wrap_original do |create, *args, **options, &block|
+            create.call(*args, **options) do |file|
+              allow(file).to receive(:flush).and_wrap_original do |flush|
+                flush.call.tap do
+                  File.unlink(file.path)
+                  File.symlink(secret, file.path)
+                end
+              end
+              block.call(file)
+            end
+          end
+          bound = launcher.masked(reader).bind(stages: 1, first_fd: 4, also: { "/tmp/.extra" => "mine" })
+          opened << bound
+
+          expect(bound.fds.fetch(5).read).to eq("mine")
+        end
+      end
+
+      it "closes every descriptor it opened when binding fails part way" do
+        made = []
+        allow(File).to receive(:new).and_wrap_original do |make, *args, **options, &block|
+          raise Errno::EMFILE if made.size == 3
+
+          make.call(*args, **options, &block).tap { made << _1 }
+        end
+
+        expect { launcher.masked(reader).bind(stages: 3, first_fd: 4, also: extra) }.to raise_error(Errno::EMFILE)
+        expect(made).to all(be_closed)
+      end
+    end
+
+    # A path source would be followed on the host, so a link planted there could read any host file.
+    it "binds every mask from a descriptor of each stage's own, and none from a path" do
+      masked = Lain::Confine::Profile.reader(root: "/p", home: "/h", masks: %w[/p/.env /p/config/master.key])
+      stages = wrapping(launcher, Lain::Shell::Term.of(%w[cat a], %w[head -1]), masked).stages
+
+      expect(stages.map { |stage| stage.argv.each_cons(5).select { _1[2] == "--ro-bind-data" } }).to eq(
+        [[%w[--perms 0400 --ro-bind-data 5 /p/.env], %w[--perms 0400 --ro-bind-data 6 /p/config/master.key]],
+         [%w[--perms 0400 --ro-bind-data 7 /p/.env], %w[--perms 0400 --ro-bind-data 8 /p/config/master.key]]]
+      )
+      namespaces = stages.map { _1.argv[0..._1.argv.index("--")] }
+      expect(namespaces.flatten).not_to include(File::NULL)
+      expect(namespaces.flat_map { _1.each_cons(3).select { |flags| flags.first == "--ro-bind" } }.uniq)
+        .to eq([%w[--ro-bind / /]])
+      expect(handed.keys).to eq([5, 6, 7, 8])
+      expect(handed.values.map(&:read)).to match(["", /\A\h{32}\z/, "", /\A\h{32}\z/])
+    end
+
     it "gives the reader profile no connect-port or unix-dir flag" do
-      expect(argv_of(launcher.wrap(term, reader, trace_fd: 3))).not_to include("--connect-port", "--unix-dir")
+      expect(argv_of(wrapping(launcher, term, reader, trace_fd: 3))).not_to include("--connect-port", "--unix-dir")
     end
 
     it "turns a profile's network grants into fence flags before the separator" do
       granted = Lain::Confine::Profile.new(name: :reader, trace: false, connect_ports: [443, 80], unix_dirs: ["/run/x"])
-      argv = argv_of(launcher.wrap(term, granted, trace_fd: 3))
+      argv = argv_of(wrapping(launcher, term, granted, trace_fd: 3))
       expect(argv[argv.index("/f/lain-fence")..]).to eq(
         %w[/f/lain-fence --connect-port 443 --connect-port 80 --unix-dir /run/x -- cat README.md]
       )
@@ -42,14 +127,14 @@ RSpec.describe Lain::Confine::Bwrap do
 
     it "binds back each read dir under /tmp after the private /tmp hides it, then masks" do
       under = Lain::Confine::Profile.reader(root: "/tmp/p", home: "/h", masks: ["/tmp/p/.env"])
-      expect(argv_of(launcher.wrap(term, under, trace_fd: 3)).each_cons(3).to_a).to include(
-        %w[--tmpfs /tmp --unshare-pid], %w[--ro-bind-try /tmp/p /tmp/p], %w[/tmp/p --ro-bind /dev/null]
+      expect(argv_of(wrapping(launcher, term, under, trace_fd: 3)).each_cons(3).to_a).to include(
+        %w[--tmpfs /tmp --unshare-pid], %w[--ro-bind-try /tmp/p /tmp/p], %w[/tmp/p --perms 0400]
       )
     end
 
     it "binds back a project that is /tmp itself, and a granted program under /tmp" do
       under = Lain::Confine::Profile.reader(root: "/tmp", home: "/h", exec_files: ["/tmp/x/grep"])
-      expect(argv_of(launcher.wrap(term, under, trace_fd: 3)).each_cons(3).to_a).to include(
+      expect(argv_of(wrapping(launcher, term, under, trace_fd: 3)).each_cons(3).to_a).to include(
         %w[--ro-bind-try /tmp /tmp], %w[--ro-bind-try /tmp/x/grep /tmp/x/grep]
       )
     end
@@ -61,9 +146,9 @@ RSpec.describe Lain::Confine::Bwrap do
         sealed: [seal.new(path: "/p/.envrc", absent: false), seal.new(path: "/p/.lain", absent: true)],
         masks: ["/p/.env"]
       )
-      argv = argv_of(launcher.wrap(term, workspace, trace_fd: 3))
+      argv = argv_of(wrapping(launcher, term, workspace, trace_fd: 3))
       expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
-        %w[--bind-try /p /p --bind-try /h/t /h/t --ro-bind /p/.envrc /p/.envrc --ro-bind /dev/null /p/.env]
+        %w[--bind-try /p /p --bind-try /h/t /h/t --ro-bind /p/.envrc /p/.envrc --perms 0400 --ro-bind-data 4 /p/.env]
       )
     end
 
@@ -74,7 +159,7 @@ RSpec.describe Lain::Confine::Bwrap do
         sealed: [seal.new(path: "/p/.git/worktrees/w/gitdir", absent: false),
                  seal.new(path: "/p/.git/commondir", absent: true), seal.new(path: "/elsewhere/hooks", absent: false)]
       )
-      argv = argv_of(launcher.wrap(term, workspace, trace_fd: 3))
+      argv = argv_of(wrapping(launcher, term, workspace, trace_fd: 3))
       expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
         %w[--bind-try /p /p --bind-try /p/.git /p/.git --bind-try /p/.git/worktrees /p/.git/worktrees
            --bind-try /p/.git/worktrees/w /p/.git/worktrees/w
@@ -86,7 +171,7 @@ RSpec.describe Lain::Confine::Bwrap do
       def workspace(private_net) = Lain::Confine::Profile.new(name: :workspace, trace: false, private_net:)
 
       it "unshares bwrap's network and tells the fence the loopback is the call's own" do
-        argv = argv_of(launcher.wrap(term, workspace(true), trace_fd: 3))
+        argv = argv_of(wrapping(launcher, term, workspace(true), trace_fd: 3))
 
         expect(argv[0...argv.index("--")]).to include("--unshare-net")
         expect(argv[argv.index("/f/lain-fence"), 2]).to eq(%w[/f/lain-fence --private-net])
@@ -94,7 +179,8 @@ RSpec.describe Lain::Confine::Bwrap do
 
       it "shares the host's network otherwise, as the reader and a grant do" do
         [workspace(false), reader].each do |profile|
-          expect(argv_of(launcher.wrap(term, profile, trace_fd: 3))).not_to include("--unshare-net", "--private-net")
+          expect(argv_of(wrapping(launcher, term, profile,
+                                  trace_fd: 3))).not_to include("--unshare-net", "--private-net")
         end
       end
     end
@@ -109,7 +195,7 @@ RSpec.describe Lain::Confine::Bwrap do
       end
 
       def mounts(profile)
-        argv_of(launcher.wrap(term, profile, trace_fd: 3)).then do |argv|
+        argv_of(wrapping(launcher, term, profile, trace_fd: 3)).then do |argv|
           argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
         end
       end
@@ -122,7 +208,7 @@ RSpec.describe Lain::Confine::Bwrap do
       end
 
       it "never binds the user's own home writable, though the fence lets the call write the private one" do
-        argv = argv_of(launcher.wrap(term, workspace(writes: %w[registry]), trace_fd: 3))
+        argv = argv_of(wrapping(launcher, term, workspace(writes: %w[registry]), trace_fd: 3))
 
         expect(argv.each_cons(3).to_a).not_to include(%w[--bind-try /h/.cargo /h/.cargo])
         expect(argv[argv.index("/f/lain-fence")..]).to include("/h/.cargo")
@@ -155,7 +241,7 @@ RSpec.describe Lain::Confine::Bwrap do
 
       def hiding(*paths)
         profile = Lain::Confine::Profile.new(name: :workspace, trace: false, hidden: paths)
-        argv = argv_of(launcher.wrap(term, profile, trace_fd: 3))
+        argv = argv_of(wrapping(launcher, term, profile, trace_fd: 3))
         argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
       end
 
@@ -163,18 +249,19 @@ RSpec.describe Lain::Confine::Bwrap do
         FileUtils.mkdir_p(dir = File.join(@dir, "masked"))
         File.write(file = File.join(dir, "config"), "x")
         profile = Lain::Confine::Profile.new(name: :workspace, trace: false, masks: [dir], hidden: [file])
-        argv = argv_of(launcher.wrap(term, profile, trace_fd: 3))
+        argv = argv_of(wrapping(launcher, term, profile, trace_fd: 3))
 
         expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")])
           .to eq(["--tmpfs", dir, "--remount-ro", dir])
       end
 
-      it "shows a file as /dev/null and a dir empty and read-only, and skips one that has gone since it was built" do
+      # 0400, so an empty file over a hidden program cannot run as an empty script.
+      it "shows a file empty and unrunnable and a dir empty and read-only, and skips one that has gone since" do
         File.write(file = File.join(@dir, "config"), "x")
         FileUtils.mkdir_p(dir = File.join(@dir, "shims"))
 
         expect(hiding(file, dir, File.join(@dir, "gone")))
-          .to eq(["--ro-bind", "/dev/null", file, "--tmpfs", dir, "--remount-ro", dir])
+          .to eq(["--perms", "0400", "--ro-bind-data", "4", file, "--tmpfs", dir, "--remount-ro", dir])
       end
     end
 
@@ -189,7 +276,7 @@ RSpec.describe Lain::Confine::Bwrap do
         )
       end
 
-      def binds(profile) = argv_of(launcher.wrap(term, profile, trace_fd: 3)).then { _1[0..._1.index("--")] }
+      def binds(profile) = argv_of(wrapping(launcher, term, profile, trace_fd: 3)).then { _1[0..._1.index("--")] }
 
       def bound(profile, flag) = binds(profile).each_cons(2).select { _1.first == flag }.map(&:last)
 
@@ -222,22 +309,22 @@ RSpec.describe Lain::Confine::Bwrap do
         name: :workspace, trace: false, write_dirs: ["/p"],
         sealed: [Lain::Confine::Profile::Seal.new(path: "/p/.lain", absent: true)]
       )
-      expect(argv_of(launcher.wrap(term, workspace, trace_fd: 3))).not_to include("/p/.lain")
+      expect(argv_of(wrapping(launcher, term, workspace, trace_fd: 3))).not_to include("/p/.lain")
     end
 
     it "keeps its private /tmp when the project is elsewhere" do
-      expect(argv_of(launcher.wrap(term, reader, trace_fd: 3))).not_to include("--ro-bind-try")
+      expect(argv_of(wrapping(launcher, term, reader, trace_fd: 3))).not_to include("--ro-bind-try")
     end
 
     it "leaves the trace out of a reader profile that has none" do
       untraced = Lain::Confine::Profile.reader(root: "/p", home: "/h", trace: false)
-      expect(argv_of(launcher.wrap(term, untraced, trace_fd: 3))).not_to include("/usr/bin/strace")
+      expect(argv_of(wrapping(launcher, term, untraced, trace_fd: 3))).not_to include("/usr/bin/strace")
     end
 
     # The reaper closes every descriptor above stderr, the trace's included, so
     # the traced command cannot write its own exec lines.
     it "wraps a traced profile with strace writing to its descriptor, then the fence as a reaper only" do
-      expect(argv_of(launcher.wrap(term, Lain::Confine::Profile::TRACED, trace_fd: 5))).to eq(
+      expect(argv_of(wrapping(launcher, term, Lain::Confine::Profile::TRACED, trace_fd: 5))).to eq(
         ["/usr/bin/strace", "-DD", "-f", "-s", "256", "--seccomp-bpf", "-e",
          "trace=execve,execveat,connect,sendto,sendmsg,sendmmsg", "-o", "/dev/fd/5", "--",
          "/f/lain-fence", "--reap-only", "--", "cat", "README.md"]
@@ -248,7 +335,7 @@ RSpec.describe Lain::Confine::Bwrap do
     it "gives every stage a trace descriptor of its own, each counted up from the first" do
       piped = Lain::Shell::Term.new(pipelines: [Lain::Shell::Term.of(%w[cat f], %w[head -1]).pipelines.sole,
                                                 Lain::Shell::Term.of(%w[pwd]).pipelines.sole])
-      wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
+      wrapped = wrapping(launcher, piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
 
       expect(wrapped.stages.map { |stage| stage.argv[stage.argv.index("-o") + 1] }).to eq(
         ["/dev/fd/3", "/dev/fd/4", "/dev/fd/5"]
@@ -259,13 +346,13 @@ RSpec.describe Lain::Confine::Bwrap do
 
     it "writes a reader stage's trace straight to its own descriptor" do
       piped = Lain::Shell::Term.of(%w[cat f], %w[head -1])
-      wrapped = launcher.wrap(piped, reader, trace_fd: 3)
+      wrapped = wrapping(launcher, piped, reader, trace_fd: 3)
 
       expect(wrapped.stages.map { |stage| stage.argv[stage.argv.index("-o") + 1] }).to eq(%w[/dev/fd/3 /dev/fd/4])
     end
 
     it "runs an untraced unconfined profile under the fence as a reaper only" do
-      expect(argv_of(launcher.wrap(term, Lain::Confine::Profile::NONE, trace_fd: 3)))
+      expect(argv_of(wrapping(launcher, term, Lain::Confine::Profile::NONE, trace_fd: 3)))
         .to eq(%w[/f/lain-fence --reap-only -- cat README.md])
     end
 
@@ -276,7 +363,7 @@ RSpec.describe Lain::Confine::Bwrap do
                                                                                stage.call(%w[wc -l])]),
                                       Lain::Shell::Term::Pipeline.new(stages: [stage.call(%w[pwd])])
                                     ])
-      wrapped = launcher.wrap(piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
+      wrapped = wrapping(launcher, piped, Lain::Confine::Profile::TRACED, trace_fd: 3)
       expect(wrapped.pipelines.map { |pipeline| pipeline.stages.map { [_1.argv.last(2), _1.discards] } })
         .to eq([[[%w[-- ls], [:stderr]], [%w[wc -l], []]], [[%w[-- pwd], []]]])
     end
@@ -326,7 +413,7 @@ RSpec.describe Lain::Confine::Bwrap do
         found = %w[bwrap strace].map { executable(dir, _1) }
         traced = Lain::Confine::Profile.new(name: :reader, trace: true)
         launcher = described_class.on_path(fence: "/f/lain-fence", env: { "PATH" => dir })
-        argv = argv_of(launcher.wrap(term, traced, trace_fd: 3))
+        argv = argv_of(wrapping(launcher, term, traced, trace_fd: 3))
 
         expect([argv.first, argv[argv.index("--") + 1]]).to eq(found)
       end
@@ -346,7 +433,7 @@ RSpec.describe Lain::Confine::Bwrap do
   describe "#namespace_argv" do
     it "is the namespace a confined reader call runs under, through its closing separator" do
       bare = Lain::Confine::Profile.new(name: :reader, trace: false)
-      argv = argv_of(launcher.wrap(term, bare, trace_fd: 3))
+      argv = argv_of(wrapping(launcher, term, bare, trace_fd: 3))
 
       expect(launcher.namespace_argv(private_net: false)).to eq(argv[0..argv.index("--")])
     end
@@ -389,15 +476,16 @@ RSpec.describe Lain::Confine::Bwrap do
       File.write(File.join(project, ".env"), "SECRET=1\n")
     end
 
+    def env_reader = Lain::Confine::Profile.reader(root: project, home:, masks: [File.join(project, ".env")])
+
     def confined(*argv)
       plant
-      profile = Lain::Confine::Profile.reader(root: project, home:, masks: [File.join(project, ".env")])
-      run(argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3)))
+      run(argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(argv), env_reader, trace_fd: 3)))
     end
 
     def run(argv)
       reader, writer = IO.pipe
-      out, err, status = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: project, 3 => writer)
+      out, err, status = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: project, 3 => writer, **handed)
       [out, err, status.success?]
     ensure
       writer&.close
@@ -410,8 +498,87 @@ RSpec.describe Lain::Confine::Bwrap do
       expect(confined("cat", __FILE__)).to match(["", /Permission denied/, false])
     end
 
-    it "refuses a masked file inside the project" do
-      expect(confined("cat", File.join(project, ".env"))).to match(["", /Permission denied/, false])
+    it "reads a masked file inside the project as empty" do
+      expect(confined("cat", File.join(project, ".env"))).to eq(["", "", true])
+    end
+
+    # bwrap drains a pipe and closes each descriptor it binds, so 1 shared between masks or stages would fail.
+    it "binds every mask of every stage from a descriptor of its own" do
+      plant
+      FileUtils.mkdir_p(File.join(project, "config"))
+      File.write(File.join(project, "config/master.key"), "real\n")
+      profile = Lain::Confine::Profile.reader(root: project, home:, trace: false,
+                                              masks: %w[.env config/master.key].map { File.join(project, _1) })
+      piped = Lain::Shell::Term.of(%w[cat .env config/master.key], %w[cat config/master.key])
+
+      outs = wrapping(described_class.new(fence:), piped, profile).stages.map { run(_1.argv) }
+
+      expect(outs.map(&:first).uniq.sole).to match(/\A\h{32}\z/)
+      expect(outs.map(&:last)).to eq([true, true])
+    end
+
+    it "leaves the contained command no descriptor beyond its own" do
+      out, _, ok = confined("ls", "-l", "/proc/self/fd")
+      held = out.scan(/ (\d+) -> (.*)$/).to_h
+
+      expect([held.keys, held["3"], ok]).to match([%w[0 1 2 3], %r{\A/proc/\d+/fd\z}, true])
+    end
+
+    it "reads a masked key as empty when it is no Rails key, with no credentials beside it" do
+      FileUtils.mkdir_p(File.join(project, "config"))
+      File.write(key = File.join(project, "config/server.key"), "PRIVATE\n")
+      profile = Lain::Confine::Profile.reader(root: project, home:, masks: [key])
+
+      expect(run(argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(["cat", key]), profile))))
+        .to eq(["", "", true])
+    end
+
+    describe "a Rails app's key and credentials" do
+      let(:key) { SecureRandom.hex(16) }
+
+      def plant_rails
+        plant
+        FileUtils.mkdir_p(File.join(project, "config"))
+        File.write(File.join(project, "config/master.key"), key)
+        File.write(File.join(project, "config/credentials.yml.enc"),
+                   Lain::Sensitivity::RailsCredentials.seal("api: real-leaf-73\n", key:))
+      end
+
+      def read_pair(masks)
+        script = "base64 -w0 config/master.key; echo; base64 -w0 config/credentials.yml.enc"
+        profile = Lain::Confine::Profile.reader(root: project, home:, masks: masks.map { File.join(project, _1) })
+        out, = run(argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(["sh", "-c", script]), profile)))
+        out.lines(chomp: true).map { _1.unpack1("m") }
+      end
+
+      # A fresh ruby, so the real ActiveSupport reads the pair without its JSON extensions reaching this worker.
+      def decrypted(read_key, read_credentials)
+        dir = File.join(@dir, "read")
+        FileUtils.mkdir_p(dir)
+        File.write(File.join(dir, "k"), read_key)
+        File.write(File.join(dir, "c"), read_credentials)
+        FreshRuby.run(<<~RUBY).chomp
+          require "active_support"
+          require "active_support/encrypted_configuration"
+          p ActiveSupport::EncryptedConfiguration.new(config_path: "#{dir}/c", key_path: "#{dir}/k",
+                                                      env_key: "LAIN_SPEC_NO_KEY", raise_if_missing_key: true).config
+        RUBY
+      end
+
+      it "reads as a decoy pair that decrypts to empty credentials, under a key that is not the project's" do
+        plant_rails
+
+        read_key, read_credentials = read_pair(%w[config/master.key config/credentials.yml.enc])
+
+        expect(read_key).to match(/\A\h{32}\z/).and(satisfy { _1 != key })
+        expect(decrypted(read_key, read_credentials)).to eq("{}")
+      end
+
+      it "still decrypts to empty credentials when only the key is masked" do
+        plant_rails
+
+        expect(decrypted(*read_pair(%w[config/master.key]))).to eq("{}")
+      end
     end
 
     it "reads the project" do
@@ -437,8 +604,8 @@ RSpec.describe Lain::Confine::Bwrap do
           Lain::Confine::Profile.new(**reader.to_h, connect_ports: granted)
         end
         script = "exec 3<>/dev/tcp/127.0.0.1/#{port}"
-        run(argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(["bash", "-c", script]), profile,
-                                                     trace_fd: 3)))
+        run(argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(["bash", "-c", script]), profile,
+                             trace_fd: 3)))
       end
 
       it "connects to the granted port and is refused another" do
@@ -472,7 +639,7 @@ RSpec.describe Lain::Confine::Bwrap do
 
       def wrapped(argv, trace: true)
         profile = Lain::Confine::Profile.reader(root: project, home:, masks: listed_masks, trace:)
-        argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3))
+        argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(argv), profile, trace_fd: 3))
       end
 
       # The fence refuses home before a mask is reached, so bwrap's layer runs
@@ -509,12 +676,12 @@ RSpec.describe Lain::Confine::Bwrap do
         FileUtils.mkdir_p(File.dirname(sibling))
         File.write(sibling, "PRIVATE KEY\n")
         plant_repo("ldir" => ssh, "lkey" => sibling)
-        expect(masked_only("cat", "lkey")).to match(["", /Permission denied/, false])
+        expect(masked_only("cat", "lkey")).to eq(["", "", true])
       end
 
       it "reads nothing through a link to the key file" do
         plant_repo("lkey" => File.join(ssh, "id_rsa"))
-        expect(masked_only("cat", "lkey")).to match(["", /Permission denied/, false])
+        expect(masked_only("cat", "lkey")).to eq(["", "", true])
         expect(run(wrapped(%w[cat lkey]))).to match(["", /Permission denied/, false])
       end
     end
@@ -548,12 +715,12 @@ RSpec.describe Lain::Confine::Bwrap do
       Lain::Confine::Profile.workspace(root:, home: Dir.home, tmpdir:, masks: in_root(".env"), exec_files: [ruby])
     end
 
-    def wrapped(argv) = argv_of(described_class.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3))
+    def wrapped(argv) = argv_of(wrapping(described_class.new(fence:), Lain::Shell::Term.of(argv), profile, trace_fd: 3))
 
     def run(argv, env: {})
       reader, writer = IO.pipe
       call_env = { "LC_ALL" => "C", "TMPDIR" => tmpdir, "GIT_CONFIG_GLOBAL" => "/dev/null", **SeedRepo::SCRUB, **env }
-      out, err, status = Open3.capture3(call_env, *argv, chdir: root, 3 => writer)
+      out, err, status = Open3.capture3(call_env, *argv, chdir: root, 3 => writer, **handed)
       [out, err, status.success?]
     ensure
       writer&.close
@@ -778,7 +945,7 @@ RSpec.describe Lain::Confine::Bwrap do
 
       def home_sh(script, **)
         term = Lain::Shell::Term.of(["sh", "-c", script])
-        run(argv_of(described_class.new(fence:).wrap(term, home_profile(**), trace_fd: 3)),
+        run(argv_of(wrapping(described_class.new(fence:), term, home_profile(**), trace_fd: 3)),
             env: { "TMPDIR" => call_dir, "RUBYOPT" => nil })
       end
 
@@ -800,7 +967,7 @@ RSpec.describe Lain::Confine::Bwrap do
       end
 
       # Bundler reads a global config only when its size is not zero, so the size is all it is shown; the fence
-      # refuses the open as well, since the bound /dev/null is the host's, not the one it grants.
+      # refuses the open as well, since the empty file sits at a path it does not grant.
       it "shows bundler's user config as zero bytes, refuses its content and a write, and leaves the host's alone" do
         config = File.join(fixture_home, ".bundle/config")
         before = stamp(config)
@@ -906,13 +1073,13 @@ RSpec.describe Lain::Confine::Bwrap do
       end
     end
 
-    # bwrap mounts the mask nodev, so even bwrap's layer alone refuses to open it, as for a reader.
-    it "refuses the open, so nothing of R/.env is readable" do
+    # bwrap's layer alone shows the empty file, as for a reader, so the fence is not what hides the secret.
+    it "shows R/.env as an empty file, so nothing of it is readable" do
       File.write(File.join(root, ".env"), "SECRET=1\n")
       full = wrapped(%w[cat .env])
+      bwrap_only = full.take(full.index("--") + 1) + %w[cat .env]
 
-      expect(run(full.take(full.index("--") + 1) + %w[cat .env])).to match(["", /Permission denied/, false])
-      expect(run(full)).to match(["", /Permission denied/, false])
+      expect([run(bwrap_only), run(wrapped(%w[cat .env]))]).to eq([["", "", true]] * 2)
     end
   end
 end

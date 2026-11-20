@@ -310,7 +310,7 @@ RSpec.describe Lain::Confine::Sandbox do
       states = [able.containment, sandbox.containment, described_class::Containment.off("bash is not sandboxed")]
 
       expect(states.map { [_1.note, _1.choice] }).to match(
-        [[nil, a_string_including("y runs it contained, without network", "cannot be read")],
+        [[nil, a_string_including("y runs it contained, without network", "masks read as empty or as a decoy")],
          [a_string_including("lain cannot contain it here", "private network"),
           "y will not run it; network runs it unconfined, with network"],
          ["it will run unconfined, with network, because bash is not sandboxed", nil]]
@@ -331,8 +331,8 @@ RSpec.describe Lain::Confine::Sandbox do
     it "names the ports a workspace fetch may be granted, and never says it runs without network" do
       choice = able(workspace: true).over(fetch).choice
 
-      expect(choice).to include("TCP ports 443")
-      expect(choice).not_to include("without network")
+      expect(choice).to include("TCP ports 443", "masks read as empty or as a decoy")
+      expect(choice).not_to include("without network", "cannot be read")
     end
 
     it "says without network for a reader call, which no grant reaches" do

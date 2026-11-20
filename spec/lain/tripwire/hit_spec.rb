@@ -48,11 +48,18 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
   # The scrub guard reads the constant at the call site.
   def git(*args) = system(env.merge(SeedRepo::SCRUB), "git", *args, chdir: project, exception: true, out: File::NULL)
 
+  def wrapped(argv)
+    launcher = Lain::Confine::Bwrap.new(fence:)
+    bound = launcher.masked(profile).bind(stages: 1, first_fd: 4)
+    [launcher.wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3, bound:), bound]
+  end
+
   def sandboxed(argv, extra = {})
-    command = Lain::Confine::Bwrap.new(fence:).wrap(Lain::Shell::Term.of(argv), profile, trace_fd: 3)
+    command, bound = wrapped(argv)
     reader, writer = IO.pipe
-    Open3.capture3(env.merge(extra), *command.stages.first.argv, chdir: project, 3 => writer)
+    Open3.capture3(env.merge(extra), *command.stages.first.argv, chdir: project, 3 => writer, **bound.fds)
     writer.close
+    bound.close
     trace = Lain::Confine::Trace.new(StringIO.new(reader.read)).record(tool_use_id: "tu_1", profile: :workspace)
     JSON.parse(JSON.generate(trace.to_journal))
   end

@@ -118,8 +118,9 @@ RSpec.describe Lain::Exec::Sandboxed do
       it "tells the model a contained call ran with masked files hidden and no network" do
         capture = run(confinement: human(contained: true))
 
-        expect(capture.stderr).to include("files lain masks cannot be read in the sandbox", "it had no network",
-                                          "read_file")
+        expect(capture.stderr).to include("files lain masks read as empty or as a decoy in the sandbox",
+                                          "it had no network", "read_file", "git status may list each tracked one as M")
+        expect(capture.stderr).not_to include("cannot be read")
       end
 
       it "adds nothing to an ordinary call" do
@@ -132,7 +133,8 @@ RSpec.describe Lain::Exec::Sandboxed do
         it "names the ports it could reach rather than saying it had no network" do
           capture = run(confinement: human(contained: true))
 
-          expect(capture.stderr).to include("files lain masks cannot be read in the sandbox", "443, 80", "read_file")
+          expect(capture.stderr).to include("files lain masks read as empty or as a decoy in the sandbox", "443, 80",
+                                            "read_file")
           expect(capture.stderr).not_to include("no network", "without network")
         end
       end
@@ -215,6 +217,93 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(handed[:fds].keys).to eq([3])
       expect(handed[:launch].call(Lain::Shell::Term.of(%w[cat README.md])).stages.sole.argv.first)
         .to eq("/usr/bin/bwrap")
+    end
+
+    describe "a profile with masks" do
+      let(:env_file) { File.join(root, ".env") }
+      let(:profile) { Lain::Confine::Profile.reader(root:, home:, masks: [env_file]) }
+
+      def git(*args) = SeedRepo.git(root, "-c", "user.name=s", "-c", "user.email=s@x", *args).stdout
+
+      def tracked_env
+        File.write(env_file, "SECRET=1\n")
+        git("init", "-q")
+        git("add", ".env")
+        git("commit", "-qm", "seed")
+      end
+
+      it "hands each stage a descriptor per mask after the trace's, binds it from there, and closes it after" do
+        run(command: Lain::Shell::Term.of(%w[cat a], %w[head -1]))
+
+        handed = inner.calls.sole
+        wrapped = handed[:launch].call(Lain::Shell::Term.of(%w[cat a], %w[head -1]))
+        expect(handed[:fds].keys).to eq([3, 4, 5, 6])
+        expect(wrapped.stages.map { _1.argv.each_cons(3).find { |flags| flags.first == "--ro-bind-data" } })
+          .to eq([["--ro-bind-data", "5", env_file], ["--ro-bind-data", "6", env_file]])
+        expect(handed[:fds].values_at(5, 6)).to all(be_closed)
+      end
+
+      it "points git in the call at the filter for a tracked mask, and at nothing for an untracked one" do
+        run
+        File.write(env_file, "SECRET=1\n")
+        run
+        tracked_env
+        run
+
+        expect(inner.calls.map { _1[:pinned_env].key?("GIT_CONFIG_COUNT") }).to eq([false, false, true])
+        expect(inner.calls.last[:pinned_env]).to include("GIT_CONFIG_KEY_1" => "filter.laindecoy0.clean")
+      end
+
+      it "puts back an index entry the call staged an empty mask into, and names a commit that holds one" do
+        tracked_env
+        before = git("rev-parse", ":.env")
+        inner.behaviour = lambda do |**|
+          File.write(env_file, "")
+          git("commit", "-qam", "emptied")
+          File.write(env_file, "SECRET=1\n")
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+
+        capture = run
+
+        expect(git("rev-parse", ":.env")).to eq(before)
+        expect(capture.stderr).to include(git("rev-parse", "HEAD").chomp, ".env", "git commit --amend")
+      end
+
+      def staging_empty_env(*flags)
+        lambda do |**|
+          File.write(env_file, "")
+          git("add", *flags, ".env")
+          File.write(env_file, "SECRET=1\n")
+          yield if block_given?
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end
+
+      it "says a stand-in it could not take back out of the index is still there, and how to undo it" do
+        tracked_env
+        lock = File.join(root, ".git", "index.lock")
+        inner.behaviour = staging_empty_env { FileUtils.touch(lock) }
+
+        capture = run
+
+        expect(capture.stderr).to include("could not", "update-index --cacheinfo 100644,")
+        expect(capture.stderr).not_to include("put git's index entry")
+      ensure
+        FileUtils.rm_f(lock)
+      end
+
+      it "takes a stand-in staged for a mask git did not track back out of the index, and says so" do
+        File.write(env_file, "SECRET=1\n")
+        git("init", "-q")
+        git("commit", "-q", "--allow-empty", "-m", "seed")
+        inner.behaviour = staging_empty_env("-f")
+
+        capture = run
+
+        expect(git("ls-files", "--", ".env")).to eq("")
+        expect(capture.stderr).to include(".env", "back out of git's index", "an empty file or a decoy was staged")
+      end
     end
 
     context "when the fence cannot reap" do

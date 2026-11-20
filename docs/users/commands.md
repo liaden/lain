@@ -1225,10 +1225,11 @@ prompt, with one line saying `a y or n answers the approval`. A prompt that laps
 (`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
 
 A call that reads secrets (a file holding a sensitive region, or files lain cannot name or scan
-whole) runs contained on a plain `y`, where files lain masks cannot be read and it has no network,
-and its `[y/N/network]` prompt says so. Under `--confine workspace`, a build tool's fetch that
-earns its ports (such as `cargo fetch`) keeps them while contained, and the prompt names those
-ports instead of saying it has no network.
+whole) runs contained on a plain `y`, where files lain masks read as empty (a Rails key pair as a
+decoy that decrypts to empty credentials) and it has no network, and its `[y/N/network]` prompt
+says so. Under `--confine workspace`, a build tool's fetch that earns its ports (such as `cargo
+fetch`) keeps them while contained, and the prompt names those ports instead of saying it has no
+network.
 
 Answer `network` (or `approve network`, or `:LainApprove network` in nvim) to run it unconfined as
 before, with network, which a `git push` needs. A note never chooses network. Where lain cannot
