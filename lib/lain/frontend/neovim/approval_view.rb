@@ -18,7 +18,7 @@ module Lain
       # made an observer, and from the second gated call of a turn onward the
       # terminal got nothing, which on `--no-nvim` is a session with no approval
       # surface at all. {#sweep}
-      # walks the PARKED set instead, and {Pending#decide}'s first-answer-wins
+      # walks the PARKED set instead, and `Pending#decide`'s first-answer-wins
       # makes the loser's answer a quiet no-op by construction.
       #
       # A TWO-KEY GESTURE, NOT A COMPOSE BUFFER. {QuestionView} is the
@@ -41,7 +41,7 @@ module Lain
       # THREAD CONTRACT. {#sweep} from the watch fiber and {#decide} from the
       # editor-command consumer are fibers of the SAME reactor thread, and
       # neither has a yield point between reading this object's state and
-      # writing it: the editor post is the non-blocking {RenderInlet} path,
+      # writing it: the editor post is the non-blocking `RenderInlet` path,
       # which refuses a full queue rather than parking on it. A caller reaching
       # this from the RPC thread would break that, which is why the gesture is
       # acked.
@@ -84,6 +84,8 @@ module Lain
         # Shown when a parked call reads secrets, led by what y and network do there, so a push that fails for
         # want of network is no surprise.
         NETWORK_HINT = "-- %<choice>s; n deny  (:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])"
+        SECRETS_HINT = "-- %<choice>s; n deny  " \
+                       "(:LainApprove network / :LainApprove secrets / :LainApprove / :LainDeny / :LainHold [note])"
         # The hint sits under every parked row, so its y names which of them it contains.
         SECRET_CALL = "a call that reads secrets"
 
@@ -115,7 +117,7 @@ module Lain
         # something other than what a `y` releases. `/m` so a newline is CARRIED
         # rather than silently dropped; `input.inspect` is what keeps a raw one
         # unreachable, and it has to, because nothing downstream re-checks
-        # ({RenderQueue#checked_lines} guards {RenderQueue#post_view}, and this
+        # (`RenderQueue#checked_lines` guards `RenderQueue#post_view`, and this
         # view posts on the approval rail, which it does not guard).
         #
         # ONE MODE, RULED. Word-wrapping the PREAMBLE (lain's own prose) while
@@ -379,7 +381,7 @@ module Lain
           return undecided(format(UNSHOWN, generation: generation.inspect)) if resolved.unshown?
           return undecided(format(NO_ROW, line.inspect)) unless resolved.owned?
 
-          answer = read(verdict, network: resolved.owner.offers_network?)
+          answer = read(verdict, **Frontend::ApprovalPolicy.offered(resolved.owner))
           return undecided(unknown(verdict)) if answer.is_a?(Approval::Reply::Unrecognised)
 
           settled(resolved.owner, answer, line)
@@ -388,13 +390,17 @@ module Lain
         # The whole line first, so a note punctuated onto the word survives;
         # the editor's plain "approve <note>" has no separator Reply's approve
         # grammar accepts, so it falls back to the word and the rest.
-        def read(verdict, network:)
+        def read(verdict, network:, secrets:)
           line = verdict.to_s.strip
-          whole = Approval::Reply.parse(line, network:)
+          whole = Approval::Reply.parse(line, network:, secrets:)
           return whole unless whole.is_a?(Approval::Reply::Unrecognised)
 
           word, said = line.split(/\s+/, 2)
-          Approval::Reply.parse(word.to_s).then { _1.is_a?(Approval::Reply::Unrecognised) ? _1 : _1.with(note: said) }
+          fallback = Approval::Reply.parse(word.to_s)
+          return fallback if fallback.is_a?(Approval::Reply::Unrecognised)
+          return whole if network && Approval::Reply.both?(fallback, line)
+
+          fallback.with(note: said)
         end
 
         # Rides the verdict wire as "mode <level>" because that is the one
@@ -430,7 +436,7 @@ module Lain
           undecided(format(SETTLED, line: line.inspect, surface: pending.surface, decision: outcome(pending)))
         end
 
-        # Not the Symbol {Pending#decision} carries: "deny" reads as an
+        # Not the Symbol `Pending#decision` carries: "deny" reads as an
         # instruction where the sentence is about something already done.
         def outcome(pending) = pending.verdict_face
 
@@ -508,13 +514,20 @@ module Lain
         end
 
         def hint_for(parked)
-          offering = parked.select(&:offers_network?).map(&:containment)
-          offering.empty? ? HINT : format(NETWORK_HINT, choice: widest(offering).choice(SECRET_CALL))
+          offering = parked.select(&:offers_network?)
+          return HINT if offering.empty?
+
+          hint = offering.any?(&:offers_secrets?) ? SECRETS_HINT : NETWORK_HINT
+          choice = widest(offering.map(&:containment)).choice(SECRET_CALL)
+          format(hint, choice: offering.reduce(choice) { |text, row| row.masked(text) })
         end
 
-        # One hint stands under every row, so it names every port any of them could be granted.
+        # One hint stands under every row, so it names every port any of them could be granted, and every file
+        # a secrets answer to any of them would lift the masks from.
         def widest(containments)
-          containments.reduce { |wide, other| wide.with(ports: (wide.ports | other.ports).freeze) }
+          containments.reduce do |wide, other|
+            wide.with(ports: (wide.ports | other.ports).freeze, unmasks: (wide.unmasks | other.unmasks).freeze)
+          end
         end
 
         # Names the call because the row it described is gone from the list.

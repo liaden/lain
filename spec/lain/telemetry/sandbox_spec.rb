@@ -6,7 +6,8 @@ RSpec.describe Lain::Telemetry::Sandbox do
   it "journals no arm or task of its own" do
     expect(record.to_journal).to eq(
       "type" => "sandbox", "tool_use_id" => "tu_1", "profile" => :reader, "trace" => false, "refused" => [],
-      "created_sealed" => [], "kept_tmpdir" => nil, "granted" => [], "network" => false
+      "created_sealed" => [], "kept_tmpdir" => nil, "granted" => [], "network" => false, "secrets" => false,
+      "held" => []
     )
   end
 
@@ -29,6 +30,19 @@ RSpec.describe Lain::Telemetry::Sandbox do
     expect(chosen.to_journal).to include("network" => true)
   end
 
+  it "journals that a human let the call read the project's secret files" do
+    chosen = described_class.new(tool_use_id: "tu_1", profile: :workspace, trace: true, refused: [], secrets: true)
+
+    expect(chosen.to_journal).to include("secrets" => true, "network" => false)
+  end
+
+  it "journals the path a scan held because it could not finish" do
+    held = described_class.new(tool_use_id: "tu_1", profile: :workspace, trace: true, refused: [], held: ["/srv/p"])
+
+    expect(held.to_journal).to include("held" => ["/srv/p"])
+    expect(Ractor.shareable?(held)).to be(true)
+  end
+
   it "stays Ractor shareable" do
     expect(Ractor.shareable?(record)).to be(true)
   end
@@ -46,7 +60,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"workspace","trace":true,' \
         '"refused":["/bin/curl"],"created_sealed":["/repo/.git/commondir"],' \
-        '"kept_tmpdir":"/t/lain-call-1","granted":["/home/u/.local/bin/rg"],"network":true}'
+        '"kept_tmpdir":"/t/lain-call-1","granted":["/home/u/.local/bin/rg"],"network":true,"secrets":false,"held":[]}'
       )
     end
 
@@ -57,7 +71,7 @@ RSpec.describe Lain::Telemetry::Sandbox do
                                    refused: [])
       expect(JSON.generate(record.to_journal)).to eq(
         '{"type":"sandbox","tool_use_id":"tu_1","profile":"reader","trace":false,"refused":[],' \
-        '"created_sealed":[],"kept_tmpdir":null,"granted":[],"network":false}'
+        '"created_sealed":[],"kept_tmpdir":null,"granted":[],"network":false,"secrets":false,"held":[]}'
       )
     end
 

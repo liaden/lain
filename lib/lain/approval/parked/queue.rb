@@ -256,6 +256,7 @@ module Lain
             @promise = Promise.new
             @offered = nil
             @network = false
+            @unmasked = false
           end
           private :begin_asking
 
@@ -331,6 +332,7 @@ module Lain
             @authority = authority
             @decision = DECISIONS.fetch(verdict.class)
             @network = verdict.network?
+            @unmasked = verdict.secrets? && authority == :human && offers_secrets?
             @reason = flattened(verdict.note) unless verdict.approved?
             @approval_note = flattened(verdict.note) if verdict.approved?
             @latency = @clock.call - @asked_at
@@ -350,11 +352,34 @@ module Lain
           # @return [Boolean] whether the approval chose network
           def network? = @network
 
+          # Only where the call can run contained, since its secrets are read only with the network closed.
+          #
+          # @return [Boolean] whether a surface offers the secrets answer
+          def offers_secrets? = containment.able?
+
+          # A machine's secrets answer is no person's choice, so it unmasks nothing.
+          #
+          # @return [Boolean] whether a human's approval chose to run the call with the project's masks lifted
+          def unmasked? = @unmasked
+
           # Any surface's, since a machine's approval is no more consent to network than a person's plain one.
           #
           # @return [Boolean] whether an approval is to run the call contained, with no network beyond a build
           #   tool's granted ports
           def contained? = approved? && offers_network? && !network?
+
+          # The row's file list goes through the row's mask, as the call does, since a file's name can hold a token.
+          # Both are masked as 1 text, so 2 values on 1 row never share a placeholder's number.
+          #
+          # @param call [String] how the answer names the call
+          # @return [String, nil] what y, network and secrets do, masked; nil where no answer beyond y is offered
+          def choice_face(call = "it")
+            containment.choice(call)&.then { @mask.call("#{call_text}\n#{_1}").split("\n", 2).last }
+          end
+
+          # @param text [String]
+          # @return [String] the text with the row's known secrets masked, as {#call_face} is
+          def masked(text) = @mask.call(text)
 
           # @return [String] what the journal and the surfaces call this pending's kind
           def kind = "tool"
@@ -362,7 +387,10 @@ module Lain
           def tool_call? = true
 
           # @return [String] the question a surface asks, in its own words
-          def call_face = @mask.call(["#{tool}(#{input.inspect})", cwd_face].compact.join(" "))
+          def call_face = @mask.call(call_text)
+
+          def call_text = ["#{tool}(#{input.inspect})", cwd_face].compact.join(" ")
+          private :call_text
 
           # The command is masked before the cut, and the journal keeps this line instead of the input.
           #
@@ -536,6 +564,7 @@ module Lain
               "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
               "latency" => latency }.merge(reason ? { "reason" => reason } : {}, digest_entry, kind_entry,
                                            network? ? { "network" => true } : {},
+                                           unmasked? ? { "secrets" => true } : {},
                                            @approval_note ? { "note" => @approval_note } : {})
           end
 
@@ -775,7 +804,7 @@ module Lain
         # yield point between them.
         def admit(effect, context, outstanding)
           disclosure = Disclosure.in(context)
-          containment = disclosure.secret_bearing? ? @containment.over(term_argvs(effect, context)) : Confine::Sandbox::Containment::NONE
+          containment = containment_for(effect, context, disclosure)
           pending = Pending.new(effect:, identity: Queue.identity_for(context, @requester), clock: @clock,
                                 timeout: @timeout, wall: @wall, outstanding:,
                                 humans_only: context.respond_to?(:automatic_approval_barred?) &&
@@ -793,6 +822,15 @@ module Lain
         # The containment stays off the reasons: the phone shows them and cannot answer network.
         def notes_of(context, disclosure)
           [*(context.parked_because if context.respond_to?(:parked_because)), *disclosure.notes]
+        end
+
+        # Under the root a bash call runs under, as the sandbox reads it, so the row names the files the run would
+        # lift.
+        def containment_for(effect, context, disclosure)
+          return Confine::Sandbox::Containment::NONE unless disclosure.secret_bearing?
+
+          checkout = context.worker_env.checkout if context.respond_to?(:worker_env)
+          @containment.over(term_argvs(effect, context), root: checkout)
         end
 
         # Bash runs argv only for a term the session's verdict allows, and a build grant needs argv, so this
@@ -907,8 +945,10 @@ module Lain
         # these is held against a later call's paths.
         def human_denial?(pending) = pending.tool_call? && pending.human? && pending.decision == :deny
 
-        # A network answer is consent for that run only, so it is asked again.
-        def human_allow?(pending) = pending.tool_call? && pending.human? && pending.approved? && !pending.network?
+        # A network or secrets answer is consent for that run only, so it is asked again.
+        def human_allow?(pending)
+          pending.tool_call? && pending.human? && pending.approved? && !pending.network? && !pending.unmasked?
+        end
 
         def silence_denial?(pending) = pending.tool_call? && pending.timed_out? && pending.decision == :deny
 

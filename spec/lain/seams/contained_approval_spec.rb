@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "securerandom"
 require "socket"
 require "stringio"
@@ -30,6 +31,8 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
   let(:fresh) { Lain::Shell::Executable::Fresh.for_lineage([]) }
   let(:listener) { TCPServer.new("127.0.0.1", 0) }
   let(:send_deploy) { "curl -s -m 2 --data-binary @- http://127.0.0.1:#{listener.addr[1]}/ < deploy.conf" }
+  let(:known) { Struct.new(:known) { def for_reads(_context) = known }.new([planted]) }
+  let(:taint) { Lain::Sensitivity::Taint.new }
 
   before do
     skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
@@ -40,9 +43,10 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
   after { listener.close }
 
   def sandbox(workspace:, lineage: fresh, probe: self.probe)
-    masks = Lain::Confine::MaskList.new(root: @root, policy: -> { policy })
+    masks = Lain::Confine::MaskList.new(root: @root, policy: -> { policy }, taint: -> { taint })
     Lain::Confine::Sandbox.new(root: @root, home: Dir.home, masks:, probe:, fence:, journal:, workspace:,
-                               tmpdir: File.join(@root, "tmp"), fresh: lineage)
+                               tmpdir: File.join(@root, "tmp"), fresh: lineage, taint: -> { taint },
+                               secrets: -> { known })
   end
 
   def bash_over(exec)
@@ -80,14 +84,15 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
   end
 
   # The call, answered at the terminal with `answer`; the prompt the human saw and the result the model read.
-  def answered(answer, exec:, containment:, command: send_deploy)
+  def answered(answer, exec:, containment:, command: send_deploy, outer: [])
     queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: decisions), timeout: 30, containment:)
     seen = []
     human = Lain::Frontend::ApprovalPolicy.new(output: StringIO.new, reader: ->(prompt) { (seen << prompt) && answer })
     result = Sync do |task|
       watching = task.async { human.watch(queue) }
       dispatch_call("bash", { "command" => command }, toolset: Lain::Toolset.new([bash_over(exec)]),
-                                                      layers: layers_over(queue), context: Lain::Session.new(worker_env:))
+                                                      layers: [*outer, *layers_over(queue)],
+                                                      context: Lain::Session.new(worker_env:))
     ensure
       watching&.stop
     end
@@ -114,7 +119,7 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
 
     prompt, result = answered("y\n", exec:, containment: box.containment)
 
-    expect(prompt).to include(box.containment.choice, "without network")
+    expect(prompt).to include(box.containment.over([]).choice, "without network")
     expect(sandbox_records.first).to have_attributes(profile: :workspace, network: false)
     expect(result.content).to start_with("exit status: 7").and include(Lain::Exec::Sandboxed::CONTAINED)
     listener.close
@@ -380,6 +385,68 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
       expect(sandbox_records.first).to have_attributes(profile: :reader, network: false)
       expect(result.content).to include("rails ran runner p 1", "curl exit 7")
       expect(result.content).not_to include(key.chomp)
+    end
+  end
+
+  describe "a human's secrets answer" do
+    let(:digest) { Digest::SHA256.hexdigest(File.read(File.join(@root, ".env"))) }
+    let(:empty) { Digest::SHA256.hexdigest("") }
+
+    it "runs the call contained under the workspace profile with the project's masks lifted, and says so" do
+      box, exec = contained_where_possible(workspace: true)
+
+      prompt, result = answered("secrets\n", exec:, containment: box.containment, command: "sha256sum .env")
+
+      expect(prompt).to include("secrets runs it cut off from the network, with lain's masks lifted from .env,",
+                                "[y/N/network/secrets]")
+      expect(result.content).to include(digest,
+                                        format(Lain::Exec::Sandboxed::Lifting::CONTAINED_SECRETS, files: ".env"))
+      expect(sandbox_records.first).to have_attributes(profile: :workspace, network: false, secrets: true)
+      expect(decision).to include("secrets" => true)
+    end
+
+    it "masks the value it read before the model sees it" do
+      box, exec = contained_where_possible(workspace: true)
+      redact = Lain::Middleware::RedactSecretReads.new(ledger: Lain::Sensitivity::Ledger.new, related: policy,
+                                                       queue: Lain::Middleware::RedactSecretReads::Unqueued)
+
+      _, result = answered("secrets\n", exec:, containment: box.containment, command: "cat .env", outer: [redact])
+
+      expect(result.content).to include("API_TOKEN=")
+      expect(result.content).not_to include(planted)
+    end
+
+    it "has no network, so nothing is sent" do
+      box, exec = contained_where_possible(workspace: true)
+      sent = received
+
+      _, result = answered("secrets\n", exec:, containment: box.containment,
+                                        command: "cat .env >/dev/null; #{send_deploy}")
+
+      expect(result.content).to start_with("exit status: 7")
+      listener.close
+      expect(sent.value).to eq("")
+    end
+
+    it "gates a copy the run made of a secret file, and the next plain y reads the file masked again" do
+      box, exec = contained_where_possible(workspace: true)
+
+      _, copying = answered("secrets\n", exec:, containment: box.containment, command: "cp .env leaked.txt")
+      _, plain = answered("y\n", exec:, containment: box.containment, command: "sha256sum .env leaked.txt")
+
+      expect(copying.content).to include(format(Lain::Exec::Sandboxed::TAINTED, path: "leaked.txt"))
+      expect(plain.content).not_to include(digest)
+      expect(plain.content.scan(empty).size).to eq(2)
+      expect(sandbox_records.map(&:secrets).uniq).to eq([true, false])
+    end
+
+    it "runs a secrets answer under --confine reader with the masks lifted and no network" do
+      box, exec = contained_where_possible(workspace: false)
+
+      _, result = answered("secrets\n", exec:, containment: box.containment, command: "sha256sum .env")
+
+      expect(result.content).to include(digest)
+      expect(sandbox_records.first).to have_attributes(profile: :reader, secrets: true)
     end
   end
 

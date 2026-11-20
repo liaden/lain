@@ -52,9 +52,11 @@ module Lain
 
       REFUSED = "y, n or hold answers the approval"
       REFUSED_NETWORK = "y, n, hold or network answers the approval"
+      REFUSED_SECRETS = "y, n, hold, network or secrets answers the approval"
 
       ANSWERS = "[y/N] "
       NETWORK_ANSWERS = "[y/N/network] "
+      SECRETS_ANSWERS = "[y/N/network/secrets] "
 
       # How a prompt another surface decided ends its line.
       CLOSED = "decided by %<surface>s: %<verdict>s"
@@ -134,13 +136,19 @@ module Lain
           answer = line.strip
           return false if answer.include?("\n")
 
-          answer.empty? ||
-            !ApprovalPolicy.read(answer, network: @pending.offers_network?).is_a?(Approval::Reply::Unrecognised)
+          answer.empty? || !ApprovalPolicy.read(answer, **ApprovalPolicy.offered(@pending))
+                                          .is_a?(Approval::Reply::Unrecognised)
         end
 
         # Yields what is said after a refused line is held, so the human learns
         # the prompt is still waiting and what answers it.
-        def refused = yield(@pending.offers_network? ? REFUSED_NETWORK : REFUSED)
+        def refused
+          offered = ApprovalPolicy.offered(@pending)
+          yield(if offered[:secrets] then REFUSED_SECRETS
+                elsif offered[:network] then REFUSED_NETWORK
+                else REFUSED
+                end)
+        end
 
         # Told by the {Intake} when this prompt is drawn, which is when the
         # call's approval window starts running.
@@ -214,13 +222,21 @@ module Lain
       #
       # @param line [String]
       # @param network [Boolean] whether the prompt offers the network answer
+      # @param secrets [Boolean] whether the prompt offers the secrets answer
       # @return [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny,
       #   Approval::Reply::Unrecognised]
-      def self.read(line, network: false)
-        verdict = Approval::Reply.parse(line, network:)
+      def self.read(line, network: false, secrets: false)
+        verdict = Approval::Reply.parse(line, network:, secrets:)
         return verdict unless verdict.is_a?(Approval::Verdict::Hold) && !line.match?(HOLD)
 
         Approval::Reply::Unrecognised.new(text: line.dup.freeze)
+      end
+
+      # @param pending [Approval::Parked::Queue::Pending]
+      # @return [Hash{Symbol => Boolean}] the answers beyond y, n and hold its prompt offers, as {.read} takes them
+      def self.offered(pending)
+        network = pending.offers_network?
+        { network:, secrets: network && pending.offers_secrets? }
       end
 
       private
@@ -328,11 +344,14 @@ module Lain
                           tail: "#{pending.silence_face}, approve? #{answers(pending)}")
       end
 
-      # What y and network do, said on a row that reads secrets, so a push that fails for want of network is
-      # no surprise.
+      # What y, network and secrets do, said on a row that reads secrets, so a push that fails for want of
+      # network is no surprise.
       def answers(pending)
-        choice = pending.containment.choice
-        pending.offers_network? ? "#{choice} #{NETWORK_ANSWERS}" : ANSWERS
+        return ANSWERS unless pending.offers_network?
+
+        choice = pending.choice_face
+
+        "#{choice} #{ApprovalPolicy.offered(pending)[:secrets] ? SECRETS_ANSWERS : NETWORK_ANSWERS}"
       end
 
       # Why a call does not run contained ends the reasons; the phone never shows it, since it cannot answer network.
@@ -360,7 +379,7 @@ module Lain
 
       # A bare deny takes the reason the human already offered for this call ({Pending#offering}).
       def verdict_in(answer, pending)
-        verdict = ApprovalPolicy.read(answer.strip, network: pending.offers_network?)
+        verdict = ApprovalPolicy.read(answer.strip, **ApprovalPolicy.offered(pending))
         verdict = UNREAD if verdict.is_a?(Approval::Reply::Unrecognised)
         return verdict unless verdict.denied? && verdict.note.nil? && pending.offered_reason
 

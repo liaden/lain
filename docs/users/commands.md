@@ -1238,6 +1238,14 @@ contain the call, a plain `y` is refused and the row says to answer `network`; w
 or `--confine classes` the row says the call will run unconfined. The phone keeps approve, hold and
 deny, and its approve runs contained.
 
+Where the call can run contained, the prompt also offers `secrets` (`[y/N/network/secrets]`, or
+`:LainApprove secrets` in nvim) and names the project files it would unmask, the first 5 then
+"and N more". It runs that one call contained with no network at all and the project's own masked
+files readable; masks in related directories stay. A decrypted value the call prints still reaches
+the model masked, and anything the call writes is scanned: a file, name or link holding a known
+value is gated until lain exits. Only your answer gives `secrets`; it is never remembered, and it
+cannot be combined with `network`.
+
 ### /deny
 
 `/deny <reason>` refuses a parked call and hands your reason to the agent as the last clause of its

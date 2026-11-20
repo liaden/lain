@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "fileutils"
+require "open3"
 require "tmpdir"
 
 RSpec.describe Lain::Sensitivity::Taint, :seam do
@@ -322,6 +323,60 @@ RSpec.describe Lain::Sensitivity::Taint, :seam do
       expect(scan.unopened).to eq([])
     end
 
+    it "stops its climb below the root, so a path it cannot reach never holds the whole project" do
+      scan = scanned do
+        copied("a/b/leak")
+        allow(File).to receive(:lstat).and_wrap_original do |original, asked|
+          asked.to_s.b.start_with?(path("a").b) ? raise(Errno::EACCES, asked) : original.call(asked)
+        end
+      end
+
+      expect(scan.unopened).to eq([path("a/b/leak")])
+      expect(taint.include?(path("README.md"))).to be(false)
+    end
+
+    it "answers for a held name tagged as bytes, asked in the filesystem's encoding" do
+      taint.hold_whole(path("d\xff").b)
+
+      expect([taint.include?(File.join(bad("d\xff"), "x")), taint.include?(path("d"))]).to eq([true, false])
+    end
+
+    # Under the C locale Ruby tags every name it reads as US-ASCII, which cannot be joined to a root whose own
+    # path is not ASCII unless the join works on bytes. The root is made by hand: mktmpdir drops a prefix's á.
+    it "scans a project whose own path is not ASCII under the C locale, in a child process" do
+      script = <<~RUBY
+        require "lain"
+        require "tmpdir"
+        key = ARGV.fetch(0)
+        secrets = Struct.new(:known) { def for_reads(_context) = known }.new([key])
+        Dir.mktmpdir("taint") do |dir|
+          root = File.join(File.realpath(dir), "n\\u00e1").tap { Dir.mkdir(_1) }
+          git = ->(*args) { system("git", "-C", root, "-c", "user.name=s", "-c", "user.email=s@x", *args, exception: true) }
+          git.call("init", "-q")
+          File.write(File.join(root, "README"), "x")
+          git.call("add", "README")
+          git.call("commit", "-qm", "seed")
+          taint = Lain::Sensitivity::Taint.new
+          since = Lain::Sensitivity::Taint.mark(root)
+          refs = Lain::Sensitivity::Taint.refs(root)
+          %W[node_modules/p/cl\\u00e9.txt staged/cl\\u00e9 cl\\u00e9.txt].each do |name|
+            leak = File.join(root.b, name.b)
+            FileUtils.mkdir_p(File.dirname(leak))
+            File.binwrite(leak, key)
+          end
+          git.call("add", "staged")
+          scan = taint.scan(root:, since:, refs:, secrets:)
+          puts scan.gated.map { _1.b.delete_prefix(root.b) }.sort.join(",")
+        end
+      RUBY
+      lib = File.expand_path("../../../lib", __dir__)
+      out, err, status = Open3.capture3({ "LC_ALL" => "C", "LANG" => nil, "LANGUAGE" => nil },
+                                        RbConfig.ruby, "-I", lib, "-rfileutils", "-e", script, key)
+
+      expect([status.success?, err.lines.grep(/Error/)]).to eq([true, []])
+      expect(out.lines.last.force_encoding(Encoding::UTF_8)).to eq("/clé.txt,/node_modules/p/clé.txt,/staged/clé\n")
+    end
+
     describe "when the prune listing fails" do
       def failing_prune(&answer)
         allow(Lain::Confine::MaskList::Listing).to receive(:git).and_wrap_original do |original, *args|
@@ -586,6 +641,11 @@ RSpec.describe Lain::Sensitivity::Taint, :seam do
 
   it "refuses a scan into the empty taint every unwired reader shares" do
     expect { described_class::NONE.scan(root:, since: Time.now, refs: {}, secrets:) }.to raise_error(FrozenError)
+    expect(described_class::NONE.paths).to eq([])
+  end
+
+  it "refuses to hold anything in the empty taint" do
+    expect { described_class::NONE.hold_whole(root) }.to raise_error(FrozenError)
     expect(described_class::NONE.paths).to eq([])
   end
 end

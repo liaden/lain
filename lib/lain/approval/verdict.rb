@@ -10,18 +10,27 @@ module Lain
     #
     # `network` is the human's choice to let an approved call that reads secrets
     # reach the network, so it runs unconfined; only an approval can carry it.
+    # `secrets` is the human's choice to let it read the project's masked files,
+    # still contained; the 2 never combine, since secrets are read only where
+    # the network is closed.
     module Verdict
-      Base = Data.define(:note, :network) do
-        def initialize(note: nil, network: false)
+      Base = Data.define(:note, :network, :secrets) do
+        def initialize(note: nil, network: false, secrets: false)
           raise ArgumentError, "only an approval can choose network" if network == true && !approved?
+          raise ArgumentError, "only an approval can choose secrets" if secrets == true && !approved?
+          if network == true && secrets == true
+            raise ArgumentError,
+                  "an approval cannot choose both secrets and network"
+          end
 
-          super(note: clean(note), network: network == true)
+          super(note: clean(note), network: network == true, secrets: secrets == true)
         end
 
         def approved? = false
         def held? = false
         def denied? = false
         def network? = network
+        def secrets? = secrets
 
         private
 

@@ -230,13 +230,103 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
 
-    it "says in its hint that y runs a call that reads secrets contained, and how to choose network" do
+    it "says in its hint that y runs a call that reads secrets contained, and how to choose network or secrets" do
       parked_secret { nil }
 
       expect(rpc.last[:lines].last)
         .to eq("-- y runs a call that reads secrets contained, without network, where files lain masks read as " \
-               "empty or as a decoy; network runs it unconfined, with network; n deny  " \
-               "(:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])")
+               "empty or as a decoy; network runs it unconfined, with network; secrets runs a call that reads " \
+               "secrets cut off from the network, where the project holds no file lain masks, and gates any file it " \
+               "writes that holds a secret; n deny  " \
+               "(:LainApprove network / :LainApprove secrets / :LainApprove / :LainDeny / :LainHold [note])")
+    end
+
+    it "approves with secrets on :LainApprove secrets, never with network" do
+      chosen = parked_secret { view.decide(1, "approve secrets", generation:) }
+
+      expect(chosen).to have_attributes(approved?: true, unmasked?: true, network?: false)
+    end
+
+    ["approve secrets network", "network secrets"].each do |verdict|
+      it "reads #{verdict.inspect} as neither combined answer, and leaves the call parked" do
+        said = nil
+        chosen = parked_secret { said = view.decide(1, verdict, generation:) }
+
+        expect(said.pending).to be_nil
+        expect(chosen).to have_attributes(approved?: false, unmasked?: false, network?: false)
+        expect(chosen.surface).not_to eq(described_class::SURFACE)
+      end
+    end
+
+    context "when the rows would lift masks from the project's files" do
+      let(:containment) do
+        Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: %w[a.env b.env c.env d.env e.env f.env g.env])
+      end
+
+      it "masks a token in a file name in its hint, as the rows mask the call" do
+        token = "ghp_#{"Q" * 36}"
+        named = Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: ["config/#{token}.key"])
+        masking = ->(text, _context) { Lain::Sensitivity::TextMask.text(text, secrets: [token]) }
+        hint = Sync do
+          queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5, containment: named, mask: masking)
+          asking = Async { parked_ask(queue, "pwd", 0, secret) }
+          spun_until { queue.count == 1 }
+          view.sweep(queue)
+          rpc.last[:lines].last
+        ensure
+          asking&.stop
+        end
+
+        expect(hint).to include("masks lifted from <redacted").and(satisfy { !_1.include?(token) })
+      end
+
+      # Two rows parked from 2 roots, each listing its own files, under a mask that knows a different value
+      # for each row's context.
+      def hint_over_roots(listing, mask: Lain::Approval::Parked::Queue::UNMASKED)
+        deferred = Lain::Confine::Sandbox::Containment::Deferred.new(unmasks: listing) do
+          Lain::Confine::Sandbox::Containment::ABLE
+        end
+        Sync do
+          queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5, containment: deferred, mask:)
+          asking = %w[/srv/a /srv/b].each_with_index.map { |root, index| Async { parked_in(queue, root, index) } }
+          spun_until { queue.count == 2 }
+          view.sweep(queue)
+          rpc.last[:lines].last
+        ensure
+          asking&.each(&:stop)
+        end
+      end
+
+      def parked_in(queue, root, index)
+        context = Struct.new(:identity, :disclosure, :parsed_command, :worker_env)
+                        .new(Lain::Requester.main, secret, Lain::Shell::Parse.new.call("pwd"),
+                             Lain::WorkerEnv.new(cwd: root, env: {}, checkout: root))
+        queue.adjudicate(effect("bash", { "command" => "pwd" }, "tu_#{index + 1}"), context)
+      end
+
+      it "names every row's files in its one hint" do
+        hint = hint_over_roots(->(root) { ["#{File.basename(root)}.env"] })
+
+        expect(hint).to include("masks lifted from a.env and b.env, and gates")
+      end
+
+      it "masks the hint's file list with each row's own mask" do
+        tokens = { "/srv/a" => "ghp_#{"A" * 36}", "/srv/b" => "ghp_#{"B" * 36}" }
+        masking = lambda do |text, context|
+          Lain::Sensitivity::TextMask.text(text, secrets: [tokens.fetch(context.worker_env.checkout)])
+        end
+
+        hint = hint_over_roots(->(root) { ["#{tokens.fetch(root)}.key"] }, mask: masking)
+
+        expect(hint).to include("masks lifted from <redacted")
+        expect(tokens.values.select { hint.include?(_1) }).to be_empty
+      end
+
+      it "names the first 5 in its hint, then how many more" do
+        parked_secret { nil }
+
+        expect(rpc.last[:lines].last).to include("masks lifted from a.env, b.env, c.env, d.env, e.env and 2 more,")
+      end
     end
 
     it "keeps the plain hint when no parked call reads secrets" do
@@ -256,8 +346,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     context "when a workspace session could grant the call a build tool's ports" do
       let(:containment) do
         netting = Struct.new(:nothing) { def supports?(_layer) = true }.new
-        Lain::Confine::Sandbox.new(root: "/srv/project", home: "/home/h", masks: nil, probe: netting,
-                                   fence: "/srv/lain-fence", journal:, workspace: true).containment
+        Lain::Confine::Sandbox.new(root: "/srv/project", home: "/home/h", masks: Struct.new(:masks).new([]),
+                                   probe: netting, fence: "/srv/lain-fence", journal:, workspace: true).containment
       end
 
       it "names the ports in its hint rather than saying the call has no network" do

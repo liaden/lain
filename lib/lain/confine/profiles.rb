@@ -16,7 +16,8 @@ module Lain
     # call that reads secrets, a surface's or an automatic rung's, runs
     # contained, under the workspace profile with the switch on and the
     # reader's with it off, and in a private network either way; a human's
-    # may run the call's own project scripts. Any other
+    # may run the call's own project scripts, and a human's secrets answer
+    # lifts the project's own masks and earns no build tool's ports. Any other
     # allow is traced and not confined: a human's that chose network, and a
     # surface's of a call that read no secret, whose machine answers stand
     # beside a person's in the same queue.
@@ -114,6 +115,26 @@ module Lain
         name ? Profile::GRANTS.fetch(name) : []
       end
 
+      # A secrets answer lifts only the masks the project's own listing put on files under it: a mask landing
+      # outside the project, and one a scan put on a file an unmasked run wrote, stay.
+      #
+      # @param masks [Array<Sensitivity::Policy::Mask>] as {MaskList#masks} answers them
+      # @param root [String] absolute; the project
+      # @return [Array<String>] the resolved paths a secrets answer lets the call read
+      def self.lifted(masks, root)
+        project = Profile.landing(root)
+        masks.reject { _1.reason == Sensitivity::Taint::REASON }.map(&:path)
+             .select { _1 != project && Landing.under?(_1, project) }
+      end
+
+      # @param masks [Array<Sensitivity::Policy::Mask>] as {MaskList#masks} answers them
+      # @param root [String] absolute; the call's own root
+      # @return [Array<String>] what {.lifted} lifts, named from the root and sorted, as a row and a note list them
+      def self.readable(masks, root)
+        project = "#{Profile.landing(root).chomp(File::SEPARATOR)}#{File::SEPARATOR}"
+        lifted(masks, root).map { _1.delete_prefix(project) }.sort
+      end
+
       # @param masks [#masks] the session's {MaskList}, asked on every call so a
       #   mask whose file has gone never reaches bwrap, which fails on one
       # @param probe [#supports?] which sandbox layers this kernel offers
@@ -166,18 +187,20 @@ module Lain
           (ruling.builds? || !composed?(ruling))
       end
 
-      # Refused before a workspace call's dir is made. A build grant keeps its own ports, as {#networked} says.
+      # Refused before a workspace call's dir is made. A build grant keeps its own ports, as {#networked} says,
+      # except under a secrets answer, which reads the project's secrets only where the network is closed.
       def contained(request)
         raise Uncontainable.new(profile: @workspace ? :workspace : :reader) unless @probe.supports?(:private_net)
 
-        @workspace ? workspace(request) : reader(request).with(private_net: true)
+        profile = @workspace ? workspace(request) : reader(request).with(private_net: true)
+        request.ruling.unmasked? ? profile.with(unmasked: true) : profile
       end
 
       def traceable? = @probe.supports?(:trace)
 
       def reader(request)
         root = root_of(request)
-        masks = mask_paths(root)
+        masks = mask_paths(root, request)
         related = @classifier.related
         profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
                                  related: [*related.roots, *related.reads],
@@ -211,7 +234,7 @@ module Lain
       end
 
       def programmed(ported, request, root)
-        masks = mask_paths(root)
+        masks = mask_paths(root, request)
         programs = programs(request, masks, fresh_gates: false)
         ported.with(masks:, exec_files: exec_files(programs),
                     exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
@@ -257,7 +280,7 @@ module Lain
       def ported(request)
         root = root_of(request)
         sealed = @sealed.for(root, trace: traceable?)
-        program = @granting.build_grant_for(request)
+        program = @granting.build_grant_for(request) unless request.ruling.unmasked?
         program ? sealed.granting(program, home: @home, env: @env) : sealed
       end
 
@@ -270,8 +293,12 @@ module Lain
       def root_of(request) = request.root || @root
 
       # A project config file git reads is shown to the call, sealed in a workspace call, since git cannot run
-      # without it; every other mask stands.
-      def mask_paths(root) = @masks.masks.map(&:path) - project_configs(root)
+      # without it; every other mask stands, but those a secrets answer lifts.
+      def mask_paths(root, request)
+        masks = @masks.masks
+        lifted = request.ruling.unmasked? ? self.class.lifted(masks, root) : []
+        masks.map(&:path) - lifted - project_configs(root)
+      end
 
       def project_configs(root)
         project = Profile.landing(root)

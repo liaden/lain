@@ -13,6 +13,8 @@ module Lain
         attribute :kept_tmpdir
         attribute :granted, default: -> { [] }
         attribute :network, default: -> { false }
+        attribute :secrets, default: -> { false }
+        attribute :held, default: -> { [] }
       end
     end
 
@@ -31,15 +33,19 @@ module Lain
     # profile lets run, on the record written before the call.
     #
     # `network` says a human chose to let a call that reads secrets reach the
-    # network, which is why it ran unconfined.
+    # network, which is why it ran unconfined, and `secrets` that a human let it
+    # read the project's masked files, contained. `held` names what a scan of
+    # such a call's writes could not finish and so holds until lain exits,
+    # on a record of its own written after the call.
     Sandbox = Data.define(:tool_use_id, :profile, :trace, :refused, :created_sealed, :kept_tmpdir, :granted,
-                          :network) do
+                          :network, :secrets, :held) do
       include Journalable
 
       def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [],
-                     network: false)
+                     network: false, secrets: false, held: [])
         super(**Carriers::Sandbox.settle!(tool_use_id:, profile: profile&.to_sym, trace:, refused:, created_sealed:,
-                                          kept_tmpdir:, granted:, network: network == true))
+                                          kept_tmpdir:, granted:, network: network == true, secrets: secrets == true,
+                                          held:))
       end
     end
   end

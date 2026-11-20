@@ -1217,6 +1217,14 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(allowed("cargo test", within: able)).to be_nil
     end
 
+    it "remembers no secrets answer" do
+      answered(runs("cargo test"), secret_in("/srv/p"), within: able) do |pending|
+        pending.decide(Lain::Approval::Verdict::Approve.new(secrets: true), surface: "spec", authority: :human)
+      end
+
+      expect(allowed("cargo test", within: able)).to be_nil
+    end
+
     it "remembers no approval that released detected regions" do
       regions = Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
       outstanding = described_class::Outstanding.new(path: "/srv/creds.txt", regions:)
@@ -1319,6 +1327,72 @@ RSpec.describe Lain::Approval::Parked::Queue do
       end
 
       expect(pending).to be_contained
+    end
+
+    describe "the secrets answer" do
+      let(:disclosure) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+
+      def decided(verdict, containment: Lain::Confine::Sandbox::Containment::ABLE, authority: :human,
+                  context: Struct.new(:disclosure).new(disclosure))
+        within = described_class.new(journal:, containment:)
+        Sync do |task|
+          run = task.async { within.adjudicate(tool_call, context) }
+          task.with_timeout(1) { within.dequeue }.tap { _1.decide(verdict, surface: "tty", authority:) }
+              .tap { run.wait }
+        end
+      end
+
+      it "unmasks a human's contained approval, with no network, and journals it" do
+        pending = decided(Lain::Approval::Verdict::Approve.new(secrets: true))
+
+        expect(pending).to have_attributes(contained?: true, network?: false, unmasked?: true, offers_secrets?: true)
+        expect(journal_records(journal_io, "approval_decision").last).to include("secrets" => true)
+          .and(satisfy { !_1.key?("network") })
+      end
+
+      it "unmasks nothing for a machine surface, whose answer is no person's choice" do
+        expect(decided(Lain::Approval::Verdict::Approve.new(secrets: true), authority: :automatic))
+          .to have_attributes(contained?: true, unmasked?: false)
+      end
+
+      it "unmasks nothing on a plain approval, and journals no secrets" do
+        expect(decided(Lain::Approval::Verdict::Approve.new)).to have_attributes(unmasked?: false)
+        expect(journal_records(journal_io, "approval_decision").last).not_to have_key("secrets")
+      end
+
+      it "is offered only where the box can run the call contained" do
+        unable = Lain::Confine::Sandbox::Containment.unable("no bwrap")
+        plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
+
+        expect([decided(Lain::Approval::Verdict::Approve.new, containment: unable),
+                decided(Lain::Approval::Verdict::Approve.new, context: plain)].map(&:offers_secrets?))
+          .to eq([false, false])
+        expect(decided(Lain::Approval::Verdict::Approve.new(secrets: true), containment: unable))
+          .to have_attributes(unmasked?: false)
+      end
+
+      it "names on the parked call the files its answer would let the call read, under the call's own root" do
+        listing = Lain::Confine::Sandbox::Containment::Deferred.new(unmasks: ->(root) { ["#{root}/.env"] }) do
+          Lain::Confine::Sandbox::Containment::ABLE
+        end
+        checkout = Lain::WorkerEnv.new(cwd: "/srv/child", env: {}, checkout: "/srv/child")
+        context = Struct.new(:disclosure, :worker_env).new(disclosure, checkout)
+
+        expect(decided(Lain::Approval::Verdict::Approve.new, containment: listing, context:).containment.unmasks)
+          .to eq(["/srv/child/.env"])
+      end
+
+      it "shows the row's choice through the row's mask, so a token in a file name is not shown raw" do
+        token = "ghp_#{"Q" * 36}"
+        named = Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: ["config/#{token}.key"])
+        pending = described_class::Pending.new(
+          effect: tool_call, identity: Lain::Requester.main, clock: -> { 0.0 }, containment: named,
+          mask: ->(text) { Lain::Sensitivity::TextMask.text(text, secrets: [token]) }
+        )
+
+        expect(pending.choice_face).to include("masks lifted from <redacted").and(satisfy { !_1.include?(token) })
+        expect(pending.choice_face("a call")).to start_with("y runs a call contained")
+      end
     end
 
     it "journals an approval's note, so a note asking for network is kept" do

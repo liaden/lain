@@ -6,7 +6,7 @@ require "tmpdir"
 
 module Lain
   module Exec
-    # Runs a bash call under the {Confine::Profile} its ruling earns, the way
+    # Runs a bash call under the `Confine::Profile` its ruling earns, the way
     # {Docker} composes {Local}: the inner exec still owns the deadline, the
     # group kill and the capture, and the launcher only prefixes each stage
     # after the inner exec's preflight has read the term as written.
@@ -55,7 +55,7 @@ module Lain
                     "To see a masked file, use read_file."
       DENIED = /^(?:[^:\n]+: )+?(?:'([^']*)'|"([^"]*)"|([^:\n]+?)): Permission denied$/
       PATH_WITHHELD = "[path withheld]"
-      WITHHELD = { path: PATH_WITHHELD, names: "[name withheld]" }.freeze
+      WITHHELD = { path: PATH_WITHHELD, names: "[name withheld]", files: "[names withheld]" }.freeze
       UNSEALABLE = "REFUSED by the sandbox, not a transient error: %<link>s is a link inside the project, so the " \
                    "file it leads to could be repointed and run later. Retrying, or running the same effect another " \
                    "way, will be refused again. Stop and ask the human to replace the link with the file, or to " \
@@ -120,9 +120,9 @@ module Lain
 
       # @param inner [Local]
       # @param launcher [Confine::Launcher]
-      # @param profiles [#for] chooses a {Confine::Profile} for a {Confine::Request}
+      # @param profiles [#for] chooses a `Confine::Profile` for a {Confine::Request}
       # @param journal [#<<] receives a {Telemetry::Sandbox} per call, a second one after a
-      #   call that created a sealed path, and a {Telemetry::ExecRecord} per traced call
+      #   call that created a sealed path or whose scan held a path, and a {Telemetry::ExecRecord} per traced call
       # @param ceiling [Integer] the output ceiling a refusal is bound for, as {Local}'s is
       # @param reaps [Boolean] whether the fence can run an unconfined call as its reaper; when it
       #   cannot, such a call runs as written, untraced, since the fence would refuse it outright
@@ -130,11 +130,13 @@ module Lain
       #   read once the call has run, since the toolset holding this exec is built before the policy
       # @param secrets [#call] returns the known values, a {Sensitivity::Secrets::Source}, read likewise
       # @param classifier [#classify] the session's policy on a path, so the note leaves out what its name gates
+      # @param masks [#masks] the session's {Confine::MaskList}, so a secrets run's note names what it could read
       def initialize(inner:, launcher:, profiles:, journal:, ceiling: Tool::Bounds::CEILINGS.fetch("bash"),
                      reaps: true, taint: Sensitivity::Taint.new.then { |own| -> { own } },
                      secrets: -> { Sensitivity::Secrets::Source::DEFAULT },
-                     classifier: Sensitivity::Policy::Null.instance)
-        @scanning = Scanning.new(taint:, secrets:, classifier:)
+                     classifier: Sensitivity::Policy::Null.instance, masks: Lifting::UNLISTED)
+        @scanning = Scanning.new(taint:, secrets:, classifier:, journal:)
+        @lifting = Lifting.new(masks)
         @inner = inner
         @launcher = launcher
         @profiles = profiles
@@ -184,10 +186,10 @@ module Lain
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                            trace: profile.trace, refused:, granted: granted(profile, confinement),
-                                           network: confinement.ruling.network?)
+                                           network: confinement.ruling.network?, secrets: profile.unmasked?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
-        scanned(profile, cwd) do
+        scanned(profile, confinement.tool_use_id, cwd) do
           masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         end
       end
@@ -201,10 +203,10 @@ module Lain
         end
       end
 
-      def scanned(profile, cwd, &block)
+      def scanned(profile, tool_use_id, cwd, &block)
         return yield unless profile.unmasked?
 
-        capture, told = @scanning.over(profile.read_dirs.first, cwd, &block)
+        capture, told = @scanning.over(profile.read_dirs.first, cwd, profile:, tool_use_id:, &block)
         line = told.map { |template, values| "#{phrased(template, **values.transform_values { printable(_1) })}\n" }
         line.empty? ? capture : appended(capture, line.join)
       end
@@ -238,11 +240,12 @@ module Lain
       end
 
       def told_contained(confinement, profile, masks, command:, cwd:, env:)
+        lifted = @lifting.readable(profile, confinement.root)
         capture = yield
         return capture unless confinement.ruling.contained?
 
-        appended(capture,
-                 "#{contained_line(profile)}\n#{named_masks(masks, typed_paths(command, cwd, env.to_h["HOME"]), cwd)}")
+        appended(capture, "#{contained_line(profile, lifted)}\n" \
+                          "#{named_masks(masks, typed_paths(command, cwd, env.to_h["HOME"]), cwd)}")
       end
 
       def named_masks(masks, typed, cwd)
@@ -262,7 +265,9 @@ module Lain
       end
 
       # A build grant keeps its ports under a contained approval, so the line must not claim no network.
-      def contained_line(profile)
+      def contained_line(profile, lifted)
+        return @lifting.told(lifted).then { |template, values| phrased(template, **values) } if profile.unmasked?
+
         ports = profile.connect_ports
         ports.empty? ? CONTAINED : format(CONTAINED_PORTED, ports: ports.join(", "))
       end
@@ -396,9 +401,17 @@ module Lain
         ruling.human? && ruling.contained? ? REFUSED_CONTAINED : REFUSED
       end
 
+      # A path no listed link landed on is masked because a scan could not finish there, not by a link.
       def overmasked(confinement, overmask, sinks)
+        return refused_before(confinement, overmask, held(confinement, overmask), sinks) if @scanning.held?(overmask)
+
         names = overmask.names.map { printable(_1) }.join(", ")
         refused_before(confinement, overmask, phrased(OVERMASKED, names:, path: printable(overmask.path)), sinks)
+      end
+
+      def held(confinement, overmask)
+        project = overmask.path == Confine::Profile.landing(confinement.root || overmask.path)
+        phrased(Scanning::HELD, path: project ? "the project" : printable(within(confinement.root, overmask.path)))
       end
 
       # Named from the root the model works in: a long absolute path reads as high-entropy to the output
@@ -415,16 +428,7 @@ module Lain
         path.delete_prefix("#{landed.chomp(File::SEPARATOR)}#{File::SEPARATOR}")
       end
 
-      # The result is scanned whole on its way to the model, and a path or a link's name can read as a
-      # credential, which would withhold the sentence saying why the call failed. So such a value is left out,
-      # each on its own first and then every one, and the sentence kept; the sandbox record still names it.
-      def phrased(template, **values)
-        lines = [values, values.to_h { |key, value| [key, token?(value) ? WITHHELD.fetch(key, value) : value] },
-                 values.to_h { |key, value| [key, WITHHELD.fetch(key, value)] }].map { format(template, **_1) }
-        lines.find { !token?(_1) } || lines.last
-      end
-
-      def token?(text) = Sensitivity::Regions.detect(text).any?
+      def phrased(...) = Scanning.phrased(...)
 
       # The profile refused the call before it was built, so the record names the path it refused on.
       def refused_before(confinement, error, line, sinks, on: error.path)
@@ -439,23 +443,85 @@ module Lain
                         .finish(Shell::Pipeline::NOT_PERMITTED)
       end
 
+      # The project files a secrets answer let a call read, which its note names.
+      class Lifting
+        CONTAINED_SECRETS = "This call ran contained, as it was approved with secrets: lain lifted its masks from " \
+                            "%<files>s, so the call could read them, and it had no network. lain scanned what it " \
+                            "wrote for the values they hold."
+        NOTHING_MASKED = "This call ran contained, as it was approved with secrets, and it had no network; the " \
+                         "project holds no file lain masks."
+        UNLISTED = Struct.new(:masks).new([].freeze).freeze
+
+        # @param masks [#masks]
+        def initialize(masks)
+          @masks = masks
+        end
+
+        # Read before the call, so the note names what it could read rather than what it left behind.
+        #
+        # @param profile [Confine::Profile]
+        # @param root [String, nil] the call's own root; the profile's project when nil
+        # @return [Array<String>] as {Confine::Profiles.readable} names them; none unless the profile is unmasked
+        def readable(profile, root)
+          return [] unless profile.unmasked?
+
+          Confine::Profiles.readable(@masks.masks, root || profile.read_dirs.first)
+        end
+
+        # @param lifted [Array<String>] as {#readable} names them
+        # @return [Array(String, Hash)] the sentence's template and values
+        def told(lifted)
+          return [NOTHING_MASKED, {}] if lifted.empty?
+
+          [CONTAINED_SECRETS, { files: Confine::Sandbox::Containment.listed(lifted) }]
+        end
+      end
+
       # What an unmasked call wrote that holds a known value, scanned even when the call raised, since what it
       # wrote before the deadline stays written.
       class Scanning
+        HELD_SCAN = "lain could not finish scanning what this call wrote, so until lain exits the project at " \
+                    "%<path>s is held: a read of anything in it asks a human and the sandbox masks it."
+        HELD = "REFUSED by the sandbox, not a transient error: lain could not finish scanning what an unmasked " \
+               "call wrote, so until lain exits %<path>s is held. Retrying will be refused again. Stop and " \
+               "tell the human, then wait for the answer."
+
+        # The result is scanned whole on its way to the model, and a path or a link's name can read as a
+        # credential, which would withhold the sentence saying why the call failed. So such a value is left out,
+        # each on its own first and then every one, and the sentence kept; the sandbox record still names it.
+        #
+        # @param template [String]
+        # @param values [Hash{Symbol => String}]
+        # @return [String]
+        def self.phrased(template, **values)
+          token = ->(text) { Sensitivity::Regions.detect(text).any? }
+          lines = [values, values.to_h { |key, value| [key, token.call(value) ? WITHHELD.fetch(key, value) : value] },
+                   values.to_h { |key, value| [key, WITHHELD.fetch(key, value)] }].map { format(template, **_1) }
+          lines.find { !token.call(_1) } || lines.last
+        end
+
         # @param taint [#call]
         # @param secrets [#call]
         # @param classifier [#classify]
-        def initialize(taint:, secrets:, classifier:)
+        # @param journal [#<<] receives a {Telemetry::Sandbox} naming each path a scan holds
+        def initialize(taint:, secrets:, classifier:, journal:)
+          @journal = journal
           @taint = taint
           @secrets = secrets
           @classifier = classifier
         end
 
+        # @param overmask [Confine::Profiles::Overmasked]
+        # @return [Boolean] whether the mask that refused the call is a hold, which no listed link landed on
+        def held?(overmask) = overmask.names.empty? && @taint.call.include?(overmask.path)
+
         # @param root [String] the project the call writes
         # @param cwd [String] what each path is named from
+        # @param profile [Confine::Profile] the call's, which a hold's record names
+        # @param tool_use_id [String] the call's, likewise
         # @yieldreturn [Capture]
         # @return [Array(Capture, Array)] the capture, and each sentence's template and values to say
-        def over(root, cwd)
+        def over(root, cwd, profile:, tool_use_id:)
           since = Sensitivity::Taint.mark(root)
           refs = Sensitivity::Taint.refs(root)
           ran = false
@@ -463,7 +529,7 @@ module Lain
             capture = yield
             ran = true
           ensure
-            scan = scanned(root, since, refs, raises: ran)
+            scan = scanned(root, since, refs, raises: ran, profile:, tool_use_id:)
           end
           [capture, told(scan, cwd)]
         end
@@ -471,17 +537,24 @@ module Lain
         private
 
         # A call that removed its own project leaves nothing to scan, and its result must still come back. Any
-        # other failure holds the whole project, so a defect in the scan gates what the run wrote; it is raised
-        # unless the call's own error is already on its way out.
-        def scanned(root, since, refs, raises:)
+        # other failure holds the whole project, so a defect in the scan gates what the run wrote; it is raised,
+        # its message naming the hold, unless the call's own error is already on its way out.
+        def scanned(root, since, refs, raises:, profile:, tool_use_id:)
           @taint.call.scan(root:, since:, refs:, secrets: @secrets.call)
         rescue StandardError => e
           return Sensitivity::Taint::NOTHING if e.is_a?(SystemCallError) && !File.directory?(root)
 
           @taint.call.hold_whole(root)
-          raise if raises
+          record_hold(root, profile, tool_use_id)
+          raise e.exception("#{e.message}\n#{Scanning.phrased(HELD_SCAN, path: Utf8.escaped(root))}") if raises
 
           Sensitivity::Taint::NOTHING
+        end
+
+        # A hold lasts until lain exits, so the session file says where, beside the error the model reads.
+        def record_hold(path, profile, tool_use_id)
+          @journal << Telemetry::Sandbox.new(tool_use_id:, profile: profile.name, trace: profile.trace, refused: [],
+                                             held: [path], secrets: profile.unmasked?)
         end
 
         def told(scan, cwd)

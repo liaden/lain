@@ -32,31 +32,56 @@ module Lain
         [kind, /\A\s*(?:#{words})(?:(?:#{grammar[:tail]})\s*\z|(?:#{grammar[:separator]})(?<note>\S.*))/mi]
       end.freeze
 
-      # Two fixed spellings, with an approval's strict tail, so no note can be read as consent to network.
-      NETWORK = /\A\s*(?:(?:approved|approve)\s+)?network(?:(?:#{GRAMMAR.dig(Verdict::Approve, :tail)})\s*\z|
-                 (?:#{GRAMMAR.dig(Verdict::Approve, :separator)})(?<note>\S.*))/mix
+      # Two fixed spellings each, with an approval's strict tail, so no note can be read as consent to network or
+      # to secrets.
+      CHOSEN = %w[network secrets].to_h do |word|
+        [word.to_sym, /\A\s*(?:(?:approved|approve)\s+)?#{word}(?:(?:#{GRAMMAR.dig(Verdict::Approve, :tail)})\s*\z|
+                       (?:#{GRAMMAR.dig(Verdict::Approve, :separator)})(?<note>\S.*))/mix]
+      end.freeze
       NETWORK_WORD = "network"
+      SECRETS_WORD = "secrets"
+      # An approval that names both words asks for what no answer gives, so it is asked again.
+      BOTH = [/\bnetwork\b/i, /\bsecrets\b/i].freeze
 
       # @param line [String]
       # @param network [Boolean] whether the asker offers the network answer; where it does not, as at an
       #   epic gate, that answer is unrecognised
+      # @param secrets [Boolean] whether the asker offers the secrets answer, likewise
       # @return [Verdict::Approve, Verdict::Hold, Verdict::Deny, Unrecognised]
-      def self.parse(line, network: false)
-        chosen = network && NETWORK.match(line.to_s)
-        return Verdict::Approve.new(note: chosen[:note], network: true) if chosen
+      def self.parse(line, network: false, secrets: false)
+        text = line.to_s
+        verdict = chosen(text, network:, secrets:) || plain(text)
+        return Unrecognised.new(text: text.dup.freeze) if verdict.nil? || ((network || secrets) && both?(verdict, text))
 
-        kind, match = PATTERNS.lazy.map { |k, pattern| [k, pattern.match(line.to_s)] }.find { _2 }
-        return Unrecognised.new(text: line.to_s.dup.freeze) unless match
-
-        kind.new(note: match[:note])
+        verdict
       end
 
       # @param verdict [Verdict::Approve, Verdict::Hold, Verdict::Deny]
-      # @return [String] the normal form {parse} reads back to an equal verdict, offering network for one that chose it
+      # @param line [String] the line it was read from
+      # @return [Boolean] whether it approves on a line that names both network and secrets
+      def self.both?(verdict, line) = verdict.approved? && BOTH.all? { line.match?(_1) }
+
+      # @param verdict [Verdict::Approve, Verdict::Hold, Verdict::Deny]
+      # @return [String] the normal form {parse} reads back to an equal verdict, offering the answer it chose
       def self.render(verdict)
-        word = Verdict.coerce(verdict).network? ? NETWORK_WORD : WORDS.fetch(verdict.class).first
+        word = if Verdict.coerce(verdict).network? then NETWORK_WORD
+               elsif verdict.secrets? then SECRETS_WORD
+               else WORDS.fetch(verdict.class).first
+               end
         verdict.note ? "#{word}, #{verdict.note}" : word
       end
+
+      def self.chosen(text, network:, secrets:)
+        { network:, secrets: }.select { _2 }.lazy.filter_map do |answer, _|
+          CHOSEN.fetch(answer).match(text)&.then { Verdict::Approve.new(note: _1[:note], answer => true) }
+        end.first
+      end
+
+      def self.plain(text)
+        kind, match = PATTERNS.lazy.map { |k, pattern| [k, pattern.match(text)] }.find { _2 }
+        kind&.new(note: match[:note])
+      end
+      private_class_method :chosen, :plain
     end
   end
 end

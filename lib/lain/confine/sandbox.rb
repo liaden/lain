@@ -56,7 +56,7 @@ module Lain
         def self.for(_request) = raise(Unconfined.new(profile: Profile::NONE.name))
       end
 
-      Containment = Data.define(:state, :because, :grants, :ports)
+      Containment = Data.define(:state, :because, :grants, :ports, :unmasks)
 
       # Whether a plain approval of a call that reads secrets can run it
       # contained: under a confined profile with no network beyond a build
@@ -66,6 +66,7 @@ module Lain
       # `:unstated` is a queue nobody told, which says nothing on the row.
       # `grants` is whether a contained call runs under the workspace profile,
       # whose build tools keep their ports, and `ports` the ones a parked call could earn.
+      # `unmasks` names the project files a secrets answer would let a parked call read.
       class Containment
         NETWORK_CHOICE = "network runs it unconfined, with network"
         ABLE_CHOICE = "y runs %<call>s contained, without network, where files lain masks read as empty or as a " \
@@ -73,6 +74,11 @@ module Lain
         PORTED_CHOICE = "y runs %<call>s contained, where files lain masks read as empty or as a decoy, and its " \
                         "build tool may reach the host's network on TCP ports %<ports>s; #{NETWORK_CHOICE}".freeze
         UNABLE_CHOICE = "y will not run %<call>s; #{NETWORK_CHOICE}".freeze
+        SECRETS_CHOICE = "secrets runs %<call>s cut off from the network, with lain's masks lifted from %<files>s, " \
+                         "and gates any file it writes that holds a secret"
+        NOTHING_MASKED_CHOICE = "secrets runs %<call>s cut off from the network, where the project holds no file " \
+                                "lain masks, and gates any file it writes that holds a secret"
+        SHOWN = 5
         UNABLE_NOTE = "lain cannot contain it here (%<because>s)"
         OFF_NOTE = "it will run unconfined, with network, because %<because>s"
         CONFINEMENT_OFF = "confinement is off"
@@ -87,15 +93,30 @@ module Lain
 
         # @param grants [Boolean] whether the session can grant a contained call its build tool's ports
         # @return [Containment]
-        def self.able(grants:) = grants ? new(state: :able, grants: true) : ABLE
+        def self.able(grants:) = new(state: :able, grants:)
 
-        def initialize(state:, because: nil, grants: false, ports: [])
-          super(state:, because: because&.then { -_1.to_s }, grants: grants == true, ports: ports.dup.freeze)
+        # The one spelling of a list of files on a row or in a note: the first {SHOWN}, then how many more, with
+        # "and" before the last, each escaped so a name cannot move the terminal's cursor.
+        #
+        # @param names [Array<String>] in the order to show them
+        # @return [String]
+        def self.listed(names)
+          shown = names.first(SHOWN).map { Utf8.escaped(_1) }
+          more = names.size - shown.size
+          items = more.positive? ? [*shown, "#{more} more"] : shown
+          items.size > 1 ? "#{items[0...-1].join(", ")} and #{items.last}" : items.first.to_s
         end
 
+        def initialize(state:, because: nil, grants: false, ports: [], unmasks: [])
+          super(state:, because: because&.then { -_1.to_s }, grants: grants == true, ports: ports.dup.freeze,
+                unmasks: unmasks.map(&:-@).freeze)
+        end
+
+        # A value already names its files; only {Deferred} lists them, under the call's own root.
+        #
         # @param argvs [Array<Array<String>>] the parked call's stages as the term arm would run them
         # @return [Containment] this one, with the ports that call could be granted where the session grants any
-        def over(argvs) = able? && grants ? with(ports: Profiles.grantable_ports(argvs)) : self
+        def over(argvs, **) = able? && grants ? with(ports: Profiles.grantable_ports(argvs)) : self
 
         # @return [Boolean] whether a plain approval of a secret-bearing call is meant to run contained
         def confines? = %i[able unable].include?(state)
@@ -119,7 +140,7 @@ module Lain
         # @return [String, nil] what y and network do, where the network answer is offered
         def choice(call = "it")
           case state
-          when :able then ports.empty? ? format(ABLE_CHOICE, call:) : ported(call)
+          when :able then "#{ports.empty? ? format(ABLE_CHOICE, call:) : ported(call)}; #{unmasking(call)}"
           when :unable then format(UNABLE_CHOICE, call:)
           end
         end
@@ -132,17 +153,28 @@ module Lain
         # bwrap, about 3 ms, which a chat launch should not pay before any call reads secrets. Off is the
         # session's choice, never the box's answer, so {#off?} needs no answer.
         class Deferred
-          delegate :state, :because, :grants, :ports, :over, :confines?, :able?, :note, :choice, :to_h, :with,
+          delegate :state, :because, :grants, :ports, :unmasks, :confines?, :able?, :note, :choice, :to_h, :with,
                    :members, :deconstruct, :deconstruct_keys, :==, :eql?, :hash, to: :resolved
 
+          # @param unmasks [#call] `(root)` to the files a secrets answer would lift the masks from under that root,
+          #   relative and in order; read on each park, since the project's files change
           # @yieldreturn [Containment] able or unable, asked for once
-          def initialize(&answer)
+          def initialize(unmasks: ->(_root) { [] }, &answer)
+            @unmasks = unmasks
             @answer = answer
             @mutex = Mutex.new
           end
 
           # @return [false]
           def off? = false
+
+          # @param argvs [Array<Array<String>>]
+          # @param root [String, nil] the call's own root; the session's when nil
+          # @return [Containment] as {Containment#over}, naming the files a secrets answer would lift where it can
+          def over(argvs, root: nil)
+            over = resolved.over(argvs)
+            over.able? ? over.with(unmasks: @unmasks.call(root)) : over
+          end
 
           private
 
@@ -156,6 +188,12 @@ module Lain
         private
 
         def ported(call) = format(PORTED_CHOICE, call:, ports: ports.join(", "))
+
+        def unmasking(call)
+          return format(NOTHING_MASKED_CHOICE, call:) if unmasks.empty?
+
+          format(SECRETS_CHOICE, call:, files: Containment.listed(unmasks))
+        end
       end
 
       # @param probe [Probe]
@@ -229,12 +267,12 @@ module Lain
 
         @built = true
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap),
-                            **@scanning)
+                            masks: @masks, **@scanning)
       end
 
       # @return [Containment::Deferred] whether this box can run a call contained, with no network beyond a build
       #   tool's ports
-      def containment = Containment::Deferred.new { contained_here }
+      def containment = Containment::Deferred.new(unmasks: ->(root) { readable(root) }) { contained_here }
 
       # Starts the mask classification of a sandbox that was built.
       #
@@ -254,6 +292,8 @@ module Lain
 
         Containment.able(grants: @profiling[:workspace])
       end
+
+      def readable(root) = Profiles.readable(@masks.masks, root || @root)
 
       def profiles
         built = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks, **@profiling)

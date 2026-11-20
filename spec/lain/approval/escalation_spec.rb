@@ -514,6 +514,40 @@ RSpec.describe Lain::Approval::Escalation do
       expect(rulings.find { _1["rung"] == "surfaces" }).to include("network" => true)
     end
 
+    it "is contained and unmasked, with no network, when the human answered secrets" do
+      expect(answered(Lain::Approval::Verdict::Approve.new(secrets: true)))
+        .to have_attributes(verdict: :allow, contained?: true, network?: false, unmasked?: true)
+    end
+
+    it "keeps the masks when a machine surface carries a secrets answer, since only a human gives it" do
+      expect(answered(Lain::Approval::Verdict::Approve.new(secrets: true), authority: :automatic))
+        .to have_attributes(verdict: :allow, contained?: true, unmasked?: false)
+    end
+
+    it "keeps the masks on a plain approval" do
+      expect(answered(Lain::Approval::Verdict::Approve.new)).to have_attributes(unmasked?: false)
+    end
+
+    it "journals the human's secrets answer on the escalation record" do
+      Sync do |task|
+        ruled = task.async { ladder(described_class::Surfaces.new(queue)).rule(effect, context) }
+        task.with_timeout(1) { queue.dequeue }
+            .decide(Lain::Approval::Verdict::Approve.new(secrets: true), surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
+
+      expect(rulings.find { _1["rung"] == "surfaces" }).to include("secrets" => true, "contained" => true)
+    end
+
+    it "refuses a ruling that unmasks a call no human approved, or one that is not contained or chose network" do
+      ruled = ->(**rest) { described_class::Ruling.allow(rung: "surfaces", because: "x", unmasked: true, **rest) }
+
+      expect { ruled.call(contained: true) }.to raise_error(Lain::Error, /human/)
+      expect { ruled.call(authority: :human) }.to raise_error(Lain::Error, /contained/)
+      expect { ruled.call(authority: :human, contained: true, network: true) }
+        .to raise_error(Lain::Error, /network/)
+    end
+
     context "when the box cannot contain the call" do
       let(:containment) { Lain::Confine::Sandbox::Containment.unable("the box lacks bwrap") }
 
@@ -541,6 +575,13 @@ RSpec.describe Lain::Approval::Escalation do
   describe "an automatic allow of a call that reads secrets" do
     let(:secret) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
     let(:context) { Struct.new(:disclosure).new(secret) }
+
+    it "never unmasks the call when the judge, bypass or a rule allows it" do
+      allowing = [EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow), described_class::Bypass.new,
+                  rules_rung(EscalationSpecSupport::Allower.new)]
+
+      expect(allowing.map { ladder(_1).rule(effect, context) }).to all(have_attributes(unmasked?: false))
+    end
 
     it "is contained when the judge, bypass or a rule allows it, and the record says so" do
       allowing = [EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow), described_class::Bypass.new,

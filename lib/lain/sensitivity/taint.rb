@@ -49,6 +49,13 @@ module Lain
       # @return [String, nil] git's stdout as binary; nil when it failed
       def self.git(checkout, *, input: nil) = Confine::DecoyGuard.git(checkout, *, input:)
 
+      # By bytes, so a name that is not ASCII joins a root that is not ASCII under any locale.
+      #
+      # @param dir [String]
+      # @param name [String]
+      # @return [String] in the filesystem's encoding
+      def self.joined(dir, name) = File.join(dir.b, name.b).force_encoding(::Lain::FILESYSTEM)
+
       def initialize
         @cell = Bounds::Cell.new([].freeze)
       end
@@ -77,7 +84,7 @@ module Lain
       #   `[object, path]` holding a known value or too large to read; the path is nil for an object no new
       #   commit names
       # @raise [FrozenError] on {NONE}
-      # @raise [SystemCallError] when the root itself is gone
+      # @raise [SystemCallError] when the root cannot be resolved
       def scan(root:, since:, refs:, secrets:)
         raise FrozenError.new("the empty taint takes no scan", receiver: self) if frozen?
 
@@ -160,7 +167,7 @@ module Lain
           nil
         end
 
-        def joined(name) = File.join(@root.b, name.b.chomp(SEPARATOR)).force_encoding(::Lain::FILESYSTEM)
+        def joined(name) = Taint.joined(@root, name.b.chomp(SEPARATOR))
 
         # The trees the listing leaves out, each at the directory a prune starts from.
         # Through the listing's own git, since the guard's pins pathspecs literal and these are globs.
@@ -205,7 +212,7 @@ module Lain
         end
 
         def children(path, stat)
-          Dir.children(path).sort.reverse.map { File.join(path, _1) }
+          Dir.children(path).sort.reverse.map { Taint.joined(path, _1) }
         rescue SystemCallError
           open_if_changed(path, stat)
           []
@@ -323,7 +330,7 @@ module Lain
 
         private
 
-        def at(path) = File.join(@top, path)
+        def at(path) = Taint.joined(@top, path)
 
         def staged
           @staged ||= if !@top then []

@@ -150,4 +150,40 @@ RSpec.describe Lain::Approval::Reply do
       end
     end
   end
+
+  describe "the secrets answer" do
+    def offered(line) = described_class.parse(line, network: true, secrets: true)
+
+    it "reads secrets and approve secrets as an approval with secrets" do
+      expect(%w[secrets SECRETS].push("approve secrets").map { offered(_1) })
+        .to all(eq(verdict::Approve.new(secrets: true)))
+    end
+
+    it "takes a note only after a comma, colon or dash" do
+      expect(offered("secrets, boot rails")).to eq(verdict::Approve.new(note: "boot rails", secrets: true))
+      expect(["secrets please", "secrets?"].map { offered(_1) }).to all(be_a(described_class::Unrecognised))
+    end
+
+    it "never reads a note as consent to secrets" do
+      expect(offered("approve: secrets please")).to eq(verdict::Approve.new(note: "secrets please"))
+    end
+
+    it "is unrecognised where it is not offered, though network is" do
+      expect(["secrets", "approve secrets"].map { described_class.parse(_1, network: true) })
+        .to all(be_a(described_class::Unrecognised))
+    end
+
+    it "reads no line naming both answers as either, whichever leads" do
+      lines = ["secrets network", "network secrets", "network, secrets", "secrets, network", "approve secrets network",
+               "approve network, secrets", "secrets: and network too"]
+
+      expect(lines.map { offered(_1) }).to all(be_a(described_class::Unrecognised))
+    end
+
+    it "renders a form that reads back where it is offered" do
+      [verdict::Approve.new(secrets: true), verdict::Approve.new(note: "a, b", secrets: true)].each do |chosen|
+        expect(offered(described_class.render(chosen))).to eq(chosen)
+      end
+    end
+  end
 end

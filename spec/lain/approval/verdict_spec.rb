@@ -71,4 +71,28 @@ RSpec.describe Lain::Approval::Verdict do
       end
     end
   end
+
+  describe "an approval with secrets" do
+    it "is not chosen by default" do
+      expect(described_class::Approve.new.secrets?).to be(false)
+    end
+
+    it "is chosen only when asked for, and differs from a plain approval" do
+      chosen = described_class::Approve.new(note: "x", secrets: true)
+
+      expect(chosen.secrets?).to be(true)
+      expect(chosen).not_to eq(described_class::Approve.new(note: "x"))
+    end
+
+    it "is refused on a hold or a deny" do
+      [described_class::Hold, described_class::Deny].each do |kind|
+        expect { kind.new(secrets: true) }.to raise_error(ArgumentError, /secrets/)
+      end
+    end
+
+    it "cannot be chosen together with network" do
+      expect { described_class::Approve.new(secrets: true, network: true) }
+        .to raise_error(ArgumentError, /secrets.*network|network.*secrets/)
+    end
+  end
 end

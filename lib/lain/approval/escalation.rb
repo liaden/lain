@@ -95,7 +95,7 @@ module Lain
       # Deeply frozen -- strings interned, `fault` coerced to a strict Boolean --
       # so `Ractor.shareable?` holds and the record is safe to share.
       Ruling = Data.define(:verdict, :rung, :reason, :fault, :authority, :final, :told, :said, :rule, :note, :liftable,
-                           :builds, :contained, :network)
+                           :builds, :contained, :network, :unmasked)
 
       class Ruling
         # Reopened rather than written in the `Data.define` block: a constant
@@ -158,10 +158,11 @@ module Lain
         #
         # `contained` is a plain allow of a call that reads secrets, a surface's or an automatic rung's, which the
         # sandbox runs confined with no network beyond a build tool's granted ports; `network` is a human's choice
-        # to run it unconfined.
+        # to run it unconfined. `unmasked` is a human's choice to run it contained with the project's own masks
+        # lifted, which no machine may make.
         def initialize(verdict:, rung:, reason:, fault: false, authority: :automatic, final: false, told: nil,
                        said: nil, rule: nil, note: nil, liftable: false, builds: false, contained: false,
-                       network: false)
+                       network: false, unmasked: false)
           unless VERDICTS.include?(verdict)
             raise Error, "unknown verdict #{verdict.inspect}; expected one of #{VERDICTS.inspect}"
           end
@@ -169,10 +170,12 @@ module Lain
             raise Error, "unknown authority #{authority.inspect}; expected one of #{AUTHORITIES.inspect}"
           end
 
+          unmasking(authority, contained, network) if unmasked == true
+
           super(verdict:, rung: -rung.to_s, reason: -reason.to_s, fault: fault == true, authority:,
                 final: final == true, told: -(told || reason).to_s, said: spoken(said), rule: spoken(rule),
                 note: spoken(note), liftable: liftable == true, builds: builds == true,
-                contained: contained == true, network: network == true)
+                contained: contained == true, network: network == true, unmasked: unmasked == true)
         end
 
         def allow? = verdict == :allow
@@ -188,15 +191,22 @@ module Lain
         def builds? = builds
         def contained? = contained
         def network? = network
+        def unmasked? = unmasked
 
         def record
           { "verdict" => verdict.to_s, "rung" => rung, "reason" => reason,
             "faulted" => fault, "authority" => authority.to_s, "final" => final }
             .merge(note ? { "note" => note } : {}, contained ? { "contained" => true } : {},
-                   network ? { "network" => true } : {}).freeze
+                   network ? { "network" => true } : {}, unmasked ? { "secrets" => true } : {}).freeze
         end
 
         private
+
+        def unmasking(authority, contained, network)
+          raise Error, "only a human may unmask a call" unless authority == :human
+          raise Error, "only a contained call may be unmasked" unless contained == true
+          raise Error, "an unmasked call has no network" if network == true
+        end
 
         # One spelling of no reason, so a blank never leaves a dangling ": ".
         def spoken(said) = (-said.to_s if said.present?)
@@ -1017,7 +1027,7 @@ module Lain
           return uncontained(pending) if pending.contained? && !pending.containment.able?
 
           Ruling.allow(rung: NAME, because: "#{APPROVED} (#{pending.surface})", authority: pending.authority,
-                       contained: pending.contained?, network: pending.network?)
+                       contained: pending.contained?, network: pending.network?, unmasked: pending.unmasked?)
         end
 
         # Liftable, since the next issue parks again and the human may then answer network.

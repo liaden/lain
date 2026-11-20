@@ -318,6 +318,53 @@ RSpec.describe Lain::Confine::Sandbox do
     end
   end
 
+  describe "what the secrets answer says it unmasks" do
+    let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }
+    let(:netting) { Lain::Confine::Probe.new(fence:, journal:, runner: netted, ptrace_scope: -> { "0" }) }
+
+    def mask(path, reason = :credential) = Lain::Sensitivity::Policy::Mask.new(path:, reason:)
+
+    def containment_over(listed, root: nil)
+      described_class.new(root: "/srv/project", home: "/home/h", masks: Struct.new(:masks).new(listed),
+                          probe: netting, fence:, journal:).containment.over([], root:)
+    end
+
+    it "names the first 5 of the project's masked files by path, then how many more" do
+      names = %w[g.key .env config/master.key b.pem a.env d/.env f.key]
+      listed = [*names.map { mask("/srv/project/#{_1}") }, mask("/home/h/.ssh/id_ed25519"),
+                mask("/srv/project/leaked.txt", :tainted)]
+
+      choice = containment_over(listed).choice
+
+      expect(choice).to include("; secrets runs it cut off from the network, with lain's masks lifted from " \
+                                ".env, a.env, b.pem, config/master.key, d/.env and 2 more, and gates")
+      expect(choice).not_to include("f.key", "g.key", "id_ed25519", "leaked.txt")
+    end
+
+    it "names every file when there are 5 or fewer, with and before the last" do
+      expect(containment_over([mask("/srv/project/.env")]).choice).to include("masks lifted from .env, and gates")
+      expect(containment_over(%w[b.env a.env c.env].map { mask("/srv/project/#{_1}") }).choice)
+        .to include("masks lifted from a.env, b.env and c.env, and gates")
+    end
+
+    it "escapes a control character in a file name, so the row cannot move the terminal's cursor" do
+      choice = containment_over([mask("/srv/project/.env\e[2Jx")]).choice
+
+      expect(choice).to include('masks lifted from .env\\e[2Jx, and gates')
+      expect(choice).not_to include("\e")
+    end
+
+    it "names the files under the call's own root when it has one" do
+      listed = [mask("/srv/project/.env"), mask("/srv/project/child/.env"), mask("/srv/project/child/config/k.key")]
+
+      expect(containment_over(listed, root: "/srv/project/child").unmasks).to eq(%w[.env config/k.key])
+    end
+
+    it "is not offered where the box cannot contain the call" do
+      expect(sandbox.containment.over([]).choice).not_to include("secrets")
+    end
+  end
+
   describe "what a plain approval of a fetch says about the network" do
     let(:fetch) { [%w[cargo fetch .env]] }
     let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }

@@ -183,6 +183,56 @@ RSpec.describe Lain::Exec::Sandboxed do
         end
       end
 
+      context "when the human answered secrets" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(private_net: true, unmasked: true) }
+        let(:listed) do
+          names = %w[g.key .env config/master.key b.pem a.env d/.env f.key]
+          [*names.map { Lain::Sensitivity::Policy::Mask.new(path: File.join(root, _1), reason: :credential) },
+           Lain::Sensitivity::Policy::Mask.new(path: File.join(root, "child/d/.env"), reason: :credential),
+           Lain::Sensitivity::Policy::Mask.new(path: File.join(home, ".ssh/id_ed25519"), reason: :credential)]
+        end
+        let(:sandboxed) do
+          described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096,
+                              masks: Struct.new(:masks).new(listed))
+        end
+
+        def secrets
+          ruled = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority: :human,
+                                                           contained: true, unmasked: true)
+          Lain::Confine::Request.new(ruling: ruled, executables: [], cwd: root, root:, tool_use_id: "toolu_1")
+        end
+
+        it "names the first 5 files it could read, and says it had no network" do
+          stderr = run(command: Lain::Shell::Term.of(%w[ls]), confinement: secrets).stderr
+
+          expect(stderr).to include(format(described_class::Lifting::CONTAINED_SECRETS,
+                                           files: ".env, a.env, b.pem, child/d/.env, config/master.key and 3 more"))
+          expect(stderr).not_to include(described_class::CONTAINED, "id_ed25519")
+        end
+
+        it "names the files under the call's own root, not the session's" do
+          child = File.join(root, "child")
+          own = Lain::Confine::Request.new(ruling: secrets.ruling, executables: [], cwd: child, root: child,
+                                           tool_use_id: "toolu_1")
+
+          stderr = run(command: Lain::Shell::Term.of(%w[ls]), confinement: own).stderr
+
+          expect(stderr).to include(format(described_class::Lifting::CONTAINED_SECRETS, files: "d/.env"))
+        end
+
+        it "records that the run had the project's secrets" do
+          run(confinement: secrets)
+
+          expect(recorded("sandbox").sole).to have_attributes(secrets: true, network: false)
+        end
+      end
+
+      it "records no secrets on a plain contained call" do
+        run(confinement: human(contained: true))
+
+        expect(recorded("sandbox").sole).to have_attributes(secrets: false)
+      end
+
       context "when the contained call earned a build tool's ports" do
         let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(connect_ports: [443, 80]) }
 
@@ -349,11 +399,46 @@ RSpec.describe Lain::Exec::Sandboxed do
         expect { run }.to raise_error(Errno::EIO)
       end
 
-      it "holds the whole project when the scan itself fails, and lets the failure through" do
+      it "holds the whole project when the scan itself fails, and lets the failure through naming the hold" do
         allow(taint).to receive(:scan).and_raise(ArgumentError, "a bug in the scan")
 
-        expect { run }.to raise_error(ArgumentError, "a bug in the scan")
+        expect { run }.to raise_error(ArgumentError, /\Aa bug in the scan\n.*could not finish scanning/m)
         expect(taint.paths).to eq([root])
+      end
+
+      it "journals the hold it took, naming the held path, for a human reading the session" do
+        allow(taint).to receive(:scan).and_raise(ArgumentError, "a bug in the scan")
+
+        expect { run }.to raise_error(ArgumentError)
+        expect(recorded("sandbox")).to include(have_attributes(tool_use_id: "toolu_1", profile: :reader,
+                                                               held: [root], secrets: true))
+      end
+
+      def refused_over_hold(path, names: [])
+        taint.hold_whole(path)
+        held = Struct.new(:error) { def for(_request) = raise(error) }
+                     .new(Lain::Confine::Profiles::Overmasked.new(path:, names:, profile: :workspace))
+        refusing = described_class.new(inner:, launcher:, profiles: held, journal:, taint: -> { taint })
+        refusing.call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                      confinement: composed).stderr
+      end
+
+      it "refuses a later contained call in a held project with its own sentence, not a listed link's" do
+        stderr = refused_over_hold(root)
+
+        expect(stderr).to include("so until lain exits the project is held")
+        expect(stderr).not_to include("listed link")
+        expect(recorded("sandbox").sole).to have_attributes(refused: [root])
+      end
+
+      it "names a listed link that lands on a held path, as any overmask, since a link made that mask" do
+        expect(refused_over_hold(File.join(root, "target"), names: ["link"])).to include("the listed link link")
+      end
+
+      it "names a held directory below the project as what is held, not the project" do
+        stderr = refused_over_hold(File.join(root, "target"))
+
+        expect(stderr).to include("so until lain exits target is held")
       end
 
       it "holds the whole project when the scan fails after the call raised, and keeps the call's error" do

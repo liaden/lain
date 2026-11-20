@@ -983,10 +983,12 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
 
     context "when lain can contain it" do
-      it "says once that a y runs it contained, without network, and offers the network answer" do
+      it "says once that a y runs it contained, without network, and offers the network and secrets answers" do
         seen = shown
         choice = "y runs it contained, without network, where files lain masks read as empty or as a decoy; " \
-                 "network runs it unconfined, with network [y/N/network] "
+                 "network runs it unconfined, with network; secrets runs it cut off from the network, where the " \
+                 "project holds no file lain masks, and gates any file it writes that holds a secret " \
+                 "[y/N/network/secrets] "
 
         expect(seen.to_s).to end_with("approve bash(#{effect.input.inspect})? #{choice}")
         expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? #{choice}")
@@ -1010,7 +1012,55 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         said = []
         described_class::Asked.new("approve? ", secret).refused { |note| said << note }
 
-        expect(said).to eq(["y, n, hold or network answers the approval"])
+        expect(said).to eq(["y, n, hold, network or secrets answers the approval"])
+      end
+
+      it "takes the secrets answer, and approves with secrets on it, never with network" do
+        expect(shown.takes?("secrets")).to be(true)
+        expect([answered("secrets"), answered("approve secrets")].map { [_1.approved?, _1.unmasked?, _1.network?] })
+          .to eq([[true, true, false], [true, true, false]])
+      end
+
+      it "names the files the secrets answer lifts the masks from" do
+        named = Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: %w[.env config/master.key])
+        held = Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 },
+                                                          containment: named)
+
+        expect(shown(held).parts.tail).to include("masks lifted from .env and config/master.key, and gates")
+      end
+
+      it "numbers the masked values of the call and of the file list as 1 line, so 2 values never share a number" do
+        called, named = %w[A B].map { "ghp_#{_1 * 36}" }
+        held = Lain::Approval::Parked::Queue::Pending.new(
+          effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { command: "echo #{called}" }),
+          identity: Lain::Requester.main, clock: -> { 0.0 },
+          containment: Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: ["config/#{named}.key"]),
+          mask: ->(text) { Lain::Sensitivity::TextMask.text(text, secrets: [called, named]) }
+        )
+
+        prompt = shown(held).to_s
+
+        expect(prompt).to include("echo <redacted:1>", "lifted from <redacted:2>")
+      end
+
+      it "masks a token in a file name on the prompt, as it masks the call" do
+        token = "ghp_#{"Q" * 36}"
+        named = Lain::Confine::Sandbox::Containment::ABLE.with(unmasks: ["config/#{token}.key"])
+        held = Lain::Approval::Parked::Queue::Pending.new(
+          effect:, identity: Lain::Requester.main, clock: -> { 0.0 }, containment: named,
+          mask: ->(text) { Lain::Sensitivity::TextMask.text(text, secrets: [token]) }
+        )
+
+        expect(shown(held).to_s).to include("masks lifted from <redacted").and(satisfy { !_1.include?(token) })
+      end
+
+      ["secrets network", "network, secrets"].each do |line|
+        it "reads #{line.inspect} as neither combined answer, and holds it for the chat" do
+          answer = answered(line)
+
+          expect(answer).to have_attributes(approved?: false, unmasked?: false, network?: false)
+          expect(shown.takes?(line)).to be(false)
+        end
       end
     end
 

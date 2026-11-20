@@ -168,11 +168,13 @@ module Lain
 
       def related_tree(dir) = Tree.new(dir, @shell_out, stat: @stat, whole_pruned: true)
 
+      # By bytes, since a held name that is not valid UTF-8 may be tagged apart from the listing's spelling of it.
       def tainted(listed)
         paths = @taint.call.paths
         return listed if paths.empty?
 
-        added = (paths - listed.map(&:path)).select { File.exist?(_1) }
+        masked = listed.to_set { _1.path.b }
+        added = paths.reject { masked.include?(_1.b) }.select { File.exist?(_1) }
         [*listed, *added.map { Sensitivity::Policy::Mask.new(path: _1, reason: Sensitivity::Taint::REASON) }].freeze
       end
 

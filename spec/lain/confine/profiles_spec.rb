@@ -887,6 +887,16 @@ RSpec.describe Lain::Confine::Profiles do
             .to eq([[443], :workspace])
         end
 
+        it "grants no port to a fetch the human answered secrets, which reads secrets only with no network" do
+          answers["lain-fence"] = ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], private_net: false })}\n", true]
+          secrets = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority: :human,
+                                                             contained: true, unmasked: true)
+          asked = Lain::Confine::Request.new(ruling: secrets, executables: [git], argv: [%w[git fetch origin]],
+                                             cwd: root, root:, tool_use_id: "toolu_1")
+
+          expect(profiles.for(asked)).to have_attributes(name: :workspace, connect_ports: [], private_net: true)
+        end
+
         it "grants each fetching git subcommand, and cargo fetch" do
           names = [*%w[fetch clone pull ls-remote].map { profile_of(["git", _1, "x"], git).name },
                    profile_of(%w[cargo fetch], cargo).name]
@@ -1581,6 +1591,83 @@ RSpec.describe Lain::Confine::Profiles do
 
           expect(profile).to have_attributes(name: :reader, private_net: true, connect_ports: [])
           expect(profile.exec_files).to include(rails, other)
+        end
+      end
+
+      describe "a human's secrets answer" do
+        let(:workspace) { described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch) }
+        let(:key) { File.join(root, "config/master.key") }
+        let(:outside) { File.join(@base, "elsewhere/id_ed25519") }
+        let(:held) { Lain::Sensitivity::Policy::Mask.new(path: File.join(root, "leaked.txt"), reason: :tainted) }
+        let(:masked) { [mask(key), mask(File.join(root, ".env")), mask(outside), held] }
+
+        def secrets(contained: true)
+          Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "approved", authority: :human,
+                                                   contained:, unmasked: true)
+        end
+
+        before do
+          answers["lain-fence"] = netted
+          FileUtils.mkdir_p(File.join(@base, "home/.bundle"))
+          File.write(File.join(@base, "home/.bundle/config"), "BUNDLE_X: y\n")
+        end
+
+        it "runs under the workspace profile with a private network and none of the project's masks" do
+          profile = workspace.for(request(secrets))
+
+          expect(profile).to have_attributes(name: :workspace, private_net: true, unmasked?: true, connect_ports: [])
+          expect(profile.masks).not_to include(key, File.join(root, ".env"))
+        end
+
+        it "lifts them under the reader profile too, when the workspace switch is off" do
+          expect(profiles.for(request(secrets))).to have_attributes(name: :reader, private_net: true, unmasked?: true)
+          expect(profiles.for(request(secrets)).masks).not_to include(key)
+        end
+
+        it "keeps a mask that lands outside the project, a file a scan held, and the hidden toolchain files" do
+          profile = workspace.for(request(secrets))
+
+          expect(profile.masks).to include(outside, held.path)
+          expect(profile.hidden).to include(File.join(@base, "home/.bundle/config"))
+        end
+
+        it "keeps a related directory's masks" do
+          related_env = File.join(@base, "related/.env")
+          classifier = Struct.new(:related) { def classify(_path) = Lain::Sensitivity::ORDINARY.verdict }
+                             .new(Lain::Confine::MaskList::Related.new(roots: [File.dirname(related_env)],
+                                                                       masks: [mask(related_env)]))
+          related = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+
+          expect(related.for(request(secrets)).masks).to include(related_env)
+        end
+
+        it "masks the project again on the next plain approval" do
+          workspace.for(request(secrets))
+
+          expect(workspace.for(request(human(contained: true)))).to have_attributes(unmasked?: false)
+          expect(workspace.for(request(human(contained: true))).masks).to include(key, File.join(root, ".env"))
+        end
+
+        it "lifts only the masks under the call's own root when it has one" do
+          child = File.join(root, "child").tap { FileUtils.mkdir_p(_1) }
+          child_key = File.join(child, ".env")
+          masked << mask(child_key)
+
+          profile = workspace.for(request(secrets, root: child))
+
+          expect(profile.masks).not_to include(child_key)
+          expect(profile.masks).to include(key)
+        end
+
+        it "keeps a listed link's mask on the project itself, which still refuses the call as any overmask does" do
+          linked = Struct.new(:masks) { def landed_on(_path) = ["here"] }.new([*masked, mask(root)])
+          listing = described_class.new(masks: linked, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+          expect { listing.for(request(secrets)) }.to raise_error(described_class::Overmasked, /here/)
+        end
+
+        it "names the masks it would lift, the project's own and no other" do
+          expect(described_class.lifted(masked, root)).to eq([key, File.join(root, ".env")])
         end
       end
     end

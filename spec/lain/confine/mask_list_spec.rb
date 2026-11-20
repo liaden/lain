@@ -80,6 +80,17 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       expect(tainted.masks).to equal(first)
     end
 
+    it "masks a tainted path whose name is not valid UTF-8 once, though the listing masks it too" do
+      bad = File.join(root, "d\xff").b.force_encoding(Lain::FILESYSTEM)
+      Dir.mkdir(bad)
+      File.write(File.join(bad, "k"), "x")
+      taint.hold_whole(File.join(bad, "k").b)
+
+      masked = tainted.masks.map(&:path).select { _1.b.include?("d\xff".b) }
+
+      expect(masked.map(&:b)).to eq([File.join(bad, "k").b])
+    end
+
     it "drops a tainted file that is gone, since a mask needs a file to bind over" do
       write("app.log", "synthetic-leaf-4f9a2c")
       taint_now
