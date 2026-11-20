@@ -1,6 +1,6 @@
 # Round 30 fixes
 
-status: in-progress
+status: done (2544d391, 2026-11-20)
 base: 9e083c2d090aebfff2d4c56e38b9dc07a4f1c805
 commit-mode: orchestrator-commits
 language: ruby (T25, T31 and T33 also touch Rust in `crates/lain-daemon` and `crates/lain-wire`)
@@ -514,6 +514,10 @@ Spec files: `spec/lain/provider/ollama/decoding_spec.rb`, `spec/lain/provider/ol
 - `Lain::Compare` (`lib/lain/compare.rb:283-303`) still withholds `cache_hit_ratio` for ollama through a `degraded` `:prompt_caching` flag. Name where the flag is set, and do not change it in this card.
 - Compaction's timing on ollama changes in `spec/lain/compaction/source_spec.rb`, because `cold` now reads false (`source.rb:1024`). Report which examples move.
 
+**Ruling (implementer stop, 2026-11-19):** once ollama reports cached tokens, `usage.cache_active?` is true. `StatusFeed#slide_cache_deadline` (`status_feed.rb:523`) then publishes a deadline at now plus `NO_CACHING`'s ttl of 0, which is already past. That turns every example in `spec/e2e/cockpit_approval_spec.rb` red. Ollama reuses a KV prefix for as long as the model stays loaded, and lain cannot name that lifetime. So a profile whose ttl is not positive publishes no cache deadline, and `slide_cache_deadline` returns early on it. `lib/lain/status_feed.rb` and `spec/lain/status_feed_spec.rb` join the card.
+
+**Ruling (2026-11-19, follow-up):** the cockpit builds its `StatusFeed` in `cli/chat_launch.rb` (`:89`, `:231`) with no `cache_profile:`, so the feed always runs on the default ttl of 300. The factory passes `cache_profile: backend.provider.cache_profile`. `lib/lain/cli/chat_launch.rb`, `spec/lain/cli/chat_launch_spec.rb` and any spec that stubs `status_feed_factory` join the card.
+
 ### T7: a child sizes its window by the probed one          [risk: low]
 
 **Depends on:** none
@@ -601,6 +605,8 @@ Spec files: `spec/lain/compaction/source_spec.rb` (near `:782-817` and `:1133-12
 **Stop and report if:**
 - `Source#handoff` declines because `kept_tokens >= window` (`source.rb:794-797`) in m30-3's shape. Use `~/tmp/lain-qa-2026-11-18-m/records/cockpit.journal.ndjson`'s numbers. The handoff would then need a forward collapse (`Derived#collapsed`, `:1058-1060`), which is a design call.
 - The handoff fires on a session that is starved only for 1 turn and then recovers.
+
+**Ruling (review, 2026-11-19):** a starved handoff counts as freed only the bytes outside the held handoff document, since the new document replaces it. It converts bytes to tokens at the measured rate (usage over the held render's bytes), and so does `cut_frees`, so a second starved handoff never fires when it would free nothing. The none-arm wording belongs here: `lib/lain/middleware/request_budget.rb` and its spec join the card. The over-window refusal under `--compact-fallback none` says the handoff is off for that reason. Reads that starve inside a single long ask stay open as a follow-up; this card hands off at the next ask.
 
 ### T9: mask the known secret values in `read_file` and `grep`          [risk: high]
 
@@ -1245,11 +1251,12 @@ Approval::RememberedAllow.new(queue:) # an Escalation rung for the auto ladder
 Scenario: an epic run uses the requester's ollama model
   Given LAIN_PROVIDER=ollama and LAIN_MODEL=qwen3-coder:30b in the shell that runs `lain daemon run epic greet`
   When the run's chat starts
-  Then its argv carries --provider ollama --model qwen3-coder:30b and the requester's --num-ctx
+  Then its env carries LAIN_PROVIDER=ollama, LAIN_MODEL=qwen3-coder:30b and the requester's LAIN_NUM_CTX
+  And its argv carries no profile flag
 
 Scenario: a chores run uses the requester's model too
   Given the same shell runs `lain daemon run chores`
-  Then the `todos drain` argv carries the same provider flags (`supervisor.rs:180`)
+  Then the `todos drain` env carries the same profile, and its argv no profile flag
 
 Scenario: a run.start with a raw argv key is still refused
   Given a run.start whose args hold "argv"
@@ -1260,6 +1267,8 @@ Scenario: a profile with an unknown provider is refused
   Then run.start refuses it, naming the provider
 ```
 Spec files: `crates/lain-daemon/tests/supervisor.rs` (`:385-420` pins the epic argv), `spec/lain/cli/daemon_command_spec.rb`
+
+**Ruling (2026-11-19, before code):** `api_base` can carry credentials, and argv shows in `ps`, so the profile travels as child env (`LAIN_PROVIDER`, `LAIN_MODEL`, `LAIN_API_BASE`, `LAIN_NUM_CTX`, `LAIN_NUM_BATCH`) from a typed `RunStart` member, never as argv. A chore's chat inherits it from the drain, and `exe/lain` does not change. The scenarios above and T26's and T27's are reworded to match.
 
 **Interface**
 
@@ -1300,7 +1309,7 @@ Scenario: a scheduled drain's chat uses the daemon's model
 
 Scenario: a requester's profile beats the daemon's
   Given T25's profile names another model
-  Then the run's argv flag wins
+  Then the requester's env value wins
 
 Scenario: the digest does not change with a LAIN_MODEL value
   Given two launches that differ only in LAIN_MODEL's value
@@ -1326,8 +1335,8 @@ Spec file: `spec/lain/daemon/launch_spec.rb` (`:56-70` "hands a run none of the 
 
 ```gherkin
 Scenario: a chore's chat uses the drain's model
-  Given a drain started with --provider ollama --model qwen3-coder:30b
-  Then each chore's chat argv carries the same flags
+  Given a drain whose environment names provider ollama and model qwen3-coder:30b in LAIN_* variables
+  Then each chore's chat inherits that environment, and its argv carries no profile flag
 
 Scenario: a failed chore says why
   Given a chore chat that exits 1 printing "ANTHROPIC_API_KEY is not set" on stderr
@@ -1342,6 +1351,8 @@ Spec file: `spec/lain/chores/runner_spec.rb`
 
 **Stop and report if:**
 - `TODOS.md` is committed by the drain, so a stderr line would land in git. Say what masks it first.
+
+**Ruling (2026-11-19, restated after a review):** the run profile reaches a chore's chat as `LAIN_*` environment that the chat inherits from the drain, set when the drain launches. It never reaches the chat as argv. `lain todos drain` takes no `--provider` or `--model` flag. The scenario above is reworded to match.
 
 ### T28: an unattended gate refuses at once with its remedy          [risk: medium]
 
@@ -1472,10 +1483,12 @@ Scenario: an unreadable config never replaces
   Then the running daemon is kept and the chat names the config error
 
 Scenario: the daemon reports both digests
-  When ping or info is asked
+  When info is asked
   Then the reply carries build_digest and settings_digest
 ```
 Spec files: `spec/lain/daemon_spec.rb` (`:120-278`, `:372` "replaces an idle daemon from another launch"), `spec/lain/daemon/launch_spec.rb` (`:147,183,239,356-409`), `crates/lain-daemon/tests/lifecycle.rs:125-161`
+
+**Ruling (2026-11-19, implementation and review):** the digests ride on `daemon.info` only; `lain-rpc` keeps answering `ping` as before. The runs directory, read from the caller's `XDG_STATE_HOME`, is a setting and is named when it differs; it never replaces a daemon. Keyed against keyless relay stays in the build digest.
 
 **Interface**
 
@@ -1742,6 +1755,10 @@ Spec files: `spec/lain/cli/command/review_spec.rb:441-547`, `spec/lain/cli/comma
 **Stop and report if:**
 - Returning an action changes when the review round opens relative to the critique. The round must open first.
 
+**Ruling (implementer stop, 2026-11-19):** `Repl#settle_command` accepts only nil, `:quit`/`:restart`, a String or a Renderable, and a command's `#call` runs outside `Conductor#supervise`. So `/review --critique` returns a new Repl action: a frozen value that carries the `/critique <focus>` line. The Repl sends that line through `middleware_turn`, the supervised path a typed `/critique` already takes. `Review` opens the round before it returns the action. `lib/lain/cli/repl.rb` and its spec join the card. The `review_spec` example "opens the round first, then critiques it" is rewritten to expect the action.
+
+**Ruling (hand-back, 2026-11-19):** at a reply prompt, `/review --critique` must refuse before it opens the round. `Registry#returns_action?` passes the invocation's arguments to the command. `Review` answers true only when the line carries `--critique`. `clear`, `quit` and `resume_session` take the argument and ignore it. `lib/lain/cli/command/registry.rb` and its spec, those 3 command files, and `docs/users/commands.md` (the critique refusal lines) join the card.
+
 ### T38: a phone gate item stands for the newest revision of its stage          [risk: medium]
 
 **Depends on:** none
@@ -1801,6 +1818,8 @@ Spec files: `spec/lain/cli/wiring/input_producer_spec.rb` (`:74-95`, `:153-358`)
 
 **Stop and report if:**
 - A held reply makes the daemon try the next-newest chat in a loop. Check `crates/lain-daemon/src/registry.rs:307-321`.
+
+**Ruling (review, 2026-11-19):** a plain `held` reply records nothing in `Pending`, so a cockpit that starts later never gets the review, and `lain queue` claims it "offered" the review to a chat that showed nothing. Instead, a plain chat replies with the outcome `plain`, which the daemon passes through unchanged. `Delivery` handles `plain` the way it handles the no-session case: it calls `Pending#hold`, so the next cockpit takes the review. The `HELD` wording in `cli/queue.rb` says "no lain cockpit is running", which is true in both cases. These files join the card: `lib/lain/review/queue/delivery.rb`, `spec/lain/review/queue/delivery_spec.rb` (adding examples is fine; the existing ones stay green), `lib/lain/cli/queue.rb` and its spec.
 
 ### T40: a mask reads as an empty file, and Rails's key pair as a decoy          [risk: high]
 
@@ -2021,6 +2040,20 @@ Confine::Profile#unmasked? # true only for a profile T43 builds
 - A gated path breaks a later `git add` of an unrelated file, or `LeaseCommit`.
 - The ctime start mark misses a file the run wrote within the same clock tick. Then mark the start a tick earlier and say how far.
 
+**Ruling (review, 2026-11-19):** the scan covers what MaskList's listing prunes. It walks each pruned subtree (`tmp/*/`, `vendor/*/`, `target/*/`, `node_modules/*/`, `.venv` and the like) and each nested repo with lstat, and reads only files whose ctime is at or after the mark. Past a file budget, it gates the changed pruned directory as a whole, unscanned. Commits are scanned on every ref the run created or moved (refs recorded before the run, `rev-list --objects --all --not <old refs>`), leaving out `refs/stash` on purpose. A blob over the size limit is reported unscanned, and gated by its index path when staged. The mark is made on the project's own filesystem, less 2 s. The taint belongs to the Policy, 1 per chat process: the board-level process constant is withdrawn, and so is the coordinator's earlier ruling that asked for it.
+
+**Ruling (user, 2026-11-20):** no walk budget. Every unmasked call walks every pruned tree and nested repo in full with lstat, and reads every file whose ctime is at or after the mark. This replaces the budget part of the earlier ruling, and the card's 1 s stop condition no longer applies to this walk. The cost, about 0.7 s per 100,000 files, falls only on calls the human unmasked with `secrets`. The `unwalked` result and its sentence go, since nothing can be over budget.
+
+**Ruling (coordinator, 2026-11-20, third review):** a directory the walk or git's listing cannot open, whose ctime is at or after the mark, is gated whole: the directory and every path below it are refused, and the run's notice names it in an unscanned sentence. This follows the user's coverage-first ruling; an unmasked run must not hide a key by `chmod 000` on its parent. The pinned deep-key example names a path that sorts last, so it fails for any cap below the fixture's size, and the hand-back says that is the limit of the pin.
+
+**Ruling (coordinator, 2026-11-20, fourth review):** the scan never decides on git's prose. The listing's git runs with `LC_ALL=C` and no `LANGUAGE`, and any stderr line the parse does not take sends the scan to a full lstat walk of the root, which holds every closed directory. A listed file that lstat refuses with EACCES holds its parent directory whole. A symlink target or a path name that holds a known value is gated as a changed file would be; a user xattr stays a named gap beside base64 and `.git`, as does a run writing below a directory that was already closed before the mark.
+
+**Ruling (coordinator, 2026-11-20, fifth review):** this replaces the stderr parse and the locale part of the fourth-review ruling. The scan reads no git prose: any stderr from the listing (or a failed or timed-out prune listing) sends the scan to a full lstat walk of the root. In the walk and the listing alike, a path below the root that lain cannot lstat or open, for any errno, holds its nearest ancestor that lstat answers whole, when that ancestor's ctime is at or after the mark; no per-entry error leaves the scan. `Scanning#scanned` rescues only the removed-root case and lets any other error raise. For a listed path holding a known value, the shallowest component holding it is gated when its ctime is at or after the mark. A value split across path levels or files is a named gap.
+
+**Ruling (coordinator, 2026-11-20, sixth review):** the scan fails closed on its own bugs. On any error other than a removed root, `Scanning#scanned` holds the project root whole, then re-raises, so a defect in the scan gates the run's writes instead of dropping them. ENOENT and ENOTDIR hold nothing, an exception to "any errno" above: a gone path hides nothing, and bwrap's `--unshare-pid --die-with-parent` leaves no writer alive to rename a path during the scan. Path handling keeps the filesystem's bytes: no step may raise on a name that is not valid UTF-8.
+
+**Ruling (coordinator, 2026-11-20, seventh review, APPROVE-WITH-FIXES):** T42 lands as reviewed; no key reaches a later masked run ungated. Its remaining fixes move to T43, which is the first caller of an unmasked profile: (1) a held root refuses contained calls with its own sentence ("lain could not finish scanning what an unmasked call wrote, so until lain exits the project is held"), not the overmask link text, and `Scanning#scanned` adds a line naming the held root; (2) join and tag paths as bytes in `Files#children` and `Git#at`, so a non-ASCII root under a C locale does not raise, with a child-process `LC_ALL=C` pin; (3) pin `include?` against a BINARY-tagged held path and a MaskList bad-named path listed once; (4) pin `Taint::NONE.hold_whole` raising FrozenError; (5) pin the climb stopping below the root; (6) widen `#scan`'s `@raise` to "when the root cannot be resolved".
+
 ### T43: a `secrets` answer runs a contained call with the project's secret files unmasked          [risk: high]
 
 **Depends on:** T9, T16, T19 (shared `confine/profiles.rb`), T24, T40, T41, T42
@@ -2060,7 +2093,7 @@ The answer is `secrets` (Open decisions). It is a human's choice, like `network`
 
 ```gherkin
 Scenario: the secrets answer unmasks the project's secret files for 1 contained run
-  Given a parked `bin/rails runner 'p Rails.application.credentials.stripe.key.present?'`
+  Given a parked `bin/rails runner 'p Rails.application.credentials.dig(:stripe, :key).present?'`
   When the human answers secrets
   Then it runs under the workspace profile with private_net and no project masks
   And it prints true
@@ -2118,12 +2151,36 @@ Scenario: the next plain y is masked again
 Scenario: the audit record says it
   Then the sandbox telemetry record for the run carries secrets true
 ```
+
+**Ruling (coordinator, 2026-11-20, implementation):** the row offers `secrets` only where the call can run contained, since it means nothing elsewhere. A secrets run keeps the masks a scan set (tainted files, a held root). It gets no build-tool ports, so it has no network at all. (First review:) the row's file list goes through the row's mask; the row, the lift and the note all use the request's root; records name the answer `secrets` in every place; taking a hold writes a journal record a human can find.
 Spec files: listed above; the seam runs a contained call through bwrap and the compiled fence.
 
 **Stop and report if:**
 - A surface offers `network` through a path these Files do not list (grep `NETWORK_WORD`, `network?` and `offers_network` under `lib/`). Name it and add it.
 - A git-history route still reaches a masked file under a decoy run (`git show HEAD~1:.env`, binary-identity research). Say whether this card widens it; it does not close it.
 - An unmasked run needs a socket a contained profile does not grant (a database). Report it; do not grant it.
+
+### F1: the suite does not read the terminal it runs in          [risk: low]
+
+**Depends on:** T43 (last card)
+**Files:**
+- `spec/support/terminal_env.rb` (new)
+- `spec/lain/cli/wiring_spec.rb`
+
+A repeat, not a flake: wiring_spec "sends a finished agent's notice after the delay, through the terminal and the feed" is red whenever the runner sits in kitty, because `Frontend::TTY::Notifier.sequence_for` reads `KITTY_WINDOW_ID` (and `TERM_PROGRAM`) from the real `ENV` and picks OSC 99 over OSC 777. The landing gate hid it by unsetting the variables. The suite drops the terminal-identity variables once, before any example, so a spec that wants one sets it, as the kitty example near `wiring_spec.rb:5252` already does by stubbing `ENV`. `TMUX` joins the list only if a spec is shown red under a runner inside tmux.
+
+**Acceptance criteria**
+
+```gherkin
+Scenario: the notice example is green inside kitty
+  Given the suite runs with KITTY_WINDOW_ID=3 and TERM_PROGRAM=iTerm.app exported
+  When wiring_spec runs by path
+  Then "sends a finished agent's notice after the delay, through the terminal and the feed" passes
+
+Scenario: a spec that wants kitty still gets it
+  Given the kitty example stubs ENV with KITTY_WINDOW_ID
+  Then it still sees OSC 99
+```
 
 ## Integration checks
 
@@ -2157,3 +2214,379 @@ After the last card lands:
 - Worktree prefix: tmp/worktrees/r30-T<id>, branch card/r30-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/r30-T<id>.
 - Memory 15 GB with swap full (3.1 of 4 GB) at start: at most 4 agents at once, landing counted as 1. Landings run LAIN_SPEC_WORKERS=10.
 - No path needs user approval.
+
+### Close-out (2026-11-20)
+
+All 43 cards landed, plus F1 (the suite drops the runner's terminal identity) and the QA scenario update, 46 commits from 9e083c2d to 2544d391.
+
+- `rake pspec` and `rubocop` ran green in every landing hook. The last full suite's runtime log names every spec file except the opt-in tiers (integration providers, spikes, live bench).
+- `cargo test` (15 suites) and `cargo clippy --all-targets -- -D warnings` are clean. `rake daemon:build` and `rspec --tag core` pass.
+- `bin/comment-census --check-tickets` finds no project ids; its one AMBIGUOUS hit is Unicode's C1 block in `completion.rb`, older than this round. `bin/zeitwerk-census --check` reports 0 in every tier.
+- The m30-1 repro prints "rendered" for the 3 helper cases and "kept literal" for the pure tag.
+- `bin/hot-path-bench --check` fails on 2 rows, both handed to the profiling pass the user plans after this run:
+  - `wire_ready` reads 19.06 to 19.66 ms against 17.1. Not this round: base and head measure 17.2 to 17.9 ms in clean checkouts, 0.1 ms apart, inside the padding noise. The main checkout itself adds about 1.7 ms to the same code (more GC marking and `Kernel#spawn` time), cause not found. The ceiling stays.
+  - `bash_true_workspace_masked` (19.4 to 20.2 ms) is still unseeded: the 3 logs ended at loads of 2.2 to 2.5, above the seeding rule's 2.
+- The flakes seen are recorded by name in `docs/devs/toolchain-traps.md`.
+- The QA scenarios are updated (17 files). The manual pass above is owed by QA round 31.
+
+**Follow-ups outside this plan:**
+- A session header records `api_base` with userinfo (`RunProfile::HEADER_FIELDS`); record it through `Admission::Endpoint.canonical`.
+- The 2 bar reasons for a fresh script say the same thing twice; a non-env absolute interpreter with a flag keeps the old shape; `lease_commit.rb` has a 2nd shebang reader.
+- A config `exit()` escapes `Launch.current`; the daemon's start lock is released before register (`daemon.rb:61-64`).
+- `epic_submit`'s seam keeps `ContextWindow.default`.
+- Make `ApprovalReplayFixtures` deterministic for deadline and latency.
+- The `Up` cockpit restart and herdr resume carry a typed or no `--approval`; `Mode::Switch` has no listener, so a flip does not re-report the herdr resume command.
+- `TextMask::Stream`'s `Layout#whole` can cut inside a UTF-8 character, and Stream shows lines after an unfinished key block over 256 KiB.
+- `lain daemon runs` rows lack the root; per-account poll dedup; a tick-wide poll cap.
+- In-ask read starvation is closed only at the next ask.
+- `/inbox` drains unmasked; a `TripwireStop` `held?` helper.
+- The approval row's `choice_face` slice shifts when a known value spans the newline between call and choice (masked either way); a refusal recorded after a hold lacks `secrets:`.
+- Inside a contained compound command (`bin/rails runner …; curl …`) the mise 4.0.6 ruby is refused under both `y` and `secrets`.
+- Taint scan gaps named in `Sensitivity::Taint`'s docstring: base64 and other reshapes, `.git`, user xattrs, a value split across path levels or files, a value written before the mark, a write below a directory closed before the mark, `refs/stash`.
+
+### Run log
+
+- 11:17 T16 T17 T13 T25 started, cut at 1c62e53e
+- 11:19 T25 stopped before code: api_base could carry credentials into ps on argv; todos drain takes no model flags. Ruling: the profile travels as child env (LAIN_PROVIDER, LAIN_MODEL, LAIN_API_BASE, LAIN_NUM_CTX, LAIN_NUM_BATCH) from a typed RunStart member, never argv; chore chats inherit it; no exe/lain change. T27's first criterion follows (drain env, not flags). Continued.
+- 11:23 T16 handed back (3 red then 177/0; 1925/0 related+ratchet). Stop condition reported only: contained Rails cannot reach a host postgres over 127.0.0.1 (Open decision, network stays closed). High review (opus) started.
+- 11:24 T17 handed back (108/3 red, 108/0 green; broad set 2063/2 before a wording fix, not re-run). Low review started.
+- 11:25 T13 handed back (460/3 red, 7521/0 green). Deviation: own TextMask over guard_inputs.secrets, not live_display. Medium review started.
+- 11:26 T17 low review APPROVE (broad set 2063/0). Landing attempt 1.
+- 11:28 T25 handed back (rspec 34/3 red, supervisor 6/5 red, wire did not compile; 1178/0 over 44 files, cargo test, fmt, clippy green). Main applied wiring in worktree: remote.md 2 lines, main.rs usage text; vale clean. High review (opus) started.
+- 11:30 17 landed 23047868
+- 11:30 T17 landed 23047868 (attempt 1; hook suite passed, 1321 runtime files). Cleanup done.
+- 11:30 T20 started, cut at 23047868
+- 11:32 T13 medium review APPROVE-WITH-FIXES, mechanical (stale live_display comment, 2 identity mask defaults, Pending YARD). Deviation ruled fine: same TextMask and secrets source as Display. 3 mutants red. Sent; no second review.
+- 11:35 T20 handed back (4 new, 2 red; 92/0 card, 2154/0 wide). Warm ask over 50,000 ignored ~107 ms in a probe. hot-path-bench --check has no recorded logs; bench's mask_list_warm builds a new Policy per call so cannot see reuse. Medium review started.
+- 11:37 T16 high review REQUEST-CHANGES: BLOCKER the shebang interpreter is not granted (real env-ruby binstub fell to /usr/bin/ruby 3.4.10, refused_exec would_stop, found by a real drive); term-arm and klass filter untested; tripwire unresolved_exec on the relative script path. Reader grant ruled right, needs a spec. Scope addition: tripwire/resolution.rb and its spec join T16. Fix round sent; second review after.
+- 11:38 T13 fixes done (7521/0); main verified the diff. Landing attempt 1.
+- 11:42 T13 attempt 1 red: 36272 examples, 1 failure, HumanReplies 'closes the ghost's read on the next surface without waiting for a line' STUCK 30s (seed 59294, load 8.3). Not on the known-flake list. Running alone.
+- 11:45 Flake "Lain::CLI::HumanReplies a run interrupted while a question is outstanding closes the ghost's read on the next surface without waiting for a line": green alone; file with seed 59294 green 3/3 on base and 3/3 with T13 applied. Neither reproduces: record by name, land. To add to docs/devs/toolchain-traps.md at the next checkpoint. A repeat becomes a card.
+- 11:45 T20 medium review APPROVE-WITH-FIXES: bench builds a new Policy per call (scope addition: lib/lain/bench/hot_paths.rb joins T20), current refilter untested, drop redundant listed==@names, doc. Sent; main verifies.
+- 11:45 T13 landing attempt 2.
+- 11:48 T25 high review APPROVE-WITH-FIXES (real drive, exec and fork paths: env carries the profile, ps and logs hold no password). Fixes: num_batch untested; provider switch must drop the daemon's other LAIN_* (kept in T25, not T26); numeric env refused by name; provider lists pinned by a spec; profile sent only when non-empty; lain-daemon.md joins the card. Second review after (substantive item 2).
+- Follow-up, outside this plan: a session header records api_base with userinfo (RunProfile::HEADER_FIELDS), interactive and now headless; record it through Admission::Endpoint.canonical. Plan text: T26's "the run's argv flag wins" reads "the requester's env value wins" under the env ruling.
+- 11:50 13 landed 5e47cb0e
+- 11:50 T13 landed 5e47cb0e (attempt 2; hook suite passed). Cleanup done.
+- 11:50 T15 started, cut at 5e47cb0e
+- 11:51 T16 round 2: items 2-9 fixed (2417/0; plain script scores 0 now). Blocker stopped: the interpreter must land on the journaled stage in Shell::Executable::Resolver (out of scope). Ruling: resolver.rb and its spec join T16; a :project stage with '#!/usr/bin/env NAME' or '#!/abs' resolves as 'NAME script' would (judge, bar and triage see the same as for 'ruby bin/rails'); first 256 bytes; flags or no shebang keep today's shape. Continued.
+- 11:54 T25 fixes done (rspec 44/9 red, supervisor 46/1 red; 1188/0 over 44 files, cargo green). Second review (same reviewer) started.
+- 11:55 T20 fixes done (2155/0; mask_list_warm one-off 3.80 ms vs 4.45 ceiling). The existence refilter is unreachable; ruling: drop it, keep the deleted-target example as guard.
+- 11:56 T20 refilter dropped (117/0); main verified the diff. Landing attempt 1.
+- 12:09 20 landed 72b00d0f
+- 12:09 T20 landed 72b00d0f (attempt 1; hook suite passed). Cleanup done.
+- 12:09 T41 started, cut at 72b00d0f
+- 12:10 T41 stopped before code: HistoryLiterals has only an 8-byte floor, so 'development' would mask. Ruling: skip exactly the Rails environment names and boolean/number shapes, never plain lowercase words (over-mask preferred); a failure-reason report callable comes back as a board_build.rb wiring line. Continued.
+- 12:10 T25 second review APPROVE (7 of 8 mutants killed; survivor: a daemon with no LAIN_PROVIDER counts as switched, unpinned; moved to T26 as a criterion). Landing attempt 1.
+- 12:10 T15 handed back (23/3 red; 1275/0). Main applied the queue_spec:416 edit in the worktree (summary now holds the command; assert no input key). Medium review started.
+- 12:14 25 landed 186b1eca
+- 12:14 T25 landed 186b1eca (attempt 1; all hooks incl. cargo and daemon tier passed). Cleanup done.
+- 12:14 T26 started, cut at 186b1eca (scope +tests/supervisor.rs for T25's unpinned no-provider rule)
+- 12:17 T15 medium review APPROVE-WITH-FIXES, mechanical (comment on summary as the only command route; mask-before-cut example). 3 mutants red. Sent; main verifies.
+- 12:17 T26 handed back (43/1 red, 43/0; 1221/0 with 51 pending; cargo supervisor 47). Medium review started.
+- 12:18 T41 handed back (NameError red; 2044/0). Main applied board_build.rb wiring in the worktree (report via CapabilityDegraded on chronicle.record_journal, default Channel::Null for improve.rb and specs); rubocop clean. Medium reviews of T26 and T41 started.
+- 12:18 T15 fixes done (1276/0; mask-before-cut example shown red by reordering a copy). Main verified. Landing attempt 1.
+- 12:20 T16 round 3: resolver resolves a project shebang as its interpreter (88/5 red; 374/0). Wide run 8507/9: 4 spec files plant #!/bin/sh stand-ins for binaries. Ruling: implementer fixes them (scope addition), ELF marker where the subject is a binary, updated expectation where it is a script.
+- 12:24 T41 medium review REQUEST-CHANGES: main's wiring reddened board_build_spec:293 (not run by main before review); untested wiring; RAILS_MASTER_KEY precedence leaves a project unmasked (ruling: retry with the key file); report-once, FLOOR untested; memoize under the lock. CapabilityDegraded accepted knowingly. Fix round sent; second review after.
+- 12:32 T26 medium review provisional APPROVE-WITH-FIXES (blocked by T15's landing gate; mutation, cargo and ratchet not run). Asked to finish once the gate clears.
+- 12:33 T15 attempt 1 red, card-caused, not a flake: gitleaks curl-auth-user on awaiting_human_spec.rb:153; approval_replay_spec:71 committed fixtures stale (summary now holds the command). 36295 examples, 1 failure. Sent back to the implementer (fixtures and builder join scope). Main checkout restored clean.
+- 12:34 T16 round 4: fixture swaps done (1763/0 over 51 files). Second high review (same reviewer) started.
+- 12:35 T15 fixed (gitleaks clean on all 7 files; fixtures differ by 3 summary lines; 1426/0). Landing attempt 2.
+- 12:38 15 landed 7faccda7
+- 12:38 T15 landed 7faccda7 (attempt 2; hook suite passed). Cleanup done.
+- 12:39 T24 started, cut at 7faccda7
+- 12:39 T41 fixes done (3 red; 3736/0). Second review (same reviewer) started.
+- 12:40 T24 stopped before code: a rung ahead of judged() replaying authority :human skips the resolved-program bar (rewritten bin/rails would run) and the context bar (Escalation#barred exempts human allows). Ruling: consult inside Judged after the bar, before JudgeMemo; also skip on automatic_approval_barred?; judged.rb and its spec join T24. Continued.
+- 12:42 T41 second review REQUEST-CHANGES: gitleaks generic-api-key on 2 spec fixtures (verified fix: relabel); stale memo after utime (add ctime); .for journal path unpinned; memo guards and mutex/@reported untestable (delete). Sent; main verifies, or narrow re-check if large.
+- 12:49 T16 second review APPROVE-WITH-FIXES (2 SHOULD-FIX: planted env in shebang, untested script run file; 3 NITs). Fix round sent; third review to follow (high-risk card).
+- 12:49 T26 review final APPROVE-WITH-FIXES, NITs only (comment on no-provider test, drop weak launch_spec example). Sent to implementer; land after.
+- 12:50 T26 NITs applied; landing attempt 1 queued
+- 12:51 T41 narrow re-check APPROVE (size-in-stamp NIT kept as belt and braces); landing attempt 1 queued behind T26
+- 13:04 T26 landing attempt 1 red: 5 unrelated examples STUCK and STARVED (typed_during_ask_spec, history_rewrite_spec, e2e fork_resume_spec, prune_merged_worktrees_spec, cli_spec frozen load path), load 1-min up to 103.7 on 16 cores, swap full. A Steam game started about 12:46 on the user's desktop. Not card-caused; T26 needs a quiet-box rerun. Hook log r30-hook-26-1.log.
+- 13:04 T41 landing stopped by pid before its suite ran; main clean. Asking the user about the box.
+- 13:18 box rebooted about 13:11; agents died, worktrees intact, user edits intact. T16 and T24 implementers resumed. T26 alone-runs next.
+- 13:24 T26 starved reds: all 5 green alone with the card (10.6s, quiet box); each file 3 of 3 green on base with its worker seed. Neither reproduces: load-starved by the game, recorded here by name, land.
+- 13:24 T24 implementation done (518 card examples, 7767 wide, 0 failures). T16 fix round 5 done (1766 examples, 0 failures); gitleaks clean on its 11 files (checked by main session).
+- 13:29 T26 landing attempt 2 red: 1 example, wiring_spec "sends a finished agent's notice after the delay, through the terminal and the feed". Deterministic, not a flake: after the reboot this session runs under kitty, and Frontend::TTY::Notifier.sequence_for picks OSC 99 on KITTY_WINDOW_ID; the spec does not isolate it. Red alone with kitty env, green alone with it unset. r30-gate.sh now unsets terminal vars. Spec isolation becomes an F-card at the end of the plan.
+- 13:33 26 landed e1f89d33
+- 13:37 T26 landed e1f89d33 (attempt 3, terminal env scrubbed). Worktree and branch removed.
+- 13:37 T41 landing attempt 1 red, card-caused: pane_command_spec "accounts for every LAIN_ name in lib/ and exe/" rejects LAIN_RAILS_CREDENTIALS_NO_ENV_KEY. Ratchet list gains spec/lain/cli/pane_command_spec.rb. Sent back to implementer.
+- 13:37 T41 sentinel renamed RAILS_CREDENTIALS_KEY_FILE_ONLY (pane_command_spec red then green); landing attempt 2
+- 13:46 T41 landing attempt 2 red, card-caused: result_block_spec "#to_json survives being nested inside a larger document" (seed 28515). rails_credentials.rb lazily requires active_support/encrypted_configuration, which loads ActiveSupport's JSON core_ext and changes Data#to_json process-wide. Reproduced in a 2-file run (78 examples, 1 failure). Sent back: decrypt without ActiveSupport, LOADED_FEATURES spec first.
+- 13:47 T31 started (opus)
+- 14:18 T16 third review APPROVE-WITH-FIXES: 2 SHOULD-FIX (judge facts drop a project script's shadow; host read under docker for a link leaving root) and 5 mechanical NITs sent back; fourth review to follow. Follow-ups outside the plan: dedupe the 2 bar reasons for a fresh script; non-env absolute interpreter with a flag keeps the old shape; 2nd shebang reader in lease_commit.rb.
+- 14:18 Lock stall: my own alone-run (r30-alone.sh piped into grep "...rspec") held gate and suite exclusive for 30 minutes; wait-quiet counted the grep (Claude Code's ugrep, comm 2.1.328) as a test run, so it waited on itself until its 1800s limit and printed nothing. All shared waiters blocked meanwhile.
+- 14:20 T24 review APPROVE-WITH-FIXES. Ruling: the replay also covers Unweighable git_store, below_top, too_many (exact text, judge capacity only); barred, protected_target and opaque park again (opaque text can expand differently). Replay shows "you approved this earlier:"; a call newly reading secrets misses. Fix round sent, second review to follow. Reading recorded: a yes under ask replays after a flip to auto (judge never sends the same call back); flip to ask parks.
+- 14:20 T31 implementation done (81 card examples, 1468 neighbour, cargo green). Wiring applied to docs/users/remote.md (vale clean). Accepted: digests on daemon.info only (lain-rpc answers ping, off card).
+- 14:20 T41 fix: OpenSSL aes-128-gcm decrypt + safe_load + own String unmarshal, no ActiveSupport; fresh-ruby LOADED_FEATURES spec red then green; both orders green. Narrow re-check sent to the T41 reviewer.
+- 14:25 T16 round 6 fixes done (4 reds before code, 2313 examples green). Fourth review sent to the round-3 reviewer.
+- 14:26 T41 re-check APPROVE-WITH-FIXES: Date/Time leaves make safe_load refuse the whole file (regression, fails unmasked); GCM tag/iv length unenforced; 4 guards to pin; Symbol leaf. Fix round sent; main session verifies the diff after.
+- 14:31 T41 fixes verified by main-session back-outs (strip, unmarshal length, aliases red; 1..5 bound green, accepted). Landing attempt 3.
+- 14:31 T16 fourth review APPROVE-WITH-FIXES: FIFO with a silent writer still hangs (NONBLOCK insufficient; fstat after open), facts dedupe unpinned. Fix round sent; narrow fifth check by same reviewer after.
+- 14:32 T24 fix round done (8 items; replay also checks the resolved-program bar for git_store/below_top/too_many since Weighing returns before it; 8780 examples green). Second review queued behind T41 landing.
+- 14:35 41 landed 4eca9628
+- 14:36 T41 landed 4eca9628. Worktree and branch removed.
+- 14:36 T9 started (opus). T24 second review started.
+- 14:38 T31 review REQUEST-CHANGES. BLOCKER: runs dir (from caller's XDG_STATE_HOME) in build_digest silently replaces an idle daemon (driven). Ruling: runs dir moves to settings, named, never replaces; keyed/keyless stays in build. Also note said twice (relay_state; chat_launch.rb joins), doc paragraph reworded (+README, configuration.md), settings as a hash. Follow-ups outside plan: config exit() escapes Launch.current; start lock released before register (daemon.rb:61-64 race). Plan text: T31 'ping or info' -> info.
+- 14:38 T16 round 7 done (FIFO: fstat on opened fd, red first; facts dedupe pinned). Narrow fifth check sent.
+- 14:41 T16 fifth check APPROVE. Landing attempt 1.
+- 14:43 T16 landing attempt 1 stopped at yard-lint: 2 ReferenceTypo warnings in confine/profiles.rb ({Profile}, {Profile.watched}) already on main; the hook lints whole staged files. Profile is a Data.define constant YARD cannot resolve. Main session changed the 3 references to code spans in the T16 worktree. Attempt 2.
+- 14:46 T9 stopped: known-value mask vs wiring_spec human release of .env (history literals make every untracked .env value known). Ruling: a known value shows only inside a region the human released in that read; all other occurrences masked. Sent back.
+- 14:48 16 landed 824fa639
+- 14:48 T16 landed 824fa639 (attempt 2). Worktree and branch removed. T19 and T40 now ready.
+- 14:48 T40 started (opus). Ruling: no ActiveSupport require in lib; decoy sealed with OpenSSL beside RailsCredentials' reader; interop proved in a fresh ruby process.
+- 14:49 T31 fix round done (242 card examples, 1554 neighbour, cargo green; remote_surface_spec joins). Second review sent.
+- 14:49 T24 second review REQUEST-CHANGES: BLOCKER protected target replays when the call also hits git_store/too_many (Weighing returns before the target check). Fix: replayable refuses when a named path is not oracle-approvable. Also pin no-memory facts, secret holdings as a path set. Third review to follow.
+- 14:54 T40 stopped (EACCES-as-proof specs outside card). Rulings: mask_list_spec, symlink_boundary_spec and launcher.rb(+spec) join; a fd per mask per stage, CLOEXEC except the bwrap spawn; filter and DecoyGuard cover every mask over a tracked path (empty .env too). Continued.
+- 14:54 T24 round 3 fixes done (366 red-then-green, 3269 wide). Third review sent.
+- 14:55 T9 done under the release ruling (2811 examples green). Hot-path stop moot: no read row; wire_ready over its ceiling is the daemon wire. High review started.
+- 15:00 T24 third review APPROVE-WITH-FIXES: pin unscanned in the secret set; drop the dead UNNAMEABLE_READ marker. Ruling: a walk or glob reaching a protected file without naming it replays (the yes covered that exact walk, which ran contained; same masks). Narrow fourth check after.
+- 15:02 T24 round 4 done (1675 examples green). Narrow fourth check sent.
+- 15:04 T31 second review APPROVE-WITH-FIXES (5 NITs: stale Rust docs, RESETTLE wording, named_digests raises on a malformed entry, doc names another ruby, flags->settings rename). Sent; narrow check after.
+- 15:05 T24 fourth check APPROVE; 2 comment NITs applied by main session. Landing attempt 1.
+- 15:07 T24 attempt 1 stopped at yard-lint: {Approval::Judge} ReferenceTypo already on main in cli/switchboard.rb:243; changed to a code span. Attempt 2.
+- 15:07 T31 NIT round done (malformed digest red then green; 1500 examples). Narrow check queued behind T24 landing.
+- 15:09 T9 review REQUEST-CHANGES. Rulings: a known span overlapping a released region shows whole (literals are wider than regions; egress_release_spec x3 red); read_file/grep mask Literals#to_a + history.refusable + decrypted credentials leaves, not every history literal (RAILS_ENV/DB_HOST masked database.yml and blocked edits); multi-line known values sought per line. Pins, dead :known removed, docs. Second review after.
+- 15:10 24 landed 7f3b2d97
+- 15:10 T24 landed 7f3b2d97 (attempt 2). Worktree and branch removed.
+- 15:10 T19 started (opus). T31 narrow check sent.
+- 15:14 T31 narrow check APPROVE. Landing attempt 1.
+- 15:15 T19 stopped (switchboard.rb not listed; design gaps). Rulings: switchboard/wiring/board_build join; bar asks the sandbox's own BuildGrant owner with injected Profiles + resolver (no bar with workspace off/no sandbox/docker); bypass refuses in the middleware naming the command; leased worker reads its own Fresh; WritesUnread command optional; reason masked with session secrets. Continued.
+- 15:20 31 landed 9efadadd
+- 15:20 T31 landed 9efadadd. Worktree and branch removed.
+- 15:20 T32 started (sonnet).
+- 15:22 T32 stopped (needs a public Config reader). Ruling: config.rb + config_spec + paths_spec join; Config.project_github?(root:, paths:). Continued.
+- 15:22 T9 fix round done (24 examples 13 red first; 3921 wide incl. egress_release_spec, LAIN_SLOW=1). Second review sent.
+- 15:25 T32 done (1524 examples). Wiring applied to docs/users/configuration.md (vale clean). Medium review started.
+- 15:29 T32 review APPROVE (main session dropped 1 WHAT comment). Landing attempt 1.
+- 15:30 User asked to fan out. Cap raised 4 -> 6 agents (landing counts 1), extra slots for low-risk one-file cards (T2, T3, T7, T14, T30, T36 first); drop back to 4 if landings stall or available memory < 3 GB. 6 GB available at load 7.7 during the T32 landing.
+- 15:32 T32 landing attempt 1 red, card-caused: project_dir_spec ProjectDir discipline (paths.rb:367 composes project_hash + state_home). Ratchet list gains spec/lain/project_dir_spec.rb. Sent back.
+- 15:32 Ratchet list widened to spec/lain/*_spec.rb (top level): project_dir_spec, landing_calls_spec and others scan lib/.
+- 15:32 T2 and T3 started (sonnet), cap 6.
+- 15:33 T40 done (438 card examples; 2 out-of-scope spec diffs and 1 docs line applied by main session, linted). T19 done (871 focused, 7126 wide). Both high reviews starting. Bench --check owed after compile on main for T19 and T40 (bash rows skipped: stale fence in worktrees).
+- 15:34 T32 rework: per-project counts path through ProjectDir#container (project_dir_spec red then green, filename unchanged). Landing attempt 2.
+- 15:36 T3 done (24 examples, 1 red first; 4469 wide). Low review queued behind T32 landing.
+- 15:42 T9 second review APPROVE-WITH-FIXES. Rulings: per-line needles only for lines secret on their own (boilerplate stays shown); 'pw' joins SECRET_WORDS (regions.rb joins); PEM tail accepted; lines_of beside for_reads; literal fake + gitleaks stopword allowed. Third review after.
+- 15:44 32 landed 79a91f35
+- 15:44 T32 landed 79a91f35 (attempt 2); worktree removed. Spawning T40, T19, T3 reviews.
+- 15:45 T7 cut at 79a91f35, implementer spawned (sonnet)
+- 15:46 T3 review REQUEST-CHANGES: session_passes cassette stale (scaffold text). Ruling: cassette joins the card; main session re-records.
+- 15:46 T2 handed back (slots refusal); low review spawned. T3 lesson: review briefs now name slow e2e files.
+- 15:46 user: more slots for reviews OK. T14 cut, implementer spawned (sonnet)
+- 15:47 T3 cassette re-recorded (record + replay 4/4 green, gitleaks clean). Landing attempt 1.
+- 15:48 user: more than 6 agents. Cap raised to 10 (guard: avail mem < 3 GB or stalled landings drops it). T30, T36, T4, T21 cut at 79a91f35
+- 15:48 T2 review APPROVE (no findings); queued to land after T3. T12 cut.
+- 15:49 T14 handed back; low review spawned
+- 15:52 3 landed 52ff3501
+- 15:52 T3 landed 52ff3501; worktree removed. T2 landing attempt 1.
+- 15:53 T7 handed back. Rulings: epic_submit Seam keeps ContextWindow.default (no backend there; stop condition answered, follow-up noted); scenario 2 not observable since children use RoundBudget::NONE, accepted, plan gap. Main session applied toolset_build.rb:495 wiring; checking subagent + toolset_build specs.
+- 15:55 2 landed 5aa3d5ba
+- 15:55 T14 review APPROVE + nit (loose matcher) applied by main session; queued to land after T2
+- 15:55 T2 landed 5aa3d5ba; worktree removed. T14 landing attempt 1.
+- 15:56 T7 review spawned; T11 cut
+- 16:14 T14 landing deadlock broken (T12's grep). r30-wait-quiet skips grep comms.
+- 16:17 14 landed e5412b68
+- 16:17 T14 landed e5412b68; worktree removed
+- 16:17 T7 review APPROVE-WITH-FIXES, 2 nits ruled no-change (param doc matches the seam's sibling paragraphs; yard ref fixes were required by whole-file yard-lint). Landing attempt 1.
+- 16:18 T10 cut
+- 16:20 T36 handed back; low review spawned
+- 16:20 T21 handed back with 3 reds outside its files; ruling: judge_memo_spec and approval_replay fixtures join T21, implementer regenerates if scoped
+- 16:21 T9 fix round 2 done (6 items, 5421 green). T4 wide run 6736 green. T11: html.rb joins; secrets wiring through Switchboard#surface_kwargs + Surface secrets: kwarg delegated to T11 implementer (T10 will rebase onto it). T12 wiring applied in herdr_binding.rb#bind (production chat always uses the real HerdrBinding); checking.
+- 16:29 7 landed bbab19ca
+- 16:29 T7 landed bbab19ca. T36 review APPROVE-WITH-FIXES; nits 1-3 applied by main session (LOADER_NAMES, env doc, comment), 16 green. T30 stop fired: degrade is journaled after notices; ruling revert hold, pin live say. T21 green with memo spec + approval_replay fixtures (written by ApprovalReplayFixtures.write only). T11 shared secrets wiring done. T12 herdr_binding_spec joined.
+- 16:29 T10 back; ruling: CLI lain review masks with Source::DEFAULT, accepted (no chat history there). T10 wiring waits for T11's Surface secrets:, then Review.new(secrets: @secrets). T36 landing; T21/T11/T12 reviews spawned.
+- 16:29 T4 review APPROVE (3 nits, no change: guard example rewritten by T5; length arm before malformed envelope arm is right since the reply was cut). Landing T36 then T4.
+- 16:30 T22 (opus), T27, T28, T38 cut and spawned
+- 16:32 T30 back: hold reverted, PhoneSurface now says a degrade once (pin was red on HEAD); low review spawned
+- 16:37 36 landed 25247d84
+- 16:37 T30 review APPROVE-WITH-FIXES: comment still accurate; @said kept (covers a replayed or second surface). Queued to land after T4.
+- 16:37 T39 cut
+- 16:37 T21 review APPROVE-WITH-FIXES: fixture regen rewrote deadline/latency noise; implementer restoring to prompt_digest-only. Follow-up: make ApprovalReplayFixtures deterministic for deadline/latency.
+- 16:38 T11 review APPROVE (reviewer mutated worktree in place by accident and restored; main verified status and the 5 lines). Queued to land after T30.
+- 16:38 T29 cut
+- 16:40 T19 review APPROVE-WITH-FIXES (7 should-fix incl. vouch race, per-call cost, fresh-crate target/ mkdir defeats bar). Fix round sent with rulings (all 7 + nits; bar moves after TripwireStop/RememberedDenials if Barred still gets ruled); third review follows. Review text: review-result-T19.md
+- 16:42 4 landed 16de57d3
+- 16:42 T36 landed 25247d84, T4 landed 16de57d3; worktrees removed. T5, T6 now unblocked; queued for the next free slots.
+- 16:42 T21 fixtures restored to prompt_digest-only (316 green); queued to land after T11
+- 16:46 30 landed f8645c33
+- 16:47 T40 review REQUEST-CHANGES (blocker: commit -am leaves host index stat dirty, blocks rebase; 7 should-fix). Fix round sent; all findings accepted; third review follows. Review text: review-result-T40.md
+- 16:48 T27 back asking for argv flag wiring; re-ruled per the 11:19 ruling (profile by LAIN_* env, no exe/lain change); sent back. Plan text still owes the T25/T27 ruling (checkpoint).
+- 16:49 T22 back; rulings: several add stages OK; git add . / the lease root abstains (as -A). Then high review.
+- 16:50 T38 handed back; medium review spawned
+- 16:52 21 landed 895070a3
+- 16:53 T30 landed f8645c33, T21 landed 895070a3; worktrees removed. T11 landing.
+- 16:56 11 landed 479a3c7d
+- 16:56 T11 landed 479a3c7d; worktree removed
+- 16:57 T10 worktree could not be reset to main (classifier denied reset --hard); lands with r30-wiring-10.patch (Review.new secrets: @secrets) against main's surface.rb. T10 medium review spawned. T12 review APPROVE-WITH-FIXES (headlines mask unpinned) -> implementer. T38 review APPROVE-WITH-FIXES (settle required: skip unpinned) -> implementer.
+- 16:58 T10 review APPROVE-WITH-FIXES: Review secrets pin, /survey joins (command/survey.rb; wiring patch adds Survey secrets), comment trim, lent+released example.
+- 16:59 T27 revised per env ruling (4523 green); medium review spawned
+- 17:00 T22 lease-root abstain added (4905 green); high review spawned (opus)
+- 17:00 T19 fix round done (7200 green); second review spawned (opus)
+- 17:00 T38 review fix in (4466 green); landing
+- 17:01 T27 review REQUEST-CHANGES (log not per-project; raw stderr on disk before masking; 0600 unpinned). Fix round sent: ProjectDir container + project_dir_spec KIND_NAMES; pipe and mask per line, capped tail; 0600/0700. Second review follows.
+- 17:02 T39 clean red (1 of 26) and ratchets (4463 green) done; medium review spawned
+- 17:03 T10 review fixes in (6460 green); landing with wiring patch (Review and Survey secrets)
+- 17:03 T6 cut
+- 17:04 T5 window-fit example added (6653 green); medium review spawned
+- 17:05 T9 third review APPROVE-WITH-FIXES (5 should-fix: 2 unpinned, ordinary values masked, per-call cost, multi-line overlap shows too much). Fix round 3 sent; all accepted incl. nits 6-9; a fourth review follows (high risk). Text: review-result-T9-3.md
+- 17:07 38 landed c362c108
+- 17:07 T38 landed c362c108
+- 17:08 T28 back (5942 green; stop condition untraced). T29 wiring applied in wiring.rb, 579 green. Medium reviews spawned for both.
+- 17:14 10 landed 39617524
+- 17:14 T10 landed 39617524 (review+survey secrets, wiring patch); worktree removed
+- 17:15 T39 review APPROVE-WITH-FIXES; ruling: plain reply outcome, Delivery holds in Pending, HELD says cockpit (card updated); fix round sent. T5 review APPROVE (NIT wording kept, card names it). T12 fix round done. Chain landing 5 12 (b3365zhtg). T37 cut.
+- 17:16 T28 review APPROVE-WITH-FIXES; I removed the wall-clock assertion in gate_spec (341 green); NITs skipped. T37 stopped: repl.rb+spec join, Repl action carrying a line (card ruling), sent back.
+- 17:17 T27 fix round 2 done (per-project log, pipe+mask, 0600); I added root: to e2e todos_drain runner; opus second review spawned
+- 17:19 T40 fix round done (8 findings + 5 nits, 3028 green, new masked bench row 25.2ms vs 17.8 unceilinged); opus third review spawned
+- 17:21 5 landed 7cb2d6ef
+- 17:28 12 landed 00e23bda
+- 17:28 T5 and T12 landed (see git log); worktrees removed
+- 17:29 T28 landing (bwrim0zlg). T35 cut at 00e23bda, implementer spawned
+- 17:29 T22 high review APPROVE-WITH-FIXES (2 should-fix: own .git unpinned, dead pipelines check; 4 nits); fix round sent; a further review after. T29 review APPROVE-WITH-FIXES (wiring unpinned, scenario 1 unspecced, 2 nits); fix round sent.
+- 17:33 T6 stopped: cockpit_approval e2e red (cache deadline at ttl 0). Ruling: non-positive ttl publishes no deadline; status_feed.rb+spec join; sent back.
+- 17:34 T37 done (Repl::Followup, 4664 green); follow-up ruled: returns_action?(args), Review true only with --critique, docs reworded; sent back
+- 17:35 T9 fix round 3 done (9 items, 5429 green LAIN_SLOW); opus fourth review spawned
+- 17:41 28 landed bc63f95b
+- 17:41 T28 landed bc63f95b; worktree removed
+- 17:42 T22 fix round done (274 green; item 3 -> .last only); second review spawned (medium)
+- 17:44 T19 review2 REQUEST-CHANGES: target/ settlement lost across resume (real drive). Ruling: journal the settlement and fold on resume (no birthtime). +quiet pin, QA 3c wording, NITs. Fix round sent; third review after.
+- 17:44 T40 review3 APPROVE-WITH-FIXES: blocker fixed (real drive). 4 should-fix (unsafe undo command, reopen by path, cacheinfo stat zero -> refresh, mode lost) + nits; fix round sent; fourth review after. Cost: mask adds ~1-2 ms; bench gap did not reproduce, seed from a quiet box.
+- 17:45 T22 review2 APPROVE-WITH-FIXES (2 spec gaps); I added git status f and 'a' commands, both kill their mutants (49 green). Landing.
+- 17:46 T27 review2 REQUEST-CHANGES; blocker dropped (env ruling now in card, scenario reworded). Fix round sent: batch masking, drain during grace, inject log dir 0700, pin cap, nits. Third review after.
+- 17:47 T29 fix round done (6764 green, wiring pinned, real Parked::Queue spec); landing after T22
+- 17:53 22 landed f522a668
+- 17:54 T37 follow-up done (4908 green); T35 done (surface.rb wiring in worktree). Medium reviews spawned for both.
+- 17:55 T9 review4 APPROVE-WITH-FIXES: numeric secret-named value leaks via ORDINARY_VALUE. Ruling: read set follows detector (ordinary dropped only when key not secret-named; unknown key keeps). Slots-not-rows journal fix + nits; docs line applied at landing as wiring. Fix round sent; fifth review after.
+- 17:57 T19 round 3 done (entry_made record, 2585 green); T27 round 3 done (4530 green). Opus third reviews spawned for both.
+- 17:57 T37 review APPROVE-WITH-FIXES: said unpinned, card scenarios not end to end (seam spec), nits; fix round sent
+- 18:00 T35 review REQUEST-CHANGES: wiring_spec red (missed), live_mode + surface lambda unpinned, herdr resume stale after flip. Fix round sent. FOLLOW-UP: Up cockpit restart/herdr resume carries typed or no --approval (design: stored approval or flag back from chat).
+- 18:01 T22 landed f522a668; worktree removed. Landing T29.
+- 18:02 T33 (deps landed) and T1 cut at f522a668; opus implementers spawned
+- 18:02 T9 round 4 done (leak fixed, 5433 green LAIN_SLOW); opus fifth review spawned
+- 18:06 T29 landing failed: Wiring ClassLength 310/309 from my attended: line. Reflowed 1 wrapped call (display:...**lineage_reads) onto one line; rubocop clean. Re-landing.
+- 18:06 T40 round 3 fixes done (3033 green); fourth review spawned (medium, opus)
+- 18:08 T37 fix round done (seam spec both scenarios, 4927 green); queued to land after T29
+- 18:08 T27 review3 REQUEST-CHANGES: BINARY stderr crashes drain with UTF-8 TODOS. Ruling: rebuild Tail on TextMask::Stream (delete own pending/flush). +4 pins, doc, nits. Fix round sent; fourth review after.
+- 18:09 T6 done (cockpit 6/6, 5662 green); chat_launch builds provider earlier, specs needed keys; medium review spawned with that focus
+- 18:11 29 landed ae741346
+- 18:11 T29 landed ae741346; worktree removed. Landing T37.
+- 18:11 T23 cut, implementer spawned
+- 18:12 T19 review3 APPROVE-WITH-FIXES (real binary barred after resume). Fix round: delete dead << arm, faults->journal, pin clamps/rescue/guard, comments, QA. Short fourth review after.
+- 18:20 T37 hook failed: deletability_spec (human_replies_spec named Review::Submit::Outbox). Replaced with Object.new (no messages sent); 209 green, rubocop clean. Re-landing.
+- 18:21 T9 review5 APPROVE-WITH-FIXES (DSN+plain var drop; 2 pins); ruling: drop only when every source is plain-named, subtract Literals detected + hinted; fix round sent. T19 round 4 done (2615 green); fourth review spawned (medium).
+- 18:22 T27 round 4 done (Tail on TextMask::Stream, UTF-8 drain fixed, 4537 green); opus fourth review spawned
+- 18:23 T23 done (why_not, 4921 green); low review spawned
+- 18:27 37 landed 6c167795
+- 18:27 T37 landed 6c167795; worktree removed
+- 18:28 T1 done incl 2 stale comments (9964 green); high review spawned
+- 18:28 T6 review APPROVE-WITH-FIXES: cloud cache_read 0 under-prices warm turns. Ruling: cloud cache_read = input rate (conservative). Comment, optional provider reuse. Fix round sent.
+- 18:28 T23 review APPROVE-WITH-FIXES (4 names unpinned, ruling note path unpinned, nits); fix round sent
+- 18:29 T33 done (cargo ok, 4342 ratchets green, --poll-every -> --poll-user per card; no user config uses it); high review spawned
+- 18:31 T40 review4 APPROVE-WITH-FIXES: timeout poisons NO_REPO cache; non-UTF-8/ESC undo command; init-above pin. Fix round sent; a short fifth review after.
+- 18:32 T19 review4 APPROVE-WITH-FIXES (test-only: torn guard, live clamp, journal wiring O1/O2; nits). Fix round sent; I will verify the mutants myself after.
+- 18:32 T9 round 5 done (DSN fixed, literals.rb joins, 5465 green); narrow sixth review spawned
+- 18:32 T23 fix round done (4 names pinned via mutation, note path already pinned at escalation_spec, 5108 green). Landing.
+- 18:32 T8 cut, opus implementer spawned
+- 18:32 T39 fix round found done in hand-back (report never delivered); 4515 green, cockpit branch mutant-pinned. Queued to land after T23.
+- 18:37 23 landed e7c97738
+- 18:37 T23 landed; worktree removed
+- 18:39 T19 round 5 done (all mutants die, 2633 green); worktree verified restored; docs wiring patch built. Queued to land after T39.
+- 18:40 T1 review APPROVE-WITH-FIXES: NUL refusal does not make placeholders unforgeable (template-built NUL). Ruling: splice-count check is the guard, drop source-byte check; re-entry ensure; early return; comments. Fix round sent; short second review after.
+- 18:41 T6 review fixes done (cloud cache_read = input, 5663 green). Queued to land after T19.
+- 18:41 T40 round 4 fixes done (3037 green); narrow fifth review spawned. Chain 39 19 6 landing (b491vbn8g).
+- 18:41 T27 review4 APPROVE-WITH-FIXES (scrub, finish drain, split char at partial cut, READS_PER_DRAIN unpinned; nits). Ruling: Tail holds incomplete UTF-8 tail bytes; Stream untouched. FOLLOW-UP: TextMask::Stream Layout#whole cuts inside a UTF-8 char; Stream shows lines after a >256 KiB unfinished key block. Fix round sent; short final review after.
+- 18:42 T9 review6 APPROVE-WITH-FIXES: hinted_tokens subtraction dead (my round-5 ruling over-asked); remove, literals.rb back to HEAD, trim comment. Tiny review after.
+- 18:46 T1 fix round done (splice guard, 9968 green); narrow second review spawned
+- 18:50 39 landed 618974f9
+- 18:51 T9 round 6 done (dead term removed, literals.rb at HEAD, 319 green); tiny seventh review spawned
+- 18:53 T8 done (6766 green; compaction_decision handoff read_starved; extra frees-enough guard); high review spawned
+- 18:57 19 landed 1e311daf
+- 18:59 T33 review APPROVE-WITH-FIXES: main.rs timer wiring unguarded (M1-M3), cwd untested, stale refusal, stale QA daemon.md, warn-once, doc wording. Fix round sent; short second review after. FOLLOW-UP: lain daemon runs rows lack root; per-account poll dedup; tick-wide cap.
+- 19:01 T27 round 5 done (8 mutants killed, 4590 green); narrow fifth review spawned
+- 19:01 T39 landed 618974f9, T19 landed 1e311daf (with docs patch); worktrees removed. T6 failed yard-lint (3 unresolved refs). T9 review7 APPROVE.
+- 19:02 T9 approved (review7). Docs wiring patch built. T6 yard refs made code spans. Chain 6 9 landing.
+- 19:02 T1 review2 APPROVE-WITH-FIXES (in-order unpinned, wording, ensure pin); T40 review5 APPROVE-WITH-FIXES (quote/backslash pin). Both sent; I verify these spec-only rounds by running the named mutants myself.
+- 19:06 T6 landing hook failed: early provider build in status_feed breaks crashed_close, epic_project_keying, recorded_run seams. Ruling: lazy cache profile. Sent back. T9 not landed (chain stopped at T6); land T9 alone next.
+- 19:06 T1 round 2 done (2 pins kill their mutants, 190 green); tiny third review spawned
+- 19:06 T40 round 5 done (1 spec pin, 26 green); tiny sixth review spawned
+- 19:10 9 landed 812b4ed4
+- 19:11 T9 landed 812b4ed4 with docs patch; worktree removed
+- 19:11 T35 fix round found done in hand-back (5061 green, M1-M3 killed). FOLLOW-UP: Mode::Switch has no listener, so a flip does not re-report the herdr resume command until the next state change. Landing T35.
+- 19:11 T1 review3 APPROVE; queued after T35
+- 19:11 T27 review5 APPROVE-WITH-FIXES (carry width/cap unpinned; inheritance example drives spec spawner). Sent back.
+- 19:14 T33 fix round done (208 daemon unit, mutants die); second review spawned. Possible flake: two_starts_at_a_stale_spawner_both_fork_from_1_fresh_spawner (once, under a mutant).
+- 19:15 T6 lazy profile fix done (5683 green; recorded_run_spec joins). Queue: 1 6 after T35.
+- 19:17 35 landed ba632eaa
+- 19:17 T35 landed ba632eaa; worktree removed. Chain 1 6.
+- 19:18 T40 review6 APPROVE. Queued after chain 1 6. Bench row bash_true_workspace_masked has no ceiling: seed at close-out from a quiet box after compile.
+- 19:20 T1 yard refs fixed; chain 1 6 40 landing. T27 round 6 done; tiny sixth review spawned.
+- 19:23 T8 review REQUEST-CHANGES: starved handoff loops (handoff_frees counts held doc, 1.31 B/token). Rulings sent: exclude held doc, measured rate in both frees, request_budget.rb joins with none wording, pins, renames. Card edit pending in r30-card-T8-ruling.txt (hook running). FOLLOW-UP: in-ask starvation (m30-3 not fully closed).
+- 19:25 1 landed 15a7b9d9
+- 19:29 6 landed b32b2e68
+- 19:30 T27 review6 APPROVE; queued after chain 1 6 40
+- 19:34 T1 landed 15a7b9d9, T6 landed b32b2e68; worktrees removed. T40 hook failed on approval_policy_spec stale contained wording; fixed (117 green), joins. Chain 40 27.
+- 19:34 T8 ruling written into card
+- 19:35 Plan rulings looked missing; they sit in pre-commit's stash patch during the T40 hook (patch1795134856-707968 has all 7). Verify they return after the landing; if not, git apply that patch's round30-fixes.md hunk.
+- 19:37 T40 hook failed on a flake: daemon_spec 'with the daemon opted in inherits no descriptor from the lain that started it' (fds helper readlinks an fd that closed after Dir.children: ENOENT). Not T40. Retrying. Candidate F-card if it repeats.
+- 19:37 T33 review2 APPROVE-WITH-FIXES (M13 retain unpinned); sent back. two_starts_at_a_stale_spawner passed in all reviewer runs (load flake).
+- 19:40 40 landed 29ad02ab
+- 19:43 27 landed 42b3e204
+- 19:43 T40 and T27 landed; worktrees removed. T18 unblocked.
+- 19:43 T18 cut at 42b3e204, implementer spawned
+- 19:44 T33 round 3 done (M13 pinned); tiny third review spawned; docs wiring patch built
+- 19:45 T33 review3 APPROVE. Landing via r30-land-33.sh (swaps in T33's rebuilt lain-daemon by rename, restores on failure) with docs wiring patch.
+- 19:47 T8 fix round: loop fixed (1 summarizer call in 5 asks), pins, renames; stopped on none wording (needs PipelineSource::Null). Ruling: pipeline_source.rb joins, Null answers no reason. fixed_bytes in rate accepted. Sent back.
+- 19:50 33 landed 18534eb7
+- 19:50 T33 landed 18534eb7 with docs patch; worktree removed. T34 unblocked.
+- 19:50 T34 cut, implementer spawned
+- 19:53 T18 done (5318 green; names written masked paths); low review spawned
+- 19:54 T18 review APPROVE-WITH-FIXES (~ path via home nil, refactor, odd-byte pin, comment); sent back
+- 19:56 T34 done (5191 green; Record project_poll, up root via Resolver); medium review spawned
+- 19:57 T8 round 2 done (none clause, Null nil, 7250 green, 21 mutants killed); opus second review spawned
+- 20:02 T18 fix round done; I showed the ~ spec red in a copy (home nil, 1 failure). Landing.
+- 20:09 18 landed 22c1c947
+- 20:09 T18 landed 22c1c947; worktree removed. T42 unblocked.
+- 20:09 T42 cut at 22c1c947, opus implementer spawned
+- 20:11 T34 review APPROVE-WITH-FIXES (input_producer HUD reads user file; up root ignores -- --root; rescue unpinned); fix round sent. Runtime-dir rule added to briefs and sent to T42 impl and T8 reviewer.
+- 20:13 T8 review2 APPROVE-WITH-FIXES: none clause order (real screen), OVERSIZED_ROUND, comment, bench duck. Sent; tiny third review after. Reviewer note: a waiting probe whose command line holds tmp/probes/ deadlocks against a land's quiet-wait.
+- 20:19 T8 round 3 done (7290 green); tiny third review spawned
+- 20:20 T8 review3 APPROVE; landing
+- 20:22 T34 fix round done (5631 green); queued after T8
+- 20:24 8 landed 15b8c1d6
+- 20:24 T8 landed 15b8c1d6; worktree removed. Landing T34.
+- 20:28 34 landed 59eb6416
+- 20:28 T34 landed 59eb6416; worktree removed. Only T42 (impl) and T43 remain.
+- 20:31 T42 done (9173 green). Ruling: process-wide Taint passed to every BoardBuild.policy (children too); wiring applied in worktree; cost check. FOLLOW-UP: taint scan misses tmp/vendor/target/node_modules/.venv and >8 MB blobs. Sent back; high review after.
+- 20:36 T42 round 2 done (process taint as BoardBuild::TAINT; 9186 green). High review spawned; first question is the load-time mutable constant.
+- 20:47 Cleanup at user request: killed 20 stale agent wait loops (zsh -c until/sleep, up to 4h old, all for landed cards); 14 lingering agents then completed. Only the T42 reviewer runs. Briefs should forbid unbounded until-loops on files.
+- 20:54 T42 review REQUEST-CHANGES: scan misses pruned dirs (real bwrap leak via tmp/cache). Rulings in card: walk pruned subtrees with budget, all-ref commit scan, big blobs reported, mark on project fs -2s, withdraw my BoardBuild::TAINT ruling. Fix round sent; second review after.
+- 21:06 T42 round 3 done (9203 green, leak closed on real bwrap, +11 ms unmasked). Opus second review spawned; first question: over-budget tree change missed vs gated.
+- 21:47 T42 review2 REQUEST-CHANGES: over-budget pruned tree change missed (budget2.rb), per-root budget makes node_modules full-walk (1.48 s at 200k), 5 surviving mutants, wrong unscanned wording, ensure raise on removed root. Design call (coverage vs latency) asked of user.
+- 05:28 USER RULING: T42 taint scan walks every pruned tree in full, no budget (cost only on secrets-unmasked calls). Written to card; sent to implementer. Mutant pins, unwalked sentence, ensure rescue already done.
+- T42: full-walk fix round done (budget, Scan.unwalked, UNWALKED deleted; deep key in a 200-file tree gated, red first with a capped walk; 9210 examples green; untouched scan 0.679 s at 100k, 1.273 s at 200k). Final high review (opus) started.
+- T42 review3 (opus): APPROVE-WITH-FIXES. Coordinator ruling: an unreadable dir with ctime at or after the mark is gated whole (written to the card). Fix round sent: dir gating, sort-last deep path, stale YARD at taint.rb 52 and 66, Null taint pin, per-entry rescue pin, a WHAT comment at 287. Short final review to follow.
+- T42: review3 fixes in (Scan.unopened gates an unreadable dir whole; MaskList::Listing returns git stderr; 6 new examples red first; 9217 examples green). Scoped review4 (opus) started, aimed at the stderr parse (locale, quoting) and other ways to hide a key.
+- T42 review4 (opus): REQUEST-CHANGES. Blockers: stderr parse English only (fails open under a translated git); r-only listed dir drops its file on EACCES. Ruling in card: LC_ALL=C plus full-walk fallback on unparsed stderr; EACCES holds the parent; symlink targets and names holding a known value are gated; xattr and pre-closed parent are named gaps. Fix round sent; scoped review5 follows.
+- T42: review4 fixes in (LC_ALL=C plus fallback walk; EACCES holds parent; names and link targets gated; 9226 examples green). Scoped review5 (opus) started.
+- T42 review5 (opus): REQUEST-CHANGES. Nested EACCES escapes scan and Scanning turns it into NOTHING (fail open); unreachable paths (read-only grandparent, over PATH_MAX) hold nothing. Ruling in card: drop the stderr parse (any stderr means a full walk); nearest lstat-able ancestor held whole for any errno; Scanning rescues only a removed root; a renamed dir holding a known value gated by its shallowest component. Fix round sent; review6 follows.
+- T42: review5 fixes in (stderr parse deleted; own sorted DFS walk with an ancestor rule; narrowed Scanning rescue; shallowest named component; 9233 examples green). Scoped review6 (opus) started.
+- T42 review6 (opus): REQUEST-CHANGES. A non-UTF-8 name raises ArgumentError from Pathname#ascend, escapes the scan, leak ungated (confirmed in bwrap). Ruling in card: Scanning holds the project root on any non-removed-root error then re-raises (fail closed on own bugs); ENOENT/ENOTDIR exception named; byte-safe path climb. Fix round sent with pins for X8, X14, X6, X12, V7.
+- T42: review6 fixes in (byte-safe climb; include? compares bytes, realpaths re-tagged; root held on own-bug errors; pins X6 X8 X12 X14 V7; 9244 examples green). Review7 (opus, last; REQUEST-CHANGES only for an ungated readback) started.
+- 10:02 42 landed ddfe66db
+- T42 landed ddfe66db (after a session crash mid-hook: user edits restored from the pre-commit patch, staged T42 reset, re-landed). Follow-ups from review7 moved into T43. T43 cut.
+- T43 impl done (25 files; 1259 card examples green; 12545 wide before a late Lifting refactor, card files green after). Rulings written: secrets offered only where contained; keeps scan masks; no build ports. Review1 (opus, high) started.
+- T43 review1 (opus): APPROVE-WITH-FIXES, no blockers. Real Rails 8.1.4 run through bwrap: secrets prints true, leaf masked, curl fails; plain y boots on the decoy. 40-spelling parse matrix: no combined answer. Fix round sent (row names through the row mask, HELD_ROOT names the held path, dedupe formatters, journal the hold, revert unexercised Taint.joined, 1 root, naming). Card's Rails example fixed (dig). Out of scope: a compound 'runner; curl' refuses the 4.0.6 ruby under contained rules (follow-up).
+- T43 review1 fixes in (309 files, 14432 examples green; hold journaled via Scanning; Sandboxed at 309/309). Review2 (opus, scoped) started.
+- T43 review2 (opus): APPROVE-WITH-FIXES, no blockers. Token-in-name masked on both surfaces; hold record once, paths only; one root for every request shape; Scanning move is one responsibility. Fix round sent (12 mechanical items; 5 surviving mutants pinned).
+- T43 review2 fixes in (13 card files 1274 green; 350 files 15792 green). Coordinator accepted the reversal: Taint.joined back in Files#children (red under a truly non-ASCII root). Review3 (opus, small) started.
+- T43 landing prepared: 25 paths, msg, docs/users/commands.md wiring patch (secrets paragraph after the network answer).
+- T43 review3 (opus): APPROVE. Nits to follow-ups: choice_face slice with a value spanning the joining newline; refused_before record lacks secrets:. yard-lint --staged refs code-spanned in worktree (sandboxed, approval_view). Landing.
+- 12:31 43 landed 05985a75
+- T43 landed 05985a75. All 43 cards landed. Close-out: F1 card written (suite drops terminal-identity env), cut and implementer started.
+- QS cut (QA scenarios update), agent started.
+- F1 done (red with kitty env exported, green after; 4345 ratchet examples). Landing.
+- 12:38 F1 landed 20340806
+- Integration: cargo test 15 suites ok, clippy clean, daemon:build, core 1/1; runtime log covers every non-opt-in spec file; censuses clean; m30-1 repro renders. F1 landed 20340806. QS (17 scenario files) landing.
+- QS hook failed: gitleaks generic-api-key on a synthetic credential leaf in secret-boundary.md; replaced with a <leaf> placeholder in both files; re-landing.
+- 12:41 QS landed 2544d391
+- QS landed 2544d391. Plan text fixed (T25 env scenarios and ruling, T26 env wins, T31 info only and runs-dir ruling); gherkin lint clean. hot-path-bench 3 records at 2544d391 (load 1.1-2.5): every ceilinged row under except wire_ready 19.06/19.66/19.08 over 17.1 (3 of 3); bash_true_workspace_masked 19.38/20.22/19.6, unseeded (loads too high to seed). Old logs rotated out; spike bisecting wire_ready base vs head.

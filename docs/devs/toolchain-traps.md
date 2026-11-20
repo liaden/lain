@@ -352,6 +352,16 @@ Added 2026-11-18, from the lain-daemon run's landing hooks on a box short of mem
 
 Two other hook runs that day went red on 13 and 36 starved examples across unrelated files under the same memory pressure. With swap full, the landing ran green at `LAIN_SPEC_WORKERS=8`.
 
+Added 2026-11-20, from the round 30 fix run. Each was red once and green on a re-run:
+
+- `Lain::CLI::HumanReplies a run interrupted while a question is outstanding closes the ghost's read on the next surface without waiting for a line`: STUCK at 30 s in a landing suite at load1 8.3. Green alone, and its file with the failing seed (59294) green 3 of 3 on the base and on the card.
+- `Lain::Daemon with the daemon opted in inherits no descriptor from the lain that started it`: the descriptor helper lists `/proc/<pid>/fd` and then reads each link, and an fd that closed between the 2 raised ENOENT. Red in 1 landing hook, green on the retry.
+- The Rust test `supervisor::two_starts_at_a_stale_spawner_both_fork_from_1_fresh_spawner` (crates/lain-daemon): red once in a reviewer's mutation run under load, green in every other run that day.
+
+Not a flake, from the same run, and fixed in it: `Lain::CLI::Wiring` "sends a finished agent's notice after the delay, through the terminal and the feed" was red whenever the runner sat in kitty, because the notifier picks its escape from `KITTY_WINDOW_ID` and `TERM_PROGRAM` in the real `ENV`. `spec/support/terminal_env.rb` now drops both before the suite, and a spec that wants a terminal stubs `ENV`. A red under that name again is a regression.
+
+Not a flake, from the same run: `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped` fails with "path must be shorter than SUN_LEN" when `TMPDIR` is long, because the fence's socket lives under it. Keep `TMPDIR` short (`$HOME/tmp/lain/<short>`) before reading that red as a regression.
+
 A live demonstration of why this list is by NAME and not by line: `buffers_spec.rb:329` was recorded by line in an earlier chunk, and one card in this one moved that same example to `:417` by adding 88 lines above it.
 
 ### Retired flakes, with the fix that ended each
