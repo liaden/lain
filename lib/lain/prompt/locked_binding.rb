@@ -25,28 +25,60 @@ module Lain
     # {Purity} BEFORE it is evaluated. Impure code therefore never runs; the
     # failure is a named {ImpureSlot}, raised at render.
     class LockedBinding
+      # The inert token the one ERB pass emits for a value, spliced afterward. A
+      # template can build one at evaluation time, so each must appear exactly
+      # once and in order, or a template could copy, move or invent a value.
+      SENTINEL = "\u0000"
+      PLACEHOLDER = /#{SENTINEL}lain-fragment:(?<index>\d+)#{SENTINEL}/
+      private_constant :SENTINEL, :PLACEHOLDER
+
       # @param resolve [#call] slot name to template source
       # @param locals [Hash{Symbol=>String,#call}] names a template may read bare;
       #   any other bare name is still a refused call. A callable value is
       #   resolved only for a template whose source mentions its name, so a
       #   costly or failing lookup never runs for a template that ignores it.
-      def initialize(resolve:, locals: {})
+      # @param values [Hash{String=>String,#call}] slot names whose String is
+      #   DATA, never a template: rendered through an inert placeholder and
+      #   spliced in after the one ERB pass, so a transcript quoting a Rails
+      #   view is never compiled. A callable is resolved only when rendered.
+      def initialize(resolve:, locals: {}, values: {})
         @resolve = resolve
         @locals = locals
+        @values = values
         @rendering = []
+        @fragments = []
       end
 
       # Render a top-level template (the shipped base prompt) purely. Its `render`
-      # calls recurse into the slot resolver below.
+      # calls recurse into the slot resolver below, and the values they name are
+      # spliced in last, in one pass that never rescans a spliced value.
+      #
+      # @param source [String] the template
+      # @param label [String] names the template in a refusal
+      # @return [String]
       def render_template(source, label)
-        evaluate(source, label)
+        outer = @fragments
+        @fragments = []
+        splice(evaluate(source, label), label)
+      ensure
+        @fragments = outer
       end
 
-      # The ERB helper. Resolves a slot name to its active partial (project
-      # override or shipped default) and renders THAT partial in turn. A slot that
-      # renders itself is a loud {CircularSlot} rather than a stack overflow.
+      # The ERB helper. A value renders as its placeholder; any other name
+      # resolves to its active partial (project override or shipped default) and
+      # renders THAT partial in turn. A slot that renders itself is a loud
+      # {CircularSlot} rather than a stack overflow.
+      #
+      # @param name [#to_s]
+      # @return [String]
       def render(name)
         name = name.to_s
+        @values.key?(name) ? placeholder(name) : partial(name)
+      end
+
+      private
+
+      def partial(name)
         raise CircularSlot, "slot #{name.inspect} renders itself (chain: #{@rendering.join(" -> ")})" \
           if @rendering.include?(name)
 
@@ -56,14 +88,31 @@ module Lain
         @rendering.pop
       end
 
-      private
+      def placeholder(name)
+        value = @values.fetch(name)
+        @fragments.push(string!(value.respond_to?(:call) ? value.call : value, name))
+        "#{SENTINEL}lain-fragment:#{@fragments.size - 1}#{SENTINEL}"
+      end
 
-      def evaluate(source, label)
-        unless source.is_a?(String)
-          raise NonStringSlot, "slot #{label.inspect} resolved to #{source.class}, not String " \
-                               "(#{source.inspect}); callers stringify slot values deliberately"
+      def string!(source, label)
+        return source if source.is_a?(String)
+
+        raise NonStringSlot, "slot #{label.inspect} resolved to #{source.class}, not String " \
+                             "(#{source.inspect}); callers stringify slot values deliberately"
+      end
+
+      def splice(rendered, label)
+        return rendered if @fragments.empty? && !rendered.match?(PLACEHOLDER)
+
+        unless rendered.scan(PLACEHOLDER).flatten.map(&:to_i) == (0...@fragments.size).to_a
+          raise ImpureSlot, "slot #{label.inspect} is impure: its value placeholders are not each value once, in order"
         end
 
+        rendered.gsub(PLACEHOLDER) { @fragments.fetch(Regexp.last_match[:index].to_i) }
+      end
+
+      def evaluate(source, label)
+        string!(source, label)
         template = ERB.new(source, trim_mode: "-")
         Purity.check!(template.src, label, locals: @locals.keys)
         template.result(clean_binding(template.src))

@@ -15,11 +15,11 @@ module Lain
     # through ERB: a fragment whose OUTPUT bytes look like ERB (`<%- ...`,
     # `<%%`) would be re-parsed on a second pass and silently mangled --
     # `50%% off <%- code` collapses to `50%% off  code`, bytes dropped with no
-    # error. So the scaffold's ONE ERB pass emits an inert {PLACEHOLDER} per
-    # hole/include, and the pre-rendered fragments are spliced in AFTERWARD in a
-    # single pass. Purity is still enforced at the legitimate first eval: an
-    # impure scaffold fails in its own render pass, an impure hole in
-    # {Prompt::Slots#render_skill} before it is ever a fragment.
+    # error. So each hole and include is a {Prompt::LockedBinding} value, which
+    # the scaffold's ONE ERB pass splices in afterward. Purity is still enforced
+    # at the legitimate first eval: an impure scaffold fails in its own render
+    # pass, an impure hole in {Prompt::Slots#render_skill} before it is ever a
+    # fragment.
     #
     # An include cycle (A includes B includes A) is caught by a render stack and
     # surfaced as {Prompt::CircularSlot} naming the chain. The stack lives here
@@ -30,14 +30,6 @@ module Lain
     # Rendering is a pure function of the frozen catalog and frozen slots, so
     # identical inputs yield byte-identical output.
     class Renderer
-      # The inert token the scaffold's single ERB pass emits in place of a
-      # hole/include, keyed by fragment index and spliced afterward. A NUL byte
-      # (0x00) cannot occur in a markdown partial, so the token can neither
-      # collide with real content nor be mistaken for an ERB tag.
-      SENTINEL = "\u0000"
-      PLACEHOLDER = /#{SENTINEL}lain-fragment:(?<index>\d+)#{SENTINEL}/
-      private_constant :SENTINEL, :PLACEHOLDER
-
       def initialize(catalog:, slots:, locals: {})
         @catalog = catalog
         @slots = slots
@@ -56,36 +48,29 @@ module Lain
         raise Prompt::CircularSlot, "skill include cycle: #{(stack + [skill.name]).join(" -> ")}" \
           if stack.include?(skill.name)
 
-        fragments = []
-        engine = Prompt::LockedBinding.new(resolve: collector(skill, stack + [skill.name], fragments), locals: @locals)
-        splice(engine.render_template(skill.scaffold, "skill/#{skill.name}"), fragments)
+        Prompt::LockedBinding.new(resolve: unknown(skill), locals: @locals, values: fragments(skill, stack))
+                             .render_template(skill.scaffold, "skill/#{skill.name}")
       end
 
-      # The scaffold's `render(name)` helper: resolve the declared name -- a hole
-      # (front-matter `slots`) to its rendered fill, or an include (front-matter
-      # `includes`) to that skill's own composed scaffold -- stash the finished
-      # fragment, and hand back an inert placeholder for the scaffold's one ERB
-      # pass to emit. A name declared NEITHER is a loud authoring error, never a
+      # Each declared hole and include, rendered only when the scaffold names it.
+      def fragments(skill, stack)
+        inside = stack + [skill.name]
+        (skill.slots | skill.includes).to_h { |ref| [ref.to_s, -> { fragment_for(skill, ref, inside) }] }
+      end
+
+      # A scaffold name declared NEITHER a hole (front-matter `slots`) nor an
+      # include (front-matter `includes`) is a loud authoring error, never a
       # silent empty splice.
-      def collector(skill, stack, fragments)
+      def unknown(skill)
         lambda do |name|
-          fragments.push(fragment_for(skill, name.to_sym, stack))
-          "#{SENTINEL}lain-fragment:#{fragments.size - 1}#{SENTINEL}"
+          raise Prompt::UnknownSlot,
+                "skill #{skill.name.inspect} scaffold references #{name.to_sym.inspect}, which is " \
+                "neither a declared slot #{skill.slots.inspect} nor an include #{skill.includes.inspect}"
         end
       end
 
       def fragment_for(skill, ref, stack)
-        resolve_hole(skill, ref) || resolve_include(skill, ref, stack) ||
-          raise(Prompt::UnknownSlot,
-                "skill #{skill.name.inspect} scaffold references #{ref.inspect}, which is " \
-                "neither a declared slot #{skill.slots.inspect} nor an include #{skill.includes.inspect}")
-      end
-
-      # A single pass: gsub scans the rendered scaffold once, so a fragment whose
-      # own bytes contain a placeholder-shaped token is never rescanned and
-      # cannot trigger a re-substitution.
-      def splice(rendered, fragments)
-        rendered.gsub(PLACEHOLDER) { fragments.fetch(Regexp.last_match[:index].to_i) }
+        resolve_hole(skill, ref) || resolve_include(skill, ref, stack)
       end
 
       def resolve_hole(skill, ref)

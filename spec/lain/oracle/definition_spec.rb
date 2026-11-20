@@ -29,6 +29,22 @@ RSpec.describe Lain::Oracle::Definition do
       expect { definition(template: %(<%= Time.now %>)).render }
         .to raise_error(Lain::Prompt::ImpureSlot)
     end
+
+    it "renders an input holding a Rails helper tag byte for byte" do
+      text = "The view has <%= link_to 'Back', posts_path %> at the bottom."
+
+      expect(definition.render(subject: text)).to eq("Is #{text} relevant?")
+    end
+
+    it "never evaluates an ERB tag in an input" do
+      rendered = definition.render(subject: %(<%= "INJECTED" %>))
+
+      expect(rendered).to eq(%(Is <%= "INJECTED" %> relevant?))
+    end
+
+    it "raises KeyError for an input the template names but the caller left out" do
+      expect { definition.render }.to raise_error(KeyError, /subject/)
+    end
   end
 
   describe "#answer (validating a raw answer through the schema)" do

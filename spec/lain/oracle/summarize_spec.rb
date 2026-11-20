@@ -14,6 +14,12 @@ RSpec.describe Lain::Oracle::Summarize do
     expect(rendered).to include("a large tool result")
   end
 
+  it "takes a source holding ERB and renders it verbatim" do
+    source = "assistant: use <%= link_to 'Back', posts_path %>"
+
+    expect(definition.render(Lain::Oracle::Eager::DEFAULT_SLOT => source)).to include(source)
+  end
+
   it "answers with the field SummarySnapshot.take reads off a held answer" do
     answer = definition.answer("summary" => "three exports, no tests").await
 

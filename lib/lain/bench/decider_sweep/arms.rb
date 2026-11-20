@@ -23,7 +23,7 @@ module Lain
           @price_book = price_book
         end
 
-        # @param arm [String] one of {DeciderSweep::ARMS}
+        # @param arm [String] one of `DeciderSweep::ARMS`
         # @return [Compare::Run]
         def run_for(arm)
           arm_build = built.fetch(arm)
@@ -80,17 +80,14 @@ module Lain
         end
 
         # {Oracle::Definition#answer} always hands back an ALREADY-resolved
-        # {Promise}, so `#await` never truly parks: `Sync` is the degenerate
+        # `Promise`, so `#await` never truly parks: `Sync` is the degenerate
         # synchronous case that machinery falls out of.
         def ask(tier, kase)
           Sync { tier.ask(**oracle_inputs(kase)).await }
         end
 
-        # {Oracle::PruneScoring::TEMPLATE} pulls both slots through
-        # {Prompt::LockedBinding}'s `render` helper, which re-evaluates a slot's
-        # VALUE as nested ERB source -- that is how a partial composes -- so
-        # every slot value must be a String, never a raw Integer, or `ERB.new`
-        # breaks on `#encoding` before Purity gets a look.
+        # The age is stringified here because {Prompt::LockedBinding} refuses a
+        # non-String value rather than guess how a number should read.
         def oracle_inputs(kase)
           { age_turns: kase.fetch("age_turns").to_s, content: kase.fetch("content") }
         end

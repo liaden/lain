@@ -22,6 +22,25 @@ RSpec.describe Lain::Oracle::Handoff do
     expect(rendered).to include("an earlier summary").and include("user: hello").and include("turn 3")
   end
 
+  describe "a transcript holding ERB" do
+    def held(text) = [{ "role" => "user", "content" => [{ "type" => "text", "text" => text }] }]
+
+    def rendered(text) = definition.render(**described_class.question(held: held(text), span: [], pins: []))
+
+    it "hands off a Rails helper tag byte for byte" do
+      text = "The view has <%= link_to 'Back', posts_path %> at the bottom."
+
+      expect(rendered(text)).to include(text)
+    end
+
+    it "keeps a pure ERB tag literal" do
+      prompt = rendered(%(literal <%= "INJECTED" %> text))
+
+      expect(prompt).to include(%(<%= "INJECTED" %>))
+      expect(prompt).not_to include("literal INJECTED text")
+    end
+  end
+
   it "answers with the five state fields" do
     typed = definition.answer(answer).await
 

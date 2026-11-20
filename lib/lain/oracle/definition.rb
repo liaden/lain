@@ -24,11 +24,12 @@ module Lain
       # `Time.now` or any impure reference is a loud {Prompt::ImpureSlot}, never a
       # silently nondeterministic prompt -- an oracle's question sits above the
       # cache line just as a slot fill does. An input the template names but the
-      # caller did not supply is a loud KeyError, not a silent blank.
+      # caller did not supply is a loud KeyError, not a silent blank. An input is
+      # data, never compiled: a transcript quoting `<%= link_to %>` renders as
+      # those bytes.
       def render(inputs = {})
-        by_name = inputs.transform_keys(&:to_s)
-        Prompt::LockedBinding.new(resolve: ->(name) { by_name.fetch(name) })
-                             .render_template(template, "oracle_question")
+        values = inputs.transform_keys(&:to_s)
+        Prompt::LockedBinding.new(resolve: values.method(:fetch), values:).render_template(template, "oracle_question")
       end
 
       # Every way an answer can be malformed -- an unexpected extra key, a missing
@@ -37,7 +38,7 @@ module Lain
       # silently miss a shape. No default is produced.
       #
       # The Promise is ALWAYS pre-resolved before this returns, so awaiting it
-      # never parks a fiber: {Lain::Promise} has no rejection channel, and a
+      # never parks a fiber: `Lain::Promise` has no rejection channel, and a
       # rejected answer carried through an await would deadlock a parked caller.
       # It is the shared return type both tiers speak, NOT an async seam -- N
       # oracle calls overlap only if the CALLER spawns a task per call.

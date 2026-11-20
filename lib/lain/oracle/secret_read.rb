@@ -188,8 +188,8 @@ module Lain
       # The three slots {TEMPLATE} renders, for the surface that asks live and for anything that
       # must key a recording the same way. The path is `inspect`ed because it is model-influenced:
       # an uninspected one holding a newline would render an instruction of its own into the
-      # question. The count is a String because a slot value is rendered as a template and
-      # {Prompt::LockedBinding} refuses anything else.
+      # question. The count is a String because {Prompt::LockedBinding} refuses a non-String
+      # value rather than guess how a number should read.
       #
       # @param path [String]
       # @param tool [#to_s]
