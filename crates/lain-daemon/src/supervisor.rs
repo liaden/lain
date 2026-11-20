@@ -79,9 +79,11 @@ pub(crate) enum RunKind {
         slug: String,
         root: PathBuf,
     },
-    /// `lain queue poll` counts review requests across the user's forge and reads no project, so
-    /// only the daemon's own timer starts it, and it carries no root.
-    ReviewPoll,
+    /// `lain queue poll` counts review requests across the forge, by the user's github settings or,
+    /// with a root, by that project's own. Only the daemon's own timer starts it.
+    ReviewPoll {
+        root: Option<PathBuf>,
+    },
     Chores {
         root: PathBuf,
     },
@@ -132,8 +134,7 @@ impl RunKind {
                 } else {
                     Err(refused(
                         "bad_root",
-                        "a review-poll run takes no root, and only the daemon's own timer starts it"
-                            .to_string(),
+                        "only the daemon's own timer starts a review-poll run".to_string(),
                     ))
                 }
             }
@@ -150,21 +151,21 @@ impl RunKind {
     fn name(&self) -> &'static str {
         match self {
             Self::Epic { .. } => "epic",
-            Self::ReviewPoll => "review-poll",
+            Self::ReviewPoll { .. } => "review-poll",
             Self::Chores { .. } => "chores",
         }
     }
 
     /// Whether herdr lists it: the review poll is the daemon's own timer, with a workspace of its own.
     fn shown(&self) -> bool {
-        !matches!(self, Self::ReviewPoll)
+        !matches!(self, Self::ReviewPoll { .. })
     }
 
     /// The project the run works in; `None` for a kind that reads none.
     fn root(&self) -> Option<&Path> {
         match self {
             Self::Epic { root, .. } | Self::Chores { root } => Some(root),
-            Self::ReviewPoll => None,
+            Self::ReviewPoll { root } => root.as_deref(),
         }
     }
 
@@ -188,7 +189,11 @@ impl RunKind {
                 argv.push(format!("/implement-epic {slug}").into());
                 argv
             }
-            Self::ReviewPoll => vec!["queue".into(), "poll".into()],
+            Self::ReviewPoll { root } => {
+                let mut argv: Vec<OsString> = vec!["queue".into(), "poll".into()];
+                argv.extend(root.iter().flat_map(|root| ["--root".into(), root.into()]));
+                argv
+            }
             Self::Chores { .. } => vec!["todos".into(), "drain".into()],
         }
     }
@@ -405,9 +410,13 @@ impl Supervisor {
     }
 
     /// The daemon's own timer's run, which a caller's request cannot name. Always by exec: it
-    /// runs once in minutes, and the timer has no caller to wait on a spawner.
-    pub(crate) fn start_review_poll(self: &Arc<Self>) -> Result<Run, RpcError> {
-        let kind = RunKind::ReviewPoll;
+    /// runs once in minutes, and the timer has no caller to wait on a spawner. `root` is a
+    /// [`project_root`] already checked, or `None` for the user's poll.
+    pub(crate) fn start_review_poll(
+        self: &Arc<Self>,
+        root: Option<PathBuf>,
+    ) -> Result<Run, RpcError> {
+        let kind = RunKind::ReviewPoll { root };
         let (id, log, output) = self.open_run_log()?;
         let (pid, process) = self.exec(&kind, &self.env_with(Vec::new()), output)?;
         Ok(self.supervise(id, kind, pid, log, process))
@@ -490,11 +499,17 @@ impl Supervisor {
         Some(line)
     }
 
-    /// Whether a review poll is still running.
-    pub(crate) fn review_poll_live(&self) -> bool {
-        self.runs()
-            .iter()
-            .any(|entry| entry.run.ended.is_none() && matches!(entry.run.kind, RunKind::ReviewPoll))
+    /// Whether the daemon was given what a run needs, without which it starts none.
+    pub(crate) fn runs_anything(&self) -> bool {
+        self.settings.is_some()
+    }
+
+    /// Whether the review poll of `root`, or the user's for `None`, is still running.
+    pub(crate) fn review_poll_live(&self, root: Option<&Path>) -> bool {
+        self.runs().iter().any(|entry| {
+            entry.run.ended.is_none()
+                && matches!(&entry.run.kind, RunKind::ReviewPoll { root: polled } if polled.as_deref() == root)
+        })
     }
 
     fn settings(&self) -> Result<&Settings, RpcError> {
@@ -971,7 +986,7 @@ fn code_of(status: ExitStatus) -> i32 {
 }
 
 /// An absolute directory with `.lain/` or `.git` at its top, the markers a lain project has.
-fn project_root(root: &str) -> Result<PathBuf, RpcError> {
+pub(crate) fn project_root(root: &str) -> Result<PathBuf, RpcError> {
     let bad = |why: String| refused("bad_root", format!("the root {:?} {why}", clip_path(root)));
     let path = Path::new(root);
     if !path.is_absolute() {

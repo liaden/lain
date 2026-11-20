@@ -126,9 +126,9 @@ async fn forking(mode: &str, env: &[(&str, &str)]) -> Daemon {
     spawned(mode, &env, true, &[]).await
 }
 
-/// As [`daemon_with`], with the review poll on a timer, whose first tick is at once.
+/// As [`daemon_with`], with the user's review poll on the timer, whose first tick is at once.
 async fn daemon_polling(mode: &str, env: &[(&str, &str)]) -> Daemon {
-    spawned(mode, env, false, &["--poll-every", "300"]).await
+    spawned(mode, env, false, &["--poll-user"]).await
 }
 
 /// As [`daemon_with`], with a phone relay, so the daemon may be handed an ntfy topic.
@@ -867,7 +867,10 @@ async fn a_caller_cannot_start_a_review_poll_with_a_root_or_at_all() {
     let mut daemon = daemon("exit3").await;
     let project = daemon.project();
     let (error, _) = daemon.start(bare("review-poll", &project)).await;
-    assert!(refusal(&error).contains("takes no root"), "{error}");
+    assert!(
+        refusal(&error).contains("only the daemon's own timer starts a review-poll run"),
+        "{error}"
+    );
     assert!(daemon.list().await.is_empty());
 }
 
@@ -932,6 +935,7 @@ fn a_run_helper_registers_then_exits_3() {
         journal: None,
         attended: false,
         started_at: "2026-11-17T10:00:00Z".to_string(),
+        project_poll: false,
     };
     let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
     let reply = exchange(&mut stream, "session.register", vec![wire_value(&register)]);
@@ -1025,6 +1029,7 @@ fn a_run_helper_parks_a_call_then_settles_it() {
         journal: None,
         attended: false,
         started_at: "2026-11-17T10:00:00Z".to_string(),
+        project_poll: false,
     };
     let mut stream = std::os::unix::net::UnixStream::connect(socket).expect("connect");
     if !exchange(&mut stream, "session.register", vec![wire_value(&register)])[2].is_nil() {
@@ -1433,6 +1438,7 @@ async fn a_session_outside_every_run_parks_without_blocking_a_live_run() {
         journal: None,
         attended: false,
         started_at: "2026-11-17T10:00:00Z".to_string(),
+        project_poll: false,
     };
     let (error, _) = daemon
         .request("session.register", vec![wire_value(&register)])

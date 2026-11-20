@@ -264,6 +264,10 @@ pub struct Register {
     pub attended: bool,
     /// When the chat started, as the chat writes it.
     pub started_at: String,
+    /// Whether the project has github settings of its own, which the daemon then polls while
+    /// any chat there asks; absent from a chat that predates it.
+    #[serde(default)]
+    pub project_poll: bool,
 }
 
 /// A review the queue asks the newest attended chat in `root` to offer its human: `offer.send`.
@@ -760,6 +764,7 @@ mod tests {
             journal: Some(s("/work/.lain/sessions/abc.ndjson")),
             attended: true,
             started_at: s("2026-11-17T10:00:00Z"),
+            project_poll: true,
         }
     }
 
@@ -796,6 +801,10 @@ mod tests {
         assert_eq!(None, register.input_socket);
         assert_eq!(None, register.journal);
         assert!(!register.attended);
+        assert!(
+            !register.project_poll,
+            "a chat that sends no project_poll asks for none"
+        );
     }
 
     fn offer() -> Offer {

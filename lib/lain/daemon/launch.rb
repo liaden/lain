@@ -21,7 +21,8 @@ module Lain
                  (?:http|https|no)_proxy|(?:HTTP|HTTPS|NO)_PROXY|
                  XDG_(?:RUNTIME_DIR|STATE_HOME|CONFIG_HOME|CACHE_HOME|DATA_HOME))\z/x
 
-      POLL = { "review poll" => ["--poll-every", "300"].freeze }.freeze
+      # The daemon always polls the projects whose chats ask; this adds the user's own poll.
+      POLL = { "review poll" => ["--poll-user"].freeze }.freeze
 
       # The ntfy topic is as good as a password and an argv is world-readable, so it rides in the
       # environment under this name, which the daemon's `main.rs` reads by the same string. The

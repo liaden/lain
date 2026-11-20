@@ -2540,9 +2540,11 @@ no run is live; otherwise `Daemon.ensure` says what it waits for and keeps the o
   `lain daemon herdr-sync` shows in herdr. The run's environment is an allowlist
   (`Daemon::Launch::KEEP` and `RUN_ENV`). `ANTHROPIC_API_KEY` is the only secret-shaped name in it,
   and only the daemon and its runs have it; the relay worker has an empty environment.
-- The periodic review poll (`periodic.rs`). With `--poll-every` (300 seconds, set when the user
-  config has a `github` verb) the daemon starts a `review-poll` run at once and every 5 minutes after.
-  A tick while the last poll still runs is skipped, and a tick the daemon was too busy to take is
+- The periodic review poll (`periodic.rs`). Every 5 minutes, starting at once, the daemon starts a
+  `review-poll` run for the user (only with `--poll-user`, set when the user config has a `github`
+  verb) and 1 `lain queue poll --root R` for each registered root whose chat sent `project_poll`; a
+  project is first polled at the tick after its chat registers.
+  A tick while the last poll of that root still runs is skipped, and a tick the daemon was too busy to take is
   dropped, not repeated.
 - The spawner (`spawner.rs`, `lib/lain/daemon/spawner.rb`). The first run boots a `lain daemon
   spawner` Ruby process, which `require`s lain once and then forks each run from itself, reading JSON

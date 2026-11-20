@@ -243,31 +243,31 @@ RSpec.describe Lain::Daemon::Launch do
       Lain::Project::Trust.for_user(paths:).grant!
     end
 
-    it "polls every 300 seconds when the user's config has a github verb" do
+    it "runs the user's poll when the user's config has a github verb" do
       write_user_config("github account: \"work\"\n")
 
-      expect(described_class.current(paths:, env:).flags).to eq(["--poll-every", "300"])
+      expect(described_class.current(paths:, env:).flags).to eq(["--poll-user"])
     end
 
-    it "polls for a github verb that sets only a default" do
+    it "runs the user's poll for a github verb that sets only a default" do
       write_user_config("github since_days: 14\n")
 
-      expect(described_class.current(paths:, env:).flags).to eq(["--poll-every", "300"])
+      expect(described_class.current(paths:, env:).flags).to eq(["--poll-user"])
     end
 
     it "runs after the relay's flags, which it does not replace" do
       write_user_config("remote relay: \"100.64.0.1:7820\"\ngithub orgs: [\"acme\"]\n")
 
       expect(described_class.current(paths:, env:).flags)
-        .to eq(["--relay", "100.64.0.1:7820", "--devices-file", devices, "--poll-every", "300"])
+        .to eq(["--relay", "100.64.0.1:7820", "--devices-file", devices, "--poll-user"])
     end
 
-    it "does not poll when the user's config has no github verb, or only an account from the environment" do
+    it "does not run the user's poll for no github verb in the user's config, or only an account from the env" do
       expect(described_class.current(paths:, env:).flags).to eq([])
       expect(described_class.current(paths:, env: env.merge("LAIN_GH_ACCOUNT" => "work")).flags).to eq([])
     end
 
-    it "does not poll when the user's config cannot be read" do
+    it "does not run the user's poll when the user's config cannot be read" do
       FileUtils.mkdir_p(File.dirname(paths.user_config))
       File.write(paths.user_config, "github account: \"work\"\n")
 
@@ -428,7 +428,7 @@ RSpec.describe Lain::Daemon::Launch do
     # A chat whose config differs from the one the daemon started with must not replace it.
     it "is the same whatever the relay, the poll and the topic" do
       settled = launch(settings: { "relay" => ["--relay", "on"], "devices file" => ["--devices-file", "/d"],
-                                   "review poll" => ["--poll-every", "300"] }.freeze,
+                                   "review poll" => ["--poll-user"] }.freeze,
                        env: { "PATH" => "/usr/bin", "DAEMON_NTFY_TOPIC" => "x" }.freeze)
 
       expect(settled.build_digest).to eq(launch.build_digest)
@@ -474,7 +474,7 @@ RSpec.describe Lain::Daemon::Launch do
   describe "#settings_differing" do
     let(:relayed) do
       launch(settings: { "relay" => ["--relay", "on"], "devices file" => ["--devices-file", "/d"],
-                         "review poll" => ["--poll-every", "300"] }.freeze,
+                         "review poll" => ["--poll-user"] }.freeze,
              env: { "PATH" => "/usr/bin", "DAEMON_NTFY_TOPIC" => "https://ntfy.sh/x-secret" }.freeze)
     end
 

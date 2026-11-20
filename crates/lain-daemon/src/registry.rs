@@ -1,6 +1,6 @@
 //! The live chats the daemon knows, each registered by its own process over its own connection.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -374,6 +374,17 @@ impl<P: Procs> Registry<P> {
         self.sessions().values().cloned().collect()
     }
 
+    /// Each root with a registered chat that asked for its project's poll, once, in order.
+    pub(crate) fn polled_roots(&self) -> Vec<String> {
+        self.sessions()
+            .values()
+            .filter(|record| record.register.project_poll)
+            .map(|record| record.register.root.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect()
+    }
+
     /// Lists `register` for the process on the other end of the connection. A process whose
     /// parent chain reaches a registered session, its own included, is refused. That catches a
     /// process still attached to a chat; it is not a boundary, because a double-forked `setsid`
@@ -560,6 +571,7 @@ mod tests {
             journal: None,
             attended: true,
             started_at: "2026-11-17T10:00:00Z".to_string(),
+            project_poll: false,
         }
     }
 
@@ -919,6 +931,59 @@ mod tests {
             .expect("registered");
         drop(registry.open_offer(ten.registration()));
         assert_eq!(0, registry.pending_offers());
+    }
+
+    fn polling(session_id: &str, pid: u32, root: &str) -> Register {
+        Register {
+            root: root.to_string(),
+            project_poll: true,
+            ..register(session_id, pid)
+        }
+    }
+
+    #[test]
+    fn a_root_is_polled_once_however_many_of_its_chats_ask() {
+        let registry = neighbours();
+        let _a = registry
+            .register(peer(4242), polling("a", 4242, "/work/api"))
+            .expect("registered");
+        let _b = registry
+            .register(peer(5000), polling("b", 5000, "/work/api"))
+            .expect("registered");
+        let _web = registry
+            .register(peer(5001), polling("web", 5001, "/work/web"))
+            .expect("registered");
+        assert_eq!(
+            vec!["/work/api".to_string(), "/work/web".to_string()],
+            registry.polled_roots()
+        );
+    }
+
+    #[test]
+    fn a_chat_that_does_not_ask_puts_no_poll_on_its_root() {
+        let registry = neighbours();
+        let _quiet = registry
+            .register(
+                peer(4242),
+                chat("quiet", 4242, "/work/api", "2026-11-16T09:00:00Z", true),
+            )
+            .expect("registered");
+        assert!(registry.polled_roots().is_empty());
+    }
+
+    #[test]
+    fn a_roots_poll_ends_with_the_last_chat_that_asked_for_it() {
+        let registry = neighbours();
+        let a = registry
+            .register(peer(4242), polling("a", 4242, "/work/api"))
+            .expect("registered");
+        let b = registry
+            .register(peer(5000), polling("b", 5000, "/work/api"))
+            .expect("registered");
+        drop(a);
+        assert_eq!(vec!["/work/api".to_string()], registry.polled_roots());
+        drop(b);
+        assert!(registry.polled_roots().is_empty());
     }
 
     #[test]

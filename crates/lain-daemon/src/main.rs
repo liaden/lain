@@ -19,7 +19,6 @@ use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::{Arc, OnceLock};
-use std::time::Duration;
 
 use lain_rpc::{Conn, Handler, Peer, Push, RpcError, Session};
 use lain_wire::Register;
@@ -66,8 +65,9 @@ struct Args {
     /// The ruby, the `exe/lain` and the log directory every run is started with, given together or
     /// not at all.
     run: Option<(PathBuf, PathBuf, PathBuf)>,
-    /// How often the review poll runs; only a daemon that runs things can run it.
-    poll_every: Option<Duration>,
+    /// Whether the user's review poll runs beside the projects' own; only a daemon that runs
+    /// things can run it.
+    poll_user: bool,
 }
 
 impl Args {
@@ -81,8 +81,12 @@ impl Args {
         let (mut socket, mut trace) = (None, None);
         let (mut listen, mut devices) = (None, None);
         let (mut ruby, mut lain, mut runs) = (None, None, None);
-        let mut poll_every = None;
+        let mut poll_user = false;
         while let Some(flag) = args.next() {
+            if flag == "--poll-user" {
+                poll_user = true;
+                continue;
+            }
             let value = args.next()?;
             match flag.as_str() {
                 "--socket" => socket = Some(PathBuf::from(value)),
@@ -92,11 +96,6 @@ impl Args {
                 "--ruby" => ruby = Some(PathBuf::from(value)),
                 "--lain" => lain = Some(PathBuf::from(value)),
                 "--runs-dir" => runs = Some(PathBuf::from(value)),
-                "--poll-every" => {
-                    poll_every = Some(Duration::from_secs(
-                        value.parse().ok().filter(|seconds| *seconds > 0)?,
-                    ));
-                }
                 _ => return None,
             }
         }
@@ -105,7 +104,7 @@ impl Args {
             (None, None, None) => None,
             _ => return None,
         };
-        if poll_every.is_some() && run.is_none() {
+        if poll_user && run.is_none() {
             return None;
         }
         let relay = match (listen, devices) {
@@ -129,7 +128,7 @@ impl Args {
             relay,
             ntfy,
             run,
-            poll_every,
+            poll_user,
         })
     }
 }
@@ -663,9 +662,7 @@ async fn serve_unix(args: Args) -> ExitCode {
         runs,
         env: run_env(std::env::vars_os()),
     }));
-    if let Some(every) = args.poll_every {
-        tokio::spawn(periodic::poll_every(Arc::clone(&runs), every));
-    }
+    spawn_review_polls(&runs, &registry, args.poll_user, periodic::POLL_EVERY);
     let handler = Daemon {
         build_digest: args.build_digest,
         settings_digest: args.settings_digest,
@@ -683,6 +680,26 @@ async fn serve_unix(args: Args) -> ExitCode {
         tracing::warn!(%error, "could not remove the socket");
     }
     code
+}
+
+/// The review polls' timer, which reads the registered roots afresh each `every`; `None` for a
+/// daemon that runs nothing.
+fn spawn_review_polls<P: registry::Procs>(
+    runs: &Arc<Supervisor>,
+    registry: &Arc<Registry<P>>,
+    poll_user: bool,
+    every: std::time::Duration,
+) -> Option<tokio::task::JoinHandle<()>> {
+    if !runs.runs_anything() {
+        return None;
+    }
+    let polled = Arc::clone(registry);
+    Some(tokio::spawn(periodic::poll_every(
+        Arc::clone(runs),
+        every,
+        poll_user,
+        move || polled.polled_roots(),
+    )))
 }
 
 /// A run gets the daemon's own env, which `Daemon::Launch` allowlisted, less the topic and the
@@ -1089,36 +1106,108 @@ mod tests {
 
     const RUNS: [&str; 6] = ["--ruby", "/r", "--lain", "/l", "--runs-dir", "/runs"];
 
-    fn polling(every: &[&str]) -> Option<Args> {
-        let flags: Vec<&str> = RUNS.into_iter().chain(every.iter().copied()).collect();
+    fn polling(flags: &[&str]) -> Option<Args> {
+        let flags: Vec<&str> = RUNS.into_iter().chain(flags.iter().copied()).collect();
         Args::parse(argv(&flags), None, digest())
     }
 
     #[test]
-    fn a_review_poll_interval_is_a_whole_number_of_seconds() {
-        let args = polling(&["--poll-every", "300"]).expect("parse");
-        assert_eq!(Some(Duration::from_secs(300)), args.poll_every);
-        assert!(polling(&[]).expect("parse").poll_every.is_none());
+    fn the_users_review_poll_runs_only_when_asked() {
+        assert!(polling(&["--poll-user"]).expect("parse").poll_user);
+        assert!(!polling(&[]).expect("parse").poll_user);
     }
 
     #[test]
-    fn a_review_poll_interval_that_is_zero_or_no_number_is_a_bad_invocation() {
-        for every in ["0", "abc", "-5", "", "1.5", "99999999999999999999"] {
-            assert!(
-                polling(&["--poll-every", every]).is_none(),
-                "{every:?} was accepted"
-            );
+    fn the_users_review_poll_takes_no_value() {
+        let args = polling(&["--poll-user", "--socket", "/other.sock"]).expect("parse");
+        assert!(args.poll_user);
+        assert_eq!(Path::new("/other.sock"), args.socket);
+    }
+
+    #[test]
+    fn the_users_review_poll_with_no_run_settings_is_a_bad_invocation() {
+        assert!(Args::parse(argv(&["--poll-user"]), None, digest()).is_none());
+    }
+
+    fn asking_for_its_project_poll(root: &str) -> Register {
+        Register {
+            session_id: "asking".to_string(),
+            pid: std::process::id(),
+            host: "rainbow".to_string(),
+            root: root.to_string(),
+            cwd: root.to_string(),
+            input_socket: None,
+            journal: None,
+            attended: true,
+            started_at: "2026-11-19T10:00:00Z".to_string(),
+            project_poll: true,
         }
     }
 
-    #[test]
-    fn a_review_poll_interval_with_no_value_is_a_bad_invocation() {
-        assert!(polling(&["--poll-every"]).is_none());
+    fn me() -> Peer {
+        Peer {
+            uid: None,
+            pid: Some(std::process::id()),
+        }
     }
 
-    #[test]
-    fn a_review_poll_interval_with_no_run_settings_is_a_bad_invocation() {
-        assert!(Args::parse(argv(&["--poll-every", "300"]), None, digest()).is_none());
+    #[tokio::test(start_paused = true)]
+    async fn the_timer_polls_a_project_a_chat_registers_from_the_next_period_and_not_the_user() {
+        let (dir, runs, polls) = periodic::tests::noting();
+        let root = periodic::tests::project(&dir, "api");
+        let registry = Registry::new(registry::ProcTable);
+        let timer = spawn_review_polls(&runs, &registry, false, Duration::from_secs(300))
+            .expect("a daemon that runs things has the timer");
+        for _ in 0..20 {
+            tokio::task::yield_now().await;
+        }
+        assert!(runs.list().is_empty(), "a poll with nothing asking");
+        let _chat = registry
+            .register(me(), asking_for_its_project_poll(&root))
+            .expect("registered");
+        tokio::time::advance(Duration::from_secs(300)).await;
+        periodic::tests::until("the project's poll at 300 s", || {
+            !periodic::tests::polled(&polls).is_empty()
+        })
+        .await;
+        let root = periodic::tests::canonical(&root);
+        assert_eq!(
+            vec![format!("queue poll --root {root}|{root}")],
+            periodic::tests::polled(&polls)
+        );
+        timer.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_timer_polls_the_user_only_when_asked_to() {
+        let (dir, runs, polls) = periodic::tests::noting();
+        let registry = Registry::new(registry::ProcTable);
+        let timer = spawn_review_polls(&runs, &registry, true, Duration::from_secs(300))
+            .expect("a daemon that runs things has the timer");
+        periodic::tests::until("the user's poll at 0 s", || {
+            !periodic::tests::polled(&polls).is_empty()
+        })
+        .await;
+        let runs_dir = periodic::tests::canonical(dir.path().join("runs").to_str().expect("utf-8"));
+        assert_eq!(
+            vec![format!("queue poll|{runs_dir}")],
+            periodic::tests::polled(&polls)
+        );
+        timer.abort();
+    }
+
+    #[tokio::test]
+    async fn a_daemon_that_runs_nothing_has_no_timer() {
+        let registry = Registry::new(registry::ProcTable);
+        assert!(
+            spawn_review_polls(
+                &Supervisor::new(None),
+                &registry,
+                true,
+                Duration::from_secs(300)
+            )
+            .is_none()
+        );
     }
 
     const RELAY: [&str; 4] = ["--relay", "127.0.0.1:0", "--devices-file", "/d/devices"];

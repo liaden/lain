@@ -378,17 +378,20 @@ and under `:hold`: the call is denied, never held.
 
 ## 9: The review poll, as a daemon task, and after a reboot
 
-The poll is a run the daemon's own timer starts: `lain queue poll`, kind `review-poll`, every 300 s, **only** when the user's
-config has a `github` verb (the daemon's argv then carries `--poll-every 300`; without one it does not, and no timer exists).
+The poll is a run the daemon's own timer starts, kind `review-poll`. The timer always runs, every 300 s, in any daemon that
+runs things. Each tick runs the user's `lain queue poll` **only** when the user's config has a `github` verb (the daemon's
+argv then carries `--poll-user`; without one it does not), and 1 `lain queue poll --root R` for each project R whose chat
+registered with its own `github` settings. A project is first polled at the tick after its chat registers, and its poll stops
+at the tick after its last chat leaves.
 Use the stand-in `gh` of `review-queue.md` section 0 on the `PATH` the daemon is started from.
 
 ```bash
-ps -o args= -C lain-daemon | grep -c -- '--poll-every 300'   # 1 with the github line, 0 without
-lain daemon runs                                              # ticks at once, then every 300 s
+ps -o args= -C lain-daemon | grep -c -- '--poll-user'   # 1 with the github line, 0 without
+lain daemon runs                                         # ticks at once, then every 300 s
 ```
 
-Expect a `review-poll` run within seconds of the daemon starting, `exited 0`, and a new one at 300 s, 600 s and so on; at
-most 1 live at a time. `lain daemon status` lists them like any run; the herdr `lain` workspace does not (the poll has the
+With the github line, expect a `review-poll` run within seconds of the daemon starting, `exited 0`, and a new one at 300 s, 600 s and so on; at
+most 1 live at a time for the user and 1 for each project. `lain daemon status` lists them like any run; the herdr `lain` workspace does not (the poll has the
 `reviews` workspace, `review-queue.md` section 6), so the runs token never names it. `$XDG_STATE_HOME/lain/reviews.json`
 (`Paths#review_counts`, beside no project) is rewritten each time.
 

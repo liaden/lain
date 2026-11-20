@@ -276,7 +276,7 @@ RSpec.describe Lain::Daemon do
 
     def relayed(launch)
       launch.with(settings: { "relay" => ["--relay", "127.0.0.1:7820"], "devices file" => ["--devices-file", "/d"],
-                              "review poll" => ["--poll-every", "300"] })
+                              "review poll" => ["--poll-user"] })
     end
 
     def kept_note(launch)

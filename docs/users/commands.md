@@ -781,7 +781,8 @@ phone (`--human remote`).
 change, so you rarely type it. See [plugin/herdr/README.md](../../plugin/herdr/README.md).
 
 The daemon also starts a review poll (`lain queue poll`) every 5 minutes when the user config has
-a `github` verb, and it shows in `runs`.
+a `github` verb, and 1 for each project with its own github settings while a chat runs there; each
+shows in `runs`.
 
 With no built daemon binary, each command exits 1 naming `rake daemon:build`. `status` and `runs`
 never start a daemon: with none running they print "no daemon is running" and exit 0, while

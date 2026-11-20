@@ -291,7 +291,7 @@ These are known and have no fix yet.
   restart is announced again.
 - `ask_human` under `--human remote` still starts the terminal answer loop, which prints to a
   headless terminal.
-- Ended runs and their logs are not pruned. The review poll alone adds 288 a day under
+- Ended runs and their logs are not pruned. Each review poll adds 288 a day under
   `$XDG_STATE_HOME/lain/daemon/runs/`.
 - `lain daemon restart` checks for live runs, then stops, from the client, so a run that starts
   in between is not seen.
