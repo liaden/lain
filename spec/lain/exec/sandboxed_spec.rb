@@ -127,6 +127,62 @@ RSpec.describe Lain::Exec::Sandboxed do
         expect(run.stderr).not_to include(described_class::CONTAINED)
       end
 
+      context "when the command names a masked file" do
+        let(:profile) do
+          Lain::Confine::Profile.reader(root:, home:,
+                                        masks: [File.join(root, ".env"), File.join(root, "config/master.key")])
+        end
+
+        it "says the file is masked and reads as empty" do
+          capture = run(command: Lain::Shell::Term.of(%w[cat .env]), confinement: human(contained: true))
+
+          expect(capture.stderr).to include(".env is masked in the sandbox and reads as empty")
+          expect(capture.stderr).not_to include("master.key")
+        end
+
+        it "says a decoy key is a decoy, not the project's key" do
+          capture = run(command: Lain::Shell::Term.of(%w[cat config/master.key]), confinement: human(contained: true))
+
+          expect(capture.stderr).to include("config/master.key is a decoy in the sandbox, not the project's key")
+        end
+
+        it "names the file a command string wrote" do
+          capture = run(command: "cat .env", confinement: human(contained: true))
+
+          expect(capture.stderr).to include(".env is masked in the sandbox and reads as empty")
+        end
+
+        it "names a file typed under the home, in a term and in a string alike" do
+          profile = Lain::Confine::Profile.reader(root: home, home:, masks: [File.join(home, ".env")])
+          tilde = Struct.new(:profile) { def for(_request) = profile }.new(profile)
+          [Lain::Shell::Term.of(%w[cat ~/.env]), "cat ~/.env"].each do |command|
+            capture = described_class.new(inner:, launcher:, profiles: tilde, journal:, ceiling: 4096)
+                                     .call(command:, cwd: home, env: { "HOME" => home }, timeout: 5,
+                                           confinement: human(contained: true))
+
+            expect(capture.stderr).to include(".env is masked in the sandbox and reads as empty")
+          end
+        end
+
+        it "keeps the note printable when a masked name holds a newline or an escape" do
+          odd = File.join(root, "a\nb\e[31m")
+          profile = Lain::Confine::Profile.reader(root:, home:, masks: [odd])
+          odd_profiles = Struct.new(:profile) { def for(_request) = profile }.new(profile)
+          capture = described_class.new(inner:, launcher:, profiles: odd_profiles, journal:, ceiling: 4096)
+                                   .call(command: Lain::Shell::Term.of(["cat", "a\nb\e[31m"]), cwd: root, env: {},
+                                         timeout: 5, confinement: human(contained: true))
+
+          expect(capture.stderr).to include("is masked in the sandbox").and(satisfy { !_1.include?("\e") })
+          expect(capture.stderr.lines.size).to eq(2)
+        end
+
+        it "adds only today's line to a command that names no masked file" do
+          capture = run(command: Lain::Shell::Term.of(%w[ls]), confinement: human(contained: true))
+
+          expect(capture.stderr).to eq("#{described_class::CONTAINED}\n")
+        end
+      end
+
       context "when the contained call earned a build tool's ports" do
         let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(connect_ports: [443, 80]) }
 

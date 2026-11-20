@@ -81,6 +81,8 @@ module Lain
                       "each tracked one as M there though git holds it unchanged"
       CONTAINED = "This call ran contained, as it was approved without network: #{MASKED_IN_GIT}, and it had no " \
                   "network. To see a masked file's values, use read_file.".freeze
+      NAMED_EMPTY = "%<path>s is masked in the sandbox and reads as empty."
+      NAMED_DECOY = "%<path>s is a decoy in the sandbox, not the project's key."
       CONTAINED_PORTED = "This call ran contained, as it was approved: #{MASKED_IN_GIT}, and it could reach the " \
                          "host's network only on TCP ports %<ports>s, which its build tool fetches over. To see a " \
                          "masked file's values, use read_file.".freeze
@@ -163,9 +165,9 @@ module Lain
                                            network: confinement.ruling.network?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
-        guarded(profile, stages(command)) do |bound, guard|
+        guarded(profile, stages(command)) do |bound, guard, masked|
           run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard), **sinks }
-          told_contained(confinement, profile) do
+          told_contained(confinement, profile, masked, command:, cwd:, env:) do
             profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
           end
         end
@@ -178,7 +180,7 @@ module Lain
         guard = Confine::DecoyGuard.before(root: profile.read_dirs.first, masks: masked.files)
         bound = masked.bind(stages:, first_fd: TRACE_FD + stages, also: guard.binds)
         begin
-          capture = yield(bound, guard)
+          capture = yield(bound, guard, masked.files)
         ensure
           bound.close
           settled = guard.settle
@@ -199,9 +201,28 @@ module Lain
           .map { "#{_1}\n" }.join
       end
 
-      def told_contained(confinement, profile)
+      def told_contained(confinement, profile, masks, command:, cwd:, env:)
         capture = yield
-        confinement.ruling.contained? ? appended(capture, "#{contained_line(profile)}\n") : capture
+        return capture unless confinement.ruling.contained?
+
+        appended(capture,
+                 "#{contained_line(profile)}\n#{named_masks(masks, typed_paths(command, cwd, env.to_h["HOME"]), cwd)}")
+      end
+
+      def named_masks(masks, typed, cwd)
+        masks.slice(*typed).map { |path, bytes| "#{named_mask(path, bytes, cwd)}\n" }.join
+      end
+
+      # Only a file the command typed is named, so the note shows the model nothing it did not already type.
+      def typed_paths(command, cwd, home)
+        return Shell::Named.of(command, cwd:, home:).paths.map(&:resolved) if command.is_a?(String)
+
+        command.words.map { File.expand_path(home && _1.start_with?("~/") ? _1.sub("~", home) : _1, cwd) }
+      end
+
+      def named_mask(path, bytes, cwd)
+        shown = printable(path.delete_prefix("#{cwd}/"))
+        phrased(bytes.empty? ? NAMED_EMPTY : NAMED_DECOY, path: shown)
       end
 
       # A build grant keeps its ports under a contained approval, so the line must not claim no network.
