@@ -241,6 +241,28 @@ Rerun with `ls` as the command: `exit=0`, the directory listing on stdout, no `R
 extra. Under a real chat the same refusal feeds `Tripwire::Ledger` as `refused_exec`, a strong signal, unless
 the refused file is one the call's own unchanged toolchain resolves to.
 
+### 4b: A refusal after a human approved says so, and the mask listing is not redone per call
+
+**The wording follows the ruling.** The harness of §4 with a ruling from a human (`Ruling.allow(authority: :human, contained: true,
+...)` in place of the rules rung) and the same planted program ends with a different final sentence: `REFUSED by the sandbox, not a
+transient error: a human approved it contained, so this call may not run <root>/planted there. Retrying, or running the same
+effect another way, will be refused again. Stop and tell the human they can answer network to run it unconfined, then wait for the
+answer.` It must **not** say `ask the human to approve it`: the human already did. The judge's or a rule's ruling keeps §4's text. A
+refusal that matches neither is a third wording to record.
+
+**A human `y` exec-grants the call's own project script.** Under the workspace profile, a parked `bin/tool` the human answered `y`
+runs, where the same script was refused before (it is a `project` program, which the profile never exec-granted). The `sandbox`
+record names the workspace profile with no network, and the `ExecRecord` has no refusal for `bin/tool`. Plant it as
+`$QA/proj/bin/tool` (a `#!/bin/sh` script). A script the call does not name is still refused: run `bin/tool` from inside another
+script that the human approved, and the inner one stays refused unless it is in the call's own words.
+
+**The mask listing is reused when nothing moved.** In a git project with an ignored `build/` of 50,000 files (500 directories of
+100), time 5 contained calls in a row (`wc -l README.md`, as a human `y` under `ask`): the first pays the listing, the next 4 do not
+list or classify the names again. This is a cost, so measure it where it can be measured: `bin/hot-path-bench`'s `mask_list_warm`
+row, not a stopwatch in the chat (a wall-clock threshold here is noise). What a driver can check by behaviour is the other half:
+create `build/.env` after the first call and the next call masks it (`cat build/.env` prints nothing, rc 0); replace a tracked
+`config/app.yml` with a link to `~/.aws/credentials` and the next call masks it too (not served from a stale listing).
+
 ## 5: A memfd exec is refused by the fence
 
 No model call; the harness from §4.

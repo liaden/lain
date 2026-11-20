@@ -176,27 +176,49 @@ its content, so this is also a restart) and run `lain daemon ensure`. Expect exi
 A socket file with nothing behind it (`kill -9` the daemon, leave the file) is removed by the next start; a regular file at
 that path is refused and never deleted.
 
-## 2: A launch-digest restart, only when idle
+## 2: Only a new build replaces a daemon, and only when it is idle
 
-The digest hashes the binary's content, the ruby, `exe/lain`, the runs directory, the env allowlist's source, the flags,
-the ntfy topic and whether `ANTHROPIC_API_KEY` is present (never its value). Change the topic: edit `remote ntfy:` to
-`.../qa-topic-2` and `lain trust --user`.
+The daemon reports 2 digests (`$QA/bin/dctl daemon.info` carries `build_digest` and `settings_digest`). The **build digest**
+hashes the binary's content, the ruby, `exe/lain`, the env allowlist's source and whether `ANTHROPIC_API_KEY` is present (never
+its value). Only a change there replaces an idle daemon. The **settings digest** hashes each of the relay, the devices file, the
+user's poll flag (named `review poll`) and the ntfy topic by name, and never replaces anything: a chat whose config differs says so and leaves the
+daemon alone. A shell's own `LAIN_MODEL` or the other `LAIN_*` values are in neither digest.
 
-**Idle, replaced.** No chat, no run. `lain daemon ensure`. Expect `daemon pid <new>` with a pid that differs from before,
-exit 0, and the old process gone.
+Pick the build change by running `lain daemon ensure` under another Ruby (`eval "$(mise env -s bash ruby@4.0.9)"` against a
+daemon started under 4.0.10): the ruby path is in the build digest, so that is a different build with no recompile. A real
+rebuild with a new commit stamp does the same.
 
-**Busy with a chat, kept.** Start a chat, then change the topic again and run `lain daemon ensure`. Expect the same pid,
-exit 0, and the note `this chat uses the daemon another checkout started at <socket>, which has 1 chat; it restarts on
-this checkout's build once that ends`. Quit the chat; `lain daemon ensure` now replaces it.
+**A settings difference leaves an idle daemon running.** Start the daemon with `remote relay:` and the `github` verb in the user
+config (so it carries `--relay` and `--poll-user`), then edit the config to drop both, `lain trust --user`, and run a chat or
+`lain daemon ensure`. Expect the same pid, exit 0, and 1 note, `the daemon at <socket> keeps the <names> it started with, which
+this chat would start differently; \`lain daemon restart\` applies them`, where `<names>` lists the differing settings by name
+(`relay`, `devices file`, `review poll`, `ntfy topic`), never a value. Run it again: the note says the same, because it is said per
+start. Then `lain daemon restart` and the new daemon carries the new flags (`ps -o args= -C lain-daemon`). **Wrong looks like:** a
+changed topic or relay that replaces an idle daemon (the old behaviour, which broke every chat registered with it), or a note
+that prints a topic URL or a device key.
+
+**A different `LAIN_MODEL` is no difference.** `LAIN_MODEL=other lain daemon ensure` against a running daemon prints no note
+and keeps the pid.
+
+**An unreadable user config never replaces.** Put a raise in the user `config.rb` (`raise "qa"`) and run `lain daemon ensure`:
+the daemon is kept, and the note says `the daemon at <socket> is kept as it runs, since the user config cannot be read: <the
+error>`. Remove the raise afterward. A replacement would have started with none of the user's relay and devices.
+
+**Idle, replaced by a new build.** No chat, no run. Run `lain daemon ensure` under the other Ruby. Expect `daemon pid <new>`
+with a pid that differs from before, exit 0, and the old process gone.
+
+**Busy with a chat, kept.** Start a chat, then run `lain daemon ensure` under the other Ruby. Expect the same pid, exit 0, and
+the note `this chat uses the daemon another checkout started at <socket>, which has 1 chat; it restarts on this checkout's build
+once that ends`. Quit the chat; `lain daemon ensure` now replaces it.
 
 **Busy with a run, kept.** The live run is the **held epic run**: set up as in §7 with `approval timeout: 600` in the project's
 `.lain/config.rb`, so the run's first parked call keeps it alive for 10 minutes. (A `chores` run on an empty `TODOS.md`
-exits at once and cannot be observed live.) While it lives, change the topic and `ensure`: the note says `1 live run` and `those end` or `that ends` by count. `lain daemon restart` refuses with
+exits at once and cannot be observed live.) While it lives, `ensure` under the other Ruby: the note says `1 live run` and `those end` or `that ends` by count. `lain daemon restart` refuses with
 `the daemon has live runs: <id>; \`lain daemon restart --force\` restarts it anyway` and exits 1; `restart --force` restarts
 it and prints `1 run keeps going unlisted:` with the run's id and pid. After it, `lain daemon runs` says `no runs`, and
 `kill -0 <run pid>` still succeeds, since a run is the daemon's child only in name: it has its own session.
 
-**The key.** `env -u ANTHROPIC_API_KEY lain daemon ensure` with no key; then `ANTHROPIC_API_KEY=sk-qa-0000000000 lain daemon
+**The key.** (A key is part of the build digest, so this is the one config-like difference that does replace an idle daemon.) `env -u ANTHROPIC_API_KEY lain daemon ensure` with no key; then `ANTHROPIC_API_KEY=sk-qa-0000000000 lain daemon
 ensure` while a chat is registered. Expect the keyless note, `the daemon at <socket> lacks ANTHROPIC_API_KEY, so runs it
 starts cannot reach anthropic until it restarts; it has 1 chat and restarts once that ends`. With no chat the same
 command replaces it. Then check where the key went: the daemon's own `/proc/<pid>/environ` holds it, the relay worker's is
@@ -289,7 +311,13 @@ answer) has already returned or returns now with the chat's own outcome (`held` 
 
 - **A headless chat is never offered.** Start `lain chat --non-interactive --prompt hi --human remote` in `$QA/src/api`
   (needs the relay and containment, section 7) with `b` and `a` quit: its record is `attended: false`, and the same `open`
-  prints `no lain chat is running in $QA/src/api; the review opens with the next lain up --nvim there`.
+  prints `no lain cockpit is running in $QA/src/api; the review opens with the next lain up --nvim there`.
+- **A plain chat is never offered either, and the review is not lost.** Start `lain chat --no-nvim` (attended, no editor) in
+  `$QA/src/api` with no cockpit. `lain queue open` there prints the same `no lain cockpit is running in ...` line, the chat shows
+  no offer line, and `ls $XDG_STATE_HOME/lain/queue/pending/` holds the review (the chat answered `plain`, which the daemon
+  passes through, and the held review waits for the next cockpit). `dctl offer.send` for the same root returns `outcome: plain`,
+  not `held`. Start `lain up --nvim` there afterward and the review is offered at its first `you>`. **Wrong looks like:** the
+  command claiming the review was offered to the plain chat, or the pending file missing so the review is gone.
 - **A chat that gave up.** `kill -STOP` the newest chat, offer a row, and expect `lain queue open` to wait 30 s, print
   `the chat <id> has not answered the offer, and may still show it` and **exit 1**. `kill -CONT` it: the offer then appears. The offer was
   dropped by the daemon's wait, not the chat's, so record whether the chat still shows it.
@@ -324,7 +352,25 @@ the terminal**: `tmux kill-window` the pane that ran it. Then, from another shel
 - `lain daemon status` lists the run, and `session <run's id> pid <n> $QA/src/api` appears (a headless chat registers like any
   other, with `attended` false).
 - The run is `lain chat --root $QA/src/api --cwd $QA/src/api --non-interactive --approval auto --human remote --epic <slug>
-  --prompt "/implement-epic <slug>"`: `tr '\0' ' ' </proc/<pid>/cmdline` says so, and the daemon built that argv itself.
+  --prompt "/implement-epic <slug>"`, plus the provider flags below: `tr '\0' ' ' </proc/<pid>/cmdline` says so, and the daemon
+  built that argv itself.
+
+**A run uses the provider you asked for.** Launch the run from a shell that exports `LAIN_PROVIDER=ollama`,
+`LAIN_MODEL=<a model the box serves>`, and `LAIN_NUM_CTX=<the served window>` (and `LAIN_API_BASE` when ollama is not on the
+default address), with the daemon started from a shell that has none of them. Expect the run's cmdline to carry `--provider
+ollama --model <model> --num-ctx <n>` after the fixed flags, and the run to reach the model (its first completion lands in the
+log) where before it died at launch for want of `ANTHROPIC_API_KEY`. `lain daemon run chores` carries the same flags on its
+`todos drain` child. Only what the shell set travels: an unset variable adds no flag, and the daemon's own value fills in (next
+paragraph). A `LAIN_NUM_CTX=0` or `=99999999999` refuses at the CLI, naming the variable and `1 to 4294967295`, and starts no
+run. A `LAIN_API_BASE` with credentials in it (`http://user:secret@host:11434`) is masked wherever lain prints it, and `ps` and
+the run log never hold `secret`. **Wrong looks like:** a run that ignores the shell's model, or a credential in `ps`.
+
+**A run with no requester uses what the daemon started with.** Start the daemon from a shell with `LAIN_PROVIDER=ollama` and
+`LAIN_MODEL=<model>`. A `chores` run started by the 300 s timer's neighbour (or a `run.start` that carries no `profile` member,
+`$QA/bin/dctl run.start '[{"kind":"chores","root":"<R>","args":{}}]'`) holds both in `/proc/<run pid>/environ`; a requester's
+profile that names another model beats the daemon's for that run (its argv flag wins). `ps -o args= -C lain-daemon` shows no
+model. A `profile` naming provider `nope` is refused: `run.start knows no provider "nope"; the providers are ...`, and starts
+nothing. The shell's `LAIN_MODEL` is not part of either digest (§2).
 
 When the run reaches the research gate or a call the judge cannot settle, expect the item on the client, naming the epic and
 the stage, and **nothing at any terminal**. Approve it from the phone: the run goes on, the journal holds the decision with
@@ -345,6 +391,7 @@ list is the evidence):
 | `lain daemon run epic Bad_Slug` | `the slug "Bad_Slug" does not match [a-z0-9][a-z0-9-]*` |
 | `lain daemon run epic x` from `/tmp` (no `.lain` or `.git`) | `is not a lain project: no .lain or .git at its top` |
 | `$QA/bin/dctl run.start '[{"kind":"epic","root":"<R>","args":{"slug":"x","argv":"rm -rf"}}]'` | `an epic run takes only a slug, not "argv"` |
+| `$QA/bin/dctl run.start '[{"kind":"epic","root":"<R>","args":{"slug":"x"},"profile":{"provider":"nope"}}]'` | `run.start knows no provider "nope"; the providers are ...` |
 | `$QA/bin/dctl run.start '[{"kind":"review-poll","root":"<R>"}]'` | `a review-poll run takes no root, and only the daemon's own timer starts it` |
 | `$QA/bin/dctl run.start '[{"kind":"shell","root":"<R>"}]'` | `knows no kind "shell"; the kinds are epic, review-poll and chores` |
 | `lain daemon run epic <slug>` with `--human remote` unmet: remove `remote relay:` from the config, `trust --user`, and run | the run starts (the daemon does not check), the **chat** refuses and exits 1 naming `remote relay:` and the user's `config.rb`; `lain daemon runs` shows `exited 1` and the log holds that line |
@@ -395,6 +442,19 @@ most 1 live at a time for the user and 1 for each project. `lain daemon status` 
 `reviews` workspace, `review-queue.md` section 6), so the runs token never names it. `$XDG_STATE_HOME/lain/reviews.json`
 (`Paths#review_counts`, beside no project) is rewritten each time.
 
+- **A project asks for its own poll, with no restart.** With the daemon already running (started before the project's config had
+  a `github` verb), add `github { orgs %w[acme] }` to `$QA/src/api/.lain/config.rb`, `lain trust` it, and start a chat there. The
+  chat's `Register` carries `project_poll true` (`dctl session.list` does not show the request; read it as the new `lain queue
+  poll --root $QA/src/api` run that appears at the **next tick**, at most 300 s later). The poll runs with the project's orgs
+  and writes the project's own counts file (`ls $XDG_STATE_HOME/lain/projects/*/reviews/*.json` or
+  `ruby -Ilib -e 'puts Lain::Paths.new.review_counts("$QA/src/api")'`), leaving the user's `reviews.json` untouched. A second chat
+  in the same project adds no second poll per tick. Quit every chat there: the project's poll stops at the tick after. A chat in
+  a project with no `github` verb registers `project_poll false` and no `--root` poll is ever run for it.
+- **An untrusted project is not polled.** Edit the project's `.lain/config.rb` without re-running `lain trust` (its hash no longer matches) and let the
+  tick run: the `--root` run exits 0, writes no counts file, and its log (`lain daemon runs`) says `<root> is untrusted, so it is
+  not polled; run lain trust there`. A project that sets no `github` verb says `<root> sets no github, so it is not polled`.
+- **A project poll pushes no herdr token.** The `reviews` token the user's poll sets (`review-queue.md` §6) is unchanged by a
+  project poll; the stand-in herdr's call log gains no `reviews=` call from a `--root` run.
 - **A slow poll is not doubled.** Make the stand-in `gh` sleep 400 s (`touch $QA/gh.slow` and have it honour that). At the 300 s
   tick the trace gains exactly 1 line `skipped a review poll tick: the last poll is still running` and `lain daemon runs` shows
   1 live poll, not 2. When it ends the next tick starts one.

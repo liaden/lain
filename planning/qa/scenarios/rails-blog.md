@@ -364,6 +364,45 @@ driven — this is integration check 7 of the discharging chunk)*:
   `request_sent.extra`. *(Prediction, not yet driven.)* A ~30 s `provider_wait` per summary is F95
   back.
 
+**A transcript holding ERB hands off.** A Rails app is the one subject whose own files hold `<%= ... %>`. The handoff, summarizer and
+other oracle prompts are templates, and a transcript's text (a view's source, a `read_file` result) is **data** in them, never
+compiled. Drive a handoff (the lone-turn recipe above) over a session whose history holds the text `<%= link_to 'Back', posts_path
+%>` in an `erb` view the model read. Expect the handoff to be journaled and the ask answered, with that text in the summarizer's
+`request_sent` byte for byte. The earlier failure was a `NameError` for `link_to` from inside the handoff, which stranded the chat.
+A pure tag (`<%= "INJECTED" %>`) stays literal in the request: grep the request for `INJECTED` outside the literal tag, 0 hits. A
+**project slot fill** is still a template: `.lain/slots/system.md` holding `<%= rand %>` still refuses the launch as impure.
+(`ruby -Ilib $QA/erb_slot_repro.rb`, if the round keeps the repro, prints `rendered` for the helper-tag cases and `kept literal`.)
+
+**A reply cut at the length limit runs none of its calls.** A reply ollama ends at `done_reason: length` that still holds complete
+tool calls (a directive to run the whole suite, one `bash` call per file) is a cut, not a tool turn. With the window not full the
+turn's `stop_reason` is `context_full`; at `--max-tokens` it is `max_tokens`. Expect the committed turn to keep the reply's text,
+then the cut notice (`The reply filled the context window before the model finished.`), then `N tool calls were cut off and not
+run.`, and **no `tool_use` block and no `tool_result` after it**: no `exec_record` for that round, and the next `request_sent`
+holds nothing for the dropped calls and fits the window. The old behaviour answered each stranded call as cancelled, one by one,
+which put 943 results into the next prompt over a 32,768-token window. A finished reply with `done_reason: stop` and calls is still a
+tool turn, and a cut reply with no calls is the old text plus the notice. A scripted vehicle is needed to force the shape
+(a stub provider, or a stand-in ollama on `--api-base`); say which was used.
+
+**ollama's cache reads are journaled.** On a second turn over the same loaded prefix, the response's `usage` records
+`cache_read_input_tokens` from ollama's `prompt_eval_cached_count`, with `input_tokens` the rest: a frame of `prompt_eval_count 7353`
+and `prompt_eval_cached_count 6998` gives `input_tokens 355` and `cache_read_input_tokens 6998`, `total_input_tokens` 7353. Read the
+`turn_usage` and `request_sent` records of turn 2. An old server with no cached count reads 0 cached and the whole count as input.
+**No `cache_cold_confirmed` follows a turn that reported cached tokens**, so an idle chat on a warm prefix is not prepared as cold
+(`session-and-window.md` §6's idle tick). And the HUD's cache countdown: ollama's profile has no time-to-live, so a warm turn
+publishes **no** cache deadline (no `cache` countdown in the HUD or status feed, and no deadline already in the past).
+
+**A chat that cannot read hands off, instead of looping on starved reads.** When the round budget has withheld every read and the
+head past the last cut holds only a few KB, no cut can free room and each ask used to proceed with the reads starved until it was
+refused. Drive it near full: a session at about 90% of a 32,768 window whose tool rounds all return the starved-read stub.
+Expect, at the **next** ask, one `compaction_decision` carrying `handoff: "read_starved"` and a `compaction_cut` of `kind: "handoff"`, the ask answered, and the next tool
+round's read budget back above 8,192 bytes. Under the default arm and `--compact-fallback early-handoff` it fires; under
+`--compact-fallback none` it never does and the over-window refusal ends `. A handoff is off because of --compact-fallback none`. A
+cut that frees enough still wins (the cut applies, no handoff). On a guessed window (a model the box did not probe) no early handoff
+happens and the sink says `early handoff is off until the model's window is known` once. What a handoff frees is priced at the
+chat's measured tokens per byte, and the held handoff document does not count as freed, so a chat that stays starved does not hand
+off again on the next ask: a second `read_starved` handoff when the first freed nothing is the finding. Reads that starve inside a single
+long ask are not this check: the handoff comes at the next ask, which is the known limit.
+
 **Held replacements re-collapse, since round 18**, so the open decision this section used to
 record — ten cuts under `summarize-conversation` rendering ten summaries — is closed and its old
 expectation is now the finding. Once more than one cut is held, a signal with nothing newly
@@ -427,6 +466,46 @@ a row — a parked call with no row, or a row with no arrival line, is the wedge
 
 Check `.lain/config.rb` between acts. A model that talks you into "always" for `bash` in a Rails
 tree has just pre-approved arbitrary shell for the rest of the session.
+
+### 3b. A human's `y` runs `bin/rails`, contained, and `secrets` runs it with the real credentials
+
+A Rails app boots by reading `config/master.key` and `config/credentials.yml.enc`, and `bin/rails` is a project script. Both used
+to stop a contained run: the masks failed the credentials read, and a project script was never exec-granted. Now a human's plain
+`y` runs it. Use the app of §0 with the project trusted, a real `config/master.key`, credentials holding `stripe: {key:
+<leaf>}` (a synthetic value you pick, 16 or more characters, written below as `<leaf>`), and `.env` holding a fake secret; `/mode ask`. Each step is a parked call that you answer.
+
+1. **A plain `y` runs the script contained.** Ask for `bin/rails runner 'p 1 + 1'`. The row says `y runs it contained, without network,
+   where files lain masks read as empty or as a decoy; network runs it unconfined, with network; secrets runs it cut off from the
+   network, with lain's masks lifted from <files> ...`. Answer `y`. Expect `2`, exit 0, a `sandbox` record under the `workspace`
+   profile with no network, and the result's contained note. `bin/rails generate scaffold Post title:string` and
+   `bin/rails db:migrate` (sqlite, no network) run the same way. The run's credentials are **empty**: `p Rails.application.credentials.to_h` prints `{}`,
+   because the masked key pair is a decoy (`secret-boundary.md` §8c). `cat config/master.key` inside it prints a key that is not yours.
+2. **A script the model just wrote still runs on a human `y`.** Have the model `write_file bin/hello` (a `#!/bin/sh` script) and
+   `chmod +x` it, then call `bin/hello`. Answer `y`: it runs contained with no network. Only the call's own programs are granted:
+   `bin/rails runner x && bin/other` grants both for that call, and nothing else under the project. An automatic allow (the judge's)
+   grants **no** project script: record how that same call runs under `auto` rather than assuming.
+3. **A plain `y` never shows the secret.** `bin/rails runner 'puts ENV.fetch("X", "none")'` is fine; a call that prints `File.read(".env")`
+   prints nothing (the mask is an empty file), and the contained note says `.env is masked in the sandbox and reads as empty.`
+4. **`secrets` runs it with the real credentials.** Park `bin/rails runner 'puts Rails.application.credentials.dig(:stripe, :key)'` and
+   answer `secrets`. The runner reads the real leaf, but the model's tool result, the journal and the display carry
+   `<redacted:1>`, never `<leaf>`: the decrypted leaves are known values (`secret-boundary.md` §4h). The note says `lain
+   lifted its masks from <files>`, and `curl http://127.0.0.1:<port>` inside such a run fails (no network, not even a build
+   tool's ports). The `sandbox` record carries `secrets: true`.
+5. **The post-run scan gates a copied key.** Park `bin/rails runner 'File.write("leaked.txt", File.read("config/master.key"))'`, or
+   `cp config/master.key leaked.txt`, and answer `secrets`. The note names `leaked.txt`. A later `read_file leaked.txt` parks for a
+   human and the judge does not approve it; and a plain-`y` run afterwards reads `leaked.txt` as empty. A `bin/rails runner` that appends a
+   decrypted leaf to `log/development.log` gates the log the same way, and the next contained run reads it as an empty file;
+   record whether Rails still boots with that empty log.
+6. **Not remembered.** Under `/mode auto`, answer `secrets` to a deferred call, then make the same call again: it parks again. A plain
+   `y` to a deferred call IS remembered for that exact call (`repl-commands.md` §6a); `secrets` and `network` are not.
+7. **Nothing a masked app needs is missing at boot.** `bin/rails runner 'p ActiveRecord::Base.connection.tables'` against sqlite runs
+   under a plain `y`; a Postgres `DATABASE_URL` does not (the contained run has its own loopback and grants no database socket). Record
+   which database your fixture uses and what a database connection printed; do not file it: a database from inside a contained run is
+   a known, unplanned limit.
+
+**Wrong looks like:** a plain `y` that still fails with `Permission denied` on `config/master.key` or `MissingKeyError`, a `secrets` run
+that prints the leaf unmasked in any surface, a copied key that no later call gates, or a decoy key that git commits (`git commit -am`
+inside the run must store your real `config/credentials.yml.enc`, §8c).
 
 ### 4. Session lifetime
 

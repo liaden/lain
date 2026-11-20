@@ -246,6 +246,13 @@ chat write `suite` (author chat). Run `lain consolidate` over a lineage whose cl
 - the clerk **may** rewrite an id it authored (a second `lain consolidate` refining `lineage-a`), and the chat
   may correct a clerk item, which is then stored with `author: chat` (the human has taken it over).
 
+**The clerk is told the spawn is its author, not a source.** The scaffold names the lineage spawn digest and says the spawn is
+recorded as each memory's author for the clerk, and that `sources` takes project file paths only. Drive `lain consolidate` over a
+completed lineage with a model that follows the scaffold, and read the stored items: each carries `author: clerk (spawn <digest>)`,
+and none was refused for a `sources` entry that is a digest. The earlier failure was a clerk citing the spawn digest as a source
+file, refused by the stale-mark rule on every write, so a pass ended `stored nothing` while the model said it had stored notes.
+Compare the pass's `stored N notes` first line against the store as above.
+
 **A clerk sees and replaces only what its own spawn wrote** (round 21's E-1 and E-6). Run `lain consolidate`
 over 2 lineages, `a` and `b`, after a chat has written `suite`. Then:
 

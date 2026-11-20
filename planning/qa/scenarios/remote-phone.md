@@ -119,6 +119,15 @@ fixed at the desk`.
 its rows under a new artifact revision: expect the phone to show the gate under a new id, and an answer to the old id to be
 refused as already settled, with no `gate_decision` for the new revision.
 
+**A stage gate with no issues is 1 item, whichever revision the desk decided.** Park 2 revisions of one stage with no issues (a `plan`
+gate re-submitted under a new artifact), so 2 rows are parked at once. Expect the phone to show 1 item for the stage, standing for
+the **newer** revision. Press Approve: exactly 1 `gate_decision` is journaled, for the newer revision's digest, and the older row
+is superseded by it (the status buffer shows the stage settled), not left parked. Then the other order: with the phone's item
+showing, decide the **older** revision at the desk. The item keeps its id and stays listed, and the phone's Approve still lands
+on the newer revision (no `remote_answer_lost`). A denial from the phone is journaled for each revision, since a denial supersedes
+none. A gate whose rows each name an issue is unchanged: each issue answers by its own key. **Wrong looks like:** 2 decisions for
+one tap, an item that vanishes or changes id when the desk settles the older row, or an Approve that errors with `UnknownDigest`.
+
 **A gate offers only Approve and Deny, and a bad answer cannot strand it.** The gate item lists 2 replies; Hold is not among them (a deferred gate already waits, so a hold answered nothing while the phone showed it landed). Check each way an answer can fail to decide a gate, from a client or by hand against the relay:
 
 - a gate answer carrying no verdicts, and an answer that holds the gate (an older app build still offers it): each comes back as text at the head of the item, `a gate answer names no issue; answer <keys>` or `a gate cannot be held: it already waits for an answer, so approve or deny it`, the item is offered again under the same id, and the journal holds no `gate_decision` for it. The old defect was an item the agenda called answered while the journal had no decision, so no surface could answer it. Answer it again and expect the decision to land.
@@ -129,6 +138,17 @@ refused as already settled, with no `gate_decision` for the new revision.
 
 - `lain remote revoke qa-phone` with a client connected: within about a second (the relay rereads the file on a 1 s tick) the
   connection closes, with no relay restart. A client with a token that was never paired is refused at its hello.
+- **A relay that fails at launch is said at launch.** Start `lain chat --human remote` with `remote relay:` pointing at an address
+  the worker cannot bind (a port already taken: `nc -l 127.0.0.1 <port>` first). Expect the chat's startup lines to include
+  `phone surface off: <reason>` before the first prompt, 1 `capability_degraded` record naming the phone surface, and no second
+  line however many items are parked later. A relay that dies after the terminal opened is said once the same way (the next bullet).
+  **Wrong looks like:** a silent chat that parks calls for a phone that is not there.
+- **A signal to a headless chat interrupts at once.** `lain chat --non-interactive --human remote --prompt '<a gated call>'` with the
+  call parked on the phone, then `kill -INT <pid>` (and again with `kill -HUP`). Expect the ask to stop with no countdown and no 60 s
+  grace line, the parked call to settle as cancelled (which denies; the model's tool result says so), **no** silence `postpone`
+  record in the journal, and no provider request started after the signal (the journal's last `turn_usage` precedes it). The
+  control is the same signal to a chat at a terminal: the 60 s countdown starts as before and a second signal interrupts.
+  **Wrong looks like:** a headless chat that counts down to nobody, or a parked call that ends as a silent postpone after the signal.
 - Kill the `lain-daemon relay` worker mid-session: the chat keeps running, one `capability_degraded` record and one
   `phone surface off:` line appear once the chat next publishes, and the desk answers everything as before. **Wrong looks like:** a stalled chat, a second degraded record per sweep, or a stack trace in the pane.
 - End the chat: every item it published leaves the relay (retracted within 1 s, and the daemon drops a session's items
@@ -138,7 +158,7 @@ refused as already settled, with no `gate_decision` for the new revision.
 
 The lain-daemon sends the notice, from its main process: the relay worker has no network. Set
 `remote ntfy: "http://127.0.0.1:<port>/qa-topic"` beside `relay:` and run the stand-in topic server before the daemon starts
-(a changed topic restarts it, by its launch digest). Park a call and leave it.
+(a changed topic does not restart a running daemon: it is a setting, and `lain daemon restart` applies it, `daemon.md` §2). Park a call and leave it.
 
 - Before 60 s: nothing is sent. Answer a second parked call within the minute: nothing is ever sent for it.
 - At 60 s the server receives exactly 1 POST: body `Open lain to answer.`, a `Title` of `lain approval waiting on <requester>`

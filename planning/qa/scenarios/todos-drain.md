@@ -28,6 +28,11 @@ sandbox with `.claude/skills/manual-qa/scripts/qa-sandbox.sh`; every path below 
 Bash call that touches files with `: "${QA:?}"`, because an empty `$QA` turns a sandbox command into a command on the
 lain checkout (round 28).
 
+**The model reaches the chat only as environment.** The chat's argv carries no `--provider` or `--model` (read a running chat's
+`/proc/<pid>/cmdline` during §2): the profile is the `LAIN_*` environment the drain inherited, set when the drain launched. From a
+daemon-started `lain daemon run chores`, the same names arrive from the requester's shell or, with none, from the daemon's own
+(`daemon.md` §7).
+
 **The drain is not interactive.** Its chat runs `--non-interactive --approval auto --confirm-price-tier refuse
 --max-cost N` (`chores/runner.rb`, `argv`). A call the judge cannot settle is refused, because nobody is there to
 answer, so do not sit at a prompt waiting for one.
@@ -149,6 +154,13 @@ finding against T30. That wording is m28-1's, which round 28 measured in a linke
 which lease shape you saw. The chat may also just not commit (a model failure): read the journal for a `git commit` call
 before filing anything.
 
+**A chore that adds a file and commits it lands.** The chore `create docs/new.md containing the word new, then add and commit it` ends
+with the chat running `git add docs/new.md && git commit -m ...` in one call, which the lease's own approval rule accepts
+(journal: no `parked` record for it, the call ran). The same chore done with `git add -A && git commit`, `git add . && ...`,
+`git add ../other && ...` or `git add f; git commit` (a `;` or `||` joins the stages) is not approved by that rule, so the
+unattended chat has nobody to ask and the call is refused at the `unattended` rung; the line then ends `[!] ... no commit`.
+A path that holds a `.git` of its own (a vendored repository) is not added by this rule either. Say which you drove.
+
 **The concurrent edit.** Run §2 again with 2 open lines and, while the first chat runs, append a third by hand
 (`echo '- [ ] third' >> TODOS.md`) and edit the text of nothing else. Run the drain as `lain todos drain --max-items 2`:
 without the cap it loops until no open line is left and runs the third chore too. After the drain the third line is
@@ -179,6 +191,16 @@ through §2's checks, which shows the chat could write and commit at all.
 commit, so the line reads `[!] ... no commit` with no sha, the drain prints `failed ...`, exits 1, and the lease is
 released. The feed body reads `failed: no commit <session>`. A second `lain todos drain` does not take the `[!]` line
 again: the drain never retries a failed chore.
+
+**A failed chore says why.** Start the drain with no provider set (`env -u LAIN_PROVIDER -u LAIN_MODEL -u ANTHROPIC_API_KEY lain
+todos drain --max-items 1`) so the chat dies at launch. The line reads `[!] ... chat exited 1: <the chat's last stderr line>`, for
+example `chat exited 1: ANTHROPIC_API_KEY is not set`, not the bare `chat exited 1`, and the drain's result line and the feed body
+carry the same words. The whole of the chat's stderr is in a per-chore log under the project's `chores` container
+(`find $XDG_STATE_HOME/lain -path '*chores*' -name '*.stderr.log'`), mode owner-only in an owner-only directory, and a long stderr
+keeps its last bytes with a first line saying so. **A known value on stderr is masked** in the line, the log and the feed: set
+`env pass: %w[DEPLOY_PW]` in the user config, `DEPLOY_PW=hunter2xyz` in the drain's shell, and a chat that prints it on stderr and exits 1
+(only the chat process's own stderr counts, so a model's command output does not drive this; use a stand-in `exe/lain` if the drain can
+be pointed at one, say how, or mark the step not driven). Then `grep -c hunter2xyz` of `TODOS.md`, the log and `feed.log` reads 0. The line is committed by the drain, so a value there would land in git.
 
 **A refused landing keeps the lease.** Change the verify to `["sh", "-c", "false"]`, re-trust, and drain a chore the chat
 commits. The line reads `[!] ... not landed <sha> <session>`, `main` has not moved, and the lease directory is still

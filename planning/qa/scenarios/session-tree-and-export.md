@@ -166,6 +166,17 @@ pass vacuously: the step is voided, not passed. Then:
   template's, `regions(1)` gives `1 region`, so the exact sentence is `1 region were masked ...`; say what it prints);
 - the footer counts masked reads, commands and searches together (`source_masked`, `command_redacted`, `search_redacted`).
 
+**A known value the journal holds raw is masked in the page.** `source_masked` covers what a read masked. A value lain *knows* but no
+pattern detects (an `env pass` value, the lent token, a Rails credential leaf) can sit raw in the journal in a prompt, an `echo` the
+model typed or a result written before masking applied. Launch with `env pass: %w[DEPLOY_PW]` and `DEPLOY_PW=hunter2xyz`, have the
+session hold `hunter2xyz` in a turn (the human types it in a prompt is enough), then, **from inside that chat**, `/share` it, and
+from the shell `lain export $S > $QA/k.html`. **Positive control:** `grep -c hunter2xyz $S` is above 0 (the journal holds it raw).
+In the `/share` upload (`gist-body.html`) the value has 0 hits, a placeholder stands where it was, the footer's masked count includes
+that region, and the `/share` line ends `(1 region masked)`. `lain export $S --jsonl` is byte-identical to the record and still holds
+the value: the JSONL is the local record and stays raw. The shell-run `lain export` has no chat to ask for known values, so it masks
+only what it detects and the env pass value may remain in `k.html`; record what it holds rather than filing it, and say it is why
+`/share` is the path to publish through.
+
 **A released read refuses.** Create `src/late.env` with a fake credential after launch, ask for the read, answer `y` at the
 release prompt (a file that existed at launch is `secret-boundary.md`'s g28-3, so avoid it here). The positive control is
 the `read_released` record itself: without it the model did not read the file and nothing below applies. Then:

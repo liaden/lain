@@ -504,6 +504,14 @@ Then the refusals, each with its own ordering:
 | `/review close --critique` | `/review close takes nothing after it` |
 | `/review feature --critique` in a headless chat | the no-editor refusal, nothing spent |
 
+| `/review feature --critique` typed at a reply prompt (a parked `ask_human`, answered by typing the command instead of an answer) | `/review ... is a session command and cannot run at a reply prompt -- answer the question first`, **before the round opens**: no `changeset_opened`. A `/review feature` with no `--critique` at the same prompt is not refused for this reason |
+
+**`/stop` reaches the critics.** The critique runs as the next supervised turn, the way a typed `/critique` does, so the stop key
+works on it. With `--critique=critics=3` on a held round and the first critic running, type `/stop`: the running critic ends,
+the other 2 never start (their children are absent from the journal), and `/stop` does not answer `no ask is running`. Then the
+control: the same line with no `/stop` finishes all 3 critics and the merged findings name 3 chunks' worth of notes. A `/stop`
+that says nothing is running while a critic works is the finding. The round opens before the critique starts either way.
+
 The ordering is the property: a refusal that can be known up front leaves **no** round behind; one only the run can find leaves
 the round open with the reason under the headline. A critique that ran **before** the review opened, or an open review lost to a
 refusal that came late, is the finding. Also check what a focus does to the line: the focus runs to the end, so

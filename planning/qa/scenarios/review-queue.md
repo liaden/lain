@@ -309,9 +309,16 @@ in the browser` and, in `gh.log`, `pr view --web https://github.com/qa-org/other
 env -u HERDR_ENV lain queue open "branch:$QA/src/api:feature"; ls -l $XDG_STATE_HOME/lain/queue/pending/
 ```
 
-Expect `no lain chat is running in $QA/src/api; the review opens with the next lain up --nvim there`, exit 0, and 1 file, mode
+Expect `no lain cockpit is running in $QA/src/api; the review opens with the next lain up --nvim there`, exit 0, and 1 file, mode
 `-rw-------`, named by the project hash. The row is **not** marked seen. Start `lain up --nvim` in `api`. Expect the offer at the
 **first** `you>`, once; Enter takes it as in §4 and marks the row seen, and `ls .../pending/` is empty. Repeat with `x` then Enter, and again with Ctrl-D: the file is gone (the offer was shown once) but the row stays listed. Start a second chat: no offer.
+
+**A plain chat holds it too.** With only a plain `lain chat --no-nvim` (a chat with no editor, which cannot open a review) running in
+`api`, repeat the `open`. Expect the same `no lain cockpit is running in ...` line (the wording is true of both cases), the plain
+chat to show **no offer**, 1 file in `pending/`, and the row unseen. The chat told the daemon `plain`, and the daemon passed it
+through, so the review is held rather than lost. Then start `lain up --nvim` in `api`: the offer appears at its first `you>`. A
+review the plain chat swallowed, or a `lain queue open` that says the review was offered to a chat that showed nothing, is the
+finding. A cockpit chat (`--nvim`) is offered as in §4.
 
 **A chat that ends first holds it again.** Hold a review, start a chat, and quit before answering the offer. Expect the pending
 file is back (`ls`), the row is still listed, and the next cockpit offers it. A held review whose line is slow to build (a dirty tree on a large checkout) is held again on exit too.
@@ -325,7 +332,7 @@ opens with the next lain up --nvim there`.
 rm -f $QA/herdr.calls; HERDR_ENV=1 HERDR_BIN_PATH=$QA/shim/herdr lain queue open "branch:$QA/src/api:feature"; cat $QA/herdr.calls
 ```
 
-Expect `no lain chat is running in ...; started lain up --nvim there in a herdr workspace`, and the calls `workspace list`,
+Expect `no lain cockpit is running in ...; started lain up --nvim there in a herdr workspace`, and the calls `workspace list`,
 `workspace create --cwd $QA/src/api --label review api --focus`, `pane run w9:p1 lain up --nvim`. With the label already in the
 stub's list (`review api`) no second `workspace create` is made. With `touch $QA/herdr.down`, the line becomes `herdr did not
 start a workspace, so the review opens with the next lain up --nvim there`, the review stays held, and the next open asks herdr
@@ -366,6 +373,18 @@ lain queue poll; cat $XDG_STATE_HOME/lain/reviews.json; cat $QA/herdr.calls $QA/
 "stale":false}`; a herdr call `workspace report-metadata w1 --source lain-queue --token reviews=3 (2 new)`; and 2 lines in
 `notify.log`, each `lain-queue review requested | pr:qa-org/<repo>#<n> <title>`. Poll again at once: the file and the token are
 rewritten and **no new notice** is sent (each request notifies once). A poll needs no chat and no cockpit.
+
+**A project's own poll.** A project whose config has its own `github { orgs ... }` block is polled apart from the user's, with
+`lain queue poll --root $QA/src/api` (the daemon runs this on its timer for a project a chat registered, `daemon.md` §9). Set the
+project's orgs to a different org than the user's, `lain trust` it, and run it: the stand-in `gh` log shows the query with
+the **project's** orgs, the project's counts file (`Paths#review_counts(root)`, a file under the project's state directory,
+named by its hash) holds the counts, and the user's `$XDG_STATE_HOME/lain/reviews.json` is untouched. No herdr `reviews` token is
+set by it. With no `github` verb in the project it exits 0, writes nothing and says `<root> sets no github, so it is not
+polled`; untrusted, `<root> is untrusted, so it is not polled; run lain trust there`. A poll with no `--root` is unchanged.
+
+**The cockpit shows its own project's count.** With the user's file at `rv 5` and the project's at `rv 3`, `lain up` in that project
+shows `rv 3` in the input pane header and the tmux bar (the HUD reads the project's counts file); a `lain up` in a project with no
+`github` verb of its own shows `rv 5`. A cockpit showing the user's count while the project polls its own is the finding.
 
 **"New" means since you last listed.** `lain queue prs` (a plain listing, not `--json`), then poll: `"hud":"rv 3"` and the token
 `reviews=3`. `lain queue pick prs` and leaving with Escape counts as listing too.

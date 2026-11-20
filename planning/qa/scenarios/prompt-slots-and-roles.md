@@ -124,6 +124,15 @@ naming **all 19** shipped roles (`evidence_researcher` sits between `diff_docent
 1 — but with the names then spelled with **hyphens**, which is the thing to correct on the next
 drive.
 
+**A misspelt or undeclared slot DIRECTORY refuses too.** Only the 2 regions `role` and `skill` exist under `.lain/slots/`. Make
+`.lain/slots/roles/reviewer.md` (a plural typo) and launch: it refuses naming the directory, `unknown slot directory
+".../.lain/slots/roles"; did you mean "role"? known: role, skill`. A directory inside the role region
+(`.lain/slots/role/extra/x.md`) refuses with `unknown role slot directory ".../role/extra"; nothing is declared there, so it takes no
+holes`. The 2 real regions still load (a role file and a `skill/<skill>/<hole>.md`), and an editor leftover or a dot-directory under
+`.lain/slots/` is not refused. The skill level's own refusal for an unknown skill directory is unchanged. Remove the fixture and
+confirm the next launch is clean. A launch that ignores the directory and runs on silently is the finding: the override a human
+wrote then never applies, with no word.
+
 **Role slot files are spelled exactly as the role is, with underscores, since 2026-09-15.** The
 hyphen-translation step is gone, so `auto_approver.md` and `gate_adjudicator.md` are the
 filenames, and a hyphenated `.lain/slots/role/test-engineer.md` gets its own refusal naming the

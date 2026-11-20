@@ -825,6 +825,15 @@ ruby -rjson -e 'ARGF.each_line{|l| r=JSON.parse(l) rescue next;
   before you answer. A `/stop` during the suite reports its own reason, `the run stopped while the suite was testing this
   issue's commit, so it was left ungated and unlanded`, not an ordinary stop.
 
+**An unattended chat refuses an interactive gate at once.** `lain chat --non-interactive --prompt "/implement-epic greet"` with
+no `gate :research` line (so research stays `interactive`), run in a pane: when the driver reaches the gate, the gate settles
+within about 1 second as a refusal whose reason names the fix, `to decide research unattended, add \`gate :research, :hands_off\`
+(or :deferred) to the \`epics\` block of .lain/config.rb`, and the journal's `gate_decision` is credited to surface
+`unattended`. No notice goes to a desk or phone, and no wait sits out a 300 s timeout. **Positive control:** the same epic run
+attended (no `--non-interactive`) parks the same gate and waits. A spawned child with no mailbox keeps its own, different
+refusal (`no human mailbox is reachable from this agent ...`), which names no gate line, since a child has no stage to decide.
+**Wrong looks like:** a refusal that waits out the timeout, or one that omits the config line.
+
 At most **one** gate may be outstanding at a time, and a gate that is denied or times out must
 **withdraw its question**. Drive a denial and then confirm the next issue's gate still opens: a
 withdrawn question that was left outstanding killed the following gate, and it is invisible until

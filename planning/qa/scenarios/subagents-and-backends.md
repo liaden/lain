@@ -213,6 +213,16 @@ declares none keeps 25), the researcher can `grep` and `glob` as well as `read_f
    worktree (`--isolation worktree`) reports paths relative to that worktree without naming it, so the line reads as the
    parent's checkout; record what you see rather than failing it. i28-1, open: a researcher's scratch lease returns "" on release, so the parent is told only `done` while the transcript line carries relative paths (`researcher wrote 2 files: a.txt, b.txt`); the parent model went looking in `/tmp`. A spike lease names its path.
 
+### 2b2: A child sizes itself by the window the run measured
+
+A child's occupancy and its tool-round budget are computed from the **run's** window, the one `session-and-window.md` §1 reads off
+`/api/ps` and journals, not from the 8,192 default. Launch with `--num-ctx 32768` on a model the box loads at that window, spawn a
+child that reads a few files, and read its occupancy where a child shows it (`lain watch`, the HUD's child row, the status feed):
+its denominator is **32,768**, so a child at 3,777 tokens reads `3777/32768`, about 12%, not 46% of 8,192. The same denominator sizes
+the child's read budget, so a child reading 3 files of a few KB each is not starved by a window it does not have. A child launched
+through a seam built with no window (an epic submit path, a bench arm) keeps the default; record which path you drove. **Wrong looks
+like:** a child that reports 100% occupancy at 8,192 inside a 32,768-token chat, or a child that hands off or refuses reads early.
+
 ### 2c: A researcher's kept lease, and what it may run
 
 A chat's researcher gets its own directory, whatever `--isolation` says, and keeps it. Drive it in a
@@ -269,6 +279,12 @@ resolves to a parent turn), and the child **never inherits the parent's prompt**
 prefix is the other shape**: an `:inherit` child starts from the parent's held cuts at spawn, so a
 parent that has compacted hands the child the compacted view, not the full chain. Put a distinctive sentence in the parent's context, a `/btw`-worthy
 aside, a memory item — and confirm it is absent from the child's request.
+
+**A leased child commits under the workspace arm.** A `@dev` child (or a drained chore, `todos-drain.md` §2) in its own clone
+lease may `git add <path in the lease> && git commit -m x`, and `git commit -a -m x`, by the lease's own approval rule, with no
+park. When that rule abstains, the `escalation` record names the check that failed (the lease it is rooted at, an untouched
+tree, a trusted git, or an admitted path), not a bare abstain. A child rooted at its clone, built the way a spawn builds it, is
+approved. Predictions only; a child whose commit abstains with no named check is the finding.
 
 ## 3 — `actor` mode, and `--isolation worktree`
 

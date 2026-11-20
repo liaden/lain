@@ -645,6 +645,33 @@ either. The `tool_use` record holds the command text the model wrote, so it does
 *Wrong looks like:* the password or the hinted token in the result, the journal or the display; a masked `BUILD_TAG` or
 `RAILS_ENV`; a `command_redacted` record that holds bytes instead of a count.
 
+### 4h: a known value is masked on every surface a reader can reach *(a chat with a model at `ask`; one export; two panes)*
+
+The values lain knows (an `env pass` value such as `DEPLOY_PW=hunter2xyz`, the lent GitHub token, a Rails project's decrypted
+credential leaves) are masked by one routine on each surface below. One value, one table; each row ends with `grep -c hunter2xyz` over
+the named place reading 0. Set `env pass: %w[DEPLOY_PW]` and export `DEPLOY_PW=hunter2xyz` before launch, and plant
+`pw=hunter2xyz` in `notes/k1.txt` (no pattern detects a value that shape, so a read masks it only because it is known).
+
+| surface | drive | expect |
+|---|---|---|
+| `read_file` | ask for `notes/k1.txt` | the result holds `pw=<redacted:N>`; the session file holds 0 hits |
+| `grep` | ask for a grep of `pw=` | the matching row is masked the same way |
+| a lent token | a file holding the token a call's worker env lends | reads masked |
+| a released file | `/release` the file's detected regions | the known value is **still** masked: a release lifts detected regions only, never a known value |
+| `/review` evidence | a changeset whose diff line holds the value; `/review`, place a note on it | the evidence and the docent brief hold a placeholder; `lain review` from the CLI, which has no chat, masks only what it detects |
+| `lain export` HTML and `/share` | export the session; `/share` through a stand-in `gh` | the page holds a placeholder, the footer counts the region (`1 region masked`), the `/share` line ends `(1 region masked)` and the uploaded body has 0 hits. `--format jsonl` stays raw, byte for byte (the record is the record) |
+| a plain chat's question | `lain chat --no-nvim`; the model's `ask_human` question holds the value | the arrival line and the question block print `<redacted:N>`; what you type back is not rewritten |
+| the desk approval line | park `bash` `echo hunter2xyz` | the `[y/N]` line shows a placeholder; answer `y` and the command that RUNS holds the real value (the display is masked, the call is not) |
+| a `/park` note | `/park resume with hunter2xyz` | the `reentry_note` record, `lain sessions` and the first notice after `/resume` hold a placeholder |
+| a blocked notice | leave the parked call past `attention delay:` | `blocked: bash echo <redacted:N>`; the `awaiting_human` record's `summary` holds the same, and it still has no `input` field (`notifications.md` §6, §7) |
+| a Rails credential leaf | a project whose `credentials.yml.enc` holds `stripe.key: <leaf>`; a bash call prints it | `<redacted:N>`. Per-environment files (`config/credentials/development.yml.enc` with its `development.key`) count; so does `RAILS_MASTER_KEY` in lain's own env with no key file |
+| a credentials file that will not decrypt (wrong key) | the same, with a mismatched key | nothing is added, and the reason journaled names the file, never the key |
+| short or structural leaves (`true`, `3`, `development`) | a credentials file holding them | **not** masked: the control that a mask is not a blanket |
+
+**Wrong looks like:** any one place holding the value while another is masked (that is the defect this table exists for), a row that
+masks the call that RUNS, or a `/share` that uploads a page the footer counted as clean. Run the table once at `ask` and once at
+`auto`, since the desk line, the notice and the judge's brief take different routes there.
+
 ## 5 — The unliftable rung, and `/mode bypass`
 
 `Escalation::Triage` inspects a `bash` call's **argv** for protected paths and rules `the command
@@ -1116,7 +1143,8 @@ three places at once.
 
 A fourth enforcement of the same classification, and the only one that holds against a command string the
 parser read wrongly: under `--confine reader`, `Confine::MaskList` asks the session's one `Sensitivity::Policy`
-for the paths a name-and-shape pass marks, and bwrap binds `/dev/null` over each before the call runs. It
+for the paths a name-and-shape pass marks, and bwrap binds an empty regular file over each (a decoy for Rails's key pair, §8c)
+before the call runs. It
 covers only calls the reader profile runs (a `ComposedTerm`-approved call), which already refuse a sensitive
 word at the ladder, so this is the layer behind that one. The mask list lists the project with
 `git ls-files`, or walks it where git does not answer (§8b); the harness hands the masks in by name instead,
@@ -1128,9 +1156,12 @@ echo "TOKEN=planted-not-a-real-secret" > $QA/proj/.env
 ( cd <checkout> && bundle exec ruby -Ilib $QA/harness.rb $QA/proj 'cat .env' )     # the control, no mask
 ```
 
-Driven 2026-10-17. With the mask: `stdout="rc=1\nhello readme\n"` and `stderr="cat: .env: Permission denied\n"`,
-the rest of the project still readable. The control prints `TOKEN=planted-not-a-real-secret`, which is why the
-first result means anything. A masked file that still prints is the defect. Whether the real
+Driven 2026-10-17 against the old mask, and changed since: a mask is no longer a `/dev/null` bind that fails with `Permission
+denied`. It is a mode-0400 empty regular file, bound from an fd with no source path on the host. With the mask: `stdout="rc=0\nhello
+readme\n"` and an empty `stderr`: `cat .env` prints nothing and succeeds, the rest of the project still readable. The control
+prints `TOKEN=planted-not-a-real-secret`, which is why the first result means anything. A masked file that still prints its bytes is
+the defect; one that fails with `Permission denied` is the OLD behaviour back, which breaks every Rails boot under a contained
+run (§8c). Assert on the absence of the secret's bytes in the output, not on an error. Whether the real
 `MaskList` finds the right files in a real project is not driven here.
 
 A confined child's `bash cat /etc/passwd` used to park for a human while its `read_file /etc/passwd` was refused with the home advice (`sensitivity/policy.rb:239-240`); a human-approved call runs `traced`, so `reader` would not hide the file (round 26, k26-9/g26-3). A human `y` on a call that reads secrets no longer runs traced: it runs contained, so the sandbox hides the masked paths from it too (`shell-term-approval.md` §11b); only the answer `network` runs it traced. Fixed for the paths the shell parse names (T33): the policy now refuses a confined child's `bash` call that names such a path, as it does for `read_file`. An opaque parse names no path and is not refused here.
@@ -1147,9 +1178,105 @@ git init -q $QA/repo && echo "TOKEN=planted" > $QA/repo/.env && printf 'garbage\
 ( cd <checkout> && bundle exec ruby bin/workspace-run --root $QA/repo -- cat .env ); echo "exit=$?"
 ```
 
-Predicted, from the T6 review drive 2026-11-13: `.env` and `config/master.key` are refused in the plain directory and `README.md` prints; `.env` is refused in the repo whose `git ls-files` fails. A secret that prints is the defect.
+Predicted: `.env` prints nothing with exit 0 in the plain directory, `config/master.key` prints a 32-character decoy key (never `planted`), `README.md` prints; `.env` prints nothing in the repo whose `git ls-files` fails. A secret that prints is the defect.
 
 Known open (not this section's defect, follow-ups F20 and F21): a confined `chmod 311 <dir>` makes the next refresh drop the masks under that directory, in a git repo and a plain one alike; and a project root that is searchable but not listable on the first refresh is masked with nothing.
+
+### 8c: A mask reads as empty, and Rails's key pair as a decoy *(no model; the harness above, `bwrap`, a Rails-shaped project)*
+
+Rails reads its credentials at boot, so a mask that fails to open breaks `bin/rails` for every contained run. A mask now reads as
+an empty file, and a Rails key pair reads as a decoy that decrypts to nothing. Fixture, in `$QA/proj` (a git repo with these tracked):
+`config/master.key` holding a real 32-hex key, `config/credentials.yml.enc` encrypted under it with `stripe: {key: <leaf>}`,
+`config/credentials/development.key` and `development.yml.enc` the same way, `.env`, and a lone `config/server.key` (no credentials file
+beside it). Run each through the harness with those paths masked:
+
+| call under the mask | expect |
+|---|---|
+| `cat .env; echo rc=$?` | `rc=0` and nothing before it |
+| `cat config/master.key` | a 32-hex key that is **not** the project's: `grep -c <the real key>` of the output reads 0 |
+| `bin/rails runner 'p Rails.application.credentials.to_h'` (or `ActiveSupport::EncryptedConfiguration` by hand) | `{}`, exit 0, no `key must be 16 bytes` and no `MissingKeyError` |
+| the same with `config/master.key` masked and `config/credentials.yml.enc` **exempt** (not masked) | still `{}`: the credentials file is decoyed beside its key, since a real file under a decoy key would raise |
+| `cat config/server.key` | empty: a key file with no credentials file beside it is a plain empty mask |
+| `ls -ld .ssh` for a masked directory | still a read-only tmpfs, as before |
+
+- **No path to a host file.** Plant a link at every place lain might keep decoy bytes (the sandbox's `TMPDIR`, the project's `tmp/`)
+  pointing at a host file outside every grant (`~/.ssh/known_hosts`). No contained read at a masked project path returns that file's
+  bytes: the binds are from file descriptors, not paths.
+- **git cannot commit a decoy.** In the project, a contained `git commit -am x` after editing `app.rb` stores the **real**
+  `config/credentials.yml.enc` blob: `git rev-parse HEAD:config/credentials.yml.enc` equals the value from before the run. (The
+  run sets a clean filter through the environment; `git status` inside the sandbox may still list the tracked decoy as `M`, and
+  the call's note says so.) Then the defeat: a call that appends `config/credentials.yml.enc -filter` to `.gitattributes` and runs
+  `git add -A` leaves the index holding the **recorded** blob after the run, with a note line `lain put git's index entry for
+  config/credentials.yml.enc back: an empty file or a decoy was staged there in place of the masked file.`, and a masked file git
+  did not track says `lain took <path> out of git's index ...`. A call that commits the decoy past the filter is named after the run:
+  `Commit <sha> holds the empty file or decoy this call read for <path>, not the masked file. ... git commit --amend --no-edit
+  repairs the commit when it is the last one`. A decoy holds no secret, so this checks the repository's integrity.
+- **The row and the note say what the run sees.** The approval row for a call that reads secrets says `y runs it contained, without
+  network, where files lain masks read as empty or as a decoy; network runs it unconfined, with network`, and the contained note
+  says `files lain masks read as empty or as a decoy in the sandbox, so git status may list each tracked one as M there though git
+  holds it unchanged`. **No surface says a masked file "cannot be read"** any more: grep the row, the note and the refusal text.
+- **The note names the masked file a command typed.** `cat .env` that printed nothing adds `.env is masked in the sandbox and reads
+  as empty.`; `cat config/master.key` adds `config/master.key is a decoy in the sandbox, not the project's key.`; a command that
+  names no masked file (`ls`) gets only the general note. A secret-shaped path the listing filter withholds is not spelled out.
+- **A refusal after a human approved says so.** A human `y` on a call whose program the contained profile cannot run is refused
+  with `a human approved it contained, so this call may not run <path> there ... they can answer network to run it unconfined`,
+  and it does **not** say to ask a human to approve it. The same call allowed by the judge keeps the older sentence.
+
+### 8d: A `secrets` answer lifts the masks for 1 run, and what it wrote is scanned *(a chat with a model at `ask`; a Rails-shaped project)*
+
+A human may answer `secrets` where `network` is offered. It runs 1 contained call with the project's own masks lifted (and no
+network at all, not even a build tool's ports), then lain scans what the call changed. Only a human's word does this: a judge, a
+rule or `bypass` allowing the same call leaves the masks on. The masks of related directories and the hidden binds
+(`~/.bundle/config`, the mise binaries) stay on under it. Use the §8c fixture with `.env` listed as 1 of 7 masked files.
+
+1. **The row names what it lifts.** Park `bin/rails runner 'p Rails.application.credentials.dig(:stripe, :key).present?'`. The
+   prompt ends `[y/N/network/secrets]` and the choice text says `secrets runs it cut off from the network, with lain's masks lifted
+   from <5 paths>, N more and gates any file it writes that holds a secret` (the first 5 by path, then `and 2 more` for 7). A
+   project with nothing masked says `where the project holds no file lain masks`. nvim's approval window and `lain://approval`
+   offer the same word beside `network`. The phone does not offer it.
+2. **The answers do not combine.** `secrets network`, `network, secrets`, `approve secrets network` and `network secrets` (at the TTY
+   and in nvim) each read as neither answer: the prompt asks again. A bare `secrets` or `approve secrets` is the answer.
+3. **Answer `secrets`.** It prints `true` (the real credentials decrypted), and the result ends `This call ran contained, as it
+   was approved with secrets: lain lifted its masks from <files>, so the call could read them, and it had no network. lain scanned
+   what it wrote for the values they hold.` The model's copy of a printed leaf is `<redacted:N>`: make the call print `credentials.dig(:stripe,
+   :key)` and check the tool result, the journal and the display (the decrypted leaves are known values, so every surface masks them,
+   §4h). The `sandbox` audit record carries `secrets: true`; a plain `y` run's carries none. `curl` inside it fails, as in any contained run.
+4. **The next call is masked again.** After a `secrets` run, a plain `y` on another call runs under decoy masks; the same call
+   repeated at `auto` parks again (a `secrets` answer is never remembered, nor is `network`).
+5. **A copied key is gated.** Answer `secrets` to `cp config/master.key leaked.txt`. The note names `leaked.txt`: `leaked.txt holds
+   a value lain knows as a secret, so until lain exits a read of it asks a human and the sandbox masks it.` Then `read_file leaked.txt`
+   parks for a human and the judge cannot approve it (the reason reads `a file a run that could read the project's secrets left
+   holding one`), and the next contained run reads `leaked.txt` as an empty file. Quit lain and start it again: the gate is gone
+   (it lasts for the process), so a note that claims otherwise is wrong.
+6. **Scope is ctime, not mtime.** `cp -p config/master.key keep.txt; touch -d 2020-01-01 keep.txt` is still caught. A file the call
+   wrote that holds no known value (`app/models/post.rb`) is not gated. A decrypted leaf appended to an existing `log/development.log`
+   gates the log, and the next run reads it as empty.
+7. **A secret committed during the run is named.** `git add -f config/master.key && git commit -m x` gives a note `Commit <sha>
+   holds a value lain knows as a secret at config/master.key. Take it out of the history before the commit leaves this machine.`
+   An object made reachable from a ref the call created is named the same way (`Git object <sha>, which a ref this call made
+   reaches ... Delete the ref ...`). An object written with `git hash-object -w` and reachable from no ref is not scanned.
+8. **A file over 8 MB is gated unscanned.** A call that writes a 9 MB file gets `<path> is over 8 MB, so lain did not scan it for
+   secrets, and until lain exits a read of it asks a human and the sandbox masks it.` That fails closed on purpose (a big log).
+9. **A plain `y` run is not scanned.** Under decoy masks no scan runs and no such line appears: the run could read no secret.
+10. **What git history can still give.** A decoy run can still `git show HEAD~1:.env` when the file was ever committed. That route
+    is known and not closed by this change; record whether it printed rather than filing it.
+
+**A directory lain cannot open is held whole.** Under `secrets`, a call that `mkdir hide && cp config/master.key hide/k && chmod 000
+hide` hides the copy behind a directory the scan cannot open. The note says `hide holds something lain could not open, so lain
+did not scan it for secrets, and until lain exits a read of anything in it asks a human and the sandbox masks it.`, and
+`read_file hide/anything` parks. The same for a directory whose parent was `chmod 000`'d. **Wrong looks like:** a key hidden by a
+mode change that no later surface gates.
+
+**A project the scan could not finish is held.** If the scan itself fails (an unreadable root, a bug), lain holds the whole project
+for the rest of the process: the call's note says `lain could not finish scanning what this call wrote, so until lain exits the
+project at <path> is held: a read of anything in it asks a human and the sandbox masks it.`; every later contained call refuses
+with `REFUSED by the sandbox ... lain could not finish scanning what an unmasked call wrote, so until lain exits <path> is held.
+Retrying will be refused again. Stop and tell the human, then wait for the answer.`, which is not the overmask link text. Hard to
+drive without a stand-in; mark it not driven unless a fault can be injected, and say which.
+
+Known gaps, so a round does not file them: a value the run reshaped (base64, reversed) or split across files or path levels is not
+caught; a user xattr is not read; a write below a directory that was already closed before the mark is not seen; nothing under a
+`.git` directory is read as a file; a database socket is not reachable from a contained run.
 
 ## 9: Outbound model requests: refused on a known secret, held under `--supervise-egress oracle` or `all` *(a chat with a model; a hosted one shows the endpoint best)*
 
