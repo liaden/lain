@@ -22,6 +22,11 @@ RSpec.describe Lain::Agent::PipelineSource::Null do
     expect(described_class.droppable?).to be(false)
   end
 
+  # A refusal names a handoff that is off only when a flag turned it off; with compaction off there is no cause.
+  it "names no cause for a handoff being off" do
+    expect(described_class.handoff_off_cause).to be_nil
+  end
+
   # Compaction is off, so an idle tick has no cut to commit.
   it "never prepares" do
     expect(described_class.prepare(base:, timeline:, usage: 1_000, session:)).to be(false)

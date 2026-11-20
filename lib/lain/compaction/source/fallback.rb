@@ -40,6 +40,12 @@ module Lain
 
           # @return [false]
           def early_armed? = false
+
+          # @return [false] it promises no handoff, starved or not
+          def hands_off_starved?(**) = false
+
+          # @return [String] the flag a refusal names as why no handoff will make room
+          def handoff_off_cause = "--compact-fallback none"
         end
 
         # @param tier [#call] answers a `#ask` oracle over
@@ -68,6 +74,9 @@ module Lain
           @early = early
         end
 
+        # @return [nil] this arm hands off, so nothing turned a handoff off
+        def handoff_off_cause = nil
+
         # @return [Boolean] whether this arm is configured to hand off ahead of a refusal
         def early_armed? = !@early.nil?
 
@@ -82,6 +91,13 @@ module Lain
         def early?(usage:, window_tokens:, messages:)
           early_armed? && !usage.nil? && usage >= window_tokens * @early && clean_break?(messages)
         end
+
+        # Whether a render whose reads are starved past any cut's cure may hand off now. Every arm
+        # but none does, at a clean break for {#early?}'s reason.
+        #
+        # @param messages [Array<Hash>] the chain this render stands on
+        # @return [Boolean]
+        def hands_off_starved?(messages:) = clean_break?(messages)
 
         # Write the state document and commit the cut that holds it.
         #

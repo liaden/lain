@@ -50,6 +50,11 @@ module Lain
 
         def handed_off? = NO_ROOM
 
+        # No flag turned a handoff off; there is no compaction to hand off from.
+        #
+        # @return [nil]
+        def handoff_off_cause = nil
+
         # Nor any cut to commit while the human is away.
         def prepare(**) = NO_ROOM
       end

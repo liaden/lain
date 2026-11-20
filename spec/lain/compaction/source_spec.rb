@@ -117,6 +117,14 @@ class SourceSpecHandoffOracle
   end
 end
 
+# The same tier writing a document several KB long, the size a long session's state runs to.
+class SourceSpecLongHandoffOracle < SourceSpecHandoffOracle
+  def ask(inputs = {})
+    @asks << inputs
+    Lain::Oracle::Handoff.definition.answer(FIELDS.transform_values { |text| "#{text}. " * 60 })
+  end
+end
+
 # A tier whose reply the decoder cannot read. Wrapped in the real journaling
 # recorder, it is what leaves an `oracle_failed` line behind.
 class SourceSpecUndecodableOracle
@@ -1234,6 +1242,224 @@ RSpec.describe Lain::Compaction::Source do
 
     it "applies the floor only on a warm cache with no live plan" do
       expect(starved(timeline(12), usage: 28_500)).to include("compacted" => true, "refused" => nil)
+    end
+  end
+
+  # At 91% of 32,768 with a 1,024-token ceiling a round can deliver about 2,400 bytes, 4,410 tokens short.
+  # A 17 KB fixed prefix puts the provider's count near 1 token a byte. Ten kept turns leave 2 KB past
+  # the cut, which cannot make that up; the rest of the history can.
+  describe "handing off when the reads are starved and no cut can cure it" do
+    let(:session) { recording_session }
+    let(:keep_last) { 10 }
+    let(:oracle) { SourceSpecHandoffOracle.new }
+    let(:surface) { RecordingChannel.new }
+    let(:starved_usage) { 29_900 }
+    let(:fixed_bytes) { 17_000 }
+
+    def sink = Lain::Sink::IOAdapter.new(surface, tool_use_id: "spec:compaction", stream: :stderr)
+
+    def told = surface.events.grep(Lain::Telemetry::ToolOutput).map(&:bytes)
+
+    def handoffs = decisions.select { |record| record["handoff"] == "read_starved" }
+
+    def handing_off(early: nil) = Lain::Compaction::Source::Fallback.new(tier: -> { oracle }, early:)
+
+    def starving(fallback: handing_off, window: window_book(32_768), **overrides)
+      source(fallback:, context_window: window, sink:, **overrides)
+    end
+
+    def starve(built, line, usage: starved_usage, base: self.base, fixed_bytes: self.fixed_bytes)
+      built.context_for(base:, timeline: line, usage:, session:, fixed_bytes:)
+    end
+
+    def grow(line, count)
+      (1..count).inject(line) do |grown, _|
+        grown.commit(role: role_at(grown.length + 1), content: [block(grown.length + 1)])
+      end
+    end
+
+    def big_block(index) = { "type" => "text", "text" => "a long passage of the parser, part #{index}. " * 150 }
+
+    # The bytes the next request sheds, at the rate the provider counted this one.
+    def round_bytes_after(line, sent)
+      before = Lain::Canonical.dump(messages_of(line)).bytesize
+      freed = Rational((before - Lain::Canonical.dump(sent).bytesize) * starved_usage, before + fixed_bytes)
+      left = Lain::ReplyReserve.room(window: 32_768, used: (starved_usage - freed).ceil, ceiling: base.max_tokens)
+      left * Lain::Oracle::Handoff::BYTES_PER_TOKEN
+    end
+
+    it "hands off on the next ask, naming the starved reads" do
+      line = timeline(12)
+
+      sent = render(starve(starving, line), line).messages
+
+      expect(handoffs.size).to eq(1)
+      expect(handoffs.first).to include("compacted" => true, "signals" => ["read_starved"],
+                                        "used_tokens" => starved_usage, "window_tokens" => 32_768)
+      expect(round_bytes_after(line, sent)).to be > Lain::Tool::RoundBudget::STARVED_BELOW
+    end
+
+    context "when the head past the cut frees 12 KB" do
+      let(:keep_last) { 2 }
+
+      it "lets the cut that cures win" do
+        starve(starving, timeline(14))
+
+        expect(handoffs).to be_empty
+        expect(oracle.asks).to be_empty
+        expect(decisions.last).to include("compacted" => true, "signals" => %w[approaching_window read_starved])
+      end
+    end
+
+    # The m30-3 shape: a 37 KB prefix puts the count near 0.6 tokens a byte, so 6 KB past the cut frees
+    # about 3,800 tokens. At the 1.31 bytes a token a budget assumes it would claim 4,800, enough.
+    context "when the head past the cut would cure only at the budget's own rate" do
+      let(:keep_last) { 6 }
+      let(:fixed_bytes) { 37_000 }
+
+      it "hands off rather than wait on that cut" do
+        starve(starving, timeline(12))
+
+        expect(handoffs.size).to eq(1)
+      end
+    end
+
+    it "hands off under the early-handoff arm before its ratio is reached" do
+      starve(starving(fallback: handing_off(early: 0.95)), timeline(12))
+
+      expect(handoffs.size).to eq(1)
+    end
+
+    it "never hands off under the none arm" do
+      built = starving(fallback: Lain::Compaction::Source::Fallback::None)
+
+      starve(built, timeline(12))
+
+      expect(handoffs).to be_empty
+      expect(built).not_to be_handed_off
+    end
+
+    it "says nothing about a guessed window under the none arm" do
+      starve(starving(fallback: Lain::Compaction::Source::Fallback::None, window: guessed_window_book(32_768)),
+             timeline(12))
+
+      expect(told).to be_empty
+    end
+
+    it "does not hand off in the middle of a tool round" do
+      line = timeline(10).commit(role: "assistant", content: [{ "type" => "tool_use", "id" => "call-11",
+                                                                "name" => "read", "input" => {} }])
+                         .commit(role: "user", content: [{ "type" => "tool_result", "tool_use_id" => "call-11",
+                                                           "content" => "a result" }])
+
+      starve(starving, line)
+
+      expect(handoffs).to be_empty
+    end
+
+    # Ten more turns would cure again, so only the spent reading holds the second handoff back.
+    it "does not hand off again on the reading the first handoff spent" do
+      built = starving
+      line = timeline(12)
+      starve(built, line)
+
+      starve(built, grow(line, 10))
+
+      expect(handoffs.size).to eq(1)
+      expect(oracle.asks.size).to eq(1)
+    end
+
+    it "hands off again once a fresh reading finds ten more turns to shed" do
+      built = starving
+      line = timeline(12)
+      starve(built, line)
+
+      starve(built, grow(line, 10), usage: starved_usage + 50)
+
+      expect(handoffs.size).to eq(2)
+    end
+
+    context "when the first handoff wrote a long document" do
+      let(:oracle) { SourceSpecLongHandoffOracle.new }
+
+      it "does not hand off again over a chat that stays starved with nothing new to shed" do
+        built = starving
+        line = timeline(12)
+        starve(built, line)
+
+        starve(built, grow(line, 2), usage: starved_usage + 50)
+
+        expect(handoffs.size).to eq(1)
+        expect(oracle.asks.size).to eq(1)
+      end
+    end
+
+    it "does not hand off when the handoff could not cure the reads either" do
+      starve(starving, small_timeline(12))
+
+      expect(handoffs).to be_empty
+      expect(oracle.asks).to be_empty
+    end
+
+    it "does not count the ask it keeps as bytes it sheds" do
+      line = timeline(12) { |index| index == 12 ? big_block(index) : small_block(index) }
+
+      starve(starving, line)
+
+      expect(handoffs).to be_empty
+    end
+
+    # With keep_last 1 the head reaches back past the ask; the ask is the running one, so no cut takes it.
+    context "when the running ask sits in the head" do
+      let(:keep_last) { 1 }
+
+      it "does not count the ask as bytes a cut could free" do
+        line = timeline(11) { |index| index >= 10 ? big_block(index) : small_block(index) }
+
+        starve(starving, line)
+
+        expect(handoffs.size).to eq(1)
+      end
+    end
+
+    context "when the cuts that hold could collapse into one" do
+      let(:keep_last) { 2 }
+
+      # Barely starved: the 4 held summaries' stretch is enough to make up the 54 tokens short.
+      it "lets the collapse answer the starvation" do
+        built = starving(need: build_need(byte_threshold: 1_000_000), hard_cap: 1,
+                         strategy: Lain::Compaction::Strategy::SummarizeConversation.new(
+                           oracle: SourceSpecSpanOracle.new("a span summary")
+                         ))
+        line = [6, 8, 10, 12].inject(nil) do |grown, size|
+          grown = grown.nil? ? timeline(size) : grow(grown, 2)
+          complete_a_step(session, session.plan_step_completions + 1)
+          render(context_for(built, grown), grown)
+          grown
+        end
+        expect(session.compaction_cuts.size).to eq(4)
+
+        starve(built, line, usage: 25_544)
+
+        expect(handoffs).to be_empty
+      end
+    end
+
+    it "says nothing about a guessed window when there is nothing to hand off" do
+      starve(starving(window: guessed_window_book(32_768)), timeline(1) { |index| big_block(index) })
+
+      expect(told).to be_empty
+    end
+
+    it "waits for a known window, and says so once" do
+      built = starving(window: guessed_window_book(32_768))
+      line = timeline(12)
+
+      2.times { starve(built, line) }
+
+      expect(handoffs).to be_empty
+      expect(told.size).to eq(1)
+      expect(told.first).to include("early handoff is off until the model's window is known")
     end
   end
 

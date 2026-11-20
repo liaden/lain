@@ -80,10 +80,11 @@ module Lain
       #
       # @param journal [#<<] where window_pressure records land; the run's
       #   record journal in a chat, and the Null channel by default
-      # @param compaction [#droppable?, #handed_off?] the run's per-turn Context
-      #   source, asked whether the refused render left anything to drop and
-      #   whether a handoff has already replaced the history; the Null source,
-      #   which never does either, by default
+      # @param compaction [#droppable?, #handed_off?, #handoff_off_cause] the run's
+      #   per-turn Context source, asked whether the refused render left anything
+      #   to drop, whether a handoff has already replaced the history, and what
+      #   turned the handoff off; the Null source, which answers no to all three,
+      #   by default
       # @param voice [#subject, #withdrawal, #moves, #spawn] whose prompt this
       #   budget refuses, which decides both the words and who the record names
       def initialize(journal: Channel::Null.instance, compaction: Agent::PipelineSource::Null, voice: nil)
@@ -143,7 +144,10 @@ module Lain
         OVERSIZED_ROUND = ". The newest tool round alone is about %<round>d tokens; read fewer files at once or use " \
                           "offset and limit"
 
-        # @param compaction [#droppable?] the run's per-turn Context source
+        # Said after the moves when a flag turned the handoff off, so a human is not left waiting on one.
+        HANDOFF_OFF = ". A handoff is off because of %<cause>s"
+
+        # @param compaction [#droppable?, #handed_off?, #handoff_off_cause] the run's per-turn Context source
         def initialize(compaction: Agent::PipelineSource::Null)
           @compaction = compaction
           freeze
@@ -155,19 +159,28 @@ module Lain
 
         def spawn = nil
 
+        # The handoff clause goes last and stays off an oversized round, which a handoff keeps whole.
         def moves(error, request)
-          moves = room_moves(error, request)
-          fixed = fixed_tokens(error, request)
-          fixed < error.window_tokens ? "#{moves}." : "#{moves}#{format(LARGER_CONTEXT, fixed:)}."
+          round = round_tokens(error, request)
+          if round >= error.window_tokens
+            return "#{format(OVERSIZED_ROUND, round: round.round(-3))}#{larger_context(error, request)}."
+          end
+
+          "#{room_moves}#{larger_context(error, request)}#{handoff_off}."
         end
 
         private
 
-        def room_moves(error, request)
-          round = round_tokens(error, request)
-          return format(OVERSIZED_ROUND, round: round.round(-3)) if round >= error.window_tokens
+        def handoff_off
+          cause = @compaction.handoff_off_cause
+          cause ? format(HANDOFF_OFF, cause:) : ""
+        end
 
-          @compaction.handed_off? ? HANDED_OFF : MOVES.fetch(@compaction.droppable?)
+        def room_moves = @compaction.handed_off? ? HANDED_OFF : MOVES.fetch(@compaction.droppable?)
+
+        def larger_context(error, request)
+          fixed = fixed_tokens(error, request)
+          fixed < error.window_tokens ? "" : format(LARGER_CONTEXT, fixed:)
         end
 
         # Over the messages alone, the base {Compaction::Source#handoff} measures its kept

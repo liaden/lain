@@ -291,6 +291,8 @@ module Lain
 
         def handed_off? = Agent::PipelineSource::Null.handed_off?
 
+        def handoff_off_cause = Agent::PipelineSource::Null.handoff_off_cause
+
         def handoff(**) = Agent::PipelineSource::Null.handoff
 
         def prepare(**) = Agent::PipelineSource::Null.prepare

@@ -17,7 +17,9 @@ RSpec.describe Lain::Middleware::RequestBudget do
   let(:journal) { Lain::Journal.new(io: journal_io) }
   let(:droppable) { true }
   let(:handed_off) { false }
-  let(:compaction) { instance_double(Lain::Compaction::Source, droppable?: droppable, handed_off?: handed_off) }
+  let(:compaction) do
+    instance_double(Lain::Compaction::Source, droppable?: droppable, handed_off?: handed_off, handoff_off_cause: nil)
+  end
   let(:budget) { described_class.new(journal:, compaction:) }
   let(:model) { "qwen3:4b" }
 
@@ -28,6 +30,12 @@ RSpec.describe Lain::Middleware::RequestBudget do
   end
 
   def records = journal_records(journal_io, "window_pressure")
+
+  def source(fallback)
+    Lain::Compaction::Source.new(need: Lain::Compaction::Need.new(byte_threshold: 1_000_000),
+                                 cold: Lain::Compaction::Cold.new(cache_profile: { ttl: 300 }),
+                                 hard_cap: 1_000_000, keep_last: 2, fallback:)
+  end
 
   def request(system: "be terse", text: "hi")
     Lain::Request.new(model:, max_tokens: 64, system:,
@@ -177,6 +185,47 @@ RSpec.describe Lain::Middleware::RequestBudget do
       end
     end
 
+    # Under `--compact-fallback none` no handoff will ever make room, so the line says the flag is why.
+    context "when the run's compaction source hands off under no arm" do
+      let(:budget) { described_class.new(journal:, compaction: source(Lain::Compaction::Source::Fallback::None)) }
+
+      it "says a handoff is off because of --compact-fallback none" do
+        message = refused(big).message
+
+        expect(message).to end_with(". A handoff is off because of --compact-fallback none.")
+        expect(message.lines.size).to eq(1)
+      end
+
+      it "still ends on that clause when the system prompt and tools alone outgrow the context" do
+        fixed = request(system: "you are a careful assistant. " * 2_000, text: "hi")
+        message = refused(fixed, prompt_tokens: 12_011, window_tokens: 2048).message
+
+        expect(message).to include("--num-ctx")
+        expect(message).to end_with("larger --num-ctx. A handoff is off because of --compact-fallback none.")
+      end
+
+      context "when it hands off under the default arm" do
+        let(:budget) do
+          described_class.new(journal:, compaction: source(Lain::Compaction::Source::Fallback.new(tier: -> {})))
+        end
+
+        it "adds no such clause" do
+          expect(refused(big).message).not_to include("A handoff is off")
+        end
+      end
+    end
+
+    context "when the run has no compaction at all" do
+      let(:budget) { described_class.new(journal:) }
+
+      it "adds no handoff clause" do
+        message = refused(big).message
+
+        expect(message).not_to include("A handoff is off")
+        expect(message).to include("/rewind", "/unpin", "narrower")
+      end
+    end
+
     # Compaction runs by itself, and by the time these words are read the
     # Agent has already re-rendered against the refused count or found the
     # render unchanged. No command compacts on demand, so it is no move.
@@ -244,6 +293,16 @@ RSpec.describe Lain::Middleware::RequestBudget do
       it "offers none of the moves that cannot shrink the round" do
         expect(message).not_to include("/rewind", "/unpin", "compaction")
         expect(message.lines.size).to eq(1)
+      end
+
+      # A handoff keeps the round whole, so it could not help, and naming it would point the wrong way.
+      context "when the run's handoff is off" do
+        let(:budget) { described_class.new(journal:, compaction: source(Lain::Compaction::Source::Fallback::None)) }
+
+        it "does not say so" do
+          expect(message).to end_with("or use offset and limit.")
+          expect(message).not_to include("A handoff is off")
+        end
       end
 
       it "keeps the usual moves when the round would fit by itself" do

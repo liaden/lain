@@ -485,3 +485,10 @@ RSpec.describe Lain::Bench::CompactionSweep do
     expect { sweep(arms: %w[elide], placements: %w[system]) }.to raise_error(ArgumentError, /placement/)
   end
 end
+
+RSpec.describe Lain::Bench::CompactionSweep::Source do
+  # A replayed arm never hands off, so a refusal over it names no flag that turned a handoff off.
+  it "names no cause for a handoff being off, as a run with no compaction does" do
+    expect(described_class.new(nil).handoff_off_cause).to be_nil
+  end
+end

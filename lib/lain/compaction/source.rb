@@ -12,7 +12,7 @@ module Lain
     # {Cold#observe} reads). So this is also a `#<<` sink, the duck
     # {StatusFeed} answers, riding the same journal fan-out.
     #
-    # DECIDE is one pass: candidate head, {Need}, {Scheduler}, and only then
+    # DECIDE is one pass: candidate head, {Need}, {Compaction::Scheduler}, and only then
     # this turn's derivation. It answers the base Context ITSELF on a defer --
     # byte-identical, not merely equivalent, which is the whole DEFER contract.
     #
@@ -22,7 +22,7 @@ module Lain
     # timeline stays the lossless record and advances only by committed turns.
     # Substituting MESSAGES rather than handing `#render` a different timeline
     # is load-bearing -- a strategy may hold a live oracle and a mutable memo,
-    # and {Scheduler::COMPOSE}'s `Ractor.make_shareable` would deep-freeze that
+    # and {Compaction::Scheduler::COMPOSE}'s `Ractor.make_shareable` would deep-freeze that
     # graph in SILENCE. The derivation therefore runs here, off the pipeline,
     # and only a frozen array of finished messages crosses into it.
     #
@@ -52,22 +52,24 @@ module Lain
       # one. Nothing reports this choice back to `Agent#render_request`, so
       # this record is the only trace it happened -- and on a bench whose
       # deliverable is comparability, an unrecorded decision is a missing
-      # measurement. {Scheduler} journals the richer accounting, but only when
+      # measurement. {Compaction::Scheduler} journals the richer accounting, but only when
       # it compacts.
       #
       # `handoff` is `"declined"`, and `kept_tokens` the reason, on the one
       # decision written after a refusal rather than before a render: the
       # handoff fallback would have kept that many of the refused count's
       # tokens verbatim, at least the window, so its summarizer call could buy
-      # nothing. Both are nil on every other decision. That one carries the
-      # refusal's own figures and counts no summaries, because the render
-      # before it already journaled its own and a tally sums every decision.
+      # nothing. That one carries the refusal's own figures and counts no
+      # summaries, because the render before it already journaled its own and
+      # a tally sums every decision. `handoff` is `"early"` or `"read_starved"`
+      # on a handoff taken ahead of any refusal, and both are nil on every
+      # other decision.
       #
       # `refused` names the refusals a reader could not otherwise tell from a
       # plain defer: the signals fired, the scheduler said now, and the rewrite
       # was measured and turned down. `inflates` covers a byte-NEUTRAL rewrite
-      # too, since {Scheduler::Rewrite#shrinks?} asks for a strict saving;
-      # `below_floor` and `cache_break_unpaid` are {Worth}'s. nil on every
+      # too, since {Compaction::Scheduler::Rewrite#shrinks?} asks for a strict saving;
+      # `below_floor` and `cache_break_unpaid` are {Compaction::Worth}'s. nil on every
       # decision that refused nothing.
       #
       # `nothing_droppable` names the other unreadable defer: `#decide` returns
@@ -136,7 +138,7 @@ module Lain
       # {CLI::Backend} sits AT the `Metrics/ClassLength` cap, so
       # `--compact-strategy`'s own string cannot reach here as a second keyword
       # (CLAUDE.md: extract, never loosen a Max). It has to reach here at all
-      # because the {Scheduler} that journals a compaction is handed a PIPELINE
+      # because the {Compaction::Scheduler} that journals a compaction is handed a PIPELINE
       # rather than a policy, and so can name neither.
       #
       # `name` is NEVER NIL: an unflagged run is not "no arm", it is the CONTROL
@@ -202,12 +204,32 @@ module Lain
       Room = Data.define(:left_tokens, :window_tokens) do
         # @param rewrite [Scheduler::Rewrite]
         # @return [Boolean] whether the bytes the rewrite frees leave a round budget that is not starved
-        def cured_by?(rewrite)
-          freed = rewrite.dropped.count / Oracle::Handoff::BYTES_PER_TOKEN
-          !Tool::RoundBudget.starved?(left_tokens + freed, window_tokens)
-        end
+        def cured_by?(rewrite) = freed_enough?(rewrite.dropped.count / Oracle::Handoff::BYTES_PER_TOKEN)
+
+        # @param tokens [Numeric] what a rewrite would take out of the request
+        # @return [Boolean] whether a round could read again once they are gone
+        def freed_enough?(tokens) = !Tool::RoundBudget.starved?((left_tokens + tokens).floor, window_tokens)
+
+        # @return [Boolean] whether a round could not read now
+        def starved? = Tool::RoundBudget.starved?(left_tokens, window_tokens)
       end
       private_constant :Room
+
+      # A starved render's room, priced at the rate the provider counted the request it last saw: its
+      # own tokens over the bytes of that request's messages and fixed prefix. A budget's 1.31 bytes a
+      # token is a floor that keeps a round safe, and read as a cure it overstates what bytes free 3 times
+      # over on a prefix-heavy request, which is how a handoff once fired at every ask. The prefix is in
+      # the denominator, unlike {#kept_tokens}'s share, because those tokens are in the count: over the
+      # messages alone a 4 KB history behind a 24,000-token prefix reads as 5 tokens a byte.
+      Starvation = Data.define(:room, :used_tokens, :message_bytes, :fixed_bytes) do
+        # @param bytes [Integer] what a rewrite would take out of the messages
+        # @return [Boolean] whether a round could read again once they are gone
+        def cured_by?(bytes) = room.freed_enough?(Rational(bytes * used_tokens, message_bytes + fixed_bytes))
+      end
+      private_constant :Starvation
+
+      AheadOfRefusal = Data.define(:handoff, :signals)
+      private_constant :AheadOfRefusal
 
       # How long since the cache was last touched, extracted so the Source
       # holds a measurement rather than a raw `Time` and an ivar it has to keep
@@ -227,7 +249,7 @@ module Lain
       private_constant :IdleGap
 
       # How this run prices a compaction and when it must have one: everything
-      # a {Scheduler} is built from except the pipeline it schedules.
+      # a {Compaction::Scheduler} is built from except the pipeline it schedules.
       #
       # Its own object because those four values are one decision read at one
       # site, and because {Source#initialize} sits AT the
@@ -340,7 +362,7 @@ module Lain
         # support, and the pinned case is the one whose remedy the others
         # point away from.
         #
-        # A decline is unreachable through a {Derivation} today ({Boundary}
+        # A decline is unreachable through a {Compaction::Derivation} today ({Boundary}
         # argues why), so that clause is written for a {Head} taken over a raw
         # history rather than for a shape this path is expected to meet.
         def cause
@@ -407,13 +429,13 @@ module Lain
         #
         # @param decision [CompactionDecision] the early handoff's
         # @return [self]
-        def handed_off_early(decision) = handoff_declined(decision)
+        def handed_off_ahead_of_refusal(decision) = handoff_declined(decision)
 
         # Told once per Source: the arm is configured and cannot fire, and saying so every turn
         # would bury the line.
         #
         # @return [self]
-        def early_handoff_withheld
+        def handoff_withheld_for_window
           @sink.puts("early handoff is off until the model's window is known") unless @withheld_told
           @withheld_told = true
           self
@@ -539,7 +561,7 @@ module Lain
       attr_reader :eager
 
       # The arm this run collapses spans under, by the name a bench groups on.
-      # Read by whoever journals a compaction, since the {Scheduler} that
+      # Read by whoever journals a compaction, since the {Compaction::Scheduler} that
       # writes the record is handed a pipeline and cannot name the policy.
       #
       # @return [String] frozen, and never nil -- see {Collapse}
@@ -567,7 +589,7 @@ module Lain
       #   range's two questions into two model calls.
       # @param journal [#<<] where the decision lands; the Null channel by
       #   default, so no caller guards `if journal`
-      # @param model [String, nil] priced for {Scheduler}'s cost accounting
+      # @param model [String, nil] priced for {Compaction::Scheduler}'s cost accounting
       # @param price_book [PriceBook] how `model`'s usage becomes dollars
       # @param clock [#call] answers the current Time. Injected, never read
       #   inline: `Time.now` in the render path would make a replayed run
@@ -647,6 +669,9 @@ module Lain
       # @return [Boolean]
       def handed_off? = @handed_off
 
+      # @return [String, nil] the flag that turned the handoff off, which a refusal names; nil when it is on
+      def handoff_off_cause = @fallback.handoff_off_cause
+
       # The last resort, asked AFTER a provider refused a prompt whole and
       # never before it: there is no estimate of a prompt's token count good
       # enough to anticipate a refusal, which is why this is a fallback rather
@@ -715,7 +740,9 @@ module Lain
         held_cut = HeldCut.on(session:, timeline:, derived: @derived, arm: @collapse_strategy)
         @preparation.rendering(held_cut, session, timeline.head_digest)
         usage = @preparation.usage(usage)
-        return handed_off_render(base, timeline, session) if early_handoff(base, held_cut, usage, session)
+        if handoff_ahead_of_refusal(base, held_cut, usage, session, fixed_bytes)
+          return handed_off_render(base, timeline, session)
+        end
 
         decide(base:, held_cut:, usage:, session:, pins: pinned(held_cut.walk, session),
                cold: @cold.cold?, fixed_bytes:)
@@ -746,39 +773,86 @@ module Lain
       private
 
       HANDOFF_DECLINED = "declined"
+      EARLY = AheadOfRefusal.new(handoff: "early", signals: [].freeze)
+      STARVED = AheadOfRefusal.new(handoff: Need::ReadStarved::KIND.to_s, signals: [Need::ReadStarved::KIND].freeze)
       # The human's next line is 1 message the idle history does not hold yet.
       NEXT_PROMPT = 1
-      private_constant :HANDOFF_DECLINED, :NEXT_PROMPT
+      private_constant :HANDOFF_DECLINED, :EARLY, :STARVED, :NEXT_PROMPT
 
       # The window must be a measured or published one: a handoff is an irreversible rewrite, and
       # a guessed denominator is how a small local runner got its history rewritten at 75% full.
-      def early_handoff(base, held_cut, usage, session)
+      def handoff_ahead_of_refusal(base, held_cut, usage, session, fixed_bytes)
         resolution = window_for(base)
+        starvation = @fallback.hands_off_starved?(messages: held_cut.walk.messages) &&
+                     starvation(base, held_cut, usage, resolution, fixed_bytes)
+        reason = handoff_reason(held_cut, session, usage, resolution, starvation)
         unless resolution.authoritative?
-          @reporting.early_handoff_withheld if @fallback.early_armed?
+          @reporting.handoff_withheld_for_window if reason || @fallback.early_armed?
           return false
         end
-        return false unless @fallback.early?(usage:, window_tokens: resolution.window_tokens,
-                                             messages: held_cut.walk.messages)
+        reason && hand_off_ahead_of_refusal(held_cut, session, usage, resolution, reason)
+      end
 
+      def hand_off_ahead_of_refusal(held_cut, session, usage, resolution, reason)
         committed = @fallback.call(held_cut, pins: session_pinned(held_cut.walk, session))
         @handed_off ||= committed
-        settle_early_handoff(usage, resolution) if committed
+        settle_ahead_of_refusal(usage, resolution, reason) if committed
         committed
+      end
+
+      def handoff_reason(held_cut, session, usage, resolution, starvation)
+        return EARLY if @fallback.early?(usage:, window_tokens: resolution.window_tokens,
+                                         messages: held_cut.walk.messages)
+
+        STARVED if starvation && starved_past_cure?(held_cut, session, starvation)
+      end
+
+      # Measured only once the room is short, so a render with reads to spare dumps nothing.
+      def starvation(base, held_cut, usage, resolution, fixed_bytes)
+        room = Room.new(left_tokens: room_left(usage, resolution, base.max_tokens),
+                        window_tokens: resolution.window_tokens)
+        return unless room.starved?
+
+        Starvation.new(room:, used_tokens: usage, message_bytes: Canonical.dump(held_cut.messages).bytesize,
+                       fixed_bytes:)
+      end
+
+      # A handoff only where an advance or collapse cannot end the starvation and the handoff can: the
+      # alternative is a forced cut every turn that still leaves every read withheld.
+      def starved_past_cure?(held_cut, session, starvation)
+        head = head_for(held_cut, pinned(held_cut.walk, session))
+        !starvation.cured_by?(cut_frees(held_cut, head)) &&
+          starvation.cured_by?(handoff_frees(held_cut, session_pinned(held_cut.walk, session), starvation))
+      end
+
+      # An upper bound: a cut replaces what it collapses, so it cannot free more than that.
+      def cut_frees(held_cut, head)
+        return head.bytesize unless head.empty?
+
+        held_cut.collapsible? ? Canonical.dump(held_cut.stretch.messages).bytesize : 0
+      end
+
+      # The held document is not shed: the new one is written to replace it, and counting it is how
+      # a chat that stayed starved after a handoff handed off again at every ask.
+      def handoff_frees(held_cut, pins, starvation)
+        kept = held_cut.kept(pins:)
+        return 0 if kept.empty?
+
+        starvation.message_bytes - Canonical.dump(kept).bytesize - held_cut.previous_document.to_s.bytesize
       end
 
       # The reading is spent: a reply that reports no input tokens leaves it in place, and the
       # next render would otherwise hand off again on a window the cut just emptied.
-      def settle_early_handoff(usage, resolution)
+      def settle_ahead_of_refusal(usage, resolution, reason)
         @preparation.consume(usage)
-        @reporting.handed_off_early(early_decision(usage, resolution))
+        @reporting.handed_off_ahead_of_refusal(ahead_of_refusal_decision(usage, resolution, reason))
       end
 
-      def early_decision(usage, resolution)
-        CompactionDecision.new(compacted: true, signals: [], head_bytes: 0, summary_hits: 0, summary_misses: 0,
-                               misses_all_size_declined: false, cold: @cold.cold?,
+      def ahead_of_refusal_decision(usage, resolution, reason)
+        CompactionDecision.new(compacted: true, signals: reason.signals, head_bytes: 0, summary_hits: 0,
+                               summary_misses: 0, misses_all_size_declined: false, cold: @cold.cold?,
                                window_tokens: resolution.window_tokens, used_tokens: usage,
-                               provenance: resolution.provenance, nothing_droppable: false, handoff: "early")
+                               provenance: resolution.provenance, nothing_droppable: false, handoff: reason.handoff)
       end
 
       # The turn that handed off sends the new cut and decides nothing further, so one render
@@ -877,8 +951,7 @@ module Lain
       # The head is taken past the held cut: what a cut already collapsed is
       # not droppable again, so a threshold measures only what it has not.
       def decide(base:, held_cut:, usage:, session:, pins:, cold:, fixed_bytes:)
-        head = Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
-                        claimant: @derived.claimant(pins:), widening: @derived.widening(pins:), lead: held_cut.lead)
+        head = head_for(held_cut, pins)
         resolution = window_for(base)
         need = need_for(head:, fixed_bytes:, usage:, session:, resolution:, ceiling: base.max_tokens)
         occupancy = ContextWindow::Occupancy.of(used_tokens: usage, window_tokens: resolution.window_tokens)
@@ -888,6 +961,11 @@ module Lain
 
         weigh(**turn, pins:, session:, room: Room.new(left_tokens: room_left(usage, resolution, base.max_tokens),
                                                       window_tokens: resolution.window_tokens))
+      end
+
+      def head_for(held_cut, pins)
+        Head.new(messages: held_cut.remaining, keep_last: @derived.keep_last, pins:,
+                 claimant: @derived.claimant(pins:), widening: @derived.widening(pins:), lead: held_cut.lead)
       end
 
       # Is there a move at all: something droppable past the cuts that hold,
@@ -914,7 +992,7 @@ module Lain
       # ONLY the guess. A shipped-table hit is a real published number
       # ({Provider#context_window_tokens} is nil for every provider but
       # ollama), so suppressing that too would switch compaction off for every
-      # Anthropic arm in silence, taking {Scheduler#forced?} with
+      # Anthropic arm in silence, taking {Compaction::Scheduler#forced?} with
       # it. And it is withdrawn HERE rather than inside {Need}, because giving
       # detector state a second field for who vouched for the window would make
       # every `#fired?` a place provenance could be read. What is withdrawn is
@@ -947,7 +1025,7 @@ module Lain
       # @return [ContextWindow::WindowResolution]
       def window_for(base) = @context_window.resolve(base.model)
 
-      # Then WHEN, and only then WHETHER IT HELPS. {Scheduler#evaluate} is pure
+      # Then WHEN, and only then WHETHER IT HELPS. {Compaction::Scheduler#evaluate} is pure
       # and journals nothing, so asking it first settles the whole
       # warm-under-cap band -- the steady state once the byte threshold is
       # crossed -- before the floor's measurement is paid for. Both halves
@@ -960,10 +1038,10 @@ module Lain
       # THE FLOOR is the last of the three questions: a rewrite that would not
       # SHRINK the rendered history is refused however loudly the signals
       # fired, and one that shrinks it too little to pay for itself is refused
-      # by {Worth} unless the window or the hard cap forces it. It measures the
+      # by {Compaction::Worth} unless the window or the hard cap forces it. It measures the
       # DERIVED chain's own projection -- the very array a render will send --
       # through the scheduler that would journal it, so the refusal and the
-      # accounting read one {Scheduler::Rewrite}.
+      # accounting read one {Compaction::Scheduler::Rewrite}.
       #
       # Measured 2026-07-25: {SummarySnapshot}'s per-message attestation (role,
       # digest, byte counts, a line per block) costs ~230 bytes, so over small
@@ -1048,7 +1126,7 @@ module Lain
 
       def snapshot_of(messages) = SummarySnapshot.take(messages:, eager: @eager)
 
-      # {Scheduler#evaluate} is the PURE half of the policy and never reads the
+      # {Compaction::Scheduler#evaluate} is the PURE half of the policy and never reads the
       # combinator its scheduler was built around, which is what lets the
       # timing question be asked BEFORE this turn's derivation exists -- so the
       # identity pipeline stands in for one not yet decided on.
@@ -1072,7 +1150,7 @@ module Lain
 
       # `head.bytesize` to {Need} and to the hard-cap comparison -- the count
       # {Head} took when it sliced the span, never a second `Canonical.dump` --
-      # and the WHOLE history's measurement to {Scheduler}, whose accounting
+      # and the WHOLE history's measurement to {Compaction::Scheduler}, whose accounting
       # reports the before/after a render actually sends rather than a head OF
       # the head.
       #
@@ -1141,7 +1219,7 @@ module Lain
       # is this turn's. Both are cheap frozen values.
       def scheduler_for(compact) = @scheduling.call(compact)
 
-      # {Scheduler::COMPOSE}'s shape, for a held render no scheduler decided:
+      # {Compaction::Scheduler::COMPOSE}'s shape, for a held render no scheduler decided:
       # the replay rides ahead of the base, and it is a module-scope lambda for
       # that constant's reason -- a Proc built in a method would carry this
       # object into a pipeline that must be shareable.

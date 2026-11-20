@@ -226,5 +226,56 @@ RSpec.describe "a guessed context window never authorises a rewrite", :seam do
 
       expect(signals).not_to include("read_starved")
     end
+
+    # One long reply inside keep_last: no cut may drop it, and only a handoff can.
+    describe "when no cut can cure the starved reads" do
+      let(:handoff_answer) do
+        { "goal" => "finish the parser", "progress" => "the lexer lands", "files_and_decisions" => "lexer.rb",
+          "open_todos" => "the parser", "next_step" => "write parser.rb" }
+      end
+
+      let!(:summarizer) do
+        reply = text_response(JSON.generate(handoff_answer),
+                              usage: Lain::Usage.new(input_tokens: 30, output_tokens: 20))
+        stub_request(:post, "http://localhost:11434/api/chat")
+          .to_return(status: 200, body: "#{JSON.generate(OllamaWire.body_hash(reply))}\n")
+      end
+
+      def starved_chat(**flags)
+        chat = Lain::CLI::Backend.new({ provider: "ollama", model: "qwen3:4b", max_tokens: 4_096, compact_keep: 2,
+                                        **flags }, root: Dir.pwd)
+        egress = Lain::Sensitivity::Secrets::Egress.new(refused: [], flagged: [])
+        chat.egress_literals.bind(Class.new { define_method(:egress) { |**| egress } }.new,
+                                  ledger: Lain::Sensitivity::Ledger.new)
+        chat
+      end
+
+      def converse_starved(chat)
+        responses = [text_response("a considered answer " * 400, usage: Lain::Usage.new(input_tokens: 26_211)),
+                     text_response("ok", usage: Lain::Usage.new(input_tokens: 9_000))]
+        agent = Lain::Agent.new(
+          provider: Lain::Provider::Mock.new(responses:), toolset: Lain::Toolset.new([]),
+          context: chat.context(system_override: "a system prompt"), journal:,
+          pipeline_source: chat.pipeline_source(cache_profile: chat.provider.cache_profile, journal:)
+        )
+        2.times { |index| agent.ask("t#{index}") }
+      end
+
+      def handoffs = decisions.select { |record| record["handoff"] == "read_starved" }
+
+      it "hands off under the default fallback" do
+        converse_starved(starved_chat)
+
+        expect(handoffs.size).to eq(1)
+        expect(summarizer).to have_been_requested.once
+      end
+
+      it "never hands off under --compact-fallback none" do
+        converse_starved(starved_chat(compact_fallback: "none"))
+
+        expect(handoffs).to be_empty
+        expect(summarizer).not_to have_been_requested
+      end
+    end
   end
 end
