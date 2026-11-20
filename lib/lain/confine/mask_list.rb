@@ -53,12 +53,21 @@ module Lain
         # @param root [String] absolute
         # @param shell_out [#call] `(*argv, **opts) -> Shell::Out`
         # @return [Array<String>, nil] binary names relative to the root; nil when git did not answer
-        def self.of(root, shell_out)
-          shell = git(root, shell_out, "ls-files", "-z", "-co", "--", ".", *EXCLUDES)
-          Shell::Out.ok?(shell) ? shell.stdout.b.split("\0").uniq : nil
+        def self.of(root, shell_out) = names(listed(root, shell_out))
+
+        # @param root [String] absolute
+        # @param shell_out [#call]
+        # @return [Shell::Out, Isolation::Checkout::Done, nil] the listing's run, its stderr included; nil when
+        #   git could not be run
+        def self.listed(root, shell_out)
+          git(root, shell_out, "ls-files", "-z", "-co", "--", ".", *EXCLUDES)
         rescue Shell::Out::Timeout, SystemCallError
           nil
         end
+
+        # @param shell [Shell::Out, Isolation::Checkout::Done, nil] see {.listed}
+        # @return [Array<String>, nil] as {.of}
+        def self.names(shell) = shell && Shell::Out.ok?(shell) ? shell.stdout.b.split("\0").uniq : nil
 
         # No fsmonitor a checkout's config names runs, and a clone lain cut is read only through its own git dir.
         #
@@ -85,8 +94,11 @@ module Lain
       #   first use, because the toolset holding this list is built before the policy
       # @param shell_out [#call] `(*argv, **opts) -> Shell::Out`
       # @param stat [#call] `(path) -> File::Stat`, how a directory read for names is stamped
-      def initialize(root:, policy:, shell_out: Shell::Out.method(:new), stat: DIRECTORY_STAT)
+      # @param taint [#call] returns the session's {Sensitivity::Taint}, read on each ask, as the policy is
+      def initialize(root:, policy:, shell_out: Shell::Out.method(:new), stat: DIRECTORY_STAT,
+                     taint: -> { Sensitivity::Taint::NONE })
         @policy = policy
+        @taint = taint
         @shell_out = shell_out
         @stat = stat
         @project = Tree.new(root, shell_out, stat:, walks_unlisted: true)
@@ -104,11 +116,14 @@ module Lain
         self
       end
 
-      # @return [Array<Sensitivity::Policy::Mask>] the project's: resolved paths that exist now, in listing order
+      # A tainted file keeps its name and inode, so no stamp moves for it, and it is joined on every ask.
+      #
+      # @return [Array<Sensitivity::Policy::Mask>] the project's: resolved paths that exist now, in listing
+      #   order, then each tainted file not among them
       def masks
         join_priming
         refresh
-        @project.current
+        tainted(@project.current)
       end
 
       # As the last {#masks} left it, without listing again.
@@ -152,6 +167,14 @@ module Lain
       end
 
       def related_tree(dir) = Tree.new(dir, @shell_out, stat: @stat, whole_pruned: true)
+
+      def tainted(listed)
+        paths = @taint.call.paths
+        return listed if paths.empty?
+
+        added = (paths - listed.map(&:path)).select { File.exist?(_1) }
+        [*listed, *added.map { Sensitivity::Policy::Mask.new(path: _1, reason: Sensitivity::Taint::REASON) }].freeze
+      end
 
       def join_priming
         priming = @priming

@@ -36,6 +36,11 @@ RSpec.describe Lain::Confine::Profile do
       expect([profile.write_dirs, profile.masks]).to eq([%w[/dev/null /tmp], ["/p/.env"]])
     end
 
+    it "is masked unless a builder says it is not" do
+      expect([profile.unmasked?, profile.with(unmasked: true).unmasked?, described_class::NONE.unmasked?])
+        .to eq([false, true, false])
+    end
+
     it "refuses a relative path, which the fence would resolve against whatever cwd it runs in" do
       expect { described_class.reader(root: "p", home: "/h") }.to raise_error(ArgumentError, /"p"/)
     end

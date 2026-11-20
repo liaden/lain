@@ -275,6 +275,145 @@ RSpec.describe Lain::Exec::Sandboxed do
         .to eq("/usr/bin/bwrap")
     end
 
+    describe "a run that could read the project's secrets" do
+      let(:key) { "4f9a2c7d1e8b3a6f0c5d2e9b7a4f1c3e" }
+      let(:taint) { Lain::Sensitivity::Taint.new }
+      let(:secrets) { Struct.new(:known) { def for_reads(_context) = known }.new([key]) }
+      let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(unmasked: true) }
+      let(:sandboxed) do
+        described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096, taint: -> { taint },
+                            secrets: -> { secrets })
+      end
+
+      def writing(name, body)
+        inner.behaviour = lambda do |**|
+          File.write(File.join(root, name), body)
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end
+
+      it "gates a file it wrote that holds a known value, and names it in the note" do
+        writing("leaked.txt", "#{key}\n")
+
+        capture = run
+
+        expect(taint.paths).to eq([File.join(root, "leaked.txt")])
+        expect(capture.stderr).to include(format(described_class::TAINTED, path: "leaked.txt"))
+      end
+
+      it "gates a file too large to scan and says it was not scanned" do
+        writing("big.bin", "a" * (9 * 1024 * 1024))
+
+        expect(run.stderr).to include(format(described_class::UNSCANNED, path: "big.bin"))
+        expect(taint.paths).to eq([File.join(root, "big.bin")])
+      end
+
+      it "names a commit it made that holds a known value" do
+        git = ->(*args) { SeedRepo.git(root, "-c", "user.name=s", "-c", "user.email=s@x", *args).stdout }
+        git.call("init", "-q")
+        File.write(File.join(root, "key"), key)
+        inner.behaviour = lambda do |**|
+          git.call("add", "key")
+          git.call("commit", "-qm", "x")
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+
+        stderr = run.stderr
+
+        expect(stderr).to include(format(described_class::TAINTED_COMMIT, commit: git.call("rev-parse", "HEAD").strip,
+                                                                          path: "key"))
+      end
+
+      it "still gates what a call wrote before it raised, and lets the error through" do
+        inner.behaviour = lambda do |**|
+          File.write(File.join(root, "leaked.txt"), key)
+          raise Lain::Exec::Timeout, "deadline"
+        end
+
+        expect { run }.to raise_error(Lain::Exec::Timeout)
+        expect(taint.paths).to eq([File.join(root, "leaked.txt")])
+      end
+
+      it "returns the call's own result when the call removed the project it ran in" do
+        inner.behaviour = lambda do |**|
+          FileUtils.rm_rf(root)
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "done", stderr: "")
+        end
+
+        expect(run).to have_attributes(exit_status: 0, stdout: "done")
+      end
+
+      it "lets any other error from the scan through" do
+        allow(taint).to receive(:scan).and_raise(Errno::EIO)
+
+        expect { run }.to raise_error(Errno::EIO)
+      end
+
+      it "holds the whole project when the scan itself fails, and lets the failure through" do
+        allow(taint).to receive(:scan).and_raise(ArgumentError, "a bug in the scan")
+
+        expect { run }.to raise_error(ArgumentError, "a bug in the scan")
+        expect(taint.paths).to eq([root])
+      end
+
+      it "holds the whole project when the scan fails after the call raised, and keeps the call's error" do
+        allow(taint).to receive(:scan).and_raise(ArgumentError, "a bug in the scan")
+        inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "deadline" }
+
+        expect { run }.to raise_error(Lain::Exec::Timeout)
+        expect(taint.paths).to eq([root])
+      end
+
+      it "names a directory it could not open, apart from a file too large to scan" do
+        inner.behaviour = lambda do |**|
+          FileUtils.mkdir_p(File.join(root, "hid"))
+          File.write(File.join(root, "hid/leak"), key)
+          File.chmod(0o000, File.join(root, "hid"))
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+
+        expect(run.stderr).to eq("#{format(described_class::UNOPENED, path: "hid")}\n")
+      ensure
+        File.chmod(0o755, File.join(root, "hid")) if File.directory?(File.join(root, "hid"))
+      end
+
+      context "when the policy already gates a written file by its name" do
+        let(:policy) do
+          Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+        end
+        let(:sandboxed) do
+          described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096, taint: -> { taint },
+                              secrets: -> { secrets },
+                              classifier: policy)
+        end
+
+        it "leaves it out of the note, which names only what the gate did not already hold" do
+          inner.behaviour = lambda do |**|
+            [".env", "leaked.txt"].each { File.write(File.join(root, _1), key) }
+            Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+          end
+
+          expect(run.stderr).to eq("#{format(described_class::TAINTED, path: "leaked.txt")}\n")
+        end
+      end
+
+      it "adds nothing to the output when it wrote no known value" do
+        writing("app.rb", "class App; end\n")
+
+        expect([run.stderr, taint.paths]).to eq(["", []])
+      end
+
+      context "when the profile keeps the masks" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:) }
+
+        it "scans nothing" do
+          writing("leaked.txt", key)
+
+          expect([run.stderr, taint.paths]).to eq(["", []])
+        end
+      end
+    end
+
     describe "a profile with masks" do
       let(:env_file) { File.join(root, ".env") }
       let(:profile) { Lain::Confine::Profile.reader(root:, home:, masks: [env_file]) }

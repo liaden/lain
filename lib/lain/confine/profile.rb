@@ -7,7 +7,7 @@ require "pathname"
 module Lain
   module Confine
     Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
-                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net)
+                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net, :unmasked)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
@@ -22,7 +22,8 @@ module Lain
     # {PrivateHome}s mounted over a home dir, `hidden` the toolchain files a
     # workspace shows empty and never runs, and `private_net` says each stage
     # of the call has a network namespace of its own, holding only loopback,
-    # so the stages of one pipeline cannot reach each other over it. Both unconfined
+    # so the stages of one pipeline cannot reach each other over it. `unmasked` says a human let the call
+    # read the project's secrets, so what it wrote is scanned for them after. Both unconfined
     # profiles still run under lain-fence as a reaper, so a stopped call
     # leaves no descendant behind; that covers a call made through a sandbox,
     # and `--confine off` or a box lacking bwrap or Landlock builds none.
@@ -70,14 +71,14 @@ module Lain
 
       # Relative to the root: files a later shell, hook or toolchain run reads
       # and acts on. The lain dir a later session reads is sealed too, at the
-      # path {ProjectDir} owns.
+      # path `ProjectDir` owns.
       PROJECT_SEALED = %w[.envrc .pre-commit-config.yaml rust-toolchain.toml rust-toolchain .cargo/config.toml
                           .cargo/config .tool-versions mise.toml .mise.toml mise.local.toml .mise.local.toml
                           .mise/config.toml .config/mise.toml .config/mise/config.toml mise/config.toml].freeze
 
       # The TCP ports each build tool fetches on. Landlock bounds a port, never
       # a host, so a granted port is open to whatever code the build runs, and
-      # {Profiles} grants one only while nothing the build could load is fresh.
+      # `Profiles` grants one only while nothing the build could load is fresh.
       GRANTS = { "bundle" => [443, 80], "cargo" => [443], "git" => [443] }.freeze
 
       # nss-resolve's socket dir: a name resolves through it, so no grant needs a
@@ -160,13 +161,14 @@ module Lain
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
                      connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil,
-                     homes: [], hidden: [], private_net: false)
+                     homes: [], hidden: [], private_net: false, unmasked: false)
         grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs:, hidden: }
         absolute([*grants.values.flatten, *sealed.map(&:path), *homes.map(&:path)])
         raise ArgumentError, "a private network has no host port to connect to" if private_net && connect_ports.any?
 
         super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze, sealed: sealed.dup.freeze,
               call_tmpdir: call_tmpdir&.then(&:-@), homes: homes.dup.freeze, private_net: private_net == true,
+              unmasked: unmasked == true,
               **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
 
@@ -188,6 +190,9 @@ module Lain
 
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = Profile.confines?(name)
+
+      # @return [Boolean] whether the call could read the project's secret files
+      def unmasked? = unmasked
 
       # A TMPDIR other processes share holds their scratch too, so a call
       # writes a dir of its own beneath it instead, and may run what it writes
@@ -293,7 +298,7 @@ module Lain
       # A project's own build output runs as {#running} says. The exact file
       # {RESOLV_CONF} lands on and {LSM_LIST} are read; cargo's home is a
       # {PrivateHome}; bundler's user config and every mise binary are
-      # hidden. {Profiles} gives a plain workspace call a private loopback,
+      # hidden. `Profiles` gives a plain workspace call a private loopback,
       # one per stage, since bwrap wraps each stage on its own.
       #
       # @param root [String] absolute; the project, read and written whole
@@ -331,7 +336,7 @@ module Lain
       # call can point one elsewhere for the next. A `CARGO_TARGET_DIR`
       # outside the project runs nothing. lain-fence grants only what exists
       # when it starts, so a dir the call makes runs from the next call on;
-      # {Profiles} makes a cargo checkout's `target/` before the call for that reason.
+      # `Profiles` makes a cargo checkout's `target/` before the call for that reason.
       #
       # @param execs [ExecRules] the build output the call's bounds run
       # @return [Profile] this one, running each such directory under its project

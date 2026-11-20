@@ -113,6 +113,7 @@ module Lain
       LOCATIONS = %i[outside_project out_of_scope].freeze
 
       OUTSIDE_PROJECT = Verdict.new(level: :gated, reason: :outside_project)
+      TAINTED = Verdict.new(level: :gated, reason: Taint::REASON)
       ACCOUNT_DATABASE = Verdict.new(level: :denied, reason: :account_database)
       EPIC_HOME_WRITE = Verdict.new(level: :denied, reason: :protected)
       EPIC_HOME_ADVICE = "the epic home changes through epic_write and epic_graph"
@@ -180,6 +181,17 @@ module Lain
         # @return [Array] none: with no classifier, no spelling judges apart from its landing
         def marks(_path) = NONE
         def lifts(_path) = NONE
+
+        # A run's writes are still scanned, so a sandbox over this policy masks what one tainted, though
+        # this policy gates none of it.
+        #
+        # @return [Taint] the shared instance's, so every chat wired with the Null holds the same one
+        attr_reader :taint
+
+        def initialize
+          @taint = Taint.new
+          super
+        end
 
         NONE = [].freeze
         INSTANCE = new.freeze
@@ -258,7 +270,7 @@ module Lain
 
         def classify(path, within: nil) = @policy.classify(path, within:)
         delegate :related?, :in_related_tree?, :related_directories, :filter, :mask_paths, :marks, :lifts,
-                 :checksums?, :read_roots, to: :@policy
+                 :checksums?, :read_roots, :taint, to: :@policy
 
         # Asked by where a path lands, never by the reason its name is judged
         # for: a home directory gated by name is still outside every root.
@@ -375,9 +387,12 @@ module Lain
       #   outside the project that a confined child reads without asking, and never writes
       # @param epic_home [String, nil] absolute; the epic home outside the project, which only
       #   the epic tools write; nil when epics live in the repository
+      # @param taint [Taint] the files a run left holding a secret, gated as {TAINTED}; its own by default
       # @raise [ArgumentError] when a read root or the epic home is not absolute
-      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE, read_roots: [], epic_home: nil)
+      def initialize(sensitivity:, home: nil, root: nil, file_facts: FileFacts::LIVE, read_roots: [], epic_home: nil,
+                     taint: Taint.new)
         @sensitivity = sensitivity
+        @taint = taint
         @file_facts = file_facts
         @read_roots = read_roots.map { absolute!(_1) }.freeze
         @epic_roots = Roots.of(*epic_home && absolute!(epic_home, "an epic home"), facts: file_facts)
@@ -413,6 +428,11 @@ module Lain
       #
       # @return [FileFacts::Live, FileFacts::Recorded]
       attr_reader :file_facts
+
+      # Asked by {Confine::MaskList}, which masks what it holds, and by the sandbox, which adds to it.
+      #
+      # @return [Taint]
+      attr_reader :taint
 
       # What {#filter} classifies a listing row by. A readable row reaching the
       # filter is already absolute ({Middleware::WithholdSecretPaths#judged}
@@ -488,7 +508,8 @@ module Lain
         denied = written.find(&:denied?)
         return denied if denied
 
-        strictest([*written, *landed(path, cwd, within)])
+        verdict = strictest([*written, *landed(path, cwd, within)])
+        tainted?(path, cwd) ? verdict | TAINTED : verdict
       end
 
       # A leased worker or a `/mode plan` spike runs in a checkout that may
@@ -795,6 +816,15 @@ module Lain
       end
 
       def strictest(verdicts) = verdicts.inject(:|)
+
+      def tainted?(path, cwd)
+        return false if @taint.empty?
+
+        named = File.expand_path(path, cwd)
+        @taint.include?(named) || @taint.include?(File.realpath(named))
+      rescue SystemCallError, ArgumentError, EncodingError
+        false
+      end
 
       # Mirrors {Sensitivity#text}, and for a reason narrower than symmetry:
       # {Tool::Input} COERCES rather than refuses, so the value this class

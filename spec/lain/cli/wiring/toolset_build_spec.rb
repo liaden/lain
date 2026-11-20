@@ -1333,6 +1333,18 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(profiles.instance_variable_get(:@home)).to eq(Lain::Paths.new.home)
     end
 
+    it "hands the sandbox and its mask list the board's taint and known values, read through the board" do
+      board = switchboard
+      exec = bash_exec(built(reader, switchboard: -> { board }))
+      masks = exec.instance_variable_get(:@profiles).instance_variable_get(:@masks)
+      scanning = exec.instance_variable_get(:@scanning)
+      read = ->(holder, name) { holder.instance_variable_get(name).call }
+
+      expect([read.call(scanning, :@taint), read.call(masks, :@taint)]).to all(be(board.sensitivity.taint))
+      expect(read.call(scanning, :@secrets)).to be(board.secrets)
+      expect(scanning.instance_variable_get(:@classifier)).to be(masks)
+    end
+
     describe "the build tool grant its profiles were built with" do
       let(:git) do
         Lain::Shell::Executable.new(name: "git", resolved: "/usr/bin/git", realpath: "/usr/bin/git", chain: [],

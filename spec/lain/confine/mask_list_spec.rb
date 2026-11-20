@@ -55,6 +55,40 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
   def paths = list.masks.map(&:path)
 
+  describe "the paths a run tainted" do
+    let(:taint) { Lain::Sensitivity::Taint.new }
+    let(:secrets) { Struct.new(:known) { def for_reads(_context) = known }.new(["synthetic-leaf-4f9a2c"]) }
+    let(:tainted) { described_class.new(root:, policy: -> { policy }, taint: -> { taint }, stat: method(:aged)) }
+
+    def taint_now
+      taint.scan(root:, since: Time.now - 60, refs: {}, secrets:)
+    end
+
+    it "masks a tainted file whose listing and inode did not change since the last ask" do
+      write("app.log", "leaf=synthetic-leaf-4f9a2c\n")
+      before = tainted.masks.map(&:path)
+      taint_now
+
+      expect(before).not_to include(File.join(root, "app.log"))
+      expect(tainted.masks.map { [_1.path, _1.reason] }).to include([File.join(root, "app.log"), :tainted])
+    end
+
+    it "masks nothing more, and answers the same masks, while nothing is tainted" do
+      write(".env", "A=1\n")
+      first = tainted.masks
+
+      expect(tainted.masks).to equal(first)
+    end
+
+    it "drops a tainted file that is gone, since a mask needs a file to bind over" do
+      write("app.log", "synthetic-leaf-4f9a2c")
+      taint_now
+      File.delete(File.join(root, "app.log"))
+
+      expect(tainted.masks.map(&:path)).not_to include(File.join(root, "app.log"))
+    end
+  end
+
   # The listing runs before every call, outside the sandbox, over a tree the last call wrote.
   it "runs no fsmonitor the checkout's config names" do
     marker = File.join(@base, "fsmonitor-ran")

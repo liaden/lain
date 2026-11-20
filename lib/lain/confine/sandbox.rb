@@ -201,8 +201,13 @@ module Lain
       # @param fresh [#any_under?] the lineage's freshness; by default every root is fresh and no port is granted
       # @param phone_answered [Boolean] whether a call that would run unconfined is refused rather than run,
       #   unless a human approved it and it runs traced
+      # @param taint [#call] returns the {Sensitivity::Taint} an unmasked call's writes are scanned into
+      # @param secrets [#call] returns the known values that scan looks for
       def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal, workspace: false,
-                     tmpdir: Dir.tmpdir, fresh: Profiles::Unread, phone_answered: false)
+                     tmpdir: Dir.tmpdir, fresh: Profiles::Unread, phone_answered: false,
+                     taint: Sensitivity::Taint.new.then { |own| -> { own } },
+                     secrets: -> { Sensitivity::Secrets::Source::DEFAULT })
+        @scanning = { taint:, secrets:, classifier: masks }
         @root = root
         @home = home
         @masks = masks
@@ -223,7 +228,8 @@ module Lain
         return unsandboxed(inner, requirer) if self.class.lacking(@probe).any?
 
         @built = true
-        Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap))
+        Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap),
+                            **@scanning)
       end
 
       # @return [Containment::Deferred] whether this box can run a call contained, with no network beyond a build

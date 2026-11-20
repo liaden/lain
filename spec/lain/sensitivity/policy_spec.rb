@@ -296,6 +296,15 @@ RSpec.describe Lain::Sensitivity::Policy do
   describe Lain::Sensitivity::Policy::Null do
     subject(:null) { described_class.instance }
 
+    it "holds a taint a run's scan can write to, though it gates nothing" do
+      Dir.mktmpdir("lain-null-taint") do |dir|
+        secrets = Struct.new(:known) { def for_reads(_context) = known }.new(["synthetic-leaf-4f9a2c"])
+        scan = null.taint.scan(root: dir, since: Time.now + 60, refs: {}, secrets:)
+
+        expect(scan).to be_a(Lain::Sensitivity::Taint::Scan)
+      end
+    end
+
     # The whole of what "an unwired chat behaves byte-identically to today"
     # means, said over the entire table rather than one sample: nothing in it
     # gates, including the paths the real policy above gates.
@@ -332,6 +341,52 @@ RSpec.describe Lain::Sensitivity::Policy do
       expect(null).to respond_to(:gates?, :denial)
       expect(null.denial(Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
                                                     input: { "path" => "/home/tester/.ssh/id_rsa" }), cwd:)).to be_nil
+    end
+  end
+
+  describe "a path a run tainted" do
+    around do |example|
+      Dir.mktmpdir("lain-policy-taint") do |dir|
+        @project = File.realpath(dir)
+        File.write(File.join(@project, "leaked.txt"), "copied\n")
+        File.write(File.join(@project, "notes.txt"), "plain\n")
+        File.symlink(File.join(@project, "leaked.txt"), File.join(@project, "alias.txt"))
+        example.run
+      end
+    end
+
+    let(:taint) { Lain::Sensitivity::Taint.new }
+    let(:tainting) do
+      described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: @project, rules:), taint:)
+    end
+
+    before do
+      secrets = Struct.new(:known) { def for_reads(_context) = known }.new(["copied"])
+      since = Time.now - 60
+      taint.scan(root: @project, since:, refs: {}, secrets:)
+    end
+
+    it "gates a read_file of it with reason tainted, which no judge may approve" do
+      expect(tainting.gates?(call("read_file", { "path" => "leaked.txt" }), cwd: @project)).to be(true)
+      expect(tainting.judge("leaked.txt", cwd: @project))
+        .to have_attributes(level: :gated, reason: :tainted, oracle_approvable?: false)
+    end
+
+    it "gates a link that lands on it" do
+      expect(tainting.judge("alias.txt", cwd: @project).reason).to eq(:tainted)
+    end
+
+    it "leaves a file the run did not taint alone" do
+      expect(tainting.gates?(call("read_file", { "path" => "notes.txt" }), cwd: @project)).to be(false)
+    end
+
+    it "answers the taint it holds, as a confined child's policy does" do
+      expect([tainting.taint, tainting.confined(tainting.bounds).taint]).to eq([taint, taint])
+    end
+
+    it "explains the reason in words" do
+      expect(Lain::Sensitivity::Verdict.new(level: :gated, reason: :tainted).explanation)
+        .to include("secret")
     end
   end
 

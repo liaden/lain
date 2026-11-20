@@ -2,6 +2,7 @@
 
 require "fileutils"
 require "stringio"
+require "tmpdir"
 
 module Lain
   module Exec
@@ -95,6 +96,20 @@ module Lain
       DECOY_COMMIT = "Commit %<commit>s holds the empty file or decoy this call read for %<path>s, not the masked " \
                      "file. Once git's index is put back, `git commit --amend --no-edit` repairs the commit when " \
                      "it is the last one; an earlier one needs a rebase."
+      TAINTED = "%<path>s holds a value lain knows as a secret, so until lain exits a read of it asks a human " \
+                "and the sandbox masks it."
+      UNSCANNED = "%<path>s is over 8 MB, so lain did not scan it for secrets, and until lain exits a read of it " \
+                  "asks a human and the sandbox masks it."
+      UNOPENED = "%<path>s holds something lain could not open, so lain did not scan it for secrets, and until " \
+                 "lain exits a read of anything in it asks a human and the sandbox masks it."
+      TAINTED_COMMIT = "Commit %<commit>s holds a value lain knows as a secret at %<path>s. Take it out of the " \
+                       "history before the commit leaves this machine."
+      TAINTED_OBJECT = "Git object %<commit>s, which a ref this call made reaches, holds a value lain knows as a " \
+                       "secret. Delete the ref before it leaves this machine."
+      UNSCANNED_COMMIT = "Commit %<commit>s holds %<path>s, over 8 MB, so lain did not scan it for secrets. Check " \
+                         "it before the commit leaves this machine."
+      UNSCANNED_OBJECT = "Git object %<commit>s, which a ref this call made reaches, is over 8 MB, so lain did " \
+                         "not scan it for secrets. Check it before it leaves this machine."
       # Each profile build that refuses for a path, and the sentence that says why.
       UNBUILT = { Confine::Profiles::NoTmpdir => NO_TMPDIR, Confine::Profile::HomeTmpdir => HOME_TMPDIR,
                   Confine::Profile::HoldsState => HOLDS_STATE, Confine::Profile::Tampered => TAMPERED }.freeze
@@ -111,8 +126,15 @@ module Lain
       # @param ceiling [Integer] the output ceiling a refusal is bound for, as {Local}'s is
       # @param reaps [Boolean] whether the fence can run an unconfined call as its reaper; when it
       #   cannot, such a call runs as written, untraced, since the fence would refuse it outright
+      # @param taint [#call] returns the {Sensitivity::Taint} an unmasked call's writes are scanned into;
+      #   read once the call has run, since the toolset holding this exec is built before the policy
+      # @param secrets [#call] returns the known values, a {Sensitivity::Secrets::Source}, read likewise
+      # @param classifier [#classify] the session's policy on a path, so the note leaves out what its name gates
       def initialize(inner:, launcher:, profiles:, journal:, ceiling: Tool::Bounds::CEILINGS.fetch("bash"),
-                     reaps: true)
+                     reaps: true, taint: Sensitivity::Taint.new.then { |own| -> { own } },
+                     secrets: -> { Sensitivity::Secrets::Source::DEFAULT },
+                     classifier: Sensitivity::Policy::Null.instance)
+        @scanning = Scanning.new(taint:, secrets:, classifier:)
         @inner = inner
         @launcher = launcher
         @profiles = profiles
@@ -165,12 +187,26 @@ module Lain
                                            network: confinement.ruling.network?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
+        scanned(profile, cwd) do
+          masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
+        end
+      end
+
+      def masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         guarded(profile, stages(command)) do |bound, guard, masked|
           run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard), **sinks }
           told_contained(confinement, profile, masked, command:, cwd:, env:) do
             profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
           end
         end
+      end
+
+      def scanned(profile, cwd, &block)
+        return yield unless profile.unmasked?
+
+        capture, told = @scanning.over(profile.read_dirs.first, cwd, &block)
+        line = told.map { |template, values| "#{phrased(template, **values.transform_values { printable(_1) })}\n" }
+        line.empty? ? capture : appended(capture, line.join)
       end
 
       # The masks are bound from descriptors numbered after every stage's trace, and the guard settles even
@@ -403,10 +439,71 @@ module Lain
                         .finish(Shell::Pipeline::NOT_PERMITTED)
       end
 
+      # What an unmasked call wrote that holds a known value, scanned even when the call raised, since what it
+      # wrote before the deadline stays written.
+      class Scanning
+        # @param taint [#call]
+        # @param secrets [#call]
+        # @param classifier [#classify]
+        def initialize(taint:, secrets:, classifier:)
+          @taint = taint
+          @secrets = secrets
+          @classifier = classifier
+        end
+
+        # @param root [String] the project the call writes
+        # @param cwd [String] what each path is named from
+        # @yieldreturn [Capture]
+        # @return [Array(Capture, Array)] the capture, and each sentence's template and values to say
+        def over(root, cwd)
+          since = Sensitivity::Taint.mark(root)
+          refs = Sensitivity::Taint.refs(root)
+          ran = false
+          begin
+            capture = yield
+            ran = true
+          ensure
+            scan = scanned(root, since, refs, raises: ran)
+          end
+          [capture, told(scan, cwd)]
+        end
+
+        private
+
+        # A call that removed its own project leaves nothing to scan, and its result must still come back. Any
+        # other failure holds the whole project, so a defect in the scan gates what the run wrote; it is raised
+        # unless the call's own error is already on its way out.
+        def scanned(root, since, refs, raises:)
+          @taint.call.scan(root:, since:, refs:, secrets: @secrets.call)
+        rescue StandardError => e
+          return Sensitivity::Taint::NOTHING if e.is_a?(SystemCallError) && !File.directory?(root)
+
+          @taint.call.hold_whole(root)
+          raise if raises
+
+          Sensitivity::Taint::NOTHING
+        end
+
+        def told(scan, cwd)
+          named = ->(path) { path.delete_prefix("#{cwd}/") }
+          [*unnamed(scan.gated).map { [TAINTED, { path: named.call(_1) }] },
+           *unnamed(scan.unscanned).map { [UNSCANNED, { path: named.call(_1) }] },
+           *scan.unopened.map { [UNOPENED, { path: named.call(_1) }] },
+           *scan.commits.map { in_git(TAINTED_COMMIT, TAINTED_OBJECT, *_1) },
+           *scan.unscanned_commits.map { in_git(UNSCANNED_COMMIT, UNSCANNED_OBJECT, *_1) }]
+        end
+
+        # A path the gate already holds by its name says nothing the model does not know.
+        def unnamed(paths) = paths.select { @classifier.classify(_1).ordinary? }
+
+        def in_git(committed, unnamed, commit, path) = path ? [committed, { commit:, path: }] : [unnamed, { commit: }]
+      end
+      private_constant :Scanning
+
       # What a workspace call may leave behind. Each seal is looked at before
       # the call, so only a path that was not there and then was counts: a
       # dangling link that was already there is never one the call made. A path
-      # created between {Confine::Profiles#for} and that look counts as there
+      # created between `Confine::Profiles#for` and that look counts as there
       # before, by the call or anyone else. The
       # call's own TMPDIR is removed, opening up any directory the call left
       # unreadable, and named when even that fails.

@@ -73,7 +73,8 @@ module Lain
         malformed: "a path that cannot be read lexically",
         system: "a system account or privilege file",
         account_database: "the system account database, which a confined agent may not read",
-        checksums: "a lockfile of package checksums"
+        checksums: "a lockfile of package checksums",
+        tainted: "a file a run that could read the project's secrets left holding one"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
       # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or
@@ -90,7 +91,7 @@ module Lain
       # loses the entropy exemption its name would grant.
       REASON_RANK = Ractor.make_shareable(
         { denied: %i[account_database protected system configured],
-          gated: %i[named credential configured protected malformed out_of_scope outside_project],
+          gated: %i[named credential tainted configured protected malformed out_of_scope outside_project],
           ordinary: %i[exempt none checksums] }
       )
       # Nested by level so a comparison builds no key.

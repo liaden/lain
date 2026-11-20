@@ -445,9 +445,12 @@ module Lain
 
         def sandboxed(inner)
           home = @in_chat.fetch(:paths).home
-          @masks = masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity })
+          taint = -> { @switchboard.call.sensitivity.taint }
+          @masks = masks = Lain::Confine::MaskList.new(root: @root, policy: -> { @switchboard.call.sensitivity },
+                                                       taint:)
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
-                                                journal: seam.journal, notes: @notes, fresh: @fresh,
+                                                journal: seam.journal, notes: @notes, fresh: @fresh, taint:,
+                                                secrets: -> { @switchboard.call.secrets },
                                                 workspace: @arms.workspace?,
                                                 phone_answered: @human.answers_remotely?)
           @confined = @sandbox.wrap(inner, requirer: self.class.name)
