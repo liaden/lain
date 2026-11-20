@@ -79,6 +79,25 @@ RSpec.describe Lain::CLI::Todos do
     end
   end
 
+  describe ".runner's chat logs" do
+    it "keeps them in a directory only the owner can enter, though the queue's lock made it first", :seam do
+      system(SeedRepo::SCRUB, "git", "-C", @dir, "init", "-q", exception: true)
+
+      described_class.runner(project:, paths:, lain: "exe/lain", max_cost: 1, sink:)
+
+      logs = Lain::ProjectDir.new(root: @dir, paths:).container("chores")
+      expect(File.stat(logs).mode & 0o777).to eq(0o700)
+    end
+  end
+
+  describe ".logs_for" do
+    it "names the directory it cannot make, as the queue's lock does" do
+      allow(FileUtils).to receive(:mkdir_p).and_raise(Errno::EACCES)
+
+      expect { described_class.logs_for(project, paths) }.to raise_error(Lain::Paths::Unwritable)
+    end
+  end
+
   describe "lain todos drain" do
     it "builds its runner over the command's stdout", :seam do
       system(SeedRepo::SCRUB, "git", "-C", @dir, "init", "-q", exception: true)

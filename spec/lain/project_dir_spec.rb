@@ -52,7 +52,7 @@ module ProjectDirDiscipline
   # caught by its literals alone, while the XDG shape carries one literal plus
   # two method calls -- and hoisting those two calls into their own statements
   # left a final expression naming nothing but the file.
-  KIND_NAMES = %w[status sessions epics worktrees workspace gc trust].freeze
+  KIND_NAMES = %w[status sessions epics worktrees workspace gc trust chores].freeze
 
   # Every literal a path expression can spell one of these with.
   LITERALS = ([PROJECT_NAME] + ARTIFACT_NAMES + KIND_NAMES).uniq.freeze

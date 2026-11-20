@@ -19,8 +19,19 @@ module Lain
         ::Lain::Chores::Runner.new(
           queue: queue_for(project, paths),
           backend: IsolationBackend.resolve("worktree", root: project.root, paths:), lain:, max_cost:, paths:,
+          logs: logs_for(project, paths),
           land: ->(lease) { Land.new(cwd: lease, paths:) }, notices: ::Lain::Notices.for(env: ENV, notes: sink)
         )
+      end
+
+      # @return [String] the project's chat-log directory, owner-only, though the queue's lock made it first
+      def self.logs_for(project, paths)
+        dir = ProjectDir.new(root: project.root, paths:).container("chores")
+        FileUtils.mkdir_p(dir)
+        FileUtils.chmod(0o700, dir)
+        dir
+      rescue SystemCallError => e
+        raise ::Lain::Paths::Unwritable.new(dir, e)
       end
 
       # @return [Chores::Queue] the project's chore file, as its config names it

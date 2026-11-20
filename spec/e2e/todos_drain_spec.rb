@@ -68,7 +68,8 @@ RSpec.describe "draining one chore through a lease, a headless chat and lain lan
       queue: Lain::Chores::Queue.at(project, paths:),
       backend: Lain::CLI::IsolationBackend.resolve("worktree", root: project, paths:),
       lain: E2E::PlainChat::EXE, land: ->(lease) { Lain::CLI::Land.new(cwd: lease, paths:, spawner: drainer(sandbox)) },
-      notices: Lain::Notices::Null.new, paths:, max_cost: 1, chat_timeout: patience, wait_timeout: patience,
+      notices: Lain::Notices::Null.new, paths:, logs: FileUtils.mkdir_p(File.join(paths.state_home, "chat-logs")).first,
+      max_cost: 1, chat_timeout: patience, wait_timeout: patience,
       spawner: spawner(sandbox, upstream)
     )
   end
