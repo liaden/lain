@@ -44,6 +44,84 @@ RSpec.describe Lain::Sensitivity::Secrets::Source do
     end
   end
 
+  describe "#for_reads" do
+    let(:history) do
+      split = Lain::Sensitivity::HistoryLiterals::Split.new(known: %w[history-ordinary-value history-secret-value],
+                                                            refusable: %w[history-secret-value])
+      Class.new do
+        define_method(:split) { split }
+        define_method(:to_a) { split.known }
+        define_method(:refusable) { split.refusable }
+      end.new
+    end
+
+    it "lists the environment's values, the worker's lent ones and the refusable history, not ordinary config" do
+      worker_env = Lain::WorkerEnv.new(cwd: Dir.pwd, env: { "LENT_TOKEN" => "worker-lent-value-9" })
+      context = Struct.new(:worker_env).new(worker_env)
+
+      expect(source_over(env).for_reads(context))
+        .to include("spec-db-password-24bytes", "worker-lent-value-9", "history-secret-value")
+        .and(not_include("history-ordinary-value"))
+    end
+
+    it "leaves out a path or a number only where the variable's name is not secret" do
+      values = { "SSH_AUTH_SOCK" => "/run/user/1000/ssh-agent.socket", "DB_PASSWORD" => "48213907",
+                 "SECRET_PATH_TOKEN" => "/var/lib/app/tok3n-x9q" }
+
+      expect(source_over(values).for_reads(nil))
+        .to include("48213907", "/var/lib/app/tok3n-x9q").and(not_include("/run/user/1000/ssh-agent.socket"))
+    end
+
+    describe "a number a plain-named variable shares with another source" do
+      let(:digits) { "48213907" }
+
+      def reads(env, pass: [], over: history)
+        described_class.new(child_env: Lain::Exec::ChildEnv.new(env:, pass:), history: over).for_reads(nil)
+      end
+
+      it "keeps the password a passed connection string holds" do
+        expect(reads({ "DATABASE_URL" => "postgres://app:#{digits}@db.internal/app", "BUILD_NUMBER" => digits },
+                     pass: %w[DATABASE_URL])).to include(digits)
+      end
+
+      it "keeps a value a secret-named variable also holds" do
+        expect(reads({ "DB_PASSWORD" => digits, "BUILD_NUMBER" => digits })).to include(digits)
+      end
+
+      it "keeps a value the history refuses" do
+        refusing = Class.new do
+          define_method(:refusable) { ["48213907"] }
+          define_method(:to_a) { ["48213907"] }
+        end.new
+
+        expect(reads({ "BUILD_NUMBER" => digits }, over: refusing)).to include(digits)
+      end
+
+      it "drops it where only a plain-named variable lists it" do
+        expect(reads({ "BUILD_NUMBER" => digits, "SSH_AUTH_SOCK" => "/run/user/1000/agent.sock" }))
+          .not_to include(digits, "/run/user/1000/agent.sock")
+      end
+    end
+
+    it "also seeks a multi-line value spelled with CRLF line ends" do
+      value = "first-line-secret-aa\nsecond-line-secret-bb"
+
+      expect(source_over("APP_SECRET" => value).for_reads(nil))
+        .to include(value, "first-line-secret-aa\r\nsecond-line-secret-bb")
+    end
+
+    it "also seeks a CRLF-stored value spelled with LF line ends" do
+      value = "first-line-secret-aa\r\nsecond-line-secret-bb"
+
+      expect(source_over("APP_SECRET" => value).for_reads(nil))
+        .to include(value, "first-line-secret-aa\nsecond-line-secret-bb")
+    end
+
+    it "reads the null session's worker for no context" do
+      expect(source_over(env).for_reads(nil)).to eq(source_over(env).for_reads(Lain::Session::Null.instance))
+    end
+  end
+
   describe "DEFAULT" do
     it "is the process child environment over no history" do
       expect(described_class::DEFAULT).to have_attributes(child_env: Lain::Exec::ChildEnv::DEFAULT,

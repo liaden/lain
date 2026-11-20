@@ -39,6 +39,7 @@ stopwords = [
   '''abc123lowentropy''',
   '''bnNzaC1rZXktdjEQ''',
   '''er2-correct-horse-batter''',
+  '''lowentropy-pass''',
 ]
 
 # Matches a plain word, so it is allowed only in the file that has it.

@@ -64,7 +64,7 @@ module Lain
       # The test reads the name the assignment captured, so a dotted key such as
       # `db.password` takes the whole-match path and is never exempt.
       ORDINARY_VALUE = %r{\A(?:\d+|(?:blake3|sha\d+|md5):[0-9a-f]{4,128}|/[\w.@+-]+(?:/[\w.@+-]+)*/?)\z}i
-      SECRET_WORDS = /pass(?!port)|secret|(?:\A|[_-])(?:credentials?|private|pwd)(?:[_-]|\z)/i
+      SECRET_WORDS = /pass(?!port)|secret|(?:\A|[_-])(?:credentials?|private|pwd|pw)(?:[_-]|\z)/i
       # Glued in any case, since `PRIVKEY` and `licensekey` name a secret and the
       # egress refusal reads this too. The ordinary words that end in `key` are
       # enumerated because no letter rule tells `monkey` from `masterkey`; each is

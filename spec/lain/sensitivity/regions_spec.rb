@@ -492,6 +492,20 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    context "when a name ends in the 2-letter password word" do
+      %w[DB_PW MYSQL_PW REDIS_PW pw].each do |name|
+        it "names #{name} a secret" do
+          expect(described_class::SECRET_NAMING).to match(name)
+        end
+      end
+
+      %w[PWA_MODE spawn NPWORKERS].each do |name|
+        it "does not name #{name} a secret" do
+          expect(described_class::SECRET_NAMING).not_to match(name)
+        end
+      end
+    end
+
     context "when a dotenv name ends in the short password word" do
       it "masks only the value of MYSQL_PWD, bare or quoted" do
         expect(detect("MYSQL_PWD=hunter2pass").map(&:bytes)).to eq(["hunter2pass"])

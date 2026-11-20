@@ -46,7 +46,9 @@ RSpec.describe "a passed value's secret masked in bash output", :seam do
                           status_feed: instance_double(Lain::StatusFeed, bind_store: nil), project:, paths: @paths)
   end
 
-  def run_bash(command)
+  def run_bash(command) = run_tool("bash", { "command" => command })
+
+  def run_tool(name, input)
     built = wiring
     backend = offline_backend_class.new({ provider: "ollama", model: nil, max_tokens: 64 },
                                         mock: Lain::Provider::Mock.new(responses: []), root: @root)
@@ -56,8 +58,35 @@ RSpec.describe "a passed value's secret masked in bash output", :seam do
     layers = Lain::CLI::ToolGuard.stack(Lain::CLI::Chronicle::Null.new, board).to_a
     Sync do |task|
       task.with_timeout(20) do
-        dispatch_call("bash", { "command" => command }, toolset: board.toolset, layers:, context: session)
+        dispatch_call(name, input, toolset: board.toolset, layers:, context: session)
       end
+    end
+  end
+
+  describe "the same value in a project file" do
+    before { File.write(File.join(@root, "deploy.txt"), "pw=hunter2xyz\n") }
+
+    it "masks it in a read_file result" do
+      result = run_tool("read_file", { "path" => "deploy.txt" })
+
+      expect(result.content).to include(format(Lain::Sensitivity::Regions::PLACEHOLDER, 1))
+      expect(result.content).not_to include("hunter2xyz")
+    end
+
+    it "masks it in a grep row" do
+      result = run_tool("grep", { "pattern" => "pw=", "path" => "." })
+
+      expect(result.content).to include("pw=#{format(Lain::Sensitivity::Regions::PLACEHOLDER, 1)}")
+      expect(result.content).not_to include("hunter2xyz")
+    end
+
+    it "leaves no state file holding it" do
+      run_tool("read_file", { "path" => "deploy.txt" })
+      run_tool("grep", { "pattern" => "pw=", "path" => "." })
+
+      state = Dir.glob(File.join(@paths.state_home, "**", "*")).select { File.file?(_1) }
+      expect(state).not_to be_empty
+      expect(state.select { File.binread(_1).include?("hunter2xyz") }).to be_empty
     end
   end
 

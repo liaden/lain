@@ -194,6 +194,12 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
       expect(literals.to_a).to include("staging-eu", "myapp.internal:8080", "verbose-debug")
     end
 
+    it "answers a plain value under a short password name" do
+      seed_deleted("DB_PW=hunter2xyz\nREDIS_PW=plainword77\n")
+
+      expect(described_class.new(root:, policy:).refusable).to include("hunter2xyz", "plainword77")
+    end
+
     it "answers a region the detector finds, and not a lone ordinary line" do
       seed_deleted("APP_ENV=staging-eu\n")
       token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
@@ -656,6 +662,15 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
       File.write(File.join(root, "config/credentials.yml.enc"), seal("signing:\n  value: synthetic-leaf-4f9a2c\n", key))
 
       expect(described_class.new(root:, policy:).to_a).to include("synthetic-leaf-4f9a2c")
+    end
+
+    it "answers a leaf as refusable, so a read masks it" do
+      key = SecureRandom.hex(16)
+      FileUtils.mkdir_p(File.join(root, "config"))
+      File.write(File.join(root, "config/master.key"), key)
+      File.write(File.join(root, "config/credentials.yml.enc"), seal("signing:\n  value: synthetic-leaf-7c1e5b\n", key))
+
+      expect(described_class.new(root:, policy:).refusable).to include("synthetic-leaf-7c1e5b")
     end
 
     it "reports through the given callable a credentials file that will not decrypt, naming the file" do

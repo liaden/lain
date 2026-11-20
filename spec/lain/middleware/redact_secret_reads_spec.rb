@@ -1933,6 +1933,334 @@ RSpec.describe Lain::Middleware::RedactSecretReads, :seam do
     end
   end
 
+  describe "a value lain knows as a secret, read by read_file or grep" do
+    subject(:middleware) { described_class.new(ledger:, queue:, journal:, secrets:) }
+
+    let(:secrets) { Lain::Sensitivity::Secrets::Source.new(child_env:, history: Lain::Sensitivity::HistoryLiterals::Null) }
+    let(:password) { "hunter2xyz" }
+    let(:child_env) do
+      Lain::Exec::ChildEnv.new(pass: %w[DATABASE_URL],
+                               env: { "DATABASE_URL" => "postgres://app:#{password}@db.local/app" })
+    end
+
+    def grep(pattern)
+      call = Lain::Effect::ToolCall.new(tool_use_id: "tu_grep", name: "grep",
+                                        input: { "pattern" => pattern, "path" => dir })
+      Sync { dispatch(call, tool: Lain::Tools::Grep.new) }.fetch(:result).content
+    end
+
+    it "masks a passed value no detector shape names, and parks nothing" do
+      expect(Lain::Sensitivity::Regions.detect("pw=#{password}\n")).to be_empty
+      path = write("deploy.txt", "pw=#{password}\n")
+
+      content = read(path).fetch(:result).content
+
+      expect(content).to start_with("pw=<redacted:1>\n")
+      expect(content).not_to include(password)
+      expect(queue.to_a).to be_empty
+    end
+
+    it "masks it in a grep row" do
+      write("deploy.txt", "pw=#{password}\n")
+
+      content = grep("pw=")
+
+      expect(content).to include("deploy.txt:1:pw=<redacted:1>")
+      expect(content).not_to include(password)
+      expect(content.lines.last).to include("A multi-line secret lain does not already hold")
+    end
+
+    describe "a number or a path a variable holds" do
+      let(:child_env) do
+        Lain::Exec::ChildEnv.new(env: { "DB_PASSWORD" => "48213907", "SSH_AUTH_SOCK" => "/run/user/1000/agent.sock" })
+      end
+
+      before do
+        write("run.sh", "mysql --password 48213907 app\nsock=/run/user/1000/agent.sock\n{\"pass\": 48213907}\n")
+      end
+
+      it "masks a number under a secret name in a read, and shows a path under an ordinary one" do
+        content = read(File.join(dir, "run.sh")).fetch(:result).content
+
+        expect(content).to start_with("mysql --password <redacted:1> app\nsock=/run/user/1000/agent.sock\n")
+        expect(content).not_to include("48213907")
+      end
+
+      it "masks the number in a grep row" do
+        expect(grep("pass")).not_to include("48213907")
+      end
+    end
+
+    describe "a token the call's worker lends" do
+      let(:token) { "lowentropy-lent-gh" }
+      let(:session) { Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: dir, env: { "GH_TOKEN" => token })) }
+
+      it "masks it in a read" do
+        expect(Lain::Sensitivity::Regions.detect("deploy as #{token}\n")).to be_empty
+        path = write("notes.txt", "deploy as #{token}\n")
+
+        content = read(path).fetch(:result).content
+
+        expect(content).to start_with("deploy as <redacted:1>\n")
+        expect(content).not_to include(token)
+      end
+    end
+
+    it "keeps it masked when the human released the file's detected regions" do
+      path = write("deploy.txt", "#{one_secret}pw=#{password}\n")
+
+      content = read(path) { approve(queue) }.fetch(:result).content
+
+      expect(content).to include(api_key)
+      expect(content).not_to include(password)
+    end
+
+    it "shows it inside a region the human released in that read, and masks it everywhere else" do
+      path = write("deploy.txt", "DATABASE_URL=postgres://app:#{password}@db.local/app\npw=#{password}\n")
+
+      content = read(path) { approve(queue) }.fetch(:result).content
+
+      expect(content).to start_with("DATABASE_URL=postgres://app:#{password}@db.local/app\npw=<redacted:1>\n")
+      expect(content.scan(password).length).to eq(1)
+    end
+
+    it "masks it again in a later read of the released file" do
+      path = write("deploy.txt", "DATABASE_URL=postgres://app:#{password}@db.local/app\n")
+      read(path) { approve(queue) }
+
+      content = read(path, tool_use_id: "tu_2").fetch(:result).content
+
+      expect(content).to start_with("DATABASE_URL=postgres://app:<redacted:1>@db.local/app\n")
+    end
+
+    it "keeps a file masked by it from satisfying the edit contract" do
+      path = write("deploy.txt", "pw=#{password}\n")
+      read(path)
+
+      expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(true)
+    end
+
+    it "never journals it" do
+      path = write("deploy.txt", "#{one_secret}pw=#{password}\n")
+      read(path) { approve(queue) }
+      grep("pw=")
+
+      expect(journal.map { _1.respond_to?(:to_journal) ? _1.to_journal : _1 }.to_json).not_to include(password)
+      expect(journal_io.string).not_to include(password)
+    end
+
+    describe "what a known value's mask journals" do
+      it "journals a file it alone masks once, however often it is read" do
+        path = write("deploy.txt", "pw=#{password}\n")
+        other = write("other.txt", "pw=#{password}\n")
+        read(path)
+        read(path, tool_use_id: "tu_2")
+        read(other, tool_use_id: "tu_3")
+
+        expect(redactions.map(&:key)).to eq([path, other])
+        expect(redactions.first).to have_attributes(regions: 1, released: 0)
+      end
+
+      it "counts a released region and the known value it did not cover, and never more released than found" do
+        path = write("deploy.txt", "DATABASE_URL=postgres://app:#{password}@db.local/app\npw=#{password}\n")
+        read(path) { approve(queue) }
+
+        expect(redactions).to contain_exactly(have_attributes(regions: 2, released: 1))
+      end
+
+      it "counts a known value inside an unreleased region once" do
+        path = write("deploy.txt", "DATABASE_URL=postgres://app:#{password}@db.local/app\n")
+        read(path)
+
+        expect(redactions).to contain_exactly(have_attributes(regions: 1, released: 0))
+      end
+    end
+
+    describe "a value of several lines" do
+      let(:private_key) do
+        '"private_key": "-----BEGIN PRIVATE KEY-----\\n' \
+          'MIIBVgIBADANBgkqhkiG9w0BAQEFAASCAUAwggE8AgEAAkEAwJ5pZr3q8yZ4o4FQ\\n-----END PRIVATE KEY-----\\n",'
+      end
+      let(:service_account) do
+        "{\n  \"type\": \"service_account\",\n  \"project_id\": \"my-project\",\n  #{private_key}\n  " \
+          "\"universe_domain\": \"googleapis.com\"\n}\n"
+      end
+      let(:kubeconfig) do
+        "apiVersion: v1\nkind: Config\nusers:\n- name: default\n  token: Zq8xV2nL4tR7yW1kP9mB3cJ6hD0sF5gA\n"
+      end
+      let(:child_env) do
+        Lain::Exec::ChildEnv.new(env: { "GOOGLE_CREDENTIALS" => service_account, "KUBE_CREDENTIALS" => kubeconfig })
+      end
+
+      before { write("sa.json", service_account) }
+
+      it "masks its private key line in a windowed read" do
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                          input: { "path" => File.join(dir, "sa.json"), "offset" => 4, "limit" => 1 })
+
+        content = Sync { dispatch(call) }.fetch(:result).content
+
+        expect(content).to include("<redacted:1>")
+        expect(content).not_to include("MIIBVgIBADANBgkq")
+      end
+
+      it "masks its private key line in a grep row" do
+        expect(grep("private_key")).not_to include("MIIBVgIBADANBgkq")
+      end
+
+      it "masks a line of it that carries a secret alone, in a file holding only that line" do
+        path = write("token.yml", "  token: Zq8xV2nL4tR7yW1kP9mB3cJ6hD0sF5gA\n")
+
+        expect(read(path).fetch(:result).content).not_to include("Zq8xV2nL4tR7yW1kP9mB3cJ6hD0sF5gA")
+      end
+
+      it "shows the boilerplate lines it shares with another file, which stays editable" do
+        path = write("provider.json",
+                     "{\n  \"type\": \"service_account\",\n  \"universe_domain\": \"googleapis.com\"\n}\n")
+        config = write("config.yaml", "apiVersion: v1\nkind: Config\nusers:\n- name: default\n")
+
+        expect([read(path), read(config, tool_use_id: "tu_2")].map { _1.fetch(:result).content })
+          .to eq([File.read(path), File.read(config)])
+        expect(session.withheld?(Lain::Session::Withheld::Source.file(path))).to be(false)
+      end
+    end
+
+    it "tells the model a known value is never released, not that a release waits" do
+      path = write("deploy.txt", "pw=#{password}\n")
+
+      content = read(path).fetch(:result).content
+
+      expect(content.lines.last).to include(described_class::Trailer::REASONS.fetch(:known))
+    end
+
+    it "journals a search masked only by a known value once per file" do
+      write("deploy.txt", "pw=#{password}\n")
+      2.times { grep("pw=") }
+
+      expect(journal.grep(Lain::Telemetry::SearchRedacted))
+        .to contain_exactly(have_attributes(path: File.join(dir, "deploy.txt"), regions: 1, released: 0))
+    end
+
+    it "journals a known value's slots beside a released region, and once for a file with unreleased ones" do
+      token = "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5"
+      released = write("released.txt", "token: #{token}\npw=#{password} again #{password}\n")
+      held = write("held.txt", "token: #{token}\npw=#{password}\n")
+      ledger.release(released, Lain::Sensitivity::Regions.detect(File.read(released)), authority: :human)
+
+      grep("token|pw=")
+
+      expect(journal.grep(Lain::Telemetry::SearchRedacted).map { [_1.path, _1.regions, _1.released] })
+        .to contain_exactly([released, 3, 1], [held, 1, 0])
+    end
+
+    describe "a value of several lines whose secret line is bare hex" do
+      let(:hex) { "3f2a1b0c9d8e7f6a5b4c3d2e1f0a9b8c7d6e5f4a" }
+      let(:child_env) { Lain::Exec::ChildEnv.new(env: { "APP_SECRET" => "header line\n#{hex}\nfooter line\n" }) }
+
+      before { write("app.txt", "intro\n#{hex}\noutro\n") }
+
+      it "masks that line in a windowed read" do
+        call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "read_file",
+                                          input: { "path" => File.join(dir, "app.txt"), "offset" => 2, "limit" => 1 })
+
+        expect(Sync { dispatch(call) }.fetch(:result).content).not_to include(hex)
+      end
+
+      it "masks that line in a grep row" do
+        expect(grep(hex[0, 12])).not_to include(hex)
+      end
+    end
+
+    describe "a value of several lines, one of them released" do
+      let(:child_env) do
+        Lain::Exec::ChildEnv.new(env: { "APP_SECRET" => "API_KEY=#{api_key}\nnote: lowentropy-lent-xx\n" })
+      end
+
+      it "shows only the line the released region overlaps" do
+        path = write("app.env", "API_KEY=#{api_key}\nnote: lowentropy-lent-xx\n")
+
+        content = read(path) { approve(queue) }.fetch(:result).content
+
+        expect(content).to include(api_key)
+        expect(content).not_to include("lowentropy-lent-xx")
+      end
+    end
+
+    describe "a value of several lines in a file with CRLF line ends" do
+      let(:child_env) do
+        Lain::Exec::ChildEnv.new(env: { "APP_SECRET" => "first-line-secret-aa\nsecond-line-secret-bb" })
+      end
+
+      it "masks it in a full read" do
+        path = write("crlf.txt", "head\r\nfirst-line-secret-aa\r\nsecond-line-secret-bb\r\ntail\r\n")
+
+        expect(read(path).fetch(:result).content).not_to include("first-line-secret-aa", "second-line-secret-bb")
+      end
+    end
+
+    it "adds no trailer to a search that matched nothing, whose report quotes a known value" do
+      write("deploy.txt", "nothing here\n")
+
+      content = grep(password)
+
+      expect(content).not_to include("rows were masked")
+      expect(content).to include("no matches")
+    end
+
+    describe "a value the project's history holds" do
+      let(:secrets) { Lain::Sensitivity::Secrets::Source.new(child_env: Lain::Exec::ChildEnv.new(env: {}), history:) }
+      let(:history) { Lain::Sensitivity::HistoryLiterals.new(root: dir, policy:) }
+      let(:policy) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: File.join(dir, "home"), cwd: dir,
+                                                                         root: dir),
+                                      root: dir)
+      end
+      let(:key) { "kJ8fQ2mZ4vX7pL0aB3nR6yT9uW1cE5dG8hK2jM4qS7vY0zA3" }
+
+      before { SeedRepo.git(dir, "init", "-q") }
+
+      { "a connection URL" => ->(key) { "DATABASE_URL=postgres://app:#{key}@db.internal:5432/app\n" },
+        "an assignment with a trailing comment" => ->(key) { "API_KEY=#{key} # prod\n" },
+        "a JSON line" => ->(key) { "{\"api_key\": \"#{key}\"}\n" } }.each do |form, body|
+        it "shows #{form} whole once a human releases the region inside it" do
+          path = write(".env", body.call(key))
+
+          content = read(path) { approve(queue) }.fetch(:result).content
+
+          expect(content).to start_with(body.call(key))
+        end
+      end
+
+      describe "beside ordinary config in an untracked .env" do
+        let(:db_password) { "lowentropy-pass-1" }
+
+        before do
+          write(".env", "RAILS_ENV=development\nDB_HOST=localhost\nDB_PASSWORD=#{db_password}\n")
+          FileUtils.mkdir_p(File.join(dir, "config"))
+        end
+
+        it "shows the ordinary values in another file, which stays editable" do
+          path = File.join(dir, "config", "database.yml")
+          File.write(path, "development:\n  host: localhost\n")
+          read(path)
+
+          edited = Lain::Tools::EditFile.new.call({ "path" => path, "old_string" => "localhost", "new_string" => "db" },
+                                                  Lain::Tool::Invocation.new(tool_use_id: "tu_e", context: session))
+
+          expect(read(path, tool_use_id: "tu_2").fetch(:result).content).to start_with("development:\n  host: db\n")
+          expect(edited).not_to be_error
+        end
+
+        it "still masks the secret-named value in another file" do
+          expect(Lain::Sensitivity::Regions.detect("pool_note: #{db_password}\n")).to be_empty
+          path = write("notes.txt", "pool_note: #{db_password}\n")
+
+          expect(read(path).fetch(:result).content).to start_with("pool_note: <redacted:1>\n")
+        end
+      end
+    end
+  end
+
   describe "a result a scan could not finish" do
     subject(:middleware) { described_class.new(ledger:, queue:, journal:, secrets:) }
 

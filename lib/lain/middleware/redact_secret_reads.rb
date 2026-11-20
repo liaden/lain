@@ -28,7 +28,9 @@ module Lain
     # here. A run with no human masks without asking; see {Unqueued}. An
     # unreleased region renders as `<redacted:N>` and a released one as
     # its real bytes, so the model keeps the file's STRUCTURE and partial approval
-    # falls out for free.
+    # falls out for free. A value lain already holds as a secret masks with no
+    # park, and shows only where it overlaps a region the human released in the
+    # same read.
     #
     # == The ordinal in the placeholder is not the region's length
     #
@@ -168,7 +170,8 @@ module Lain
       #   A default is safe here, unlike the two above: the default asks, and scans every file whole.
       # @param secrets [Sensitivity::Secrets::Source] read on every command result for the
       #   launch's secret-named variables and the project's history values, beside the
-      #   calling worker's own
+      #   calling worker's own, and on every file read and search for its narrower
+      #   {Sensitivity::Secrets::Source#for_reads} set
       # @param file_facts [FileFacts::Live, FileFacts::Recorded] what tells a searched directory from a
       #   file, from {Sensitivity::Policy#file_facts}
       # @raise [ArgumentError] on a nil ledger or queue
@@ -193,16 +196,20 @@ module Lain
         # parallel searches can both journal the same mask, the race
         # the ledger accepts for its extra prompt.
         @row_masked = Set.new
+        @known_masked = Set.new
         super()
         freeze
       end
 
-      Withheld = Data.define(:session, :path, :scan, :unreleased)
+      Withheld = Data.define(:session, :path, :scan, :unreleased, :shown)
 
       # What one masking decision needs to carry, so the collaborators it touches
       # do not become five parameters on every method.
       class Withheld
-        def found = scan.regions.length
+        # A known value inside a masked region shares its placeholder, so slots are counted, not finds.
+        def found = released + scan.placeholders(unreleased, shown)
+
+        def masks? = unreleased.any? || scan.known?
 
         # Counts, never bytes -- what {Telemetry::SourceMasked} carries.
         #
@@ -218,7 +225,7 @@ module Lain
         # writing that here puts a false entry inside the very count
         # {Telemetry::Carriers::SourceMasked}'s `released <= regions` validator
         # exists to keep honest.
-        def released = found - unreleased.length
+        def released = scan.regions.length - unreleased.length
       end
 
       # A command's scan rides the env down, so the whole spill {WithholdAutomaticOutput} scans and the head
@@ -264,7 +271,7 @@ module Lain
       # statement about what else the file holds.
       def adjudicate(carried, effect, result)
         path = read_path(carried, effect)
-        scan = Scan.new(result.content, checksums: lockfile(carried).call(path))
+        scan = Scan.new(result.content, checksums: lockfile(carried).call(path), known: read_known(carried))
         # Refused BEFORE the ledger is touched. `outstanding` RECONCILES -- it
         # drops the releases for regions the file no longer holds -- so asking it
         # about a view we are about to refuse would forget releases for regions
@@ -272,8 +279,10 @@ module Lain
         return unreadable(carried, effect) unless scan.readable?
 
         withheld = withheld_in(carried, path, scan)
-        return carried unless withheld.unreleased.any?
-        return mask(carried, effect, withheld, remembered(withheld)) if remembered(withheld)
+        return carried unless withheld.masks?
+
+        why = remembered(withheld)
+        return mask(carried, effect, withheld, why) if why
 
         settle(carried, effect, withheld)
       end
@@ -349,9 +358,9 @@ module Lain
         end
       end
 
-      def text_mask(carried)
-        ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)))
-      end
+      def text_mask(carried) = ::Lain::Sensitivity::TextMask.new(secrets: @secrets.for(carried.fetch(:context)))
+
+      def read_known(carried) = @secrets.for_reads(carried.fetch(:context))
 
       # Every `bash` call passes here, so nothing is stat'd until a release could be shown.
       def named_files(carried, effect)
@@ -386,7 +395,7 @@ module Lain
       # the ledger has by construction seen every byte, which is what makes the
       # reconcile inside `outstanding` sound.
       def withheld_in(carried, path, scan)
-        Withheld.new(session: session_of(carried), path:, scan:,
+        Withheld.new(session: session_of(carried), path:, scan:, shown: [],
                      unreleased: @ledger.outstanding(path, scan.regions, complete: true))
       end
 
@@ -422,6 +431,7 @@ module Lain
 
       # Why a read is masked without asking, or nil when it must ask.
       def remembered(withheld)
+        return :known if withheld.unreleased.empty?
         return :related if @related.related?(withheld.path)
         return :unattended if @queue.equal?(Unqueued)
 
@@ -478,7 +488,10 @@ module Lain
                                       regions: withheld.unreleased.length, requester: settled.requester,
                                       surface: settled.surface)
         end
-        carried
+        known = withheld.with(unreleased: [], shown: withheld.unreleased)
+        return carried if known.scan.placeholders([], known.shown).zero?
+
+        mask(carried, effect, known, :known)
       end
 
       # Journaled on a STATE TRANSITION, not on a call -- {Session#record_read}'s
@@ -489,13 +502,23 @@ module Lain
       # ruled on", which IS the transition, so the check goes BEFORE it is added to.
       def mask(carried, effect, withheld, why)
         withheld.session.record_withheld(Session::Withheld::Source.file(withheld.path))
-        unless declined?(withheld)
+        if transition?(withheld)
           record(Telemetry::SourceMasked) { redaction(effect, withheld) }
           record_over_masked(effect, withheld.unreleased)
         end
         @ledger.decline(withheld.path, withheld.unreleased) unless why == :postponed
-        masked = withheld.scan.mask(withheld.unreleased)
-        carried.merge(result: Tool::Result.ok(Trailer.append(masked, withheld.unreleased.length, why)))
+        carried.merge(result: masked_read(withheld, why))
+      end
+
+      def masked_read(withheld, why)
+        scan = withheld.scan
+        held = [withheld.unreleased, withheld.shown]
+        Tool::Result.ok(Trailer.append(scan.mask(*held), scan.placeholders(*held), why))
+      end
+
+      # A known value is never ruled on, so the ledger cannot say whether its mask is news.
+      def transition?(withheld)
+        withheld.unreleased.empty? ? @known_masked.add?(withheld.path) : !declined?(withheld)
       end
 
       # `complete: false`, because a row is a partial view: a complete reconcile
@@ -504,16 +527,33 @@ module Lain
         rows = rows_in(carried, effect, result.content)
         found = rows.regions
         unreleased = found.to_h { |path, regions| [path, @ledger.outstanding(path, regions, complete: false)] }
-        return carried if unreleased.values.all?(&:empty?)
+        known = rows.known_rows
+        return carried if unreleased.values.all?(&:empty?) && known.empty?
 
+        masked = rows.mask(unreleased)
         record_row_masks(effect, found, unreleased)
-        carried.merge(result: Tool::Result.ok(rows.mask(unreleased)))
+        record_known_rows(effect, found, masked.slots.select { |path, _| unreleased.fetch(path, []).empty? })
+        carried.merge(result: Tool::Result.ok(masked.text))
+      end
+
+      # A file whose rows only a known value masks: its found regions were all released, so it
+      # counts as many regions as those plus the placeholders its rows hold, as {Withheld#found}
+      # does. Keyed apart from the digests, once per file, as {#record_row_masks} is.
+      def record_known_rows(effect, found, slots)
+        slots.reject { |path, _| @row_masked.include?([path, :known]) }.each do |path, count|
+          shown = found.fetch(path, []).length
+          record(Telemetry::SearchRedacted) do
+            Telemetry::SearchRedacted.new(tool_use_id: effect.tool_use_id, path:, regions: shown + count,
+                                          released: shown)
+          end
+          @row_masked << [path, :known]
+        end
       end
 
       def rows_in(carried, effect, content)
         cwd = session_of(carried).worker_env.cwd
         Rows.new(content, base: Session.normalize_path(effect.input[PATH_INPUT], cwd:), cwd:, facts: @file_facts,
-                          lockfile: lockfile(carried))
+                          lockfile: lockfile(carried), known: read_known(carried))
       end
 
       # {#mask}'s state-transition rule, over a set of its own so that nothing
@@ -599,10 +639,13 @@ module Lain
 
         # @param content [String, Array] a tool result's content
         # @param checksums [Boolean] as on {Sensitivity::Regions.detect}
-        def initialize(content, checksums: false)
+        # @param known [Array<String>] values masked wherever they recur, except where one
+        #   overlaps a region shown by {#mask}
+        def initialize(content, checksums: false, known: [])
           @content = content
           @pieces = content.is_a?(String) ? [Piece.new(text: content, key: nil)] : content.map { piece_of(_1) }
           @detected = @pieces.map { |piece| piece && ::Lain::Sensitivity::Regions.detect(piece.text, checksums:) }
+          @known = @pieces.map { |piece| piece ? ::Lain::Sensitivity::Regions.recurrences(piece.text, known) : [] }
           freeze
         end
 
@@ -621,20 +664,57 @@ module Lain
         #   reading order
         def regions = @detected.compact.flatten
 
+        # Whether a known value recurs anywhere, so the content masks with nothing unreleased.
+        def known? = @known.any?(&:any?)
+
         # @param unreleased [Array<#digest>] the regions to withhold
+        # @param shown [Array<#digest>] the regions a human released in this read, inside which a known value shows
         # @return [String, Array] content shaped exactly as it arrived
-        def mask(unreleased)
-          withheld = unreleased.to_set(&:digest)
+        def mask(unreleased, shown = [])
           # An Enumerator rather than a counter variable, so the ordinals stay
           # consecutive ACROSS pieces without a mutable local threaded through
           # two methods.
           ordinals = (1..).each
-          rebuild(@pieces.zip(@detected).map do |piece, found|
-            piece && redact(piece.text, found.select { withheld.include?(_1.digest) }, ordinals)
+          rebuild(@pieces.zip(spans(unreleased, shown)).map do |piece, held|
+            piece && redact(piece.text, held, ordinals)
           end)
         end
 
+        # @param unreleased [Array<#digest>] the regions to withhold
+        # @param shown [Array<#digest>] as on {#mask}
+        # @return [Integer] how many placeholders {#mask} renders for them
+        def placeholders(unreleased, shown = []) = spans(unreleased, shown).compact.sum { _1.list.length }
+
         private
+
+        # The human was shown that region disclosed and chose to send it, so a
+        # known value overlapping it goes too: a single-line value whole, since a
+        # history literal is the whole assigned value and wider than the region,
+        # and a multi-line one only on the lines the region overlaps. Anywhere
+        # else it did not.
+        def spans(unreleased, shown)
+          withheld = unreleased.to_set(&:digest)
+          released = shown.to_set(&:digest)
+          @pieces.zip(@detected, @known).map do |piece, found, known|
+            found && ::Lain::Sensitivity::Spans.of(found.select { withheld.include?(_1.digest) } +
+                                                   unshown(piece.text, known,
+                                                           found.select { released.include?(_1.digest) }))
+          end
+        end
+
+        # A multi-line value is judged a line at a time, so a release of 1 line's region shows no other line.
+        def unshown(text, known, released)
+          return known if released.empty?
+
+          known.flat_map { by_line(text, _1) }
+               .reject { |span| released.any? { _1.start < span.finish && span.start < _1.start + _1.length } }
+        end
+
+        def by_line(text, span)
+          lines = text.b.byteslice(span.start, span.length).split(/(?<=\n)/)
+          starts = lines.inject([span.start]) { |at, line| [*at, at.last + line.bytesize] }
+          lines.zip(starts).map { |line, start| ::Lain::Sensitivity::Spans::Span.new(start:, length: line.bytesize) }
+        end
 
         # Every spelling of "this block is text", and nil for anything else. A
         # bare String element and a Symbol `:text` key are both text and were both
@@ -688,6 +768,7 @@ module Lain
           timed_out: "the release timed out; the release waits for a human, and a human may still release it. #{ASK}",
           postponed: "the human postponed the release; the release waits for a human. #{ASK}",
           related: "the file lies under a related directory, so its regions are never released.",
+          known: "it holds a value lain keeps as a secret, which no release shows.",
           unattended: "no human is attached to this run to release it."
         }.freeze
 
@@ -717,8 +798,8 @@ module Lain
       # resolved against the root or the worker's cwd: the key `read_file` uses.
       class Rows
         TRAILER = "%<count>d %<noun>s masked%<prior>s: read_file on a file may ask for the release of its regions. " \
-                  "A multi-line secret, such as a PEM body, cannot be detected one line at a time " \
-                  "and is not masked here."
+                  "A multi-line secret lain does not already hold, such as a PEM body, cannot be detected " \
+                  "one line at a time and is not masked here."
 
         Row = Data.define(:prefix, :text, :path, :regions)
         NO_LOCKFILE = ->(_path) { false }
@@ -731,21 +812,27 @@ module Lain
         # would spell it back out.
         class Row
           # @return [Array(String, Integer)] the row as sent, and how many placeholders it holds
-          def masked(unreleased, ordinals)
-            spans = spans(unreleased)
+          def masked(unreleased, ordinals, seek)
+            spans = spans(unreleased, seek)
             [prefix + ::Lain::Sensitivity::Masking.render(text, spans, ordinals:), spans.count]
           end
 
+          # @param seek [#call] `(text, values) -> values` the row holds a spelling of
+          # @return [Boolean] whether a known value recurs in the row
+          def known?(seek) = recurring(seek, []).any?
+
           private
 
-          def spans(unreleased)
+          def spans(unreleased, seek)
             withheld = unreleased.to_set(&:digest)
             found = regions.select { withheld.include?(_1.digest) }
-            ::Lain::Sensitivity::Spans.of(found + recurrences(unreleased))
+            ::Lain::Sensitivity::Spans.of(found + recurring(seek, unreleased.map(&:bytes)))
           end
 
-          def recurrences(unreleased)
-            ::Lain::Sensitivity::Regions.recurrences(text, unreleased.map(&:bytes))
+          # Only a row that holds a spelling of some value pays for the placeholder scan.
+          def recurring(seek, own)
+            values = seek.call(text, own)
+            values.empty? ? [] : ::Lain::Sensitivity::Regions.recurrences(text, values)
           end
         end
 
@@ -755,7 +842,7 @@ module Lain
         class Line
           def path = nil
 
-          def masked(_unreleased, _ordinals) = [text, 0]
+          def masked(_unreleased, _ordinals, _seek) = [text, 0]
         end
 
         # @param content [String] the tool's rows, newline-joined
@@ -763,8 +850,11 @@ module Lain
         # @param cwd [String] the worker's cwd, against which a file target's label resolves
         # @param facts [FileFacts::Live, FileFacts::Recorded] what says whether a path is a directory or a file
         # @param lockfile [#call] whether a row's file is a lockfile, scanned as `read_file` scans it
-        def initialize(content, base:, cwd:, facts: FileFacts::LIVE, lockfile: NO_LOCKFILE)
+        # @param known [Array<String>] values masked wherever they recur; a row is never released
+        def initialize(content, base:, cwd:, facts: FileFacts::LIVE, lockfile: NO_LOCKFILE, known: [])
           @facts = facts
+          @known = known
+          @known_seek = seeker([])
           @directory = facts.directory?(base)
           @anchor = @directory ? base : cwd
           @base = base
@@ -778,18 +868,40 @@ module Lain
         # @return [Hash{String => Array<Sensitivity::Regions::Region>}] every region per file, in row order
         def regions = matches.group_by(&:path).transform_values { |rows| rows.flat_map(&:regions) }
 
+        # @return [Hash{String => Integer}] per file, how many rows a known value recurs in
+        def known_rows = matches.select { _1.known?(@known_seek) }.map(&:path).tally
+
+        Masked = Data.define(:text, :slots)
+
         # @param unreleased [Hash{String => Array<#digest>}] the regions to withhold, per file
-        # @return [String] the rows with those regions masked, and the trailer saying so
+        # @return [Masked] the rows with those regions masked and the trailer saying so, and per
+        #   file how many placeholders its rows hold
         def mask(unreleased)
           ordinals = ::Lain::Sensitivity::Regions.numbering_after(@text)
-          rendered = @rows.map { _1.masked(unreleased.fetch(_1.path, []), ordinals) }
-          masked = rendered.count { |(_, placeholders)| placeholders.positive? }
-          [*rendered.map(&:first), trailer(masked)].join("\n")
+          held = unreleased.values.flatten.map(&:bytes)
+          seek = held.empty? ? @known_seek : seeker(held)
+          rendered = @rows.map { [_1.path, *_1.masked(unreleased.fetch(_1.path, []), ordinals, seek)] }
+          masked = rendered.count { |(_, _, placeholders)| placeholders.positive? }
+          Masked.new(text: [*rendered.map { _1[1] }, trailer(masked)].join("\n"), slots: slots_of(rendered))
         end
 
         private
 
         def matches = @rows.grep(Row)
+
+        def slots_of(rendered)
+          rendered.select { |path, _, count| path && count.positive? }
+                  .each_with_object(Hash.new(0)) { |(path, _, count), slots| slots[path] += count }
+        end
+
+        # The values' spellings are built once, so a row holding none skips the per-row search.
+        def seeker(bytes)
+          union = ::Lain::Sensitivity::TextMask::Union.new((bytes + @known).uniq)
+          lambda do |text, own|
+            present = union.in(text)
+            (own + @known).select { present.include?(_1) }
+          end
+        end
 
         def trailer(masked)
           prior = ::Lain::Sensitivity::Regions.placeholders(@text)
