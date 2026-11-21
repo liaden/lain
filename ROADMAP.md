@@ -2298,6 +2298,15 @@ XDG path relative, which put machine state back inside the user's repository)
     contained; a human `secrets` answer unmasks 1 contained run, scanning what it wrote; a headless run takes the requester's provider; only a new build replaces the
     daemon, and a project can add its own review poll.
 
+77. **Planned (2026-11-21, panel-reviewed)**: `planning/specs/attempt3-sweep-fixes.md`, 45 cards in 8 streams from
+    `planning/nyotes-attempt3-sweep-research-2026-11.md`, 1 owner per layer the attempt 3 trial hit: identity aliased in
+    everything sent off the machine and a truthful sandbox record; 1 tier line per bash result, linters and pinned mise
+    installs inside the sandbox, a lineage-scoped tripwire; the child checkout contract, package caches and approved
+    references lent through masked listings; an operand-role table, compound statements read, 1 git read table, input
+    validated before the ladder, opaque calls to the judge behind a resolving bar and a replay-gated arm; a keyword-gated
+    scanner with remembered per-file releases; quota pauses that keep the conversation and a retained tree handed on;
+    gates that test what the issue says, record what a reviewer read and check allowed paths; held lines that die with
+    their prompt.
 ## Map of the documents
 
 - **Architecture & why:** `docs/devs/architecture.md`, and this document's own `## Status`/`## Milestones`
