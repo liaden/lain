@@ -2092,7 +2092,7 @@ RSpec.describe Lain::Tools::Subagent do
         expect(system.size).to eq(2)
         expect(system.first["text"]).to eq(slots.render_child)
         expect(system.first["cache"]).to be(true)
-        expect(system.last["text"]).to start_with(slots.render_role(:researcher)).and include("Working directory: /")
+        expect(system.last["text"]).to start_with(slots.render_role(:researcher)).and include("Working directory: ")
       end
     end
   end

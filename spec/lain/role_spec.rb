@@ -219,6 +219,18 @@ RSpec.describe Lain::Role do
       end
     end
 
+    it "names a working directory under the home from ~" do
+      Dir.mktmpdir do |root|
+        slots = Lain::Prompt::Slots.load(root:, environment: Lain::Prompt::Environment.fixed)
+        worker_env = Lain::WorkerEnv.new(cwd: "/home/ada/w/issue-1", env: { "HOME" => "/home/ada/" })
+        tail = sre.child_context(Lain::Context.new(model: "probe", max_tokens: 64), slots:, worker_env:)
+                  .system.last["text"]
+
+        expect(tail).to end_with("Working directory: ~/w/issue-1")
+        expect(tail).not_to include("/home/ada")
+      end
+    end
+
     # A process under LANG=C reads a directory's name as bytes, and the role
     # text it joins is UTF-8.
     it "names a non-ASCII working directory read as bytes" do

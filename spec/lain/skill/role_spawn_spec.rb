@@ -635,7 +635,8 @@ RSpec.describe Lain::Skill::RoleSpawn do
 
         expect(base_seen).to be_empty
         expect(dir).to start_with(File.join(File.realpath(root), "research-"))
-        expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{dir}")
+        shown = Lain::Prompt::Environment.tilde(dir, Dir.home)
+        expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{shown}")
       end
     end
 

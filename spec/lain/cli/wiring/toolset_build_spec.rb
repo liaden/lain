@@ -1196,7 +1196,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
           tail = provider.requests.first.system.last["text"]
           expect(tail).to start_with(library.slots.render_role(:researcher).chomp)
-          expect(tail).to end_with("Working directory: #{made.first}")
+          expect(tail).to end_with("Working directory: #{Lain::Prompt::Environment.tilde(made.first, Dir.home)}")
         end
       end
     end
@@ -1976,9 +1976,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       issue_epic.run("run the plan")
 
       expect(provider.requests[0].system.last["text"]).to start_with(library.slots.render_role(:issue_orchestrator))
-        .and end_with("Working directory: #{Dir.pwd}")
+        .and end_with("Working directory: #{Lain::Prompt::Environment.tilde(Dir.pwd, Dir.home)}")
       expect(provider.requests[1].system.last["text"]).to start_with(library.slots.render_role(:dev))
-        .and end_with("Working directory: #{Dir.pwd}")
+        .and end_with("Working directory: #{Lain::Prompt::Environment.tilde(Dir.pwd, Dir.home)}")
     end
 
     context "when the orchestrator hands a review to a child", :seam do

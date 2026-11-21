@@ -285,7 +285,7 @@ RSpec.describe Lain::Prompt::Slots do
     # Recorded from `Slots.load(root: <empty dir>).digests` / `#render_role`
     # against shipped templates only (no project overrides), before the fix.
     # The escalation bar: if fixing the binding moves any of these, stop.
-    let(:shipped_system_digest) { "blake3:9a2396088779e94eee1c9dda0d91f1de70090726661096479e96a757ed2a5569" }
+    let(:shipped_system_digest) { "blake3:52885bf066932f00da6302f523aaefd5717e51e98abc8b5f9d8340c8ec3dc1e4" }
     let(:shipped_role_digests) do
       {
         "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",

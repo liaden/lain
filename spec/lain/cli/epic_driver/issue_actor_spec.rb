@@ -271,7 +271,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
     expect(first_prompt(orchestrator)).to include("an order totals its lines", "an order can be refunded",
                                                   target, "epic/demo")
     expect(orchestrator.system.last["text"]).to start_with(backend.library.slots.render_role(:issue_orchestrator))
-      .and end_with("Working directory: #{checkout}")
+      .and end_with("Working directory: #{Lain::Prompt::Environment.tilde(checkout, Dir.home)}")
   end
 
   context "with a red step that records what it was asked" do

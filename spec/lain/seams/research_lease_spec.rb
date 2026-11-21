@@ -95,7 +95,8 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
 
       expect(result.content).to eq("found it")
       expect(dirs.size).to eq(1)
-      expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{dirs.first}")
+      shown = Lain::Prompt::Environment.tilde(dirs.first, Dir.home)
+      expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{shown}")
       expect(File.directory?(dirs.first)).to be(true)
       expect(Dir.children(dirs.first)).to be_empty
     end
@@ -175,7 +176,8 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
       expect(worktrees.size).to eq(1)
       expect(plan_branches).to contain_exactly(start_with("lain/plan/"))
       expect(first_request(provider)).to include(worktrees.first, plan_branches.first, "The project is at #{@repo}")
-      expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{worktrees.first}")
+      shown = Lain::Prompt::Environment.tilde(worktrees.first, Dir.home)
+      expect(provider.requests.first.system.last["text"]).to end_with("Working directory: #{shown}")
       expect(provider.requests.last.messages.to_s).to include("OTHER.md")
       expect(File.read(File.join(worktrees.first, "OTHER.md"))).to eq("the other repository\n")
     end

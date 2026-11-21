@@ -878,15 +878,17 @@ RSpec.describe Lain::CLI::ChatLaunch do
                          project_factory: -> { project }).backend
         system = backend.context.system
 
-        expect(system).to include(root, cwd, "/srv/related-app", Dir.home, Time.now.strftime("%F"),
-                                  ENV.fetch("USER"), ENV.fetch("SHELL"), "(a git repository)",
+        shown = ->(path) { path.sub(%r{\A#{Regexp.escape(Dir.home)}(?=/|\z)}, "~") }
+        expect(system).to include(shown.call(root), shown.call(cwd), "/srv/related-app", Time.now.strftime("%F"),
+                                  ENV.fetch("SHELL"), "(a git repository)",
                                   Lain::Prompt::Environment.os_name("/etc/os-release"))
+        expect(system).not_to include(Dir.home, ENV.fetch("USER"), "User:", "Home directory:")
         expect(backend.context.system).to eq(system)
-        expect(system).to include("Working directory: #{cwd}")
+        expect(system).to include("Working directory: #{shown.call(cwd)}")
 
         bulk, tail = researcher_system(backend, "/state/leases/r1")
-        expect(bulk).to include(root, "/srv/related-app", Dir.home, "(a git repository)")
-        expect(bulk).not_to include("Working directory: #{cwd}")
+        expect(bulk).to include(shown.call(root), "/srv/related-app", "(a git repository)")
+        expect(bulk).not_to include(Dir.home, "Working directory: #{shown.call(cwd)}")
         expect(tail).to end_with("Working directory: /state/leases/r1")
       end
     end

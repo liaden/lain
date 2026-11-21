@@ -72,13 +72,15 @@ module Lain
     # siblings in different places still share the bulk. Without one the render
     # is the plain prelude, for callers that are not a chat's children.
     def child_context(context, slots:, worker_env: nil)
-      bulk, tail = worker_env ? placed_segments(slots, worker_env.cwd) : prelude_segments(slots:)
+      bulk, tail = worker_env ? placed_segments(slots, worker_env) : prelude_segments(slots:)
       context.with_system([{ "type" => "text", "text" => bulk, "cache" => true }, { "type" => "text", "text" => tail }])
     end
 
     private
 
-    def placed_segments(slots, cwd)
+    def placed_segments(slots, worker_env)
+      home = worker_env.env.fetch("HOME") { Dir.home }
+      cwd = Prompt::Environment.tilde(worker_env.cwd, home)
       [slots.render_child("system", sealed:), placed_tail(slots.render_role(name), cwd)]
     end
 
