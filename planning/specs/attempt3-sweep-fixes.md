@@ -1,6 +1,7 @@
 # nyotes attempt 3 fixes: 8 layers, 1 owner each
 
-status: draft
+status: in-progress
+base: af86076ffbfa7efb7f06cc63c4157546c8949ee3
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -1543,3 +1544,18 @@ After the last card lands:
   6. a `/stop` leaves no held line behind.
 
 ## Execution log
+
+- Run started 2026-11-21. Base main at af86076f (the plan commit over the Grounding base c9e4b35b; no lib, spec, crates or ext change between them, so Grounding holds).
+- Start state: worktree nyotes/implement-readiness at ~/w/ir left alone. Snapshots in the session scratchpad (start-status.txt, start-worktrees.txt, start-branches.txt, start-submodules.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: `git add .gitmodules && git update-index --add --cacheinfo 160000,b48d660ae3c1f6037094d6cfc6b5d9f5938a7957,references/repos/cliffcompaction --cacheinfo 160000,36be9c612e64082a4f0d4d0a94706c38ecbc20a1,references/repos/pi` (both paths sit under the ignored references/repos/).
+- Hook (config unchanged since round 30): pre-commit hygiene hooks, gitleaks, lychee and vale (docs), shellcheck, cargo fmt/clippy/test (rust files), cargo deny (Cargo/deny files), `bundle exec rake compile daemon:build check` (rubocop whole repo + pspec, about 121s), daemon-tier (`rspec --tag core --tag daemon`, for crates/lain-(rpc|daemon|wire) and lib/lain/daemon paths and remote_surface.rb), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg), bin/lint-price-freshness. Example count: the hook log's first pass or tmp/parallel_runtime_rspec.log.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <ruby paths>; gitleaks on new spec fixtures; Rust (T20 only): cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test, with its own CARGO_TARGET_DIR.
+- Ratchet specs: bundle exec rspec spec/*_spec.rb (top-level scanners), plus spec/lain/rust/binding_coverage_spec.rb, spec/lain/telemetry/round_trip_spec.rb, spec/lain/review/journal_discriminators_spec.rb, spec/lain/sensitivity_spec.rb, spec/lain/comment_census_spec.rb, spec/lain/zeitwerk_census_spec.rb, spec/lain/cli_spec.rb, spec/lain/project/root_defaults_spec.rb, spec/lain/cli/pane_command_spec.rb.
+- Build outputs a worktree needs: lib/lain/lain.so (Nov 20 14:40, after the last ext change), target/release/lain-fence, target/release/lain-daemon, tmp/parallel_runtime_rspec.log.
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo (test|build|clippy)|rake (pspec|check|compile|daemon)|tmp/probes/'. Never pipe a locked run into grep: wait-quiet counts it.
+- Landings run with the terminal identity unset (KITTY_*, TERM_PROGRAM) and LAIN_SPEC_WORKERS=10.
+- Worktree prefix: tmp/worktrees/a3s-T<id>, branch card/a3s-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/a3s-T<id>.
+- Memory 15 GB (8 available at start), load 1.1 on 16 cores: at most 5 agents at once, landing counted as 1.
+- No path needs user approval. T45's live replay asks before more than 200 model calls.
+
+### Run log
