@@ -1,10 +1,11 @@
 # frozen_string_literal: true
 
 require "active_support/core_ext/string/inflections"
+require "concurrent/map"
 
 module Lain
   module Approval
-    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned)
+    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned, :identifying)
 
     # What a bash call would reach before it runs: how many sensitive regions
     # each file it reads holds, where it would send, whether lain could name
@@ -26,13 +27,18 @@ module Lain
     # @!attribute [r] unscanned
     #   @return [Array<String>] each read lain did not scan whole, named as in holdings: a glob, a
     #     directory or search root, a file past the cap, or one it could not open as a regular file
+    # @!attribute [r] identifying
+    #   @return [Boolean] whether a stage that sends names one of the account's identity values in its words
     class Disclosure
       HOLDS = "%<path>s holds %<count>s sensitive %<noun>s"
       SENDS = "it names %<sinks>s as %<noun>s"
       UNNAMEABLE = "lain cannot name the files it touches"
       UNSCANNED = "reads files lain did not scan whole: %<paths>s"
+      IDENTIFYING = "it sends the account identity in an outgoing request"
       HERE = "."
       RECURSIVE = "/**"
+      # Read once per process, since asking git for the author is a spawn and a bash call builds a disclosure.
+      SESSION = Concurrent::Map.new
 
       # Counts the sensitive regions in one file's leading bytes, the lockfile
       # rule applied by the file's name as the classifier reads it.
@@ -125,10 +131,60 @@ module Lain
         NC_VALUED = %w[-p -s -w -i -q -x -X -e -c -I -O -T -V -g -G -P -W].freeze
         SSH_VALUED = %w[-p -i -l -o -F -J -L -R -D -b -c -E -e -I -m -O -Q -S -W -w -B].freeze
         GIT_VALUED = %w[-C -c --git-dir --work-tree --namespace].freeze
+        SSH_FILES = %w[-i -F -E -S].freeze
+        # Each sender's options whose value is a file on this box, so what they name is never sent.
+        FILE_VALUED = {
+          "curl" => %w[-o --output -T --upload-file -K --config],
+          "wget" => %w[-O --output-document -P --directory-prefix -o --output-file -i --input-file],
+          "git" => %w[-C --git-dir --work-tree], "ssh" => SSH_FILES, "sftp" => SSH_FILES, "scp" => SSH_FILES
+        }.freeze
+        COPY_VALUED = { "scp" => SSH_VALUED, "rsync" => %w[-e] }.freeze
+        CURL_BODIES = %w[-d --data --data-binary --data-urlencode -F --form].freeze
+        # Only these read a `name=@file` or `name=<file` from a file; to `-d` it is literal data.
+        CURL_FIELDS = %w[-F --form --data-urlencode].freeze
+        FIELD_FROM_FILE = /\A[^=]*=[@<]/
 
         # @param stages [Array<Shell::Parse::Stage>]
         # @return [Array<String>] each destination once, in the order named
         def self.of(stages) = stages.flat_map { from(_1) }.uniq
+
+        # Only a known file option's value or a copy's local source is skipped, since the home path such a
+        # file sits under never leaves the box; an option lain does not know may send its value.
+        #
+        # @param stages [Array<Shell::Parse::Stage>]
+        # @param identity [#alias] the values that name the account
+        # @return [Boolean] whether a stage that sends names one of those values in a word it sends
+        def self.identifying?(stages, identity)
+          stages.any? { |stage| from(stage).any? && sent_words(stage).any? { identity.alias(_1) != _1 } }
+        end
+
+        def self.sent_words(stage)
+          words = stage.argv.map { unquoted(_1) }.drop_while { _1.match?(ASSIGNMENT) }
+          program = program(words.first)
+          args = words.drop(1)
+          args.reject.with_index { |word, at| local?(program, word, at.positive? ? args[at - 1] : nil) }
+        end
+
+        def self.local?(program, word, flag)
+          file_option?(program, word, flag) || (program == "curl" && body_file?(word, flag)) ||
+            copied?(program, word, flag)
+        end
+
+        def self.file_option?(program, word, flag)
+          options = FILE_VALUED.fetch(program, [])
+          options.include?(flag) || options.any? { _1.start_with?("--") && word.start_with?("#{_1}=") }
+        end
+
+        def self.body_file?(word, flag)
+          word.start_with?("-d@") || (CURL_BODIES.include?(flag) && word.start_with?("@")) ||
+            (CURL_FIELDS.include?(flag) && word.match?(FIELD_FROM_FILE))
+        end
+
+        # A URL's scheme reads as a remote's host, so one test keeps both sent.
+        def self.copied?(program, word, flag)
+          valued = COPY_VALUED.fetch(program, nil)
+          !valued.nil? && !word.start_with?("-") && !valued.include?(flag) && !word.match?(REMOTE)
+        end
 
         def self.from(stage)
           words = stage.argv.map { unquoted(_1) }.drop_while { _1.match?(ASSIGNMENT) }
@@ -164,7 +220,8 @@ module Lain
         end
 
         def self.unquoted(word) = word.delete(%q('"))
-        private_class_method :from, :program, :sent, :remote, :operands, :unquoted
+        private_class_method :from, :sent_words, :local?, :file_option?, :body_file?, :copied?, :program, :sent,
+                             :remote, :operands, :unquoted
       end
 
       # The scan of a session whose files cannot be read: nothing is a file it can count.
@@ -178,14 +235,18 @@ module Lain
       # @param stages [Array<Shell::Parse::Stage>] the call's stages, as parsed
       # @param cwd [String] absolute; the session's directory, a file below it named from there
       # @param scan [#call] `path -> Scanner::Count or nil`, nil for a path that names nothing
+      # @param identity [#alias] the values that name the account; the caller's own copy when it holds one
       # @return [Disclosure]
-      def self.of(named, stages, cwd:, scan:)
+      def self.of(named, stages, cwd:, scan:, identity: session_identity)
         read = named.paths.reject { _1.written || _1.guess || _1.directory }
         files, bulk = read.partition { _1.pattern.nil? }
         counts = files.map(&:resolved).uniq.filter_map { |path| scan.call(path)&.then { [path, _1] } }
         new(holdings: held(counts, cwd), sinks: Sinks.of(stages), unnameable: named.opaque?,
-            unscanned: unscanned(bulk, counts, cwd))
+            unscanned: unscanned(bulk, counts, cwd), identifying: Sinks.identifying?(stages, identity))
       end
+
+      # @return [Sensitivity::Secrets::Identity]
+      def self.session_identity = SESSION.compute_if_absent(:identity) { Sensitivity::Secrets::Identity.current }
 
       # @param context [Object, nil]
       # @return [Disclosure] the context's, or {NONE}
@@ -212,10 +273,10 @@ module Lain
       end
       private_class_method :held, :unscanned, :root, :shown
 
-      def initialize(holdings:, sinks:, unnameable:, unscanned: [])
+      def initialize(holdings:, sinks:, unnameable:, unscanned: [], identifying: false)
         super(holdings: Ractor.make_shareable(holdings.to_h { |path, count| [-path.to_s, Integer(count)] }),
               sinks: Ractor.make_shareable(sinks.map { -_1.to_s }.uniq), unnameable: unnameable == true,
-              unscanned: Ractor.make_shareable(unscanned.map { -_1.to_s }.uniq))
+              unscanned: Ractor.make_shareable(unscanned.map { -_1.to_s }.uniq), identifying: identifying == true)
       end
 
       NONE = new(holdings: {}, sinks: [], unnameable: false)
@@ -227,10 +288,14 @@ module Lain
       #   a read lain could not name or scan whole is most of a build or a commit
       def holds_secrets? = holdings.values.any?(&:positive?)
 
+      # @return [Boolean] whether a stage that sends names one of the account's identity values
+      def identifying? = identifying
+
       # @return [Array<Parked::Queue::Reason>] lain's own words, each path and host inspected
       def notes
         [*holdings.select { _2.positive? }.map { |path, count| Parked::Queue::Reason.own(held_note(path, count)) },
          *(Parked::Queue::Reason.own(sent_note) unless sinks.empty?),
+         *(Parked::Queue::Reason.own(IDENTIFYING) if identifying),
          *(Parked::Queue::Reason.own(UNNAMEABLE) if unnameable),
          *(Parked::Queue::Reason.own(format(UNSCANNED, paths: unscanned.map(&:inspect).join(", "))) if unscanned.any?)]
       end

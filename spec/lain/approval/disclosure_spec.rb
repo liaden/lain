@@ -9,6 +9,10 @@ RSpec.describe Lain::Approval::Disclosure do
   let(:token) { "ghp_#{SecureRandom.alphanumeric(36)}" }
   let(:scan) { described_class::Scanner.new(Lain::Sensitivity.new(home: File.join(@dir, "home"), cwd: @dir)) }
 
+  let(:alice) do
+    Lain::Sensitivity::Secrets::Identity.new(pairs: [["/home/alice", "/home/<user>"], %w[alice <user>]])
+  end
+
   around do |example|
     Dir.mktmpdir("lain-disclosure") do |dir|
       @dir = File.realpath(dir)
@@ -18,10 +22,10 @@ RSpec.describe Lain::Approval::Disclosure do
 
   def write(name, text) = File.binwrite(File.join(@dir, name), text)
 
-  def disclosed(command, cwd: @dir)
+  def disclosed(command, cwd: @dir, identity: alice)
     parsed = Lain::Shell::Parse.new.call(command)
     named = Lain::Shell::Named.from(parsed, cwd:, home: File.join(@dir, "home"))
-    described_class.of(named, parsed.stages, cwd:, scan:)
+    described_class.of(named, parsed.stages, cwd:, scan:, identity:)
   end
 
   def said(disclosure) = disclosure.notes.map(&:to_s)
@@ -279,6 +283,86 @@ RSpec.describe Lain::Approval::Disclosure do
     it "lists several destinations in one note" do
       expect(said(disclosed("curl https://a.test https://b.test")))
         .to eq(['it names "a.test", "b.test" as network destinations'])
+    end
+  end
+
+  describe "the account identity in an outgoing request" do
+    let(:crate) { "https://crates.io/api/v1/crates/x" }
+
+    it "names the sink and says the request carries the identity, never the value" do
+      disclosure = disclosed("curl -A 'probe (alice@local)' #{crate}")
+
+      expect([disclosure.sinks, said(disclosure)])
+        .to eq([["crates.io"], ['it names "crates.io" as a network destination',
+                                "it sends the account identity in an outgoing request"]])
+      expect(said(disclosure).join).not_to include("alice")
+    end
+
+    it "notes a header or a long user agent option alike" do
+      ["curl -H 'From: alice' #{crate}", "curl --user-agent=alice #{crate}", "wget -U alice #{crate}"].each do |command|
+        expect(disclosed(command)).to be_identifying, command
+      end
+    end
+
+    it "reads a value the shell's quoting splits" do
+      expect(disclosed(%(curl -A al"ic"e #{crate}))).to be_identifying
+    end
+
+    {
+      "curl -o /home/alice/dl https://crates.io/x" => "curl -o dl -H 'From: alice' https://crates.io/x",
+      "curl --data @/home/alice/p.json https://crates.io/x" => "curl --data user=alice https://crates.io/x",
+      "curl -d@/home/alice/p.json https://crates.io/x" => "curl -d@p.json https://crates.io/alice",
+      "git -C /home/alice/proj push origin" => "git push https://alice@github.com/x/y main",
+      "rsync -a /home/alice/src mirror.test:b/" => "rsync -a src alice@mirror.test:b/",
+      "scp /home/alice/n.txt me@files.test:/tmp/" => "scp n.txt alice@files.test:/tmp/",
+      "ssh -i /home/alice/.ssh/key box.test" => "ssh -i key -l alice box.test",
+      "curl -F file=@/home/alice/p.json https://crates.io/x" => "curl -F user=alice https://crates.io/x",
+      "wget -O /home/alice/o https://crates.io/x" => "wget -O o --header 'From: alice' https://crates.io/x",
+      "wget -P /home/alice/dl https://crates.io/x" => "wget -U probe/alice https://crates.io/x",
+      "git push origin feature" => "git push origin alice/feature",
+      "curl --output=/home/alice/o https://crates.io/x" => "curl -d handle=@alice https://crates.io/x"
+    }.each do |local, sent|
+      it "does not note the home path #{local} names on this box" do
+        expect(disclosed(local)).not_to be_identifying
+      end
+
+      it "notes the identity #{sent} sends" do
+        expect(disclosed(sent)).to be_identifying
+      end
+    end
+
+    ["scp -o User=alice f host.test:", %(rsync -e "ssh -l alice" f host.test:),
+     "curl -d 'q=<alice' https://crates.io/x"].each do |sent|
+      it "notes the identity #{sent} sends in an option's value" do
+        expect(said(disclosed(sent))).to include("it sends the account identity in an outgoing request")
+      end
+    end
+
+    it "notes a sending stage's header though another stage reads the same path" do
+      expect(disclosed("cat /home/alice/a; curl -H /home/alice/a https://crates.io/x")).to be_identifying
+    end
+
+    it "notes the sink and no identity for a generic user agent" do
+      disclosure = disclosed("curl -A 'nyotes-probe' #{crate}")
+
+      expect([disclosure.identifying?, said(disclosure)])
+        .to eq([false, ['it names "crates.io" as a network destination']])
+    end
+
+    it "does not note a value only a local command names" do
+      expect(disclosed("echo alice | tee out.txt")).not_to be_identifying
+    end
+
+    it "reads the session's own identity when none is given" do
+      described_class::SESSION.clear
+      with_env("HOME" => "/srv/probe-home-#{SecureRandom.hex(4)}") do
+        parsed = Lain::Shell::Parse.new.call("curl -H 'From: #{Dir.home}' #{crate}")
+        named = Lain::Shell::Named.from(parsed, cwd: @dir, home: Dir.home)
+
+        expect(described_class.of(named, parsed.stages, cwd: @dir, scan:)).to be_identifying
+      end
+    ensure
+      described_class::SESSION.clear
     end
   end
 
