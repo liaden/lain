@@ -32,8 +32,10 @@ module Lain
     # `granted` names the programs a parsed command was handed as grants that the
     # profile lets run, on the record written before the call.
     #
-    # `network` says a human chose to let a call that reads secrets reach the
-    # network, which is why it ran unconfined, and `secrets` that a human let it
+    # `network` says whether the call could reach the network: true when its
+    # profile does not confine it, the granted ports when a build tool was
+    # granted some, false otherwise; only the record written before the call carries it, and the leftover, held
+    # and refusal records take the default. `secrets` that a human let it
     # read the project's masked files, contained. `held` names what a scan of
     # such a call's writes could not finish and so holds until lain exits,
     # on a record of its own written after the call.
@@ -44,9 +46,12 @@ module Lain
       def initialize(tool_use_id:, profile:, trace:, refused:, created_sealed: [], kept_tmpdir: nil, granted: [],
                      network: false, secrets: false, held: [])
         super(**Carriers::Sandbox.settle!(tool_use_id:, profile: profile&.to_sym, trace:, refused:, created_sealed:,
-                                          kept_tmpdir:, granted:, network: network == true, secrets: secrets == true,
-                                          held:))
+                                          kept_tmpdir:, granted:, network: settled_network(network),
+                                          secrets: secrets == true, held:))
       end
+
+      def settled_network(network) = network.is_a?(Array) ? network.map(&:to_s).freeze : network == true
+      private :settled_network
     end
   end
 end

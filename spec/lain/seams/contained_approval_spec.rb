@@ -272,7 +272,7 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
 
     prompt, result = answered("y\n", exec:, containment: box.containment, command: "cargo fetch .env")
 
-    expect(sandbox_records.first).to have_attributes(profile: :grant, network: false)
+    expect(sandbox_records.first).to have_attributes(profile: :grant, network: ["443"])
     expect([prompt, result.content]).to all(include("TCP ports 443"))
     expect([prompt, result.content].join).not_to include("no network", "without network")
   end

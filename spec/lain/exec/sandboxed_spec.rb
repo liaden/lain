@@ -103,10 +103,34 @@ RSpec.describe Lain::Exec::Sandboxed do
         Lain::Confine::Request.new(ruling: ruled, executables: [], cwd: root, root:, tool_use_id: "toolu_1")
       end
 
-      it "records that the human chose network" do
-        run(confinement: human(network: true))
+      context "with a plain allow under the traced profile" do
+        let(:profile) { Lain::Confine::Profile::TRACED }
 
-        expect(recorded("sandbox").sole).to have_attributes(network: true)
+        it "records network true and the traced profile" do
+          run(confinement: judged)
+
+          expect(recorded("sandbox").sole).to have_attributes(network: true, profile: :traced)
+        end
+      end
+
+      context "with a contained run under a private-net profile" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(private_net: true) }
+
+        it "records no network even when the ruling named it" do
+          run(confinement: human(network: true))
+
+          expect(recorded("sandbox").sole).to have_attributes(network: false)
+        end
+      end
+
+      context "with a build granted port 443" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(connect_ports: [443]) }
+
+        it "records the granted ports" do
+          run(confinement: human(contained: true))
+
+          expect(recorded("sandbox").sole).to have_attributes(network: ["443"])
+        end
       end
 
       it "records no choice of network on a contained call" do

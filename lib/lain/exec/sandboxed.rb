@@ -186,12 +186,18 @@ module Lain
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                            trace: profile.trace, refused:, granted: granted(profile, confinement),
-                                           network: confinement.ruling.network?, secrets: profile.unmasked?)
+                                           network: network_of(profile), secrets: profile.unmasked?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
         scanned(profile, confinement.tool_use_id, cwd) do
           masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         end
+      end
+
+      def network_of(profile)
+        return true unless profile.confined?
+
+        profile.connect_ports.map(&:to_s).presence || false
       end
 
       def masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)

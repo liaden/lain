@@ -30,6 +30,13 @@ RSpec.describe Lain::Telemetry::Sandbox do
     expect(chosen.to_journal).to include("network" => true)
   end
 
+  it "journals the ports a call was granted" do
+    granted = described_class.new(tool_use_id: "tu_1", profile: :grant, trace: true, refused: [], network: [443, "80"])
+
+    expect(granted.to_journal).to include("network" => %w[443 80])
+    expect(Ractor.shareable?(granted)).to be(true)
+  end
+
   it "journals that a human let the call read the project's secret files" do
     chosen = described_class.new(tool_use_id: "tu_1", profile: :workspace, trace: true, refused: [], secrets: true)
 
