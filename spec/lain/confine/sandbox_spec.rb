@@ -318,6 +318,12 @@ RSpec.describe Lain::Confine::Sandbox do
     end
   end
 
+  describe "a call that reads no secrets" do
+    it "states the tier a plain approval runs it under" do
+      expect(described_class::Containment::NONE.choice).to eq("y runs it unconfined, with network")
+    end
+  end
+
   describe "what the secrets answer says it unmasks" do
     let(:netted) { ->(argv) { [argv.include?("--status") ? '{"abi":3,"reap":true,"private_net":false}' : "", true] } }
     let(:netting) { Lain::Confine::Probe.new(fence:, journal:, runner: netted, ptrace_scope: -> { "0" }) }

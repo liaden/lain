@@ -86,8 +86,12 @@ module Lain
         NETWORK_HINT = "-- %<choice>s; n deny  (:LainApprove network / :LainApprove / :LainDeny / :LainHold [note])"
         SECRETS_HINT = "-- %<choice>s; n deny  " \
                        "(:LainApprove network / :LainApprove secrets / :LainApprove / :LainDeny / :LainHold [note])"
+        # Shown when only bash calls that read no secrets are parked, which a plain y runs unconfined.
+        UNCONFINED_HINT = "-- %<choice>s; n deny  (:LainApprove / :LainDeny / :LainHold [note])"
         # The hint sits under every parked row, so its y names which of them it contains.
         SECRET_CALL = "a call that reads secrets"
+        UNCONFINED_CALL = "a bash call"
+        OTHER_CALL = "any other bash call"
 
         # A FOLD's measurement rather than a terminal's: a closed item shows
         # this line plus `10_folds.lua`'s "  (+N lines)" marker on ONE screen
@@ -515,11 +519,24 @@ module Lain
 
         def hint_for(parked)
           offering = parked.select(&:offers_network?)
-          return HINT if offering.empty?
+          return unconfined_hint(parked) if offering.empty?
 
           hint = offering.any?(&:offers_secrets?) ? SECRETS_HINT : NETWORK_HINT
           choice = widest(offering.map(&:containment)).choice(SECRET_CALL)
-          format(hint, choice: offering.reduce(choice) { |text, row| row.masked(text) })
+          choice = offering.reduce(choice) { |text, row| row.masked(text) }
+          other = unconfined_choice(parked, OTHER_CALL)
+          format(hint, choice: [choice, other].compact.join("; "))
+        end
+
+        def unconfined_hint(parked)
+          choice = unconfined_choice(parked, parked.one? ? "it" : UNCONFINED_CALL)
+          choice ? format(UNCONFINED_HINT, choice:) : HINT
+        end
+
+        # @return [String, nil] what a plain y does to the bash rows that read no secrets, when there are any
+        def unconfined_choice(parked, call)
+          unconfined = parked.select { _1.tool == Approval::Parked::Queue::BASH && _1.containment.unstated? }
+          unconfined.first&.containment&.choice(call)
         end
 
         # One hint stands under every row, so it names every port any of them could be granted, and every file

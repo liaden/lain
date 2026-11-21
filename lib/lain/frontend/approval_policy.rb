@@ -347,11 +347,18 @@ module Lain
       # What y, network and secrets do, said on a row that reads secrets, so a push that fails for want of
       # network is no surprise.
       def answers(pending)
-        return ANSWERS unless pending.offers_network?
+        return unconfined_answers(pending) unless pending.offers_network?
 
         choice = pending.choice_face
 
         "#{choice} #{ApprovalPolicy.offered(pending)[:secrets] ? SECRETS_ANSWERS : NETWORK_ANSWERS}"
+      end
+
+      # A bash call that reads no secrets runs unconfined under a plain y, and the row says so.
+      def unconfined_answers(pending)
+        return ANSWERS unless pending.tool == Approval::Parked::Queue::BASH && pending.containment.unstated?
+
+        "#{pending.containment.choice} #{ANSWERS}"
       end
 
       # Why a call does not run contained ends the reasons; the phone never shows it, since it cannot answer network.

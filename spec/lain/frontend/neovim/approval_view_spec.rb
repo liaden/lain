@@ -61,6 +61,10 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
   let(:rpc) { ApprovalViewSpecSupport::SpyRpc.new }
   let(:view) { described_class.new(rpc:) }
 
+  def unconfined_hint(call = "it")
+    "-- y runs #{call} unconfined, with network; n deny  (:LainApprove / :LainDeny / :LainHold [note])"
+  end
+
   def effect(name = "bash", input = { "command" => "pwd" }, id = "tu_1")
     ApprovalViewSpecSupport::Effect.new(name, input, id)
   end
@@ -329,10 +333,41 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
       end
     end
 
-    it "keeps the plain hint when no parked call reads secrets" do
+    it "says what a plain y runs a bash call under when no parked call reads secrets" do
       parked_secret(disclosure: Lain::Approval::Disclosure::NONE) { nil }
 
-      expect(rpc.last[:lines].last).to eq(described_class::HINT)
+      expect(rpc.last[:lines].last).to eq(unconfined_hint)
+    end
+
+    it "adds what a plain y runs a bash call under when other parked rows read secrets" do
+      Sync do |task|
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5, containment:)
+        asking = [["pwd", secret], ["ls", Lain::Approval::Disclosure::NONE]].each_with_index.map do |(command, held), i|
+          task.async { parked_ask(queue, command, i, held) }
+        end
+        spun_until { queue.count == 2 }
+        view.sweep(queue)
+
+        expect(rpc.last[:lines].last).to include("secrets runs a call that reads secrets cut off from the network")
+          .and end_with("; y runs any other bash call unconfined, with network; n deny  " \
+                        "(:LainApprove network / :LainApprove secrets / :LainApprove / :LainDeny / :LainHold [note])")
+      ensure
+        asking&.each(&:stop)
+      end
+    end
+
+    it "keeps the plain hint when the parked call is not a bash call" do
+      Sync do |task|
+        queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 5, containment:)
+        context = Struct.new(:identity, :disclosure).new(Lain::Requester.main, Lain::Approval::Disclosure::NONE)
+        asking = task.async { queue.adjudicate(effect("edit_file", { "path" => "a.rb" }, "tu_1"), context) }
+        spun_until { queue.count == 1 }
+        view.sweep(queue)
+
+        expect(rpc.last[:lines].last).to eq(described_class::HINT)
+      ensure
+        asking&.stop
+      end
     end
 
     it "approves with network on :LainApprove network, and plainly on a note asking for it" do
@@ -1361,7 +1396,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # which lands first and would otherwise satisfy a line-count wait.
     def read_screen(handle, commands)
       worker = Thread.new { park_and_sweep(handle, commands) }
-      waited_for { buffer_lines.last == described_class::HINT }
+      waited_for { buffer_lines.last == unconfined_hint(commands.one? ? "it" : "a bash call") }
       probed = block_given? ? yield : {}
       { lines: buffer_lines, folds: fold_state }.merge(probed)
     ensure
@@ -1424,7 +1459,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     # Both readings, either side of the queue emptying: the block is the
     # example's own chance to act on the editor while a call is still parked.
     def observed_windows
-      waited_for { buffer_lines.last == described_class::HINT }
+      waited_for { buffer_lines.last == unconfined_hint }
       parked = windows_showing
       taken = yield
       @empty.push(:now)
@@ -1601,7 +1636,7 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     it "leaves the key hints in a fold of their own rather than letting them take the list's" do
       screen = rendered_fold_state
 
-      expect(screen[:lines].last).to eq(described_class::HINT)
+      expect(screen[:lines].last).to eq(unconfined_hint)
       expect(screen[:folds].last).to eq(screen[:lines].size)
       expect(screen[:folds].first).to eq(-1)
     end
@@ -1628,8 +1663,8 @@ RSpec.describe Lain::Frontend::Neovim::ApprovalView do
     it "pads the key-hint line's closed fold to the window width, with no fill trailing it" do
       screen = rendered_fold_state { { hint: fold_display(buffer_lines.size) } }
 
-      expect(screen[:lines].last).to eq(described_class::HINT)
-      expect(screen[:hint]["text"]).to start_with(described_class::HINT)
+      expect(screen[:lines].last).to eq(unconfined_hint)
+      expect(screen[:hint]["text"]).to start_with(unconfined_hint)
       expect(screen[:hint]["text"].length).to be >= screen[:hint]["width"]
     end
 

@@ -63,7 +63,8 @@ module Lain
       # tool's granted ports. `:able` can,
       # `:unable` cannot, so such an approval is refused until the human
       # chooses network, and `:off` confines nothing, by the session's choice.
-      # `:unstated` is a queue nobody told, which says nothing on the row.
+      # `:unstated` is a queue nobody told, or a call that reads no secrets: a plain approval of one runs it
+      # unconfined, which {UNSTATED_CHOICE} says where a surface shows it.
       # `grants` is whether a contained call runs under the workspace profile,
       # whose build tools keep their ports, and `ports` the ones a parked call could earn.
       # `unmasks` names the project files a secrets answer would let a parked call read.
@@ -74,6 +75,7 @@ module Lain
         PORTED_CHOICE = "y runs %<call>s contained, where files lain masks read as empty or as a decoy, and its " \
                         "build tool may reach the host's network on TCP ports %<ports>s; #{NETWORK_CHOICE}".freeze
         UNABLE_CHOICE = "y will not run %<call>s; #{NETWORK_CHOICE}".freeze
+        UNSTATED_CHOICE = "y runs %<call>s unconfined, with network"
         SECRETS_CHOICE = "secrets runs %<call>s cut off from the network, with lain's masks lifted from %<files>s, " \
                          "and gates any file it writes that holds a secret"
         NOTHING_MASKED_CHOICE = "secrets runs %<call>s cut off from the network, where the project holds no file " \
@@ -127,6 +129,9 @@ module Lain
         # @return [Boolean] whether the session chose to confine nothing
         def off? = state == :off
 
+        # @return [Boolean] whether nothing was stated, so a plain approval runs the call unconfined
+        def unstated? = state == :unstated
+
         # @return [String, nil] why the call does not run contained, for the row; nil when it does or nothing
         #   was stated, since {#choice} then says it
         def note
@@ -142,6 +147,7 @@ module Lain
           case state
           when :able then "#{ports.empty? ? format(ABLE_CHOICE, call:) : ported(call)}; #{unmasking(call)}"
           when :unable then format(UNABLE_CHOICE, call:)
+          when :unstated then format(UNSTATED_CHOICE, call:)
           end
         end
 
@@ -153,7 +159,8 @@ module Lain
         # bwrap, about 3 ms, which a chat launch should not pay before any call reads secrets. Off is the
         # session's choice, never the box's answer, so {#off?} needs no answer.
         class Deferred
-          delegate :state, :because, :grants, :ports, :unmasks, :confines?, :able?, :note, :choice, :to_h, :with,
+          delegate :state, :because, :grants, :ports, :unmasks, :confines?, :able?, :unstated?, :note, :choice,
+                   :to_h, :with,
                    :members, :deconstruct, :deconstruct_keys, :==, :eql?, :hash, to: :resolved
 
           # @param unmasks [#call] `(root)` to the files a secrets answer would lift the masks from under that root,

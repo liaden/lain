@@ -157,7 +157,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       described_class.new(output:, pastel: Pastel.new(enabled: false),
                           reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(holding)
 
-      expect(seen.parts.tail).to eq("postpones in 5:00, approve? [y/N] ")
+      expect(seen.parts.tail).to eq("postpones in 5:00, approve? y runs it unconfined, with network [y/N] ")
     end
   end
 
@@ -177,7 +177,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
     expect([seen.parts.to_h, seen.parts.frame.keys, Ractor.shareable?(seen.parts)]).to eq(
       [{ lead: "agent asks:", call: "bash(#{effect.input.inspect})", reasons: [],
-         tail: "auto-denies in 5:00, approve? [y/N] " }, ["parts"], true]
+         tail: "auto-denies in 5:00, approve? y runs it unconfined, with network [y/N] " }, ["parts"], true]
     )
   end
 
@@ -1089,12 +1089,30 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     end
   end
 
+  it "says on a bash row that reads no secrets what a plain y runs it under" do
+    seen = nil
+    described_class.new(output:, pastel: Pastel.new(enabled: false),
+                        reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
+
+    expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? y runs it unconfined, with network [y/N] ")
+  end
+
+  it "keeps the bare question on a row that is not a bash call" do
+    edit = Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "edit_file", input: { path: "a.rb" })
+    held = Lain::Approval::Parked::Queue::Pending.new(effect: edit, identity: Lain::Requester.main, clock: -> { 0.0 })
+    seen = nil
+    described_class.new(output:, pastel: Pastel.new(enabled: false),
+                        reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(held)
+
+    expect(seen.parts.tail).to eq("auto-denies in 5:00, approve? [y/N] ")
+  end
+
   it "neither offers nor takes the network answer on an ordinary call" do
     seen = nil
     described_class.new(output:, pastel: Pastel.new(enabled: false),
                         reader: ->(prompt) { (seen = prompt) && "n\n" }).decide(pending)
 
-    expect(seen.to_s).not_to include("network")
+    expect(seen.to_s).not_to include("[y/N/network")
     expect(seen.takes?("network")).to be(false)
   end
 
@@ -1202,7 +1220,8 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
     # reaches the human at all.
     it "renders the ordinary prompt, byte for byte, when the pending discloses nothing" do
       expect(rendered(pending))
-        .to eq("agent asks (auto-denies in 5:00): approve bash(#{effect.input.inspect})? [y/N] ")
+        .to eq("agent asks (auto-denies in 5:00): approve bash(#{effect.input.inspect})? " \
+               "y runs it unconfined, with network [y/N] ")
     end
 
     # A link's name says nothing about what it opens, so the human is shown
@@ -1280,8 +1299,9 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       it "keeps the real question at the end of the line, where the forged one cannot reach" do
         rendering = rendered(disclosing(path: forged))
 
-        expect(rendering).to end_with("approve bash(#{effect.input.inspect})? [y/N] ")
-        expect(rendering.rindex("? [y/N] ")).to be > rendering.index(forged.inspect)
+        expect(rendering)
+          .to end_with("approve bash(#{effect.input.inspect})? y runs it unconfined, with network [y/N] ")
+        expect(rendering.rindex("? y runs")).to be > rendering.index(forged.inspect)
       end
     end
 
