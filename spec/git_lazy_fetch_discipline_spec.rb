@@ -171,6 +171,9 @@ RSpec.describe "git lazy fetch discipline" do
     },
     "lain/isolation/checkout.rb" => -> { Lain::Isolation::Checkout.new(repo).run("rev-parse", "HEAD") },
     "lain/isolation/worker_id.rb" => -> { Lain::Isolation::WorkerId.checked("worker-1") },
+    "lain/sensitivity/secrets/identity.rb" => lambda {
+      Lain::Sensitivity::Secrets::Identity.send(:git_config, "user.name")
+    },
     "lain/session_record/provenance.rb" => -> { Lain::SessionRecord::Provenance.harness(gem_root: repo) },
     "lain/workspace/snapshot/scope/shadow_git/repository.rb" => lambda {
       Lain::Workspace::Snapshot::Scope::ShadowGit::Repository
