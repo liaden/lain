@@ -81,8 +81,8 @@ module Lain
         # caller writing `model = build(h); model.valid?` must be ready for both.
         def build(input)
           new(**symbolize(elements_of(input)))
-        rescue ActiveModel::UnknownAttributeError => e
-          raise InvalidInput, e.message
+        rescue ActiveModel::UnknownAttributeError
+          raise InvalidInput, "an unknown key"
         end
 
         # The JSON Schema sent to the provider, derived from the same declarations.

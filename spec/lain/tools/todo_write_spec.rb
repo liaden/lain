@@ -101,6 +101,14 @@ RSpec.describe Lain::Tools::TodoWrite do
     # call {Lain::Canonical} makes -- because nothing justifies preferring
     # either spelling, and a rule nobody remembers is worse than a loud
     # failure. A deliberate renegotiation.
+    it "refuses an element's unknown key without echoing it" do
+      secret = %w[sk SECRET1 AKIAZZZ].join("-")
+      item = { "content" => "x", "status" => "pending", secret => 1 }
+
+      expect { tool.call({ "todos" => [item] }, invocation_with(session)) }
+        .to raise_error(Lain::Tool::InvalidInput) { |e| expect(e.message).to include("todos[0]").and(not_include(secret)) }
+    end
+
     it "refuses a mixed-key item rather than picking a spelling, naming the element by index" do
       mixed = { "content" => "canonical", :content => "shadow",
                 "status" => "in_progress", :status => "completed" }
@@ -306,7 +314,7 @@ RSpec.describe Lain::Tools::TodoWrite do
     it "refuses an item carrying a key the schema never declared" do
       expect do
         tool.call({ todos: [{ content: "a", status: "pending", priority: "high" }] }, invocation_with(session))
-      end.to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*priority/)
+      end.to raise_error(Lain::Tool::InvalidInput, /todos\[0\].*unknown key/)
       expect(session.reminders).to eq([])
     end
   end

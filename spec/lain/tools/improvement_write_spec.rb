@@ -23,6 +23,13 @@ RSpec.describe Lain::Tools::ImprovementWrite do
     expect(sink.appended).to eq(1)
   end
 
+  it "refuses an unknown kind without echoing the value the model sent" do
+    secret = %w[sk SECRET1 AKIAZZZ].join("-")
+
+    expect { tool.call(**note, kind: secret) }
+      .to raise_error(Lain::Tool::InvalidInput) { |e| expect(e.message).to include("Kind").and(not_include(secret)) }
+  end
+
   it "stores a second line when the kind or the note changes" do
     tool.call(**note)
     tool.call(**note, kind: "bug")

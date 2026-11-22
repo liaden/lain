@@ -2533,16 +2533,13 @@ RSpec.describe Lain::CLI::Wiring do
           "input" => { "id" => "nothing", "description" => "empty", "body" => "  \n\t " } }
       end
 
-      it "is refused as the oracle's decline, under no pattern name" do
+      it "is refused as invalid input before the oracle, journaled as a decline naming the tool" do
         agent, recorder = dispatch
 
-        expect(refusals.map(&:pattern)).to eq([Lain::Middleware::RefuseSecretWrites::ORACLE_DECLINE])
+        expect(refusals.map(&:pattern)).to eq(["decline:invalid_input:memory_write"])
         expect(Lain::Middleware::RefuseSecretWrites.decline?(refusals.first.pattern)).to be(true)
-        expect(Lain::Middleware::RefuseSecretWrites::PATTERNS).not_to have_key(refusals.first.pattern)
         expect { recorder.fetch("nothing") }.to raise_error(Lain::Memory::Index::UnknownId)
-        # The model-facing half: a decline must make no credential claim.
-        expect(tool_results(agent)).to include("not worth writing")
-        expect(tool_results(agent)).not_to include("pattern")
+        expect(tool_results(agent)).to include("invalid input for memory_write")
       end
     end
 
@@ -5920,7 +5917,7 @@ RSpec.describe Lain::CLI::Wiring do
         runner = wiring.wire_agent(channel:, recorder:, session:, backend: configured).send(:tool_runner)
 
         expect(runner.middleware.to_a.map(&:class))
-          .to eq([Lain::Middleware::RestoreIdentity, WiringSpecToolStamp, Lain::Middleware::ParsedCommand,
+          .to eq([Lain::Middleware::RestoreIdentity, WiringSpecToolStamp, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand,
                   Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
@@ -6257,7 +6254,7 @@ RSpec.describe Lain::CLI::Wiring do
           board = board_for(root:)
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
-            .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+            .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
                     Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
@@ -6776,7 +6773,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # is refused before a human is ever asked about it.
     it "puts all three secret guards, then the test layout guard, then the board's gate, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
@@ -6867,7 +6864,7 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       runner = build.send(:tool_runner)
 
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
-        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,

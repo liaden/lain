@@ -139,6 +139,11 @@ RSpec.describe Lain::Tool do
       expect { echo.call({}) }.to raise_error(Lain::Tool::InvalidInput, /text is required/)
     end
 
+    it "names a problem with #invalid instead of raising, and answers nil for valid input" do
+      expect(echo.invalid({})).to match(/invalid input for echo: .*text is required/)
+      expect(echo.invalid(text: "hello")).to be_nil
+    end
+
     it "rejects a wrong scalar type" do
       expect { echo.call(text: 5) }.to raise_error(Lain::Tool::InvalidInput, /text must be string/)
     end
@@ -190,6 +195,22 @@ RSpec.describe Lain::Tool do
       expect { modelled.call({}) }
         .to raise_error(Lain::Tool::InvalidInput, /invalid input for modelled: Text can't be blank/)
       expect(modelled.call(text: "hi").content).to eq("hi")
+    end
+
+    it "says how many unknown keys a model-input call had without naming them, in call and invalid alike" do
+      text_input = Class.new(Lain::Tool::Input) { field :text, :string, required: true, description: "t" }
+      modelled = Class.new(described_class) do
+        input_model text_input
+        def name = "modelled"
+        def description = "d"
+        def perform(input, _context) = Lain::Tool::Result.ok(input.text)
+      end.new
+      input = { "text" => "hi", "AKIAZZZ1234567890AB" => "x" }
+
+      expect(modelled.invalid(input)).to eq("invalid input for modelled: 1 unknown key")
+      expect do
+        modelled.call(input)
+      end.to raise_error(Lain::Tool::InvalidInput, "invalid input for modelled: 1 unknown key")
     end
 
     it "validates array items" do

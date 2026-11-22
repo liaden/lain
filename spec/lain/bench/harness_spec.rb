@@ -94,7 +94,7 @@ RSpec.describe Lain::Bench::Harness do
 
     it "holds every guard and the gate, not the write refusal alone" do
       expect(wiring.tool_middleware.to_a.map(&:class)).to eq(
-        [Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+        [Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
          Lain::Middleware::RefuseSecretWrites, Lain::Middleware::RedactSecretReads,
          Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
          Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,

@@ -174,7 +174,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "puts the scope, write, read, listing, test layout and automatic output guards first, then the " \
        "remembered denials, the unread build bar, the path refusal and the gate" do
       expect(guards(ToolGuardSpecBoard.new).map(&:class))
-        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput,
+                Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
@@ -419,7 +420,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     let(:the_session) { Lain::Session.new }
 
     def dispatched(stack, name = "bash", context: the_session)
-      env = stack.call({ effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input: {}),
+      env = stack.call({ effect: Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name:, input: { "command" => "true" }),
                          tool: Lain::Tools::Bash.new, context: }) do |passed|
         passed.merge(result: Lain::Tool::Result.ok("the interpreter ran"))
       end
@@ -442,6 +443,19 @@ RSpec.describe Lain::CLI::ToolGuard do
 
       expect(layers.map { |layer| layer.instance_variable_get(:@sensitivity) }).to all(be(board.sensitivity))
       expect(gate_asks?(board.policy, guards(board), toolset: bash_toolset)).to be(true)
+    end
+
+    it "refuses a bash call with no command before any rung is asked, naming the field" do
+      board = ToolGuardSpecBoard.new
+      allow(board.policy).to receive(:rule)
+
+      result = Sync do
+        dispatch_call("bash", { "name" => "pin-check" }, toolset: bash_toolset, layers: guards(board),
+                                                         context: Lain::Session.new)
+      end
+
+      expect(result).to have_attributes(is_error: true, content: /invalid input for bash.*command/i)
+      expect(board.policy).not_to have_received(:rule)
     end
 
     it "reports a refused call in the board's own words" do
@@ -636,7 +650,8 @@ RSpec.describe Lain::CLI::ToolGuard do
     # Behind the identity restore only, so it reads the real paths the guards will.
     it "runs ahead of every guard lain builds, the parse included" do
       expect(guards(board_with(configured(ToolGuardSpecStamp))).map(&:class))
-        .to eq([Lain::Middleware::RestoreIdentity, ToolGuardSpecStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+        .to eq([Lain::Middleware::RestoreIdentity, ToolGuardSpecStamp, Lain::Middleware::ValidInput,
+                Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
                 Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput,
@@ -829,11 +844,11 @@ RSpec.describe Lain::CLI::ToolGuard do
         expect(remembered.asked).to eq([expected])
       end
 
-      it "reaches the ladder as unreadable when the call names no command" do
+      it "refuses a call that names no command before the ladder reads it" do
         leased = described_class.detached(journal:)
 
         expect(acted(leased, Lain::Tools::Bash.new, {}))
-          .to have_attributes(is_error: true, content: include("a command whose paths cannot be read"))
+          .to have_attributes(is_error: true, content: match(/invalid input for bash.*command/i))
       end
     end
 
@@ -1290,7 +1305,7 @@ RSpec.describe Lain::CLI::ToolGuard do
     it "is the parent's stack, guard for guard, with a leased child also held to its checkout" do
       expect(child_stack(env_at(@checkout)).to_a.map(&:class)).to eq(guards(board).map(&:class))
       expect(child_stack(env_at(@checkout, checkout: @checkout)).to_a.map(&:class))
-        .to eq(guards(board).map(&:class).insert(2, Lain::Middleware::ConfineToScope))
+        .to eq(guards(board).map(&:class).insert(3, Lain::Middleware::ConfineToScope))
     end
 
     it "judges a leased child's writes at its own checkout too, through the board's one run" do
@@ -1612,8 +1627,9 @@ RSpec.describe Lain::CLI::ToolGuard do
       Dir.mktmpdir do |dir|
         leased = Lain::WorkerEnv.new(cwd: dir, env: {}, checkout: dir)
 
-        expect(described_class.detached(journal:).call(leased).to_a.map(&:class).first(3))
-          .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope])
+        expect(described_class.detached(journal:).call(leased).to_a.map(&:class).first(4))
+          .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand,
+                  Lain::Middleware::ConfineToScope])
       end
     end
 

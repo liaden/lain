@@ -675,7 +675,7 @@ module Lain
         inputs.with(sensitivity: inputs.sensitivity.confined(held))
       end
 
-      # The configured members, then the nine guards over one set of inputs,
+      # The configured members, the input check, then the nine guards over one set of inputs,
       # the layout held at `roots`, and the gate's two layers asking `policy`
       # -- checked closed as it is built, the one check a child's stack from
       # any builder is also held to.
@@ -684,7 +684,7 @@ module Lain
         requester &&= Requester.of(requester)
         Middleware::Gate.closes!(
           Middleware::Stack.new([Middleware::RestoreIdentity.new(identity: inputs.identity),
-                                 *configured_then_parsed(inputs),
+                                 *configured_then_parsed(inputs, journal),
                                  Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
@@ -730,11 +730,13 @@ module Lain
       end
 
       # The parse follows the configured members, which may rewrite the command, so every
-      # guard below reads the text that will run.
-      def configured_then_parsed(inputs)
-        [*configured(inputs), Middleware::ParsedCommand.new(home: inputs.sensitivity.home,
-                                                            scan: Approval::Disclosure::Scanner.over(inputs.sensitivity),
-                                                            identity: inputs.identity)]
+      # guard below reads the text that will run; validation follows them for the same reason
+      # and precedes the parse, so a call that cannot run is never parsed or asked about.
+      def configured_then_parsed(inputs, journal)
+        parsed = Middleware::ParsedCommand.new(home: inputs.sensitivity.home,
+                                               scan: Approval::Disclosure::Scanner.over(inputs.sensitivity),
+                                               identity: inputs.identity)
+        [*configured(inputs), Middleware::ValidInput.new(journal:), parsed]
       end
 
       # Fresh instances on every call, so no two stacks share one.

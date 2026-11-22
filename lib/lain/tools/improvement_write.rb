@@ -2,13 +2,13 @@
 
 module Lain
   module Tools
-    # Tier 1 (structured): appends one {Improvement} note to the cross-project
-    # sink via an injected {Improvement::Sink}. Direct Ruby, no subprocess, no
-    # model-controlled command string -- the same shape as {Tools::MemoryWrite}.
+    # Tier 1 (structured): appends one `Improvement` note to the cross-project
+    # sink via an injected `Improvement::Sink`. Direct Ruby, no subprocess, no
+    # model-controlled command string -- the same shape as `Tools::MemoryWrite`.
     #
     # `sink` already knows WHERE the file lives and WHO is writing; the model
     # only supplies WHAT. This is a note about lain ITSELF, for lain's own
-    # maintainers -- distinct from {Tools::MemoryWrite}, which is user-facing
+    # maintainers -- distinct from `Tools::MemoryWrite`, which is user-facing
     # recall.
     class ImprovementWrite < Tool
       # `evidence_digests` is a comma-separated String rather than a JSON
@@ -26,7 +26,7 @@ module Lain
               description: "Comma-separated content digests (e.g. turn or request digests) backing this " \
                            "note. Leave empty if none."
 
-        validates :kind, inclusion: { in: Improvement::KINDS, message: "must be one of #{Improvement::KINDS.inspect}, got %<value>s" }
+        validates :kind, inclusion: { in: Improvement::KINDS, message: "must be one of #{Improvement::KINDS.inspect}" }
       end
 
       input_model Input

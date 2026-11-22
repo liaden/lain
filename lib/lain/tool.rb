@@ -3,7 +3,7 @@
 module Lain
   # The abstract base every tool subclasses.
   #
-  # A tool is a *capability*: possessing one (via a {Lain::Toolset}) is the
+  # A tool is a *capability*: possessing one (via a `Lain::Toolset`) is the
   # authorization to use it, so a tool carries no permission logic of its own.
   # What it carries instead is a description the model reads, a schema the input
   # is checked against, and -- optionally -- design-by-contract predicates that
@@ -15,7 +15,7 @@ module Lain
   #
   # A tool that *fails* returns a {Result} with `is_error: true` -- it does not
   # raise as a matter of course. When it does raise (a bug, a contract
-  # violation, a bad input), the executing {Lain::Effect::Handler} converts that
+  # violation, a bad input), the executing `Lain::Effect::Handler` converts that
   # into an error {Result} so nothing propagates past the loop. The two concerns
   # are kept apart on purpose: the contract mechanism stays Eiffel-honest (a
   # violation raises), while loop totality is the handler's job.
@@ -27,7 +27,7 @@ module Lain
     # A single design-by-contract predicate paired with the message shown when
     # it is violated -- either a String, or, when the declaration named a
     # `subject:`, an `(input, invocation)` thunk that builds the sentence
-    # against the call that failed. {Tool::Contracts} resolves the two into one
+    # against the call that failed. `Tool::Contracts` resolves the two into one
     # String at violation time; every contract in `lib/` is currently a thunk,
     # because each one names the file it is refusing. Kept as data so contracts
     # are inspectable, not just runnable.
@@ -36,7 +36,7 @@ module Lain
     include Contracts
 
     class << self
-      # Declare (or read) the {Tool::Input} subclass describing this tool's input.
+      # Declare (or read) the `Tool::Input` subclass describing this tool's input.
       # When present it supplies both the JSON Schema the model sees and the local
       # validation, so the two cannot drift. Inherited, so a subclass of a tool
       # keeps its parent's input unless it declares its own.
@@ -63,7 +63,7 @@ module Lain
 
     # The upfront-catalog-safe projection of {#description}: its first line only,
     # and the SINGLE source both halves of deferred disclosure share --
-    # {Toolset::Disclosure::Deferred} renders it, and {Tools::ToolSearch} both
+    # `Toolset::Disclosure::Deferred` renders it, and `Tools::ToolSearch` both
     # renders AND matches queries against it. A search that matched the fuller
     # `#description` while only ever rendering this truncation would let a caller
     # binary-search substrings to infer text the catalog never shows; routing
@@ -73,7 +73,7 @@ module Lain
       description.to_s.lines.first.to_s.strip
     end
 
-    # The {Tool::Input} class for this tool, or nil when it declares a raw schema.
+    # The `Tool::Input` class for this tool, or nil when it declares a raw schema.
     def input_model
       self.class.input_model
     end
@@ -98,7 +98,7 @@ module Lain
     end
 
     # Whether this tool is safe to run concurrently with others. Defaults to
-    # false: {Agent::ToolRunner#gather} fans a turn of parallel_safe? tools out
+    # false: `Agent::ToolRunner#gather` fans a turn of parallel_safe? tools out
     # as sibling fibers, and opting a tool *in* is a claim about its side
     # effects (no Session write-set mutation, no process-global state) that
     # must be made deliberately, not inherited. The full-toolset partition is
@@ -120,15 +120,15 @@ module Lain
     end
 
     # Whether a call can be asked again in a later round with nothing lost but
-    # the round: a read. Defaults to false, because a {RoundBudget} withholds
+    # the round: a read. Defaults to false, because a `RoundBudget` withholds
     # only these, and a result that cannot be asked for again (a subagent's
     # answer, a command's output) is lost if withheld.
     def rerunnable?
       false
     end
 
-    # Whether this is a tool a {Toolset} holds: always, for a real one.
-    # {Toolset::Unheld} is the stand-in that answers no, so the approval gate
+    # Whether this is a tool a `Toolset` holds: always, for a real one.
+    # `Toolset::Unheld` is the stand-in that answers no, so the approval gate
     # can decline to ask a human about a call that will run nothing.
     def held?
       true
@@ -152,8 +152,20 @@ module Lain
       result
     end
 
-    # The provider-neutral schema for this one tool. {Lain::Toolset} sorts and
-    # serializes an array of these through {Lain::Canonical} for cache stability;
+    # What is wrong with `input`, without running anything or raising: exactly what {#call} would refuse
+    # it for, so a layer ahead of the tool never turns away input the tool would have coerced and run.
+    #
+    # @param input [Hash] what the model sent
+    # @return [String, nil] the {InvalidInput} message, nil when the input validates
+    def invalid(input)
+      validate_input!(input)
+      nil
+    rescue InvalidInput => e
+      e.message
+    end
+
+    # The provider-neutral schema for this one tool. `Lain::Toolset` sorts and
+    # serializes an array of these through `Lain::Canonical` for cache stability;
     # here we only assemble the fields. Keys are stable and always present so two
     # constructions never differ by a missing optional.
     def to_schema
@@ -176,7 +188,7 @@ module Lain
     end
 
     # The session a tool records reads and writes against rides
-    # {Tool::Invocation#context}, which is documented-nullable (a bare unit
+    # `Tool::Invocation#context`, which is documented-nullable (a bare unit
     # call threads no context). Coalesce that one legitimate nil to the Null
     # session HERE, in one named place, so no subclass -- nor any contract
     # predicate -- ever guards on nil at the point it wants the session.
@@ -197,6 +209,9 @@ module Lain
     end
 
     def validate_with_model(input)
+      unknown = unknown_keys(input)
+      invalid!(unknown_detail(unknown, input)) unless unknown.zero?
+
       model = built_input(input)
       return model if model.valid?
 
@@ -207,11 +222,26 @@ module Lain
     # failure has no per-attribute home -- a malformed array ELEMENT is the
     # motivating case, since only the raw input knows its index -- so the
     # tool-name prefix every other failure carries has to be added here too.
+    # An unknown key is counted, never named: the model's key may be a secret
+    # it pasted, and this text is journaled and shown back.
     def built_input(input)
       input_model.build(input)
     rescue InvalidInput => e
       invalid!(e.message)
     end
+
+    def unknown_keys(input)
+      return 0 unless input.is_a?(Hash)
+
+      (input.keys.map(&:to_s) - input_model.fields.keys).size
+    end
+
+    def unknown_detail(count, input)
+      missing = input_model.required_fields - input.keys.map(&:to_s)
+      [pluralized(count), *missing.map { "#{_1} is required" }].join("; ")
+    end
+
+    def pluralized(count) = "#{count} unknown #{count == 1 ? "key" : "keys"}"
 
     def invalid!(detail) = raise(InvalidInput, "invalid input for #{name}: #{detail}")
   end

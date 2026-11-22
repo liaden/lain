@@ -490,9 +490,9 @@ RSpec.describe "an Input declaring array fields" do
     end
   end
 
-  it "names an inline element class after the field it declares, not by heap address" do
+  it "names an element by its field and index, never by heap address" do
     expect { person_input.build({ "people" => [{ "name" => "Lain", "age" => 14 }] }) }
-      .to raise_error(Lain::Tool::InvalidInput, /people\[0\].*people/)
+      .to raise_error(Lain::Tool::InvalidInput, "people[0]: an unknown key")
   end
 
   # The Journal is NDJSON and is the experiment record. An Input reaching
@@ -537,6 +537,17 @@ RSpec.describe "an Input declaring array fields" do
     # `field`'s machinery is not the DSL a tool author writes.
     it "keeps its element machinery private" do
       expect { Lain::Tool::Input::Element }.to raise_error(NameError, /private constant/)
+    end
+  end
+
+  describe "an unknown key" do
+    it "is refused without being named, at the top level and inside an element" do
+      secret = %w[sk SECRET1 AKIAZZZ].join("-")
+
+      expect { person_input.build({ "people" => [{ "name" => "a", secret => 1 }] }) }
+        .to raise_error(Lain::Tool::InvalidInput) { |e| expect(e.message).to include("people[0]").and(not_include(secret)) }
+      expect { person_input.build({ secret => 1 }) }
+        .to raise_error(Lain::Tool::InvalidInput) { |e| expect(e.message).not_to include(secret) }
     end
   end
 

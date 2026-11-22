@@ -271,7 +271,8 @@ RSpec.describe LainCLI do
     end
 
     def guarded
-      [Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+      [Lain::Middleware::RestoreIdentity, Lain::Middleware::ValidInput, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+       Lain::Middleware::RefuseSecretWrites,
        Lain::Middleware::RedactSecretReads,
        Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
        Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
