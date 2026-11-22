@@ -8,7 +8,9 @@ module Lain
       # with lines read back leniently, where every closing record arrives as {Telemetry::Untyped},
       # so each is matched both ways.
       #
-      # An approval closes on the `tool_use_id` its decision names, a gate or a question on `ref`.
+      # An approval closes on the park its decision names, since one `tool_use_id` can park twice; a
+      # record from before parks carried an identity pairs on the `tool_use_id` in order. A gate or a
+      # question closes on `ref`.
       # A wave asked under one `question_key` is one wait until every issue in it is decided. A
       # hold closes nothing: the work waits until the human speaks again.
       #
@@ -27,6 +29,9 @@ module Lain
         Ask = Data.define(:wait, :refs, :counted)
         private_constant :Ask
 
+        Parked = Data.define(:wait, :park)
+        private_constant :Parked
+
         MAIN = "main"
 
         # {Journal#encode}'s failure record, also what {Approval::Parked::Queue#degrade} writes in
@@ -44,7 +49,7 @@ module Lain
         def step(record)
           case record
           when Telemetry::AwaitingHuman then opened(record)
-          when Approval::Parked::Queue::Pending then released(record.tool_use_id)
+          when Approval::Parked::Queue::Pending then released(record.tool_use_id, record.park)
           when Epic::GateDecision then record.held? ? self : closed("gate", [record.artifact_digest])
           when Telemetry::QuestionsConsumed then closed("question", record.digests)
           when Telemetry::Untyped, Hash then read_back(record)
@@ -53,7 +58,7 @@ module Lain
         end
 
         # @return [Array<Wait>] approvals first, then gates and questions, each in the order opened
-        def open = approvals + asks.values.map(&:wait)
+        def open = approvals.map(&:wait) + asks.values.map(&:wait)
 
         # @param agent [String] {MAIN} or a spawn's digest
         # @return [Array<Wait>]
@@ -81,7 +86,7 @@ module Lain
         # Hash and {Telemetry::Untyped} both answer `[]` by the journal's own field names.
         def read_back(record)
           case record["type"]
-          when "approval_decision" then released(record["tool_use_id"])
+          when "approval_decision" then released(record["tool_use_id"], record["park"])
           when "gate_decision" then record["verdict"] == HOLD ? self : closed("gate", [record["artifact_digest"]])
           when "questions_consumed" then closed("question", Array(record["digests"]))
           when JOURNAL_ERROR then degraded(record["entry_class"])
@@ -92,9 +97,9 @@ module Lain
         def opened(record)
           wait = Wait.new(ref: record.question_key || record.ref, kind: record.kind, agent: record.spawn || MAIN,
                           summary: record.summary)
-          return with(approvals: [*approvals, wait.with(ref: record.ref)]) if record.kind == "approval"
+          return asked(record, wait) unless record.kind == "approval"
 
-          asked(record, wait)
+          with(approvals: [*approvals, Parked.new(wait.with(ref: record.ref), record.park)])
         end
 
         # A deferred gate is journaled after the decision that parked it and only the morning review
@@ -116,12 +121,18 @@ module Lain
         # come apart: the queue's degrade path writes a `journal_error` in place of either, and a
         # lost decision would hold the count high for the rest of the run. A degraded park goes
         # first, since it names nothing a later decision could match, then the oldest approval.
-        def released(tool_use_id)
-          index = approvals.index { |wait| wait.ref == tool_use_id }
+        def released(tool_use_id, park = nil)
+          index = approval_index(tool_use_id, park)
           return with(approvals: approvals.reject.with_index { |_, at| at == index }) if index
           return with(degraded_parks: degraded_parks - 1) if degraded_parks.positive?
 
           with(approvals: approvals.drop(1))
+        end
+
+        # A park that names itself closes by that name; one from before parks carried one, by its call.
+        def approval_index(tool_use_id, park)
+          approvals.index { |approval| park && approval.park == park } ||
+            approvals.index { |approval| approval.park.nil? && approval.wait.ref == tool_use_id }
         end
 
         def closed(kind, refs) = refs.inject(self) { |waits, ref| waits.answered(kind, ref) }
@@ -130,7 +141,7 @@ module Lain
         def degraded(entry_class)
           case entry_class
           when Telemetry::AwaitingHuman.name then with(degraded_parks: degraded_parks + 1)
-          when Approval::Parked::Queue::Pending.name then released(nil)
+          when Approval::Parked::Queue::Pending.name then released(nil, nil)
           else self
           end
         end

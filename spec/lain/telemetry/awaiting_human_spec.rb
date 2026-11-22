@@ -25,6 +25,16 @@ RSpec.describe Lain::Telemetry::AwaitingHuman do
                                     "deadline" => "2026-11-02T09:15:00Z", "summary" => "Approve the plan?")
   end
 
+  it "names the park it opens, which no other park of the same call shares" do
+    record = described_class.approval(parked.bind(park: "park-1"))
+
+    expect(record.to_journal).to include("park" => "park-1")
+  end
+
+  it "omits the park of a wait that is not an approval" do
+    expect(described_class.new(kind: "gate", ref: "r", summary: "s").to_journal).not_to have_key("park")
+  end
+
   it "journals a null deadline for a question, which waits on no clock" do
     record = described_class.new(kind: "question", ref: "blake3:q", summary: "Which branch?")
 

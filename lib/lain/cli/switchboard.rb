@@ -129,6 +129,8 @@ module Lain
       #   would grant a build; none by default
       # @param child_env [Exec::ChildEnv] what a bash child is handed, whose env the opaque route reads; the
       #   process default by default
+      # @param park_ids [#call] what names each park the queue admits; random by default, since a resumed
+      #   session shares its file with the last
       # @param human [Human] who answers this session, built once by the chat from
       #   its launch flags. Required: a default would hand a headless caller a
       #   queue nobody drains
@@ -146,10 +148,11 @@ module Lain
                    masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT,
                    memo: Approval::JudgeMemo.off, containment: Confine::Sandbox::Containment::NONE,
                    fresh: Shell::Executable::Fresh::Unmarked, granting: Confine::Profiles::Granting::NONE,
-                   child_env: Exec::ChildEnv::DEFAULT)
+                   child_env: Exec::ChildEnv::DEFAULT, park_ids: Approval::Parked::Queue::RANDOM_PARKS)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
             request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:, fresh:, granting:, child_env:,
+            park_ids:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !human.ladder_refuses?, approval: options.fetch(:approval, :ask))
       end
@@ -266,6 +269,7 @@ module Lain
       # @param granting [Confine::Profiles::Granting, Confine::Profiles::Granting::NONE] as on {.for}; none by
       #   default
       # @param child_env [Exec::ChildEnv] as on {.for}; the process default by default
+      # @param park_ids [#call] as on {.for}
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -277,7 +281,8 @@ module Lain
                      stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
                      silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off,
                      containment: Confine::Sandbox::Containment::NONE, fresh: Shell::Executable::Fresh::Unmarked,
-                     granting: Confine::Profiles::Granting::NONE, child_env: Exec::ChildEnv::DEFAULT)
+                     granting: Confine::Profiles::Granting::NONE, child_env: Exec::ChildEnv::DEFAULT,
+                     park_ids: Approval::Parked::Queue::RANDOM_PARKS)
         @child_env = child_env
         @attended = attended
         @journal = journal
@@ -286,7 +291,7 @@ module Lain
                           masks:, display:, containment:)
         # A parked call has to be answered by somebody, and a queue with no
         # drain is a wait, not a decision.
-        @approvals = queue_over(sensitivity, approval_timeout, silence, containment) if @attended
+        @approvals = queue_over(sensitivity, approval_timeout, silence, containment, park_ids) if @attended
         @toolset = toolset
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
@@ -535,10 +540,10 @@ module Lain
       def faults = Approval::Escalation::Faults.new(@journal)
 
       # Over the path policy's own file facts, so a remembered denial lands where the gate's paths do.
-      def queue_over(sensitivity, timeout, silence, containment)
+      def queue_over(sensitivity, timeout, silence, containment, park_ids)
         Approval::Parked::Queue.new(journal: @journal, timeout:, home: sensitivity.home,
                                     file_facts: sensitivity.file_facts, silence:, containment:, verdict: @verdict,
-                                    mask: method(:face_mask))
+                                    mask: method(:face_mask), park_ids:)
       end
 
       # Display has no text-level mask, so this goes straight to the TextMask it wraps, over the same secrets.

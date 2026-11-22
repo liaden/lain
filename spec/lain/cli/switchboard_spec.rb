@@ -633,6 +633,19 @@ RSpec.describe Lain::CLI::Switchboard do
       expect(parked_under(board)).to be_a(Lain::Approval::Parked::Queue::Pending)
     end
 
+    it "names the parks of the board's queue at random, since a resumed session shares its file with the last" do
+      board = switchboard(approval: :auto, judge: judge_answering(:defer))
+
+      expect(parked_under(board).park).to match(/\Apark-\h{16}\z/)
+    end
+
+    it "names the parks from the id source it is handed" do
+      board = switchboard(approval: :auto, judge: judge_answering(:defer),
+                          park_ids: Lain::Approval::Parked::Queue.counted_parks)
+
+      expect(parked_under(board).park).to eq("park-1")
+    end
+
     describe "a human's allow of the exact call" do
       let(:cargo) { Lain::Effect::ToolCall.new(tool_use_id: "tu_c", name: "bash", input: { "command" => "cargo test" }) }
 

@@ -157,6 +157,112 @@ RSpec.describe Lain::Journal::Projection::Waits do
     end
   end
 
+  describe "an approval closed by the park it names" do
+    parked_read = lambda do |command|
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command })
+      Lain::Approval::Parked::Queue::Pending.new(effect:, identity: Lain::Requester.main, clock: -> { 0.0 })
+                                            .bind(park: "park-#{command}")
+    end
+    approve = lambda do |pending|
+      pending.decide(Lain::Approval::Verdict::Approve.new, surface: "tty")
+      pending
+    end
+
+    it "leaves the park that was not decided open, whichever order they were decided in" do
+      path_gate = parked_read.call("cat a")
+      release = parked_read.call("cat b")
+      waits = described_class.over([Lain::Telemetry::AwaitingHuman.approval(path_gate),
+                                    Lain::Telemetry::AwaitingHuman.approval(release), approve.call(release)])
+
+      expect([waits.approvals_pending, waits.open.map(&:summary)])
+        .to eq([1, [Lain::Telemetry::AwaitingHuman.approval(path_gate).summary]])
+    end
+
+    it "closes a park whose records were read back from a file by the park they name" do
+      path_gate = parked_read.call("cat a")
+      release = parked_read.call("cat b")
+      parks = [path_gate, release].map { Lain::Telemetry::AwaitingHuman.approval(_1) }
+      closing = Lain::Telemetry.read(JSON.parse(JSON.generate(approve.call(release).to_journal)), strict: false)
+
+      expect(described_class.over([*parks, closing]).open.map(&:summary)).to eq([parks.first.summary])
+    end
+
+    it "reads 0 the moment a human answers, before the requester fiber resumes" do
+      records = []
+      journal = Struct.new(:records) { def record(entry) = records << entry }.new(records)
+      queue = Lain::Approval::Parked::Queue.new(journal:)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "make" })
+
+      Sync do |task|
+        run = task.async { queue.call(effect, nil) }
+        queue.dequeue.approve(surface: "tty")
+
+        expect(described_class.over(records).approvals_pending).to eq(0)
+        run.wait
+      end
+    end
+
+    it "keeps a resumed queue's parks apart from the ones its file already holds" do
+      records = []
+      journal = Struct.new(:records) { def record(entry) = records << entry }.new(records)
+      effect = lambda do |id|
+        Lain::Effect::ToolCall.new(tool_use_id: id, name: "bash", input: { "command" => "make #{id}" })
+      end
+      queues = Array.new(2) { Lain::Approval::Parked::Queue.new(journal:) }
+
+      Sync do |task|
+        earlier = task.async { queues.first.call(effect.call("tu_1"), nil) }
+        resumed = task.async { queues.last.call(effect.call("tu_2"), nil) }
+        queues.last.dequeue.approve(surface: "tty")
+        resumed.wait
+
+        expect(described_class.over(records).open.map(&:ref)).to eq(["tu_1"])
+        earlier.stop
+      end
+    end
+
+    it "mints random ids from several threads at once, one source shared" do
+      ids = Lain::Approval::Parked::Queue::RANDOM_PARKS
+      queues = Array.new(2) do
+        Lain::Approval::Parked::Queue.new(journal: Struct.new(:records) { def record(_) = nil }.new([]),
+                                          park_ids: ids)
+      end
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "make" })
+
+      parks = queues.map do |queue|
+        Thread.new do
+          Sync do |task|
+            run = task.async { queue.call(effect, nil) }
+            queue.dequeue.tap { _1.approve(surface: "tty") }.park.tap { run.wait }
+          end
+        end
+      end.map(&:value)
+
+      expect(parks.uniq.size).to eq(2)
+    end
+
+    it "counts parks from 1 on the counter, which the fixtures take, and never repeats one across threads" do
+      ids = Lain::Approval::Parked::Queue.counted_parks
+
+      minted = Array.new(8) { Thread.new { Array.new(50) { ids.call } } }.flat_map(&:value)
+
+      expect([minted.uniq.size, minted.min_by { _1.delete_prefix("park-").to_i }]).to eq([400, "park-1"])
+    end
+
+    it "journals each decision once" do
+      records = []
+      journal = Struct.new(:records) { def record(entry) = records << entry }.new(records)
+      queue = Lain::Approval::Parked::Queue.new(journal:)
+      effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "make" })
+
+      Sync do |task|
+        task.async { queue.call(effect, nil) }.tap { queue.dequeue.approve(surface: "tty") }.wait
+      end
+
+      expect(records.grep(Lain::Approval::Parked::Queue::Pending).size).to eq(1)
+    end
+  end
+
   describe "#open_for" do
     it "answers only the agent's own waits" do
       waits = described_class.over([approval_park.call("tu_1"), approval_park.call("tu_2", spawn: child)])

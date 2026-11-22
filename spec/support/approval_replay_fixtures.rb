@@ -148,10 +148,12 @@ module ApprovalReplayFixtures
     classifier = Lain::Sensitivity.new(home: at.home, cwd: at.cwd, root: at.root)
     sensitivity = Lain::Sensitivity::Policy.new(sensitivity: classifier, home: at.home, root: at.root,
                                                 file_facts: facts)
+    # The counter, because `park` is the one field a regeneration would otherwise change; the comparison spec
+    # already drops `deadline` and `latency`.
     Lain::CLI::Switchboard.for(
       human: Lain::CLI::Human.new(kind: :terminal),
       chronicle:, options: { approval: }, model: MODEL, toolset:, judge: Judge.new(script), rules: remembered,
-      denied_tools:, sensitivity:,
+      denied_tools:, sensitivity:, park_ids: Lain::Approval::Parked::Queue.counted_parks,
       classifiers: Lain::CLI::Wiring::BoardBuild::Classifiers.new(home: at.home, cwd: at.cwd, root: at.root),
       test_layout: Lain::Middleware::GuardTestLayout::Run.new(layout: Lain::TestLayout::None, root: at.root,
                                                               file_facts: facts)

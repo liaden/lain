@@ -5,6 +5,7 @@ require "active_support/core_ext/string/filters"
 require "active_support/core_ext/string/inflections"
 require "async"
 require "async/queue"
+require "securerandom"
 
 module Lain
   module Approval
@@ -33,6 +34,24 @@ module Lain
         # so nobody awaits the verdict and the only honest one is a denial signed
         # by the cancellation itself.
         ABANDONED_SURFACE = "abandoned"
+
+        # A session file is appended to across resumes, so a live session names parks from this: a
+        # counter restarting at 1 would meet the parks its file already holds. A callable and not an
+        # Enumerator, because an external Enumerator raises when a second thread asks it for the next.
+        RANDOM_PARKS = -> { "park-#{SecureRandom.hex(8)}" }
+
+        # The park names a recorded fixture needs, since it must regenerate to the same bytes. Locked
+        # because one source can be shared by queues on several threads.
+        #
+        # @return [#call] park-1, park-2, and so on, one per call
+        def self.counted_parks
+          lock = Mutex.new
+          count = 0
+          -> { "park-#{lock.synchronize { count += 1 }}" }
+        end
+
+        # What a {Pending} built with no queue does once decided.
+        NOT_SETTLED = ->(_pending) {}
 
         Remembered = Data.define(:reason, :authority, :contained, :secrets)
 
@@ -260,8 +279,10 @@ module Lain
 
           def begin_asking(clock)
             @clock = clock
+            @settled = NOT_SETTLED
             @asked_at = clock.call
             @promise = Promise.new
+            @park = nil
             @offered = nil
             @network = false
             @unmasked = false
@@ -271,6 +292,23 @@ module Lain
           # @return [String, nil] where the path this call names lands when that
           #   differs, read off the facts the queue was built over at park time
           attr_reader :landing
+
+          # The queue names each park it admits, so a path gate park and a release park of one call, which
+          # share a `tool_use_id`, are told apart. A pending built with no queue has none.
+          #
+          # @return [String, nil] what pairs this park's record with its decision
+          attr_reader :park
+
+          # `settled` is called once with this pending, by the answer that wins.
+          #
+          # @param park [String]
+          # @param settled [#call]
+          # @return [Pending] self
+          def bind(park:, settled: NOT_SETTLED)
+            @park = park
+            @settled = settled
+            self
+          end
 
           # @return [String] the asking identity's name
           def requester = identity.name
@@ -345,6 +383,7 @@ module Lain
             @approval_note = flattened(verdict.note) if verdict.approved?
             @latency = @clock.call - @asked_at
             @promise.resolve(@decision)
+            @settled.call(self)
           end
           private :resolve
 
@@ -573,7 +612,7 @@ module Lain
           def to_journal
             { "type" => "approval_decision", "tool_use_id" => tool_use_id, "requester" => requester,
               "tool" => tool, "surface" => surface, "verdict" => decision.to_s, "timed_out" => timed_out?,
-              "latency" => latency }.merge(reason ? { "reason" => reason } : {}, digest_entry, kind_entry,
+              "latency" => latency }.merge(reason ? { "reason" => reason } : {}, park_entry, digest_entry, kind_entry,
                                            network? ? { "network" => true } : {},
                                            unmasked? ? { "secrets" => true } : {},
                                            @approval_note ? { "note" => @approval_note } : {})
@@ -584,6 +623,8 @@ module Lain
           def flattened(words) = words.to_s.gsub(/[[:cntrl:]]/, " ").squish.presence
 
           def kind_entry = tool_call? ? {} : { "kind" => kind }
+
+          def park_entry = park ? { "park" => park } : {}
 
           def digest_entry = input_digest ? { "input_digest" => input_digest } : {}
         end
@@ -652,13 +693,15 @@ module Lain
         #   contained, which a plain approval of one does; unstated, the row says nothing of it
         # @param mask [#call] `(text, context)` to the text with the session's known secrets masked; it only
         #   changes what a surface shows, never what the call runs
+        # @param park_ids [#call] where each park's name comes from; see {RANDOM_PARKS} and {.counted_parks}
         # @param verdict [Shell::Verdict] the session's one shell verdict, which decides whether bash runs a call
         #   as argv, so whether a build tool's ports could be granted
         def initialize(journal:, requester: REQUESTER, timeout: DEFAULT_TIMEOUT, clock: RunClock::MONOTONIC,
                        wall: -> { Time.now }, home: nil, file_facts: FileFacts::LIVE, silence: Silence::DENY,
                        containment: Confine::Sandbox::Containment::NONE, verdict: ::Lain::Shell::Verdict.new(home:),
-                       mask: UNMASKED)
+                       mask: UNMASKED, park_ids: RANDOM_PARKS)
           @mask = mask
+          @park_ids = park_ids
           @journal = journal
           @containment = containment
           @verdict = verdict
@@ -714,7 +757,7 @@ module Lain
         def ask_decision(decision, timeout: nil)
           pending = DecisionPending.new(decision:, identity: Requester.of(decision.requester), clock: @clock,
                                         timeout: timeout || @timeout, wall: @wall, silence: @silence)
-          park(pending)
+          park(moor(pending))
           settle(pending)
           pending.approved?
         end
@@ -835,7 +878,7 @@ module Lain
                                 spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:,
                                 secrets: Queue.secrets_of(disclosure), files: disclosure.whole_files,
                                 mask: ->(text) { @mask.call(text, context) })
-          park(pending)
+          park(moor(pending))
         end
 
         # The containment stays off the reasons: the phone shows them and cannot answer network.
@@ -867,6 +910,8 @@ module Lain
           ::Lain::Middleware::ParsedCommand.named_in(effect, context, home: @home) if effect.name == BASH
         end
 
+        def moor(pending) = pending.bind(park: @park_ids.call, settled: method(:record_decision))
+
         def park(pending)
           record_evidence(Telemetry::AwaitingHuman) { Telemetry::AwaitingHuman.approval(pending) }
           @parked << pending
@@ -886,8 +931,11 @@ module Lain
           @parked.delete(pending)
           remember(pending)
           retire_arrivals
-          record_evidence(Pending) { pending }
         end
+
+        # Written when the answer lands, not when the requester resumes, so a reader counting what waits
+        # on a human sees it close at once.
+        def record_decision(pending) = record_evidence(Pending) { pending }
 
         # Straight-line with no yield, as every @parked mutation is, so it can
         # sit in {#settle}'s `ensure` without opening a gap between fibers; a
