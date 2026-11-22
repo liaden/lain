@@ -404,8 +404,11 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
   def trace = File.join(@dir, "daemon.trace")
 
-  def surface(registration, secrets: [], agenda: self.agenda, journal: self.journal, project: @dir, **options)
-    described_class.new(registration:, agenda:, secrets:, journal:, poll_interval: 0.02, project:, trace:, **options)
+  # An empty identity, so a spec never waits on the `git config` the real one reads.
+  def surface(registration, secrets: [], agenda: self.agenda, journal: self.journal, project: @dir,
+              identity: Lain::Sensitivity::Secrets::Identity.new(pairs: []), **options)
+    described_class.new(registration:, agenda:, secrets:, journal:, poll_interval: 0.02, project:, trace:, identity:,
+                        **options)
   end
 
   def agenda_over(gates: RemoteSurfaceSpecSupport::NoGates.new, queue: self.queue,
@@ -443,6 +446,30 @@ RSpec.describe Lain::Approval::RemoteSurface do
 
       expect(registration.methods_called).to contain_exactly("daemon.info", "agenda.publish")
       expect(registration.published.first.first.added.sole).to have_attributes(tool: "bash", id: "1")
+    end
+
+    it "reads this box's identity once for a publish of several items" do
+      reads = 0
+      allow(Lain::Sensitivity::Secrets::Identity).to receive(:session) do
+        reads += 1
+        Lain::Sensitivity::Secrets::Identity.new(pairs: [])
+      end
+      agenda = agenda_over(gates: RemoteSurfaceSpecSupport::Wave.new)
+
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async do
+            described_class.new(registration:, agenda:, secrets: [], journal:, poll_interval: 0.02, project: @dir,
+                                trace:).watch
+          end
+          park(task)
+          wait_until(reason: "the surface published") { registration.added_ids.size >= 2 }
+        ensure
+          watching&.stop
+        end
+      end
+
+      expect(reads).to eq(1)
     end
 
     it "takes an answer the daemon pushes, as the paired device, with human authority" do
@@ -560,6 +587,25 @@ RSpec.describe Lain::Approval::RemoteSurface do
       shown = registration.published.last.first.added.sole.question
       expect(shown).to include("no epic document at", described_class::PATH_MASK)
       expect(shown).not_to include(Dir.home)
+    end
+
+    it "shows this box's identity as its placeholder in a refusal it shows the phone" do
+      identity = Lain::Sensitivity::Secrets::Identity.new(pairs: [["alice", "<lain:user>"]])
+      gated = agenda_over(gates: RemoteSurfaceSpecSupport::RaisingGates.new("the owner alice cannot take this"))
+      Sync do |task|
+        task.with_timeout(10) do
+          watching = task.async { surface(registration, agenda: gated, identity:).watch }
+          wait_until(reason: "the gate was published") { registration.added_ids.any? }
+          registration.deliver("answer", [approve(registration.published.first.first.added.sole).to_wire])
+          wait_until(reason: "the refusal was published") { registration.added_ids.size == 2 }
+        ensure
+          watching&.stop
+        end
+      end
+
+      shown = registration.published.last.first.added.sole.question
+      expect(shown).to include("the owner <lain:user> cannot take this")
+      expect(shown).not_to include("alice")
     end
 
     it "keeps watching when the daemon drops while it asks after a reconnect, and publishes again once it answers" do

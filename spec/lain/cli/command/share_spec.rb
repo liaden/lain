@@ -43,6 +43,15 @@ RSpec.describe Lain::CLI::Command::Share do
     expect(reply).to include("https://gist.github.com/u/abc123").and include("3 regions")
   end
 
+  it "pipes an export that names this box's identity as its placeholders" do
+    identity = Lain::Sensitivity::Secrets::Identity.new(pairs: [["/home/alice", "/home/<lain:user>"]])
+    allow(export).to receive(:call).with(format: :html).and_return("<p>cd /home/alice/dev</p>")
+
+    described_class.new(exports: ->(_file) { export }, shell: gh, journal:, identity:).call("", env)
+
+    expect(spawned.first.last).to include(input: "<p>cd /home/<lain:user>/dev</p>")
+  end
+
   it "spawns the gist under the configured account's environment" do
     account = instance_double(Lain::Forge::Gh::Account, environment: { "GH_TOKEN" => "t0k" })
 
@@ -257,6 +266,23 @@ RSpec.describe Lain::CLI::Command::Share do
 
       expect(File.read("#{dir}/stdin")).not_to include("hunter2xyz")
       expect(reply).to include("3 regions masked")
+    end
+
+    it "aliases a name that follows a newline inside a tool call and inside a tool result" do
+      turns = [{ "type" => "turn", "digest" => "d2", "role" => "assistant", "parent" => "d1", "meta" => {},
+                 "content" => [{ "type" => "tool_use", "id" => "t1", "name" => "bash",
+                                 "input" => { "command" => "echo hi\n/home/alice/dev" } }] },
+               { "type" => "turn", "digest" => "d3", "role" => "user", "parent" => "d2", "meta" => {},
+                 "content" => [{ "type" => "tool_result", "tool_use_id" => "t1",
+                                 "content" => "ok\n/home/alice/dev" }] }]
+      File.write(file, "#{[*records, *turns].map { |record| JSON.generate(record) }.join("\n")}\n")
+      identity = Lain::Sensitivity::Secrets::Identity.new(pairs: [["/home/alice", "/home/<lain:user>"]])
+
+      described_class.new(exports:, journal:, identity:)
+                     .call("", build_command_env(chronicle: instance_double(Lain::CLI::Chronicle::Null,
+                                                                            journal_path: file)))
+
+      expect(File.read("#{dir}/stdin")).to include("/home/<lain:user>/dev").and not_include("alice")
     end
 
     it "pipes the real html to gh and records the url and the masked count" do

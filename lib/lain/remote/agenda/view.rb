@@ -15,24 +15,25 @@ module Lain
 
         # @param item [ParkedCall, GateQuestion, Question]
         # @param secrets [#to_a] the board's known secret values, as {Sensitivity::Secrets::Source} lists them
+        # @param identity [Sensitivity::Secrets::Identity] the account, home and host values, shown as placeholders
         # @return [ParkedCall, GateQuestion, Question, nil] the same kind of item, masked and frozen;
         #   nil for a call that stays at the desk
         # @raise [StandardError] whatever the secrets source raises reading its values; a caller must
         #   not rescue it and publish the raw item, which would send the phone every value unmasked
-        def self.of(item, secrets:)
+        def self.of(item, secrets:, identity: Sensitivity::Secrets::Identity.session)
           return if item.releases.positive?
 
           mask = Sensitivity::TextMask.new(secrets: secrets.to_a)
-          Ractor.make_shareable(item.with(**item.to_h.except(*KEPT).transform_values { masked(_1, mask) }))
+          Ractor.make_shareable(item.with(**item.to_h.except(*KEPT).transform_values { masked(_1, mask, identity) }))
         end
 
-        def self.masked(value, mask)
+        def self.masked(value, mask, identity)
           case value
-          when String then mask.call(value).text
-          when Hash then value.to_h { |key, inner| [masked(key, mask), masked(inner, mask)] }
-          when Array then value.map { masked(_1, mask) }
+          when String then identity.alias(mask.call(value).text)
+          when Hash then value.to_h { |key, inner| [masked(key, mask, identity), masked(inner, mask, identity)] }
+          when Array then value.map { masked(_1, mask, identity) }
           when *PLAIN then value
-          else mask.call(value.to_s).text
+          else identity.alias(mask.call(value.to_s).text)
           end
         end
         private_class_method :masked

@@ -92,6 +92,21 @@ RSpec.describe Lain::Remote::Agenda::View, :seam do
     end
   end
 
+  describe "the identity of this box" do
+    let(:identity) { Lain::Sensitivity::Secrets::Identity.new(pairs: [["/home/alice", "/home/<lain:user>"]]) }
+
+    it "is shown as its placeholder in every text field" do
+      call = Lain::Remote::Agenda::ParkedCall.new(id: "1", requester: "agent", tool: "bash",
+                                                  input: { "command" => "cd /home/alice/dev/app" },
+                                                  cwd: "/home/alice/dev/app", why: "", asked_at:, releases: 0)
+
+      shown = described_class.of(call, secrets: [], identity:)
+
+      expect(shown).to have_attributes(input: { "command" => "cd /home/<lain:user>/dev/app" },
+                                       cwd: "/home/<lain:user>/dev/app")
+    end
+  end
+
   describe "a call whose yes would release a file's sensitive regions" do
     it "is left off the phone, and still waits at the desk" do
       path = File.join(@root, ".env")

@@ -86,16 +86,18 @@ module Lain
       # @param agenda [Remote::Agenda] what waits on a human, and where an answer goes
       # @param secrets [#to_a] the board's known secret values, which every published item is masked for
       # @param journal [#<<] where a degraded relay and a failed sweep are recorded
+      # @param identity [Sensitivity::Secrets::Identity] the account, home and host values, shown as placeholders
       # @param poll_interval [Numeric] seconds between reads of the agenda
       # @param project [String] the project root every published item names, and every gate key is scoped to
       # @param trace [String] the daemon's trace, which says why its relay is unavailable
       def initialize(registration:, agenda:, secrets:, project:, trace:, journal: Channel::Null::INSTANCE,
-                     poll_interval: DEFAULT_POLL_INTERVAL)
+                     identity: Sensitivity::Secrets::Identity.session, poll_interval: DEFAULT_POLL_INTERVAL)
         @registration = registration
         @project = project
         @trace = trace
         @agenda = agenda
         @secrets = secrets
+        @identity = identity
         @journal = journal
         @poll_interval = poll_interval
         start_unpublished
@@ -200,7 +202,9 @@ module Lain
       # sweep starts from the same cursor.
       def publish
         cursor, added, settled = @agenda_lock.synchronize { @agenda.delta_since(@cursor) }
-        views = added.to_h { [_1, Remote::Agenda::View.of(phone_face(_1), secrets: @secrets)] }.compact
+        views = added.to_h do |item|
+          [item, Remote::Agenda::View.of(phone_face(item), secrets: @secrets, identity: @identity)]
+        end.compact
         settle(settled.select { @published.key?(_1) })
         views.each { |item, view| show(item, view) }
         @cursor = cursor
@@ -236,7 +240,8 @@ module Lain
         refused = @refused.slice(*@published.keys)
         @refused.clear
         refused.each do |id, reason|
-          view = Remote::Agenda::View.of(annotated(phone_face(@published.fetch(id)), reason), secrets: @secrets)
+          face = annotated(phone_face(@published.fetch(id)), reason)
+          view = Remote::Agenda::View.of(face, secrets: @secrets, identity: @identity)
           view && show(@published.fetch(id), view)
         end
       end

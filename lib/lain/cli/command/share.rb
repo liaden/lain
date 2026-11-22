@@ -20,11 +20,14 @@ module Lain
         # @param shell [Class] answers `new(*argv, input:)` and `#run_command`, {Shell::Out}'s shape
         # @param journal [#record] takes the {Telemetry::SessionShared}
         # @param account [Forge::Gh::Account, Forge::Gh::Account::None] whose token gh creates the gist with
-        def initialize(exports:, journal:, shell: Shell::Out, account: Forge::Gh::Account::None.new)
+        # @param identity [Sensitivity::Secrets::Identity] the account, home and host values, sent as placeholders
+        def initialize(exports:, journal:, shell: Shell::Out, account: Forge::Gh::Account::None.new,
+                       identity: Sensitivity::Secrets::Identity.session)
           @exports = exports
           @shell = shell
           @journal = journal
           @account = account
+          @identity = identity
           freeze
         end
 
@@ -55,7 +58,7 @@ module Lain
         end
 
         def publish(export, file)
-          document = export.call(format: FORMAT)
+          document = @identity.alias(export.call(format: FORMAT))
           masked = export.masked
           shell = spawn(File.basename(file, ".*"), document)
           return "gh gist create failed: #{shell.stderr.strip}" unless Shell::Out.ok?(shell)
