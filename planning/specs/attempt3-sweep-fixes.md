@@ -1526,6 +1526,48 @@ Spec file: `spec/lain/journal/projection/waits_spec.rb`
 **Stop and report if:**
 - `plugin/tmux_plugin_spec.rb` or `remote/agenda_spec.rb` counts on the old release order.
 
+### Stream F: defects and repeat flakes found during the run
+
+These cards were added mid-run under the repeat-flake and repeat-defect rules. F1 through F5 and F8 have landed; their entries record what was found. T20 was split: the sweeps landed with the parse cap kept at 4096, and the rest moved to F6 and F7.
+
+### F1: Mask grep-prefixed secret lines in bash output          [risk: high]
+
+Found while reviewing T18: `grep -n DB .env` printed `5:DB_PASSWORD=...` unmasked through the real ToolGuard stack. `CredentialPatterns` LINE_LEAD now reads `N:`, `FILE:N:`, `FILE:` and git grep `rev:path:` leads. Landed 68482428.
+
+### F2: Keep 1 cache mark on a role child's system prompt          [risk: high]
+
+The role_prelude_wiring example was taken for a repeat flake. It had been pending since 2026-07-17, and its expected failure was misread as a hook failure. The real defect: a role child sent 5 cache_control marks. Landed 7d75d8f78.
+
+### F3: Let the streaming stand-in see a client leave without raising          [risk: low]
+
+Repeat flake: `a stalled stream under an Async reactor two healthy streams interleaving lets both finish, each with its own content`, Errno::ECONNRESET in the stand-in. Landed 7480e950.
+
+### F4: Assert jq is not a command word in the cockpit status-right          [risk: low]
+
+New flake with a known cause: the status-right embeds a random tmpdir name, and a suffix holding `jq` failed the check. Landed 46a10ca2.
+
+### F5: Reap the tmux child before a tty spec removes its tmpdir          [risk: low]
+
+Repeat flake family: Errno::ENOTEMPTY on the tmpdir cleanup in `keeps vi's mode and cursor`. Landed 0eeac15c.
+
+### F6: Parse each nested substitution once in ShellRuns          [risk: high]
+
+**Depends on:** T23 (it rewrites `ShellRuns` in `lib/lain/tools/bash.rb`)
+**Files:** `lib/lain/tools/bash.rb`, `spec/lain/tools/bash_spec.rb`
+
+`Tools::Bash::ShellRuns#substituted` parses every nested substitution again. Nested `echo $(` takes 11.9 s at 4 KB and 87 s at 8 KB on HEAD, on the containment path of every automatic allow. Parse only the outermost substitutions and recurse, or cap the total bytes parsed; past the cap the command is unread and parks.
+
+### F7: Bisect trailing redirects in Named, then raise the parse cap          [risk: medium]
+
+**Depends on:** T23, F6
+**Files:** `lib/lain/shell/named.rb`, `spec/lain/shell/named_spec.rb`, `bin/hot-path-bench`, the parse cap's file
+
+`Shell::Named::Compounds#trailing?` rescans every stage and separator per compound per redirect, which is about cubic: `(cd a && cat b) >o; ` repeated is 0.43 s at 4 KB and 2.7 s at 8 KB. Bisect sorted begins, as Owners does. Add hot-path-bench rows for dense and nested shell shapes, re-measure HOLD_BELOW, and only then raise the parse cap to 32 KiB - 1 (the deferred half of T20).
+
+### F8: Tell a drain's own expiry from an actor's timeout          [risk: medium]
+
+Same misread as F2: a pending example in supervisor_reactor_spec expected a real defect, and the example sat on the known-flake list. `Supervisor::Drain::Expired` now carries the drain's own expiry. Landed 0150044bf.
+
 ## Integration checks
 
 After the last card lands:
@@ -1880,3 +1922,32 @@ After the last card lands:
 - 02:10 20 landed 9791777d
 - 02:10 T20 landed 9791777d
 - 02:10 F3 started, cut at 9791777d. Plan log fold.
+- 02:11 Plan log folded 267a6f62. T23 round 5 done (allowlists for interpreters, shell grammars, shell options and plain-operand builtins; 7284/0). Rulings: inline spawning code accepted for the judge (prompt shows it whole); stdin fails only when it is the program; make -C follow-up. Short round, then fourth review.
+- 02:12 F2 high review APPROVE-WITH-FIXES (prefixes measured: main unchanged, persona mark kept; stale comments; supervisor_reactor_spec:480 is the same pending misread). Last round sent.
+- 02:13 T15 high review REQUEST-CHANGES (pruned top-level .venv unmasked; mid-walk error fails open; workspace binds the previous listing; refusal unrecorded; .git/config). profiles.rb joins. Fix round sent; second review after.
+- 02:13 F8 started, cut at 267a6f62.
+- 02:16 F3 done (stand-in tolerates a client leaving; 1604/0). F2 last round done (5233/0). Both verified by main; landing F3 then F2.
+- 02:18 F8 done (Drain::Expired; pending removed; false DrainTimedOut red; 1592/0). Medium review queued behind the F3/F2 landings. F2, F3 and F8 all edit toolchain-traps.md; the land script patches.
+- 02:22 F3 landed 7480e950d
+- 02:23 F3 landed 7480e950; F2 land attempt 1 hit a toolchain-traps.md patch conflict with F3; main rebuilt F2's doc edit on main's copy. Attempt 2.
+- 02:24 T23 round 6 done (stdin parks only as the program; full inline script reaches the judge, pinned; 7286/0). Fourth high review queued behind the F2 landing.
+- 02:26 F2 landed 7d75d8f78
+- 02:27 F2 landed 7d75d8f78 (attempt 2; worktree removed by hand, its doc differs from the patched cut by design).
+- 02:27 T23 fourth high review sent (a9d2df77573f0076a). F8 medium review started.
+- 02:29 F8 medium review APPROVE-WITH-FIXES (unsettled_turn rescue unpinned; commit the paused-drain probe). Last round sent.
+- 02:33 F8 last round done (retire-path pins; paused-drain spec; 1595/0). Doc edit rebuilt on main's copy; landing by copy (A3S_CUT=HEAD).
+- 02:33 T15 fix round done (8 items; 5410/0). Rulings: crate .env accepted (public sources); checkout .git/config masked by glob; content-based secrets in a contained cat out of scope. Short round, then second review.
+- 02:37 F8 landed 0150044bf
+- 02:37 F8 landed 0150044bf (worktree removed by hand).
+- 02:38 T23 fourth high review REQUEST-CHANGES (set -k; jq include; perl -d; unknown interpreters like nvim and pypy pass by name; busybox drop). Ruling: a program allowlist for the opaque route closes the class; LOADER_ENV becomes KEEP-relative. Round 7 sent; fifth review after.
+- 02:43 T15 checkout .git/config masked by glob (2/2 red; 5432/1, the ruled P3). Second high review sent.
+- 02:49 T23 round 7 done (ROUTE_PROGRAMS allowlist; set -k, jq include, perl -d, ruby -C, node options park; 7287/0). Found: the board judged the process env, so every routed real-chat call parked on LD_LIBRARY_PATH. Ruling: judge ChildEnv's output; outside-KEEP allowlist; child_env.rb and board_build.rb join. Then fifth review.
+- 02:58 T23 judges ChildEnv#received (228/3 red; 7325/0; real-env drive reaches the judge again). Rulings: toolchain names in KEEP stay unbarred; lent names do not bar, only project-passed names outside KEEP. Short round, then fifth review.
+- 03:05 T23 round 8 done (received_unlent; lent GH_TOKEN does not park; 230/2 red; 7327/0). Fifth high review sent.
+- 03:07 T15 second high review APPROVE-WITH-FIXES (probe rows all masked or ruled; raw reason bytes break JSON; 3 unpinned lines; glob on every root). Last round sent; main verifies and lands.
+- 04:40 T23 fifth high review REQUEST-CHANGES (partial quoting; option-named programs in git grep, sort, rg; sed delimiters; make include; inline loads). User ruled via AskUserQuestion: keep fixing and reviewing. Round 9 sent (quote-removed values; per-program option allowlists; inline code naming an existing file bars). Sixth review after.
+- 04:40 T15 last round done (escaped reason; 3 pins; timeout re-raised; glob only under checkouts; 6236/1 ruled). Verified by main; landing attempt 1.
+- 04:43 15 landed ce53b889e
+04:43 T15 landed ce53b889e
+04:43 T16 started (cut ce53b889e; runs beside T23, bash.rb edit kept to the Request build)
+- 04:44 F1 to F8 written into the plan as Stream F (T20 split noted). Plan log fold.
