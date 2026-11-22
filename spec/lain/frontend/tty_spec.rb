@@ -2213,11 +2213,27 @@ RSpec.describe Lain::Frontend::TTY do
         File.write(File.join(dir, "child.rb"), child)
         example.run
       ensure
-        tmux("kill-server")
+        stop_server
       end
     end
 
     def tmux(*args) = Open3.capture2("tmux", "-L", @socket, *args).first
+
+    # kill-server only signals the child; it can still be writing into the dir when mktmpdir removes it.
+    def stop_server
+      pids = tmux("list-panes", "-a", "-F", "\#{pane_pid}").split.map(&:to_i)
+      tmux("kill-server")
+      wait_until(timeout: 10, reason: "the tmux server and its child exiting") do
+        pids.none? { |pid| alive?(pid) } && !Open3.capture2("tmux", "-L", @socket, "has-session").last.success?
+      end
+    end
+
+    def alive?(pid)
+      Process.kill(0, pid)
+      true
+    rescue Errno::ESRCH
+      false
+    end
 
     def start(columns: 100, env: {}, ready: /you>/)
       command = [*env.map { |name, value| "#{name}=#{value}" }, "TERM=xterm-256color", "INPUTRC=/nonexistent",
