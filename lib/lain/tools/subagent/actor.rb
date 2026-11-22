@@ -43,6 +43,17 @@ module Lain
         # nothing.
         class NotLaunched < Error; end
 
+        # The clock an actor waits on at a usage limit. `Kernel#sleep` yields
+        # the fiber under Async's scheduler, so a wait holds no thread, and a
+        # stop lands on it at once.
+        class Sleeper
+          # @return [Time]
+          def now = Time.now
+
+          # @param time [Time] the moment to wait until
+          def until(time) = sleep([time - now, 0].max)
+        end
+
         # `address` is the stable name the parent tells this actor by: its
         # :spawn digest, present from launch, BEFORE the child's first commit
         # gives its chain a correlation.
@@ -63,9 +74,16 @@ module Lain
         # `reservation` is the child's claim on its holder's room. It settles
         # once, with the child's spend: at the first reply, or when the run
         # ends having sent none, as a child its ceiling stopped does.
+        #
+        # At a usage limit the actor waits on `sleeper` until the reset, or
+        # `probe` seconds when the provider names none, at most `probes` times.
         def initialize(agent:, lineage:, parent:, journal: Channel::Null.instance,
                        registration: AskHuman::Directory::Unheld, answer: ANSWER,
-                       worker: Isolation::SelfSync::Unaskable, reservation: Budget::Shared::Unreserved)
+                       worker: Isolation::SelfSync::Unaskable, reservation: Budget::Shared::Unreserved,
+                       sleeper: Sleeper.new, probe: 900, probes: 16)
+          @sleeper = sleeper
+          @probe = probe
+          @probes = probes
           @worker = worker
           @reservation = reservation
           @agent = agent
@@ -145,22 +163,34 @@ module Lain
         private_constant :UNTOLD
 
         QUOTA_STOPPED = "stopped by the provider's usage limit"
+        PAUSED_BY = "paused by the provider's usage limit"
+
+        # A usage window runs 5 hours, so a reset further off is a longer limit,
+        # a weekly one say: the actor stops for good, naming the reset, rather
+        # than hold its checkout and its slot for days.
+        LONGEST_WAIT = 6 * 60 * 60
 
         # Why a turn failed, in words a parent or a report can show: a usage
         # limit says when it resets, anything else names its class and message.
         #
         # @param error [Exception]
+        # @param now [Time] the moment a retry-after in seconds counts from
         # @return [String]
-        def self.cause(error)
-          return "#{error.class}: #{error.message}" unless Agent::StopReason.for(error) == :quota
+        def self.cause(error, now: Time.now)
+          return "#{error.class}: #{error.message}" unless quota?(error)
 
-          reset = Agent::StopReason.reset_at(error)
+          reset = Agent::StopReason.reset_at(error, now:)
           reset ? "#{QUOTA_STOPPED}; resets at #{reset}" : QUOTA_STOPPED
         end
 
+        # @param error [Exception]
+        # @return [Boolean] whether a usage limit stopped the turn
+        def self.quota?(error) = Agent::StopReason.for(error) == :quota
+
+        # Worded when the turn failed, so a reset counted in seconds is read from that moment.
         # @return [String, nil] why the turn failed, in {.cause}'s words; nil for
         #   an actor whose turn did not raise
-        def cause = (self.class.cause(@failure) if @failure)
+        def cause = @worded
 
         # Land a final attributed :message, unless a failed turn already told
         # the parent one, then cancel the fiber.
@@ -209,6 +239,7 @@ module Lain
           @ready.resolve(true)
           @park.wait
         rescue StandardError => e
+          worded(e)
           @failure = e
         ensure
           @reservation.settle(@agent.spent)
@@ -228,7 +259,7 @@ module Lain
         # That note is the farewell: a stop after it would mark the spawn
         # stopped, and the fleet would read a failed child as a stopped one.
         def process(prompt)
-          answer = Response::Failed.refusing(@agent.ask(prompt))
+          answer = Response::Failed.refusing(asked(prompt))
           # Failure and farewell notes are lifecycle notes outside the count, so they always reach the parent.
           @reservation.note_message!
           reply(@answer.bounded(@agent, answer, journal: @journal).text, lifecycle: StatusFeed::SpawnLifecycle::SETTLED)
@@ -240,10 +271,71 @@ module Lain
           raise e
         end
 
+        # A usage limit pauses the turn rather than failing it: the actor waits
+        # out the window and resumes the same agent from its last committed
+        # turn. It resumes rather than asks, because a fresh ask would fold the
+        # stranded prompt into a second copy of itself. The wait happens
+        # before the turn fails, so the supervisor never retires the row
+        # mid-pause. Each try is kept as a value and raised only after the
+        # loop, so a later error never carries an earlier limit as its cause.
+        def asked(prompt)
+          outcome = (1..@probes).inject(tried { @agent.ask(prompt) }) { |last, wait| resumed(last, wait) }
+          raise outcome if outcome.is_a?(Exception)
+
+          outcome
+        end
+
+        def resumed(last, wait)
+          resume = resume_at(last) if last.is_a?(Exception) && self.class.quota?(last)
+          return last unless resume && resume - @sleeper.now <= LONGEST_WAIT
+
+          paused(last) if wait == 1
+          told_paused(last, resume)
+          @sleeper.until(resume)
+          tried { @agent.resume }
+        end
+
+        def tried
+          yield
+        rescue StandardError => e
+          e
+        end
+
+        def resume_at(error)
+          reset = Agent::StopReason.reset_at(error, now: @sleeper.now)
+          reset ? Time.iso8601(reset) : @sleeper.now + @probe
+        end
+
+        def paused(error)
+          @journal << Telemetry::RunInterrupted.new(
+            head: @agent.timeline.head_digest&.to_s, reason: :quota, detail: Agent::StopReason.detail(error),
+            reset_at: Agent::StopReason.reset_at(error, now: @sleeper.now), spawn: @address
+          )
+        end
+
+        # Told again only when a reset the provider named moved, so no reader keeps a stale time,
+        # while probing with no reset is told once. The note skips {#reply}'s settle, since the
+        # child's spend keeps growing after the pause.
+        def told_paused(error, resume)
+          text = "#{PAUSED_BY}; #{waiting(error, resume)}"
+          return if text == @told_paused
+
+          @told_paused = text
+          noted(text, lifecycle: StatusFeed::SpawnLifecycle::PAUSED)
+        end
+
+        def waiting(error, resume)
+          return "checking again every #{@probe / 60} minutes" unless Agent::StopReason.reset_at(error)
+
+          "resumes at #{resume.utc.iso8601}"
+        end
+
+        def worded(error) = @worded ||= self.class.cause(error, now: @sleeper.now)
+
         # Telling the parent must not replace the failure being told: the turn's
         # own error is the one {#settle} and the supervisor have to see.
         def told_failed(error)
-          reply(self.class.cause(error), lifecycle: StatusFeed::SpawnLifecycle::FAILED)
+          reply(worded(error), lifecycle: StatusFeed::SpawnLifecycle::FAILED)
         rescue StandardError => e
           @journal << Telemetry::ObserverFailed.new(hook: :failed_farewell, digest: @agent.timeline.head_digest.to_s,
                                                     message: e.message)
@@ -255,6 +347,10 @@ module Lain
         # bare.
         def reply(text, lifecycle: nil)
           @reservation.settle(@agent.spent)
+          noted(text, lifecycle:)
+        end
+
+        def noted(text, lifecycle:)
           @lineage.note(@parent, from: @address, to: @parent_correlation, text:,
                                  causal_parents: [@address, @agent.timeline.head_digest].compact, lifecycle:)
         end

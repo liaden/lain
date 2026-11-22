@@ -1458,6 +1458,28 @@ RSpec.describe Lain::Supervisor do
 
     let(:shared_env) { Lain::WorkerEnv.new(cwd: "/leased/checkout", env: {}) }
 
+    # A clock an actor waits on at a usage limit: each wait moves time to the moment asked for, at once.
+    let(:clock) do
+      Class.new do
+        attr_reader :now, :waits
+
+        def initialize(now)
+          @now = now
+          @waits = []
+        end
+
+        def until(time)
+          @waits << time
+          @now = [time, @now].max
+        end
+      end.new(Time.utc(2026, 11, 21, 12))
+    end
+
+    def quota
+      response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
+      Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
+    end
+
     def worker(ordinal = 1) = Lain::Isolation::WorkerId.adopted(role: "issue", ordinal:).to_s
 
     def row_of(supervisor, actor) = supervisor.find { |row| row.actor.equal?(actor) }
@@ -1518,21 +1540,50 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
-    it "exposes a usage limit as the failed row's cause, with the reset time" do
-      response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
-      quota = Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
-      provider = Class.new(Lain::Provider::Mock) { define_method(:complete) { |*, **| raise quota } }.new(responses: [])
+    it "retires an actor that waited out a usage limit as settled, with no cause" do
+      limit = quota
+      stub_const("RetireOnceLimitedProvider", Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **opts|
+          limited = @limited
+          @limited = true
+          raise limit unless limited
+
+          super(request, **opts)
+        end
+      end)
+      tool = CoreGraph.subagent(provider: RetireOnceLimitedProvider.new(responses: [text_response("done")]),
+                                toolset: CoreGraph.toolset([EchoTool.new]), parent: parent_timeline,
+                                journal: CoreGraph.journal, mode: :actor, log:)
+      steps = []
+      row = nil
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, steps),
+                                     retirement: retirement(steps))) do |supervisor, _task|
+        actor = supervisor.adopt(role: "issue") { |worker_env| tool.launch_actor("go", worker_env:, sleeper: clock) }
+        row = row_of(supervisor, actor.settle)
+        supervisor.retire(row)
+        supervisor.stop
+      end
+
+      expect(clock.waits).to eq([Time.utc(2026, 11, 21, 13)])
+      expect(row.cause).to be_nil
+      expect(steps.map(&:first)).to eq(%i[acquire sync anchor release])
+    end
+
+    it "words the retirement of an actor the limit outlasted as its row's cause" do
+      limit = quota
+      provider = Class.new(Lain::Provider::Mock) { define_method(:complete) { |*, **| raise limit } }.new(responses: [])
       tool = CoreGraph.subagent(provider:, toolset: CoreGraph.toolset([EchoTool.new]), parent: parent_timeline,
                                 journal: CoreGraph.journal, mode: :actor, log:)
       row = report = nil
       supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
                                      retirement: retirement([]))) do |supervisor, _task|
-        row = row_of(supervisor, adopted(supervisor, tool))
+        actor = supervisor.adopt(role: "issue") { |worker_env| tool.launch_actor("go", worker_env:, sleeper: clock) }
+        row = row_of(supervisor, actor)
         report = supervisor.retire(row)
         supervisor.stop
       end
 
-      expect(row.cause).to match(/\Astopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)
+      expect(row.cause).to eq("stopped by the provider's usage limit; resets at 2026-11-22T05:00:00Z")
       expect(report.detail).to include(row.cause)
     end
 
@@ -1775,11 +1826,11 @@ RSpec.describe Lain::Supervisor do
       def commits = CoreGraph.provider(tool_response(["c1", "commit", {}]), text_response("done"))
 
       # @return [Array(Tools::Subagent::Actor, WorkerEnv)]
-      def committed(supervisor, provider)
+      def committed(supervisor, provider, **pause)
         env = nil
         actor = supervisor.adopt(role: "issue") do |worker_env|
           env = worker_env
-          committing(provider).launch_actor("work", worker_env:)
+          committing(provider).launch_actor("work", worker_env:, **pause)
         end
         [actor, env]
       end
@@ -1979,9 +2030,8 @@ RSpec.describe Lain::Supervisor do
 
       # The real supervisor builds the report over a real checkout and the real
       # run words it: nothing in the chain is a hand-built report.
-      it "words a usage-limit stop for a human, over a real retirement that kept the actor's commit" do
-        response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
-        quota = Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
+      it "words a usage limit that outlasted every wait for a human, over a real retirement that kept the commit" do
+        quota = self.quota
         stub_const("RetireQuotaProvider", Class.new(Lain::Provider::Mock) do
           define_singleton_method(:quota) { quota }
           def complete(request, **)
@@ -2012,7 +2062,8 @@ RSpec.describe Lain::Supervisor do
         supervised(described_class.new(journal:, isolation: backend,
                                        retirement: real_retirement)) do |supervisor, _task|
           actors = lambda do |issue_id, **|
-            actor, = committed(supervisor, RetireQuotaProvider.new(responses: [tool_response(["c1", "commit", {}])]))
+            actor, = committed(supervisor, RetireQuotaProvider.new(responses: [tool_response(["c1", "commit", {}])]),
+                               sleeper: clock)
             launch.new(actor, "issue.demo.#{issue_id}.1", "lain/issue/demo/#{issue_id}",
                        Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: "red-#{issue_id}"))
           end
@@ -2024,8 +2075,9 @@ RSpec.describe Lain::Supervisor do
           supervisor.stop
         end
 
+        expect(clock.waits.size).to eq(16)
         expect(result.reported.map(&:reason))
-          .to match([a_string_matching(/stopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)])
+          .to match([a_string_including("stopped by the provider's usage limit; resets at 2026-11-22T05:00:00Z")])
         expect(result.landed).to be_empty
       end
 

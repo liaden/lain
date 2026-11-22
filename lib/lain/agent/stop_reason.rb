@@ -57,13 +57,14 @@ module Lain
       end
 
       # @param error [Exception]
+      # @param now [Time] the moment a retry-after in seconds counts from
       # @return [String, nil] an ISO 8601 time the quota resets, when the response says
-      def self.reset_at(error)
+      def self.reset_at(error, now: Time.now)
         headers = quota_in_chain(error)&.response&.then do |response|
           response.respond_to?(:headers) ? response.headers : nil
         end
         seconds = Provider::AnthropicWire::RESET_HEADER_PARSER.call(headers&.[]("retry-after"))
-        (Time.now + seconds).utc.iso8601 if seconds
+        (now + seconds).utc.iso8601 if seconds
       end
 
       def self.quota_in_chain(error)

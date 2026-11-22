@@ -23,6 +23,23 @@ RSpec.describe Lain::Tools::Subagent::Actor do
                        journal: session_file, observer: scribe, mode: :actor)
   end
 
+  # A clock the actor waits on: each wait moves time to the moment asked for, at once.
+  let(:clock) do
+    Class.new do
+      attr_reader :now, :waits
+
+      def initialize(now)
+        @now = now
+        @waits = []
+      end
+
+      def until(time)
+        @waits << time
+        @now = [time, @now].max
+      end
+    end.new(Time.utc(2026, 11, 21, 12))
+  end
+
   def stops
     journal_records(session_io).select do |record|
       record["type"] == "message" && record.dig("payload", "lifecycle") == "stopped"
@@ -380,6 +397,178 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     end
   end
 
+  def quota(headers = {})
+    Lain::Provider::HTTP::QuotaError.new(Struct.new(:status, :body, :headers).new(429, "", headers), "limit reached")
+  end
+
+  describe "a child that meets a usage limit" do
+    let(:sent) { [] }
+
+    # Raises the scripted errors in order, then answers; every request is kept, raised or not.
+    def provider(*errors, answer: text_response("ready"))
+      sent = self.sent
+      Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **opts|
+          sent << request
+          raise errors.shift unless errors.empty?
+
+          super(request, **opts)
+        end
+      end.new(responses: [answer])
+    end
+
+    # Answers each request from `script` in order: an Exception is raised, anything else is the reply.
+    def scripted(*script)
+      sent = self.sent
+      Class.new(Lain::Provider::Mock) do
+        define_method(:complete) do |request, **|
+          sent << request
+          reply = script.shift
+          raise reply if reply.is_a?(Exception)
+
+          reply
+        end
+      end.new(responses: [])
+    end
+
+    def launched(provider, sleeper: clock, **wiring)
+      tool = CoreGraph.subagent(provider:, parent:, journal: session_file, observer: scribe, mode: :actor, **wiring)
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") do |worker_env|
+          tool.launch_actor("go", worker_env:, sleeper:)
+        end
+        yield actor, supervisor
+      ensure
+        supervisor&.stop
+      end
+    end
+
+    def lifecycle_text(lifecycle)
+      journal_records(session_io).find { |record| record.dig("payload", "lifecycle") == lifecycle }
+                                 &.dig("payload", "text")
+    end
+
+    context "with a reset 10 minutes ahead" do
+      it "waits until the reset, then asks again on the same agent and settles" do
+        timeline = nil
+        launched(provider(quota("retry-after" => "600"))) { |actor| timeline = actor.settle.timeline }
+
+        expect(clock.waits).to eq([Time.utc(2026, 11, 21, 12, 10)])
+        expect(lifecycle_text("settled")).to eq("ready")
+        expect(sent.map(&:messages).uniq.size).to eq(1)
+        expect(timeline.rewind(1).head_digest.to_s)
+          .to eq(journal_records(session_io, "run_interrupted").first.fetch("head"))
+      end
+
+      it "journals 1 run_interrupted with reason quota and the reset time" do
+        launched(provider(quota("retry-after" => "600"), quota("retry-after" => "600"))) { |actor, _| actor.settle }
+
+        interrupted = journal_records(session_io, "run_interrupted")
+        expect(interrupted.map { |record| record.values_at("reason", "reset_at") })
+          .to eq([["quota", "2026-11-21T12:10:00Z"]])
+      end
+    end
+
+    context "when the session file is folded for a watcher" do
+      it "shows the paused child working and main unchanged, at the pause and after it" do
+        launched(provider(quota("retry-after" => "600"))) { |actor, _| actor.settle }
+
+        unit = Lain::Journal::Projection::AgentStates.unit
+        folds = journal_records(session_io).each_with_object([unit]) do |raw, all|
+          all << all.last.step(Lain::Telemetry.read(raw, strict: false))
+        end
+        at_pause = folds.drop(1).zip(journal_records(session_io)).find { |_, raw| raw["type"] == "run_interrupted" }
+        spawn = journal_records(session_io).find { |raw| raw["kind"] == "spawn" }.fetch("digest")
+
+        expect(at_pause.first.agents.to_h { [_1.id, _1.state] }).to eq("main" => :idle, spawn => :working)
+        expect(at_pause.last["spawn"]).to eq(spawn)
+      end
+
+      it "tells the parent it paused, and when it resumes" do
+        launched(provider(quota("retry-after" => "600"))) { |actor, _| actor.settle }
+
+        expect(lifecycle_text("paused")).to eq("paused by the provider's usage limit; resumes at 2026-11-21T12:10:00Z")
+      end
+
+      it "tells the parent again when a later limit moves the resume" do
+        launched(provider(quota("retry-after" => "600"), quota("retry-after" => "1200"))) { |actor, _| actor.settle }
+
+        paused = journal_records(session_io).select { |record| record.dig("payload", "lifecycle") == "paused" }
+        expect(paused.map { |record| record.dig("payload", "text")[/resumes at (.*)/, 1] })
+          .to eq(%w[2026-11-21T12:10:00Z 2026-11-21T12:30:00Z])
+        expect(journal_records(session_io, "run_interrupted").size).to eq(1)
+      end
+    end
+
+    context "with a reset exactly 6 hours ahead" do
+      it "waits for it" do
+        launched(provider(quota("retry-after" => "21600"))) { |actor, _| actor.settle }
+
+        expect(clock.waits).to eq([Time.utc(2026, 11, 21, 18)])
+        expect(lifecycle_text("settled")).to eq("ready")
+      end
+    end
+
+    context "with a reset further off than 6 hours" do
+      it "stops for good at once, naming the reset, and holds nothing for it" do
+        launched(provider(quota("retry-after" => "21601"))) do |actor|
+          expect { actor.settle }.to raise_error(Lain::Provider::HTTP::QuotaError)
+        end
+
+        expect([clock.waits, sent.size, journal_records(session_io, "run_interrupted")]).to eq([[], 1, []])
+        expect(lifecycle_text("failed")).to eq("stopped by the provider's usage limit; resets at 2026-11-21T18:00:01Z")
+      end
+    end
+
+    context "with an iteration ceiling of 3" do
+      it "counts the iterations used before the pause, so the run sends 3 requests in all" do
+        echo = ->(id) { tool_response([id, "echo", { "text" => id }]) }
+        provider = scripted(echo.call("c1"), echo.call("c2"), quota("retry-after" => "60"), echo.call("c3"),
+                            text_response("done"))
+        launched(provider, toolset: Lain::Toolset.new([EchoTool.new]), policy: CoreGraph.spawn_policy(only: %i[echo]),
+                           budget: Lain::Budget.ceilings(iterations: 3)) do |actor|
+          expect { actor.settle }.to raise_error(Lain::Budget::Exceeded)
+        end
+
+        expect(sent.size).to eq(3)
+      end
+    end
+
+    context "when stopped during the wait, on the real clock" do
+      it "ends the wait at once, with no cause, and the row reads stopped" do
+        launched(provider(quota("retry-after" => "3600")), sleeper: described_class::Sleeper.new) do |actor, supervisor|
+          row = supervisor.find { |registration| registration.actor.equal?(actor) }
+          actor.stop
+
+          expect([actor.cause, row.state, lifecycle_text("stopped")]).to eq([nil, :stopped, "actor stopped"])
+        end
+      end
+    end
+
+    context "with no reset time" do
+      it "tells the parent once that it checks every 15 minutes, not once per probe" do
+        launched(provider(quota, quota, quota)) { |actor, _| actor.settle }
+
+        paused = journal_records(session_io).select { |record| record.dig("payload", "lifecycle") == "paused" }
+        expect(clock.waits.size).to eq(3)
+        expect(paused.map { |record| record.dig("payload", "text") })
+          .to eq(["paused by the provider's usage limit; checking again every 15 minutes"])
+      end
+
+      it "probes every 15 minutes, 16 times, then fails with the quota cause" do
+        launched(provider(*Array.new(17) { quota })) do |actor|
+          expect { actor.settle }.to raise_error(Lain::Provider::HTTP::QuotaError)
+        end
+
+        start = Time.utc(2026, 11, 21, 12)
+        expect(clock.waits).to eq((1..16).map { |probe| start + (probe * 900) })
+        expect(sent.size).to eq(17)
+        expect(lifecycle_text("failed")).to eq("stopped by the provider's usage limit")
+      end
+    end
+  end
+
   describe "a child whose provider fails" do
     let(:failure) { RuntimeError.new("socket closed") }
     let(:tool) do
@@ -391,7 +580,9 @@ RSpec.describe Lain::Tools::Subagent::Actor do
     def failed_text
       Sync do |task|
         supervisor = Lain::Supervisor.new(journal: session_file).run(task)
-        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        actor = supervisor.adopt(role: "researcher") do |worker_env|
+          tool.launch_actor("go", worker_env:, sleeper: clock)
+        end
         expect { actor.settle }.to raise_error(failure.class)
       ensure
         supervisor&.stop
@@ -410,8 +601,8 @@ RSpec.describe Lain::Tools::Subagent::Actor do
         Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
       end
 
-      it "tells the parent it was stopped by the limit, and when it resets" do
-        expect(failed_text).to match(/\Astopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)
+      it "tells the parent it was stopped by the limit, and when it resets, once every wait met it again" do
+        expect(failed_text).to eq("stopped by the provider's usage limit; resets at 2026-11-22T05:00:00Z")
       end
     end
 

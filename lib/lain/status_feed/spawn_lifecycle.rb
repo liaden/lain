@@ -6,8 +6,11 @@ module Lain
     # one question both live-fleet readers ask of it: has this spawn finished,
     # so a tmux window or a published roster can drop it?
     #
-    # Four marks ride a `:spawn` or `:message` body's `"lifecycle"` field --
-    # `"launched"`, `"settled"`, `"stopped"`, `"failed"`. A one-shot's
+    # Five marks ride a `:spawn` or `:message` body's `"lifecycle"` field --
+    # `"launched"`, `"settled"`, `"paused"`, `"stopped"`, `"failed"`. An actor
+    # writes `"paused"` when a usage limit holds its turn; it is not terminal,
+    # so every reader asking {#terminal?} or {#finished?} keeps the spawn
+    # live, and `lain watch` shows the mark beside the note. A one-shot's
     # completion speaks `"stopped"` like any other transition when its child
     # answered or was stopped, and `"failed"` when its child raised; only the
     # one that answered carries a `"result"`. The mark is the only terminal
@@ -23,6 +26,7 @@ module Lain
     class SpawnLifecycle
       LAUNCHED = "launched"
       SETTLED = "settled"
+      PAUSED = "paused"
       STOPPED = "stopped"
       FAILED = "failed"
 
@@ -34,7 +38,7 @@ module Lain
       # outside it is never trusted as terminal OR as safely non-terminal --
       # it is named on {#unrecognized} so a caller can tell "nothing happened
       # yet" apart from "something happened that this object does not know".
-      MARKS = [LAUNCHED, SETTLED, STOPPED, FAILED].freeze
+      MARKS = [LAUNCHED, SETTLED, PAUSED, STOPPED, FAILED].freeze
 
       # @return [String, Symbol, nil] the `"lifecycle"` value the record's body
       #   carried, when that value falls outside {MARKS}; {UNMARKED} for a

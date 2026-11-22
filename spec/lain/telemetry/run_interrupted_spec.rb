@@ -78,6 +78,21 @@ RSpec.describe Lain::Telemetry::RunInterrupted do
         .to eq('{"type":"run_interrupted","reason":"transport"}')
     end
 
+    it "names the spawn a child's pause belongs to, and leaves it off main's own" do
+      paused = described_class.new(head: nil, reason: :quota, spawn: "blake3:#{"c" * 64}")
+
+      expect(JSON.generate(paused.to_journal))
+        .to eq(%({"type":"run_interrupted","reason":"quota","spawn":"blake3:#{"c" * 64}"}))
+      expect(paused).to be_deeply_frozen
+      expect(described_class.new(head: nil, reason: :quota).to_journal).not_to have_key("spawn")
+    end
+
+    it "reads a line with no spawn, as every older session file holds, as main's" do
+      line = JSON.parse('{"type":"run_interrupted","reason":"quota","reset_at":"2026-11-01T10:00:00Z"}')
+
+      expect(Lain::Telemetry.read(line, strict: false)["spawn"]).to be_nil
+    end
+
     it "carries only the default reason when nothing else was known" do
       expect(JSON.generate(described_class.new(head: nil).to_journal))
         .to eq('{"type":"run_interrupted","reason":"torn"}')

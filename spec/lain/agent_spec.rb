@@ -1199,6 +1199,26 @@ RSpec.describe Lain::Agent do
         expect { a.ask("go", iterations: 3) }.to raise_error(Lain::Budget::Exceeded, /ceiling is 3/)
       end
 
+      it "still bounds a run resumed after a usage limit cut its ask short" do
+        limit = Lain::Provider::HTTP::QuotaError.new(Struct.new(:status, :body, :headers).new(429, "", {}), "limit")
+        script = [calls(1).first, limit, *calls(6)]
+        provider = Class.new(Lain::Provider::Mock) do
+          define_method(:complete) do |request, **|
+            requests << request
+            reply = script.shift
+            raise reply if reply.is_a?(Exception)
+
+            reply
+          end
+        end.new(responses: [])
+        a = described_class.new(provider:, toolset:, context:, budget: Lain::Budget.ceilings(iterations: 9))
+        a.allow(Lain::Budget.ceilings(iterations: 3))
+
+        expect { a.ask("go") }.to(raise_error { |error| expect(Lain::Agent::StopReason.for(error)).to eq(:quota) })
+        expect { a.resume }.to raise_error(Lain::Budget::Exceeded, /ceiling is 3/)
+        expect(provider.requests.size).to eq(3)
+      end
+
       it "is journaled as the run's allowance" do
         journal = []
         a = agent([text_response("x")], journal:)

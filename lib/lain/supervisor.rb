@@ -510,8 +510,7 @@ module Lain
       rescue Async::TimeoutError
         raise
       rescue StandardError => e
-        cause = Tools::Subagent::Actor.cause(e)
-        Agent::StopReason.for(e) == :quota ? cause : "the actor's turn raised #{cause}"
+        Agent::StopReason.for(e) == :quota ? actor.cause : "the actor's turn raised #{actor.cause}"
       end
 
       # An operator's own #stop is deliberate and is reclaimed with the rest of

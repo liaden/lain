@@ -20,10 +20,10 @@ module Lain
   # `Chat#complete`) and both were declined, because the loop is what this
   # project exists to study.
   class Agent
-    # States, legal transitions and the journaling seam; also defines {STATES}.
+    # States, legal transitions and the journaling seam; also defines `STATES`.
     include LoopMachine
 
-    # The settled half of {STATES}. `:stalled` and `:awaiting_approval` are
+    # The settled half of `STATES`. `:stalled` and `:awaiting_approval` are
     # deliberately absent -- both are mid-run PARKS that a run resumes from.
     #
     # Homed here rather than at its reader ({CLI::ResendBridge}) because it had
@@ -335,6 +335,15 @@ module Lain
     # check-then-act race across the two.
     def run(on_stream_started: nil) = @dispatch_lock.synchronize { Sync { run_loop(on_stream_started) } }
 
+    # Continue the ask a raise cut short, from the last committed turn, under
+    # the ceiling that ask ran under and with the iterations it already used,
+    # so a pause between the two grants no fresh ceiling.
+    #
+    # @return [Lain::Response] the final assistant response
+    def resume
+      @dispatch_lock.synchronize { ceilinged(allowed) { Sync { run_loop(nil, from: @iterations) } } }
+    end
+
     # Is a dispatch in flight RIGHT NOW? A different question from {#state},
     # which records what the loop was last doing. The two disagree exactly when
     # a turn is TORN: {#reopen!} fires at the start of the next {#ask}, so a run
@@ -492,9 +501,10 @@ module Lain
     # a user turn and raised on before the provider was asked -- a session still
     # taking input and no longer able to answer any of it. A conversation-wide
     # ceiling is a different policy needing its own name and refusal
-    # ({CLI::GoalDriver::Run} is what one looks like).
-    def run_loop(on_stream_started)
-      @iterations = 0
+    # ({CLI::GoalDriver::Run} is what one looks like). {#resume} alone starts
+    # from the count its cut-short ask reached.
+    def run_loop(on_stream_started, from: 0)
+      @iterations = from
 
       loop do
         env = @instrumentation.turn_middleware.call({ iteration: @iterations, timeline: @timeline }) do |inner|

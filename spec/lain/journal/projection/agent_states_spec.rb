@@ -140,6 +140,37 @@ RSpec.describe Lain::Journal::Projection::AgentStates do
     expect(states.call(request.call, telemetry.read(line, strict: false))).to eq(main => :done)
   end
 
+  describe "a child's pause at a usage limit" do
+    pause = telemetry::RunInterrupted.new(head: nil, reason: :quota, spawn: child)
+    from_file = ->(record) { telemetry.read(JSON.parse(JSON.generate(record.to_journal)), strict: false) }
+
+    it "keeps the child working and leaves main as it was" do
+      expect(states.call(spawn_of.call(child), pause)).to eq(main => :idle, child => :working)
+      expect(states.call(request.call, settled, spawn_of.call(child), pause)).to eq(main => :done, child => :working)
+    end
+
+    it "carries no failure onto main" do
+      expect(described_class.over([request.call, spawn_of.call(child), pause]).agents.first.failure).to be_nil
+    end
+
+    it "leaves main's own failure as main's, not the child's limit" do
+      failed = telemetry::RunInterrupted.new(head: nil, reason: :transport)
+
+      expect(described_class.over([request.call, failed, spawn_of.call(child), pause]).agents.first.failure)
+        .to eq("transport")
+    end
+
+    it "folds alike when read back from a file" do
+      expect(states.call(spawn_of.call(child), from_file.call(pause))).to eq(main => :idle, child => :working)
+    end
+
+    it "still reads a quota stop with no spawn, the older shape, as main's" do
+      old = from_file.call(telemetry::RunInterrupted.new(head: nil, reason: :quota))
+
+      expect(states.call(request.call, spawn_of.call(child), old)).to eq(main => :done, child => :working)
+    end
+  end
+
   describe "why a failed ask failed" do
     failed = telemetry::RunInterrupted.new(head: nil, reason: :max_tokens)
     agent_after = ->(*records) { described_class.over(records).agents.first }

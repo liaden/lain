@@ -10,6 +10,7 @@ module Lain
         attribute :status, default: nil
         attribute :detail, default: nil
         attribute :reset_at, default: nil
+        attribute :spawn, default: nil
       end
     end
 
@@ -22,16 +23,19 @@ module Lain
     # human interrupted, a fleet the shutdown window closed on, and a stream the
     # model stopped feeding all leave the identical hole, and only the first two
     # are anybody's decision.
-    RunInterrupted = Data.define(:head, :reason, :status, :detail, :reset_at) do
+    #
+    # `spawn` names the child whose run paused, as a child's other records do;
+    # nil is main's own run, which every record written before the field was.
+    RunInterrupted = Data.define(:head, :reason, :status, :detail, :reset_at, :spawn) do
       include Journalable
 
-      def initialize(head:, reason: :torn, status: nil, detail: nil, reset_at: nil)
+      def initialize(head:, reason: :torn, status: nil, detail: nil, reset_at: nil, spawn: nil)
         super(**Carriers::RunInterrupted.settle!(head:, reason: self.class.reason!(reason), status:, detail:,
-                                                 reset_at:))
+                                                 reset_at:, spawn: spawn&.then { -_1.to_s }))
       end
 
       # Left off at their nil default, so a record with no status or head is the line it always was.
-      def to_journal = omitting_defaults(super, Carriers::RunInterrupted, :head, :status, :detail, :reset_at)
+      def to_journal = omitting_defaults(super, Carriers::RunInterrupted, :head, :status, :detail, :reset_at, :spawn)
     end
 
     class RunInterrupted
@@ -51,7 +55,7 @@ module Lain
       # record built with no classification says the unclassified thing rather
       # than borrowing a narrower one it cannot support.
       #
-      # The tail is the stops a reply itself ended on, named by {Response#failure}'s stop_reason.
+      # The tail is the stops a reply itself ended on, named by `Response#failure`'s stop_reason.
       REASONS = %i[interrupted grace_expired stopped ceiling over_window transport rejected stalled_stream torn
                    middleware max_tokens context_full refusal truncated malformed unknown quota].freeze
 

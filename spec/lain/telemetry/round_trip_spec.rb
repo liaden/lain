@@ -97,7 +97,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
     RunAllowance: { iterations: 103 },
     RunArms: { arms: { "confine" => "reader", "judge" => true } },
     RunInterrupted: { head: d, reason: :quota, status: 130, detail: "quota exceeded",
-                      reset_at: "2026-11-01T18:00:00Z" },
+                      reset_at: "2026-11-01T18:00:00Z", spawn: d },
     Salvaged: { request_digest: d, head_before: d, head_after: d },
     Sandbox: { tool_use_id: "tu_1", profile: :reader, trace: false, refused: [], created_sealed: ["/r/.git/x"],
                kept_tmpdir: "/t", granted: ["/g"] },

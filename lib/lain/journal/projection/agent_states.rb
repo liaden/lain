@@ -78,7 +78,7 @@ module Lain
         def failure_after(record)
           reason = stop_reason(record)
           return nil if record.is_a?(Telemetry::AskSettled)
-          return failure if reason.nil?
+          return failure if reason.nil? || child_of(record)
 
           Telemetry::RunInterrupted.human?(reason) ? nil : reason.to_s
         end
@@ -93,6 +93,7 @@ module Lain
 
         def advanced(record)
           reason = stop_reason(record)
+          return progressed(child_of(record)) if reason && child_of(record)
           return main(Telemetry::RunInterrupted.human?(reason) ? :idle : :done) unless reason.nil?
 
           case record
@@ -102,6 +103,14 @@ module Lain
           when Telemetry::ChildProgress then progressed(record.spawn)
           when ::Lain::AgentStates::Seen then seen(record.agent)
           else base
+          end
+        end
+
+        # The spawn a stopped run belongs to; nil for main's, which a record with no spawn always is.
+        def child_of(record)
+          case record
+          when Telemetry::RunInterrupted then record.spawn
+          when Telemetry::Untyped then record["spawn"]
           end
         end
 

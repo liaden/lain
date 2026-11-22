@@ -224,10 +224,11 @@ module Lain
       #
       # `worker_env` has no default: an actor handed none would run its tools
       # in the process's own directory, the tree the run was started in. An
-      # adopter hands it the environment its lease was cut with.
+      # adopter hands it the environment its lease was cut with. `sleeper` is
+      # the clock the actor waits on at a usage limit.
       #
       # @raise [Lain::Budget::Ceilings::Unrunnable] when the holder has no room for a child
-      def launch_actor(prompt, worker_env:, parent: parent_timeline)
+      def launch_actor(prompt, worker_env:, parent: parent_timeline, sleeper: Actor::Sleeper.new)
         # Per launch: the floor note has no lifecycle exemption, so an
         # actor-mode sibling under the floor is reported too.
         policy.prefix.journal_floor(journal)
@@ -241,7 +242,7 @@ module Lain
         releasing(builder.reservation) do
           Lineage::OneShot.new(lineage, parent, consumed: telemetry, journal:).recording do |record|
             spawn = record.spawned(prompt, lifecycle: StatusFeed::SpawnLifecycle::LAUNCHED)
-            launched_over(spawn, prompt, worker_env, record, builder).tap { record.launched }
+            launched_over(spawn, prompt, worker_env, record, builder, sleeper:).tap { record.launched }
           end
         end
       end
@@ -356,11 +357,11 @@ module Lain
         Tool::Result.ok("actor launched: #{actor.address}")
       end
 
-      def launched_over(spawn, prompt, worker_env, record, builder)
+      def launched_over(spawn, prompt, worker_env, record, builder, sleeper:)
         progress = reporting(spawn, prompt, nil, @announces_as)
         child = record.built(build_child(record.parent, worker_env, task: prompt, progress:, builder:))
         child.launched do |agent, registration, tools, held|
-          Actor.new(agent:, registration:, lineage:, parent: record.parent, journal:, answer: @answer,
+          Actor.new(agent:, registration:, lineage:, parent: record.parent, journal:, answer: @answer, sleeper:,
                     reservation: held, worker: Isolation::SelfSync.worker(agent, tools:)).launch(prompt, spawn:)
         end
       end

@@ -95,6 +95,15 @@ RSpec.describe Lain::StatusFeed::SpawnLifecycle do
     end
   end
 
+  describe "an actor pausing at a usage limit is not terminal" do
+    it "is a recognized mark that neither ended, failed nor finished" do
+      lifecycle = described_class.new(record({ "text" => "paused", "lifecycle" => "paused" }))
+
+      expect([lifecycle.terminal?, lifecycle.failed?, lifecycle.finished?, lifecycle.unrecognized])
+        .to eq([false, false, false, nil])
+    end
+  end
+
   describe "an ordinary tell is not terminal" do
     it "is not terminal" do
       lifecycle = described_class.new(record({ "text" => "narrow to RCTs" }))
