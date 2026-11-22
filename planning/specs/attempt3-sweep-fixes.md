@@ -742,7 +742,8 @@ Confine::Request = Data.define(..., :bounds) # the requesting agent's bounds, re
 ### T17: Lend an issue's approved out-of-repo references to its agents, read-only          [risk: high]
 
 **Depends on:** T16
-**Files:** `lib/lain/epic/issue_view.rb`, `lib/lain/cli/epic_driver/issue_actor.rb`, `spec/lain/epic/issue_view_spec.rb`, `spec/lain/cli/epic_driver/issue_actor_spec.rb`
+**Files:** `lib/lain/epic/issue_view.rb`, `lib/lain/cli/epic_driver/issue_actor.rb`, `spec/lain/epic/issue_view_spec.rb`, `spec/lain/cli/epic_driver/issue_actor_spec.rb`, `lib/lain/tools/subagent.rb`, `spec/lain/tools/subagent_spec.rb`
+**Note (from T16 review):** no production path sets a child's `worker_env.bounds` yet; children's WorkerEnvs are built at tools/subagent.rb:1325 and :1437. Setting `bounds` replaces the cut in `Policy.bounds_for` (policy.rb:545) and the write hold at session.rb:684, so set the full cut bounds plus the lend, never the lend alone.
 **Reuse:** `IssueView::Authored#references` (epic/issue_view.rb:142), `IssueActor::Brief`, T16's lend
 **Shared-file wiring:** none
 **Reachable from:** `CLI::EpicDriver::Factory` (factory.rb:645) -> `IssueActor` -> the actor's lease and its children's `worker_env.bounds`
@@ -1951,3 +1952,10 @@ After the last card lands:
 04:43 T15 landed ce53b889e
 04:43 T16 started (cut ce53b889e; runs beside T23, bash.rb edit kept to the Request build)
 - 04:44 F1 to F8 written into the plan as Stream F (T20 split noted). Plan log fold.
+- 04:45 T16 stop condition fired (1 session MaskList shared by every child, Bash has no descend). Ruled: keep the session list, build a per-request lent listing from request.bounds in Profiles#for, cached by digest; sandbox.rb/toolset_build.rb allowed if needed. Continued.
+- 04:57 T16 done (Request#bounds, MaskList#lent per request by digest, lend refusals; 11 red; 7246/0). Sibling sees EACCES not ENOENT; no production lend until T17. High review started.
+- 05:02 T23 round 9 done (quote removal once, per-program option allowlists, sed/make/inline-file parks, GIT_CONFIG_GLOBAL as run file; 4 red; 7333/0; drives agree). Sixth high review started (asked to judge arm-off drift on /proc/self/exe).
+- 05:07 T23 sixth review REQUEST-CHANGES (sed -ne cluster, git -iO cluster, inline-code scan bypassable; -- over-park; arm-off /proc row deliberate). Rulings: inline -c/-e code parks on the route and the literal scan goes; -- ends options for the listed tools; sed -i allowed; /proc row stays, named in the commit message. Round 10 sent.
+- 05:09 T16 high review APPROVE-WITH-FIXES (Bash line unpinned, lent unit examples, @journaled lock, cache key, comment). Fix round sent. T17 card gains subagent.rb and the full-bounds note. Sibling stat under home is pre-existing (follow-up).
+- 05:16 T16 fix round done (Bash bounds pinned, 4 lent examples, journaling lock, cache by dir; 4 red re-proved; 7251/0). Verified by main; fold, then landing attempt 1.
+- 05:17 T23 round 10 done (sed clusters read as sed does, git O clusters, inline code parks and scan deleted, -- ends options, sed -i allowed, make eval/file/shell park; 4 red; 7332/0; drives agree, arm off = HEAD but /proc row). Seventh review waits for the T16 landing.
