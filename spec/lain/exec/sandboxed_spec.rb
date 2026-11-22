@@ -16,6 +16,8 @@ RSpec.describe Lain::Exec::Sandboxed do
   let(:home) { File.join(@base, "home") }
   let(:journal) { [] }
 
+  let(:reader_tier) { "[ran: reader; no network; no /dev/dri; home masked]\n" }
+
   def ruling(rung, rule: nil) = Lain::Approval::Escalation::Ruling.allow(rung:, because: "approved", rule:)
 
   def executable(name, realpath, klass)
@@ -46,7 +48,6 @@ RSpec.describe Lain::Exec::Sandboxed do
     let(:launcher) { Lain::Confine::Bwrap.new(fence: "/x/lain-fence") }
     let(:inner) { inner_class.new }
     let(:sandboxed) { described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096) }
-
     let(:inner_class) do
       Class.new do
         attr_reader :calls
@@ -65,6 +66,8 @@ RSpec.describe Lain::Exec::Sandboxed do
         end
       end
     end
+
+    def tier = "#{profile.tier_line}\n"
 
     def run(command: Lain::Shell::Term.of(%w[cat README.md]), timeout: 5, confinement: composed)
       sandboxed.call(command:, cwd: root, env: {}, timeout:, confinement:)
@@ -94,6 +97,121 @@ RSpec.describe Lain::Exec::Sandboxed do
       capture = run(confinement: composed(executables: [wrapped]))
 
       expect([inner.calls, capture.exit_status, recorded("sandbox").sole.refused]).to eq([[], 126, [planted]])
+    end
+
+    describe "the tier line" do
+      def tail(capture) = capture.stderr.lines.last.chomp
+
+      it "ends a reader run with what it lacked" do
+        expect(tail(run)).to eq("[ran: reader; no network; no /dev/dri; home masked]")
+      end
+
+      it "starts the line on its own when stderr did not end in a newline, so the line can be found" do
+        inner.behaviour = ->(**) { Lain::Exec::Capture.new(exit_status: 1, stdout: "", stderr: "bad") }
+
+        expect(run.stderr).to eq("bad\n#{profile.tier_line}\n")
+      end
+
+      it "finds the line at the end of an over-ceiling capture whose stderr had no newline" do
+        inner.behaviour = lambda do |**|
+          Lain::Exec::Capture.new(exit_status: 1, stdout: "a" * 4000, stderr: "bad", size: 9000, ceiling: 4096)
+        end
+
+        expect(described_class::Tier.last_line(run.stderr)).to eq("#{profile.tier_line}\n")
+      end
+
+      it "ends a call that timed out with the line, since it ran" do
+        inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "partial output" }
+
+        expect { run }.to raise_error(Lain::Exec::Timeout, "partial output\n#{profile.tier_line}\n")
+      end
+
+      it "carries no line when the call was refused before it ran, since nothing ran" do
+        planted = File.join(root, "bin/cat")
+        capture = run(confinement: composed(executables: [executable("cat", planted, :project)]))
+
+        expect(capture.exit_status).to eq(126)
+        expect(described_class::Tier.last_line(capture.stderr)).to be_nil
+      end
+
+      it "carries no line when the profile could not be chosen, since nothing ran" do
+        error = Lain::Confine::Profiles::Overmasked.new(path: root, names: ["link"], profile: :workspace)
+        raising = Struct.new(:error) { def for(_request) = raise(error) }.new(error)
+        capture = described_class.new(inner:, launcher:, profiles: raising, journal:)
+                                 .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {},
+                                       timeout: 5, confinement: composed)
+
+        expect(described_class::Tier.last_line(capture.stderr)).to be_nil
+      end
+
+      describe "against the output ceiling" do
+        def producing(bytes)
+          inner.behaviour = ->(**) { Lain::Exec::Capture.new(exit_status: 0, stdout: "a" * bytes, stderr: "", ceiling: 4096) }
+        end
+
+        it "does not count the line, so a result exactly at the ceiling still renders" do
+          producing(4096)
+          capture = run
+
+          expect(capture.size).to eq(4096)
+          rendered = Lain::Tools::Bash.render_output(capture)
+
+          expect(rendered).to be_ok
+          expect(rendered.content).to end_with("#{tail(capture)}\n")
+        end
+
+        it "ends a capture over the ceiling with the line too" do
+          inner.behaviour = lambda do |**|
+            Lain::Exec::Capture.new(exit_status: 0, stdout: "a" * 4097, stderr: "", size: 9000, ceiling: 4096)
+          end
+          capture = run
+
+          expect([capture.size, tail(capture)]).to eq([9000, "[ran: reader; no network; no /dev/dri; home masked]"])
+        end
+      end
+
+      context "with the traced profile" do
+        let(:profile) { Lain::Confine::Profile::TRACED }
+
+        it "says the run was unconfined" do
+          expect(tail(run(confinement: judged))).to eq("[ran: unconfined, with network]")
+        end
+      end
+
+      context "with a build granted ports" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(connect_ports: [443, 80]) }
+
+        it "names the ports rather than claiming no network" do
+          expect(tail(run)).to eq("[ran: reader; network only on ports 443, 80; no /dev/dri; home masked]")
+        end
+      end
+
+      context "when the kernel does not enforce the network rule" do
+        let(:sandboxed) do
+          described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096, net_enforced: false)
+        end
+
+        it "says with network for a confined profile with no private network" do
+          expect(tail(run)).to eq("[ran: reader; with network; no /dev/dri; home masked]")
+        end
+
+        it "records network true" do
+          run
+
+          expect(recorded("sandbox").sole).to have_attributes(network: true)
+        end
+      end
+
+      context "when the kernel does not enforce the network rule but the call has a private network" do
+        let(:profile) { Lain::Confine::Profile.reader(root:, home:).with(private_net: true) }
+        let(:sandboxed) do
+          described_class.new(inner:, launcher:, profiles:, journal:, ceiling: 4096, net_enforced: false)
+        end
+
+        it "still says no network, since the namespace holds it" do
+          expect(tail(run)).to include("no network")
+        end
+      end
     end
 
     describe "a human's approval of a call that reads secrets" do
@@ -197,13 +315,14 @@ RSpec.describe Lain::Exec::Sandboxed do
                                          timeout: 5, confinement: human(contained: true))
 
           expect(capture.stderr).to include("is masked in the sandbox").and(satisfy { !_1.include?("\e") })
-          expect(capture.stderr.lines.size).to eq(2)
+          expect(capture.stderr.lines.size).to eq(3)
+          expect(capture.stderr).to end_with("#{profile.tier_line}\n")
         end
 
         it "adds only today's line to a command that names no masked file" do
           capture = run(command: Lain::Shell::Term.of(%w[ls]), confinement: human(contained: true))
 
-          expect(capture.stderr).to eq("#{described_class::CONTAINED}\n")
+          expect(capture.stderr).to eq("#{described_class::CONTAINED}\n#{tier}")
         end
       end
 
@@ -481,7 +600,7 @@ RSpec.describe Lain::Exec::Sandboxed do
           Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
         end
 
-        expect(run.stderr).to eq("#{format(described_class::UNOPENED, path: "hid")}\n")
+        expect(run.stderr).to eq("#{format(described_class::UNOPENED, path: "hid")}\n#{tier}")
       ensure
         File.chmod(0o755, File.join(root, "hid")) if File.directory?(File.join(root, "hid"))
       end
@@ -502,14 +621,14 @@ RSpec.describe Lain::Exec::Sandboxed do
             Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
           end
 
-          expect(run.stderr).to eq("#{format(described_class::TAINTED, path: "leaked.txt")}\n")
+          expect(run.stderr).to eq("#{format(described_class::TAINTED, path: "leaked.txt")}\n#{tier}")
         end
       end
 
       it "adds nothing to the output when it wrote no known value" do
         writing("app.rb", "class App; end\n")
 
-        expect([run.stderr, taint.paths]).to eq(["", []])
+        expect([run.stderr, taint.paths]).to eq([tier, []])
       end
 
       context "when the profile keeps the masks" do
@@ -518,7 +637,7 @@ RSpec.describe Lain::Exec::Sandboxed do
         it "scans nothing" do
           writing("leaked.txt", key)
 
-          expect([run.stderr, taint.paths]).to eq(["", []])
+          expect([run.stderr, taint.paths]).to eq([tier, []])
         end
       end
     end
@@ -636,7 +755,7 @@ RSpec.describe Lain::Exec::Sandboxed do
     it "closes its trace writers and journals the trace when the call times out" do
       inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "too slow" }
 
-      expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+      expect { run }.to raise_error(Lain::Exec::Timeout, /\Atoo slow\n\[ran: [^\n]+\]\n\z/)
       expect(inner.calls.sole[:fds].fetch(3)).to be_closed
       expect(recorded("exec_record").sole).to have_attributes(truncated: false, incomplete: false)
     end
@@ -702,7 +821,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       it "ends the output with the refusal for an exec the sandbox refused" do
         writing(refused_exec(planted))
 
-        expect(run.stderr).to end_with("#{wording}\n")
+        expect(run.stderr).to end_with("#{wording}\n#{tier}")
       end
 
       it "adds nothing to a call with no refusal" do
@@ -720,7 +839,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       it "words a refusal that no later exec of the program answered, beside one that did" do
         writing(refused_exec(planted), refused_exec("/other/y"), ran_exec("/usr/bin/y"))
 
-        expect(run.stderr).to end_with("#{wording}\n").and(satisfy { !_1.include?("/other/y") })
+        expect(run.stderr).to end_with("#{wording}\n#{tier}").and(satisfy { !_1.include?("/other/y") })
       end
 
       it "words a refusal that an unrelated successful exec of the same program came before" do
@@ -730,7 +849,7 @@ RSpec.describe Lain::Exec::Sandboxed do
           capture
         end
 
-        expect(run(command: Lain::Shell::Term.of(%w[x a], %w[x b])).stderr).to end_with("#{wording}\n")
+        expect(run(command: Lain::Shell::Term.of(%w[x a], %w[x b])).stderr).to end_with("#{wording}\n#{tier}")
       end
 
       # The output detector scans the whole result, so a path that reads as a token would withhold the
@@ -743,7 +862,7 @@ RSpec.describe Lain::Exec::Sandboxed do
           writing(refused_exec(path))
 
           stderr = run.stderr
-          expect(stderr).to end_with("#{format(described_class::REFUSED, path: "[path withheld]")}\n")
+          expect(stderr).to end_with("#{format(described_class::REFUSED, path: "[path withheld]")}\n#{tier}")
           expect(stderr).not_to include(path)
           expect(Lain::Sensitivity::Regions.detect(stderr)).to be_empty
         end
@@ -755,7 +874,8 @@ RSpec.describe Lain::Exec::Sandboxed do
 
         stderr = run.stderr
         expect(stderr).to include(format(described_class::REFUSED, path: "#{planted}\\nforged"))
-        expect(stderr.lines.size).to eq(1)
+        expect(stderr.lines.size).to eq(2)
+        expect(stderr).to end_with(tier)
       end
 
       def loud(stdout, exit_status: 3, size: stdout.bytesize)
@@ -769,7 +889,8 @@ RSpec.describe Lain::Exec::Sandboxed do
         loud("a" * 4000)
         capture = run
 
-        expect(capture).to have_attributes(exit_status: 3, stdout: "", stderr: a_string_ending_with("#{wording}\n"))
+        expect(capture).to have_attributes(exit_status: 3, stdout: "",
+                                           stderr: a_string_ending_with("#{wording}\n#{tier}"))
         expect(Lain::Tools::Bash.render_output(capture)).to be_ok
       end
 
@@ -777,15 +898,17 @@ RSpec.describe Lain::Exec::Sandboxed do
         loud("a" * 4097, size: 9000)
         capture = run
 
-        expect(capture).to have_attributes(exit_status: 3, stdout: "", stderr: a_string_ending_with("#{wording}\n"))
+        expect(capture).to have_attributes(exit_status: 3, stdout: "",
+                                           stderr: a_string_ending_with("#{wording}\n#{tier}"))
         expect(Lain::Tools::Bash.render_output(capture)).to be_ok
       end
 
-      it "counts the added line in the capture's size" do
+      it "counts the added line in the capture's size, and the tier line after it not at all" do
         writing(refused_exec(planted))
         capture = run
+        tier = described_class::Tier.last_line(capture.stderr)
 
-        expect(capture.size).to eq(capture.stdout.bytesize + capture.stderr.bytesize)
+        expect(capture.size).to eq(capture.stdout.bytesize + capture.stderr.bytesize - tier.bytesize)
       end
 
       it "words nothing under a trace that confines nothing" do
@@ -813,7 +936,7 @@ RSpec.describe Lain::Exec::Sandboxed do
 
         expect(run.stderr).to end_with(
           "The reader sandbox limits reads to the project and its related directories. " \
-          "To see a masked file, use read_file.\n"
+          "To see a masked file, use read_file.\n#{tier}"
         )
       end
 
@@ -846,7 +969,7 @@ RSpec.describe Lain::Exec::Sandboxed do
         it "names the sandbox for #{what} outside the read list" do
           failing(stderr.gsub("ROOT", root))
 
-          expect(run.stderr).to end_with("use read_file.\n")
+          expect(run.stderr).to end_with("use read_file.\n#{tier}")
         end
       end
 
@@ -859,7 +982,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       it "leaves an ordinary failure alone" do
         failing("1 example, 1 failure\n")
 
-        expect(run.stderr).to eq("1 example, 1 failure\n")
+        expect(run.stderr).to eq("1 example, 1 failure\n#{tier}")
       end
 
       it "leaves a successful call alone" do
@@ -958,7 +1081,7 @@ RSpec.describe Lain::Exec::Sandboxed do
           raise Lain::Exec::Timeout, "too slow"
         end
 
-        expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+        expect { run }.to raise_error(Lain::Exec::Timeout, /\Atoo slow\n\[ran: [^\n]+\]\n\z/)
         expect(recorded("sandbox").last.created_sealed).to eq([envrc])
       end
 
@@ -1001,7 +1124,7 @@ RSpec.describe Lain::Exec::Sandboxed do
             File.write(envrc, "")
             raise Lain::Exec::Timeout, "too slow"
           end
-          expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+          expect { run }.to raise_error(Lain::Exec::Timeout, /\Atoo slow\n\[ran: [^\n]+\]\n\z/)
         end
       end
     end
@@ -1196,7 +1319,7 @@ RSpec.describe Lain::Exec::Sandboxed do
 
       it "leaves the call's own timeout to reach the caller" do
         inner.behaviour = ->(**) { raise Lain::Exec::Timeout, "too slow" }
-        expect { run }.to raise_error(Lain::Exec::Timeout, "too slow")
+        expect { run }.to raise_error(Lain::Exec::Timeout, /\Atoo slow\n\[ran: [^\n]+\]\n\z/)
       end
     end
   end
@@ -1295,7 +1418,7 @@ RSpec.describe Lain::Exec::Sandboxed do
 
       it "tells the model the refusal is final when the program had no other copy to fall through to" do
         expect(run("cat README.md", env: { "PATH" => File.dirname(planted) }).stderr)
-          .to end_with("#{format(described_class::REFUSED, path: as_shown(planted))}\n")
+          .to end_with("#{format(described_class::REFUSED, path: as_shown(planted))}\n#{reader_tier}")
       end
 
       it "is refused when a term's stage execs it, which then falls through to the next PATH entry" do
@@ -1434,7 +1557,8 @@ RSpec.describe Lain::Exec::Sandboxed do
 
     it "still names a missing program as not found" do
       expect(run(term(%w[no-such-program-anywhere])))
-        .to have_attributes(exit_status: 127, stderr: "lain: no-such-program-anywhere: command not found\n")
+        .to have_attributes(exit_status: 127,
+                            stderr: "lain: no-such-program-anywhere: command not found\n#{reader_tier}")
     end
 
     it "keeps bundler from reading the user's own config, which may hold gem credentials" do

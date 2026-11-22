@@ -376,8 +376,10 @@ module Lain
       end
 
       def spilled(capture, pending, path)
-        Tool::Result.ok(@spilled.handback(head: pending.head, size: pending.size, kept: pending.kept, path:,
-                                          beside: "exit status: #{capture.exit_status}\n#{SPILLED_STREAMS}"))
+        handed = @spilled.handback(head: pending.head, size: pending.size, kept: pending.kept, path:,
+                                   beside: "exit status: #{capture.exit_status}\n#{SPILLED_STREAMS}")
+        tier = Exec::Sandboxed::Tier.last_line(capture.stderr)
+        Tool::Result.ok(tier ? "#{handed}\n#{tier}" : handed)
       end
 
       # The Journal's only account of arm selection when no ladder ran: the
@@ -576,8 +578,14 @@ module Lain
       # The boundary's own refusal is not used: its byte count would measure the
       # backend's report, and `head -c` at that count cuts the command's output
       # somewhere else.
+      #
+      # A sandboxed call's message ends with the tier line, which is set aside before either check and put back
+      # after, so a replaced report still ends with it and the line never counts toward the bound.
       def timed_out(input, error)
-        Tool::Result.error("command timed out after #{seconds(input)}s: #{timeout_report(error.message)}")
+        tier = Exec::Sandboxed::Tier.last_line(error.message)
+        report = timeout_report(error.message.byteslice(0, error.message.bytesize - tier.to_s.bytesize))
+        shown = tier ? "#{report.sub(/\n?\z/, "\n")}#{tier}" : report
+        Tool::Result.error("command timed out after #{seconds(input)}s: #{shown}")
       end
 
       def timeout_report(message)

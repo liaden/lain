@@ -3,6 +3,44 @@
 require "tmpdir"
 
 RSpec.describe Lain::Confine::Profile do
+  describe "#network and #tier_line" do
+    let(:reader) { described_class.reader(root: "/p", home: "/h") }
+
+    it "reports no network for a confined profile with no ports" do
+      expect([reader.network, reader.tier_line]).to eq([false, "[ran: reader; no network; no /dev/dri; home masked]"])
+    end
+
+    it "reports the granted ports as strings" do
+      granted = reader.with(connect_ports: [443, 80])
+
+      expect([granted.network, granted.tier_line])
+        .to eq([%w[443 80], "[ran: reader; network only on ports 443, 80; no /dev/dri; home masked]"])
+    end
+
+    it "reports network when the kernel does not enforce ports" do
+      expect([reader.network(net_enforced: false), reader.tier_line(net_enforced: false)])
+        .to eq([true, "[ran: reader; with network; no /dev/dri; home masked]"])
+    end
+
+    it "keeps a private network, which a namespace holds whatever the kernel enforces" do
+      private_net = reader.with(private_net: true)
+
+      expect([private_net.network(net_enforced: false), private_net.tier_line(net_enforced: false)])
+        .to eq([false, "[ran: reader; no network; no /dev/dri; home masked]"])
+    end
+
+    it "reports an unconfined profile as networked and unconfined, enforced or not" do
+      expect([described_class::TRACED.network(net_enforced: false), described_class::TRACED.tier_line])
+        .to eq([true, "[ran: unconfined, with network]"])
+    end
+
+    it "names what a private mount holds" do
+      mounted = reader.with(homes: [Lain::Confine::Profile::PrivateHome.new(path: "/h/.cargo", reads: %w[bin])])
+
+      expect(mounted.tier_line).to eq("[ran: reader; no network; no /dev/dri; home masked, private ~/.cargo]")
+    end
+  end
+
   describe ".reader" do
     subject(:profile) do
       described_class.reader(root: "/p", home: "/h", masks: ["/p/.env"], exec_files: ["/h/.local/bin/grep"])

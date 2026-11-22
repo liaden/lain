@@ -18,6 +18,10 @@ module E2E
     TIMESTAMPS = /"(expires_at|created_at)":"[^"]*"/
     TIMESTAMP_PLACEHOLDER = "<RECORDED>"
 
+    # The line a sandboxed bash result ends with. It words what this box's sandbox could do (Landlock's
+    # ABI, the profile the approval earned), so a cassette recorded on another box would go stale on it.
+    TIER_LINE = /\n?\[ran: [^\]\n]*\]\n\z/
+
     # Read from the stand-in's thread, so it is shared state rather than a thread local.
     SERVING_SINCE = Concurrent::Array.new
 
@@ -87,7 +91,7 @@ module E2E
       #   ({Sandbox}'s LIVE list) made since the journey began serving
       def self.of(body, volatile: Cassette.volatile)
         role, content = (body.fetch("messages", []).last || {}).values_at("role", "content")
-        steady = content.is_a?(String) ? Cassette.steady(content, volatile) : content
+        steady = content.is_a?(String) ? Cassette.steady(content, volatile).sub(TIER_LINE, "\n") : content
         new(model: body["model"], tools: body.fetch("tools", []).map { |tool| tool.dig("function", "name") }.sort,
             option_keys: body.fetch("options", {}).keys.sort, last_message: [role, steady])
       end

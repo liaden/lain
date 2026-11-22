@@ -413,7 +413,7 @@ RSpec.describe Lain::Confine::Profiles do
           built = exec.call(command: "mkdir -p #{File.dirname(bin)} && cp /usr/bin/true #{bin} && ./#{bin}",
                             cwd: root, env: {}, timeout: 20, confinement: request(ruling("auto")))
 
-          expect(built).to have_attributes(exit_status: 0, stderr: "")
+          expect(built).to have_attributes(exit_status: 0, stderr: a_string_matching(/\A\[ran: [^\n]+\]\n\z/))
         end
 
         # The sandbox's own target/ is no change a human must vouch for, so the first build still asks one.
@@ -1432,7 +1432,8 @@ RSpec.describe Lain::Confine::Profiles do
             write.call(self)
 
             expect([user_name(:reader), user_name(:workspace)])
-              .to all(have_attributes(exit_status: 0, stdout: "P\n", stderr: ""))
+              .to all(have_attributes(exit_status: 0, stdout: "P\n",
+                                      stderr: a_string_matching(/\A\[ran: [^\n]+\]\n\z/)))
           end
         end
       end

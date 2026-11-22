@@ -25,6 +25,17 @@ RSpec.describe Lain::Confine::Sandbox do
       expect(degraded).to be_empty
     end
 
+    it "tells the exec the network rule is enforced from Landlock ABI 4" do
+      abi = ->(level) { ->(argv) { [argv.include?("--status") ? %({"abi":#{level},"reap":true}) : "", true] } }
+      enforced = [3, 4].map do |level|
+        probing = Lain::Confine::Probe.new(fence:, journal:, runner: abi.call(level), ptrace_scope: -> { "0" })
+        described_class.new(root: "/srv/project", home: "/home/h", masks:, probe: probing, fence:, journal:)
+                       .wrap(inner, requirer: "Spec").instance_variable_get(:@tier).net_enforced
+      end
+
+      expect(enforced).to eq([false, true])
+    end
+
     it "does not launch a bwrap found in the cwd through an empty PATH entry" do
       Dir.mktmpdir("lain-sandbox-cwd") do |dir|
         File.write(File.join(dir, "bwrap"), "#!/bin/sh\n")
@@ -630,7 +641,7 @@ RSpec.describe Lain::Confine::Sandbox do
       system(SeedRepo::SCRUB, "git", "-C", repo, "config", "core.hooksPath", File::NULL, exception: true)
       capture = judged("git status --short")
 
-      expect([capture.exit_status, capture.stderr]).to eq([0, ""])
+      expect([capture.exit_status, capture.stderr]).to match([0, /\A\[ran: [^\n]+\]\n\z/])
     end
 
     it "refuses a write to the repository's config, and leaves the config as it was" do

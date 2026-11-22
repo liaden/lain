@@ -188,11 +188,42 @@ module Lain
       end
       private :valid_ports
 
+      def network_phrase(network)
+        return "with network" if network == true
+
+        network ? "network only on ports #{network.join(", ")}" : "no network"
+      end
+      private :network_phrase
+
+      def home_phrase
+        mounted = homes.map { "private ~/#{File.basename(_1.path)}" }
+        ["home masked", *mounted].join(", ")
+      end
+      private :home_phrase
+
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = Profile.confines?(name)
 
       # @return [Boolean] whether the call could read the project's secret files
       def unmasked? = unmasked
+
+      # @param net_enforced [Boolean] whether the kernel bounds TCP ports at all; below Landlock ABI 4 a confined
+      #   profile with no private network still reaches the host's
+      # @return [Boolean, Array<String>] true when the call could reach the network, the granted ports when only
+      #   they could be, false when none
+      def network(net_enforced: true)
+        return true unless confined? && (net_enforced || private_net)
+
+        connect_ports.map(&:to_s).presence || false
+      end
+
+      # @param net_enforced [Boolean] as for {#network}
+      # @return [String] the line a bash result ends with, so the model reads what its run lacked
+      def tier_line(net_enforced: true)
+        return "[ran: unconfined, with network]" unless confined?
+
+        "[ran: #{name}; #{network_phrase(network(net_enforced:))}; no /dev/dri; #{home_phrase}]"
+      end
 
       # A TMPDIR other processes share holds their scratch too, so a call
       # writes a dir of its own beneath it instead, and may run what it writes

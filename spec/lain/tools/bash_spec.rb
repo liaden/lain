@@ -749,6 +749,19 @@ RSpec.describe Lain::Tools::Bash do
         expect(Dir.exist?(answers)).to be(false)
       end
 
+      it "ends a spilled result with the tier line the exec appended, which the spill does not count" do
+        tier = "[ran: reader; no network; no /dev/dri; home masked]\n"
+        tiered = Class.new(SimpleDelegator) do
+          define_method(:call) do |**kwargs|
+            super(**kwargs).then { Lain::Exec::Capture.new(**_1.to_h, stderr: _1.stderr + tier) }
+          end
+        end.new(Lain::Exec::Local.new)
+
+        result = described_class.new(exec: tiered, spill:).call({ command: "cat #{script}" }, invocation)
+
+        expect(result.content).to include("the full output is at").and end_with("\n#{tier}")
+      end
+
       it "spills nothing for output under the ceiling" do
         result = described_class.new(spill:).call({ command: flooding(1024) }, invocation)
 
@@ -1449,6 +1462,34 @@ RSpec.describe Lain::Tools::Bash do
 
       expect(tool.call({ command: %(sh -c "sleep 5"), timeout: 7 }, invocation).content)
         .to eq("command timed out after 7s: Command timed out after 7s\nSTDOUT: ✅")
+    end
+
+    describe "a timeout that ran under a tier" do
+      let(:tier) { "[ran: reader; no network; no /dev/dri; home masked]\n" }
+
+      def timed_out(report)
+        described_class.new(exec: timing_out(report)).call({ command: "sleep 5", timeout: 7 }, invocation)
+      end
+
+      it "ends a report replaced for being over the bound with the line, not counting the line" do
+        result = timed_out("#{"x" * 40_000}\n#{tier}")
+
+        expect(result).to be_error
+        expect(result.content).to include("40001").and end_with("\n#{tier}")
+      end
+
+      it "ends a report that is not text with the line" do
+        result = timed_out("Command timed out after 7s\nSTDOUT: caf\xE9\n#{tier}".b)
+
+        expect(result.content).to include("not valid UTF-8 text").and end_with("\n#{tier}")
+      end
+
+      it "keeps a report exactly at the bound whole, since the line is not counted" do
+        body = ("x" * (described_class::OUTPUT_BOUND.limit - 1)) << "\n"
+        result = timed_out("#{body}#{tier}")
+
+        expect(result.content).to eq("command timed out after 7s: #{body}#{tier}")
+      end
     end
 
     # The block-level half of the byte-identity rule: which arm ran is no more

@@ -131,10 +131,12 @@ module Lain
       # @param secrets [#call] returns the known values, a {Sensitivity::Secrets::Source}, read likewise
       # @param classifier [#classify] the session's policy on a path, so the note leaves out what its name gates
       # @param masks [#masks] the session's {Confine::MaskList}, so a secrets run's note names what it could read
+      # @param net_enforced [Boolean] whether the kernel bounds a call's network at all, which Landlock does only
+      #   from ABI 4; when false a confined profile without a private network is recorded and worded as networked
       def initialize(inner:, launcher:, profiles:, journal:, ceiling: Tool::Bounds::CEILINGS.fetch("bash"),
                      reaps: true, taint: Sensitivity::Taint.new.then { |own| -> { own } },
                      secrets: -> { Sensitivity::Secrets::Source::DEFAULT },
-                     classifier: Sensitivity::Policy::Null.instance, masks: Lifting::UNLISTED)
+                     classifier: Sensitivity::Policy::Null.instance, masks: Lifting::UNLISTED, net_enforced: true)
         @scanning = Scanning.new(taint:, secrets:, classifier:, journal:)
         @lifting = Lifting.new(masks)
         @inner = inner
@@ -143,6 +145,7 @@ module Lain
         @journal = journal
         @ceiling = ceiling
         @reaps = reaps
+        @tier = Tier.new(net_enforced:)
       end
 
       # @param term [Shell::Term]
@@ -186,18 +189,15 @@ module Lain
         refused = unrunnable(profile, confinement.executables)
         @journal << Telemetry::Sandbox.new(tool_use_id: confinement.tool_use_id, profile: profile.name,
                                            trace: profile.trace, refused:, granted: granted(profile, confinement),
-                                           network: network_of(profile), secrets: profile.unmasked?)
+                                           network: profile.network(net_enforced: @tier.net_enforced),
+                                           secrets: profile.unmasked?)
         return refuse(confinement, profile, refused.first, sinks) if refused.any?
 
-        scanned(profile, confinement.tool_use_id, cwd) do
-          masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
+        @tier.over(profile) do
+          scanned(profile, confinement.tool_use_id, cwd) do
+            masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
+          end
         end
-      end
-
-      def network_of(profile)
-        return true unless profile.confined?
-
-        profile.connect_ports.map(&:to_s).presence || false
       end
 
       def masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
@@ -467,7 +467,7 @@ module Lain
         #
         # @param profile [Confine::Profile]
         # @param root [String, nil] the call's own root; the profile's project when nil
-        # @return [Array<String>] as {Confine::Profiles.readable} names them; none unless the profile is unmasked
+        # @return [Array<String>] as `Confine::Profiles.readable` names them; none unless the profile is unmasked
         def readable(profile, root)
           return [] unless profile.unmasked?
 

@@ -10,6 +10,8 @@ module Lain
     # bench arm build it the same way, so they cannot come to confine differently.
     class Sandbox
       LAYERS = %i[bwrap landlock].freeze
+      # Landlock bounds a TCP port only from this ABI; below it a confined call can still connect anywhere.
+      NET_ABI = 4
       NO_PRIVATE_NET = "the box cannot give a call a private network"
 
       # A session whose phone answers its calls runs outside the sandbox only what a human approved, traced.
@@ -274,7 +276,7 @@ module Lain
 
         @built = true
         Exec::Sandboxed.new(inner:, launcher:, profiles:, journal: @journal, reaps: @probe.supports?(:reap),
-                            masks: @masks, **@scanning)
+                            net_enforced: @probe.abi >= NET_ABI, masks: @masks, **@scanning)
       end
 
       # @return [Containment::Deferred] whether this box can run a call contained, with no network beyond a build

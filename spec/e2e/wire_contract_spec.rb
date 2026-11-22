@@ -143,6 +143,27 @@ RSpec.describe E2E::Cassette, :e2e do
     end
   end
 
+  describe "a tool result ending in the tier line" do
+    def tool_fingerprint(content)
+      last = { "role" => "tool", "content" => content }
+      described_class::Fingerprint.of(chat_request(tools: %w[bash], last:).body)
+    end
+
+    # The line words what this box's sandbox could do, which a cassette recorded elsewhere cannot know.
+    it "fingerprints alike whatever tier line it ends with, or none" do
+      bare = "exit status: 0\n--- stdout ---\nhi\n--- stderr ---\n"
+
+      expect([bare, "#{bare}[ran: workspace; no network; no /dev/dri; home masked]\n",
+              "#{bare}[ran: unconfined, with network]\n"].map { tool_fingerprint(_1) }.uniq.size).to eq(1)
+    end
+
+    it "fingerprints apart when anything but the line differs" do
+      line = "[ran: workspace; no network; no /dev/dri; home masked]\n"
+
+      expect(tool_fingerprint("exit status: 0\n#{line}")).not_to eq(tool_fingerprint("exit status: 1\n#{line}"))
+    end
+  end
+
   describe "a request naming a sandbox" do
     def fingerprint(content)
       last = { "role" => "user", "content" => content }
