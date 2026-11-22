@@ -2057,4 +2057,86 @@ RSpec.describe Lain::Tools::Bash do
       end
     end
   end
+
+  describe "reading the substitutions a command nests" do
+    let(:parsed) { [] }
+    let(:runs) do
+      parse = Lain::Shell::Parse.new
+      seen = parsed
+      Lain::Tools::Bash::ShellRuns.new(home: nil, parse: ->(source) { (seen << source.bytesize) && parse.call(source) })
+    end
+    # Every parse in one reading draws from the same budget, whatever substitution or script it is for.
+    let(:budget) { 16_384 }
+    let(:unbudgeted) { "substitutions and scripts that together pass the bytes lain reads in one command" }
+
+    def nested(depth, program = "true") = "#{"echo $(" * depth}#{program}#{")" * depth}"
+
+    # Each program by its name, under a path that lets a shell be told by its file.
+    def names(command)
+      runs.executables(command, env: -> { {} }) do |argv|
+        Lain::Shell::Executable.unresolved(argv.first).with(resolved: "/usr/bin/#{argv.first}")
+      end.map(&:name)
+    end
+
+    # A command that parses `budget + over` bytes in all, padded outside any substitution so each byte counts once.
+    def padded(over)
+      inner = nested(60, "tool")
+      runs.argvs(inner)
+      spent = parsed.sum
+      parsed.clear
+      "echo #{"y" * (budget - spent - 7 + over)}; #{inner}"
+    end
+
+    it "parses no more than its budget for all its substitutions, and parks past that", :aggregate_failures do
+      expect(names(nested(128))).to include(unbudgeted)
+      expect(parsed.sum).to be <= budget
+    end
+
+    it "parses no more than one budget across many scripts, each under it alone", :aggregate_failures do
+      script = "sh -c '#{nested(16)}'"
+      command = Array.new((Lain::Shell::Parse::MAX_BYTES - 1) / (script.bytesize + 2), script).join("; ")
+
+      expect(names(command)).to include(unbudgeted)
+      expect(parsed.sum).to be <= budget
+      parsed.clear
+      runs.argvs(command)
+      expect(parsed.sum).to be <= budget
+    end
+
+    it "lends only the stages it read before the budget ran out, never a reason" do
+      expect(runs.argvs("ls; #{nested(128, "curl x")}")).to eq([["ls"], ["echo", "$(#{nested(127, "curl x")})"]])
+    end
+
+    it "lends a program nested just under the budget", :aggregate_failures do
+      command = padded(0)
+
+      expect(runs.argvs(command)).to include(["tool"])
+      expect(parsed.sum).to eq(budget)
+    end
+
+    it "lends no program nested just past the budget", :aggregate_failures do
+      command = padded(1)
+
+      expect(runs.argvs(command)).not_to include(["tool"])
+      expect(parsed.sum).to be <= budget
+    end
+
+    it "reads no later script once a draw is refused, however small the script" do
+      expect(runs.argvs("sh -c '#{nested(128)}'; sh -c 'tool'")).not_to include(["tool"])
+    end
+
+    # Each parse is capped at MAX_BYTES, so a budget of fewer full parses would park commands the cap still reads.
+    it "budgets at least 4 full parses, so the parse cap cannot rise past it alone" do
+      expect(Lain::Tools::Bash::ShellRuns::READ_BYTES).to be >= 4 * Lain::Shell::Parse::MAX_BYTES
+    end
+
+    it "reports a command past the length cap as broken, drawing nothing for a parse that never ran" do
+      expect(names("echo #{"a" * budget}")).to include(Lain::Tools::Bash::ShellRuns::BROKEN.reason)
+    end
+
+    it "still reads a program a few substitutions deep", :aggregate_failures do
+      expect(names(nested(8, "tool"))).to include("tool")
+      expect(names(nested(8, "tool"))).not_to include(unbudgeted, Lain::Tools::Bash::ShellRuns::NESTED.reason)
+    end
+  end
 end

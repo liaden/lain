@@ -674,6 +674,9 @@ module Lain
       # nobody listed parks.
       class ShellRuns
         DEPTH = 3
+        # Every parse of one command draws from this. Realistic commands peak near 3.5 KB summed, and the bound keeps a
+        # nested or fanned-out command to a few full parses' worth of work.
+        READ_BYTES = 16_384
         SHELLS = %w[sh bash dash zsh].freeze
         SCRIPT_FLAG = /\A-[A-Za-z]*c[A-Za-z]*\z/
         OPTION = /\A[-+]/
@@ -741,6 +744,10 @@ module Lain
         INCLUDED = Unread.new(reason: "a makefile that includes another")
         # A builtin evaluates its operand as arithmetic, where a subscript runs a command.
         OPERAND = Unread.new(reason: "a builtin operand that may be evaluated")
+        # A substitution is parsed again inside each that holds it, and a `-c` script once more, so the parses of
+        # one command are cut off at {READ_BYTES} rather than left quadratic in the nesting.
+        UNBUDGETED = Unread.new(reason: "substitutions and scripts that together pass the bytes lain reads in one " \
+                                        "command")
         DIRECTORY = Unread.new(reason: "a directory change")
         private_constant :DIRECTORY
 
@@ -1186,12 +1193,28 @@ module Lain
 
         # What one reading keeps and how it tells a shell from a stage: by name, or by the file the stage runs, which
         # is resolved whole because a shell given no `-c` reads its program from somewhere the words do not name.
-        Reading = Data.define(:reports_unread, :shell)
+        # A frozen value holding a mutable {Budget}, so a `with` copy shares the spend on purpose.
+        Reading = Data.define(:reports_unread, :shell, :budget)
         # One stage a reporting reading found, and where its words have no value lain can read.
         Run = Data.define(:argv, :unknown)
         NAMED = ->(argv) { SHELLS.include?(argv.first.rpartition("/").last) && argv.first }
-        VERBATIM = Reading.new(reports_unread: false, shell: NAMED)
-        private_constant :Reading, :Run, :NAMED, :VERBATIM
+
+        # What one command's reading may still parse.
+        class Budget
+          def initialize(bytes)
+            @left = bytes
+          end
+
+          # Once a draw is refused every later one is too, so a reading never resumes past the point it stopped.
+          #
+          # @param bytes [Integer]
+          # @return [Boolean] whether the bytes were left, which are then spent
+          def draw?(bytes)
+            @left = bytes <= @left ? @left - bytes : -1
+            @left >= 0
+          end
+        end
+        private_constant :Reading, :Run, :NAMED, :Budget
 
         # @param home [String, nil] what a leading `~/` names, as the shell's HOME
         # @param parse [Shell::Parse]
@@ -1203,7 +1226,9 @@ module Lain
         # @param source [String] the command as bash reads it
         # @param depth [Integer] how many nested scripts deep to read
         # @return [Array<Array<String>>]
-        def argvs(source, depth = DEPTH) = read(source, depth, VERBATIM)
+        def argvs(source, depth = DEPTH)
+          read(source, depth, Reading.new(reports_unread: false, shell: NAMED, budget: Budget.new(READ_BYTES)))
+        end
 
         # A `-c` script is found under the wrappers the resolver peels, and a shell is told by the file its name
         # resolves to, so neither `nice sh -c` nor `rbash -c` hides one.
@@ -1215,7 +1240,8 @@ module Lain
         # @return [Array<Shell::Executable>] one per program and per {Unread} reason; none when the words show none
         def executables(source, env:)
           shell = ->(argv) { shell_file(yield(argv)) }
-          entries = settled(read(source, DEPTH, Reading.new(reports_unread: true, shell:)))
+          reading = Reading.new(reports_unread: true, shell:, budget: Budget.new(READ_BYTES))
+          entries = settled(read(source, DEPTH, reading))
           entries = [SESSION_ENV, *entries] if lends_code?(env.call)
           entries.map { |entry| entry.is_a?(Unread) ? entry.executable : resolved_stage(entry) { yield _1 } }
         end
@@ -1223,6 +1249,8 @@ module Lain
         private
 
         def read(source, depth, reading)
+          return unbudgeted(reading) unless reading.budget.draw?(parsed_bytes(source))
+
           parse = @parse.call(source)
           stages = parse.stages.flat_map { stage(_1.argv, depth, reading) }
           [*unread_in(parse, depth, reading), *stages, *(depth.zero? ? [] : substituted(source, depth - 1, reading))]
@@ -1326,18 +1354,29 @@ module Lain
           end
         end
 
-        # Every substitution, nested ones too, so each is read for its own stages only.
+        # Every substitution, nested ones too, so each is read for its own stages only, all of them drawing on the
+        # command's one budget.
         def substituted(source, depth, reading)
           return [] if source.bytesize > Shell::Parse::MAX_BYTES
 
-          Ext::TreeSitter.query(source, Shell::Parse::LANGUAGE, SUBSTITUTIONS)
-                         .flat_map { @parse.call(_1.fetch("text").gsub(DELIMITERS, "")).stages }
-                         .flat_map { stage(_1.argv, depth, reading) }
+          texts = Ext::TreeSitter.query(source, Shell::Parse::LANGUAGE, SUBSTITUTIONS)
+                                 .map { _1.fetch("text").gsub(DELIMITERS, "") }
+          return unbudgeted(reading) unless reading.budget.draw?(texts.sum(&:bytesize))
+
+          texts.flat_map { @parse.call(_1).stages }.flat_map { stage(_1.argv, depth, reading) }
         end
+
+        # Past the budget a reporting reading parks. The verbatim one lends the confinement only what it read, so a
+        # program in the unread part is not named up front by `Profiles#unrunnable`: the sandbox refuses it at run
+        # time instead.
+        def unbudgeted(reading) = reading.reports_unread ? [UNBUDGETED] : []
+
+        # A parse the length cap refuses reads nothing.
+        def parsed_bytes(source) = source.bytesize > Shell::Parse::MAX_BYTES ? 0 : source.bytesize
 
         def stage(argv, depth, reading)
           raws = argv.drop_while { _1.match?(ASSIGNMENT) }
-          return [*own(raws.map { unquoted(_1) }, reading), *verbatim(raws.map { unquoted(_1) }, depth)] \
+          return [*own(raws.map { unquoted(_1) }, reading), *verbatim(raws.map { unquoted(_1) }, depth, reading)] \
             unless reading.reports_unread
 
           values = raws.map { Shell::Named::Word.read(_1)&.text }
@@ -1348,9 +1387,9 @@ module Lain
         # Where bash's quote removal leaves a word lain cannot compute, past the program word.
         def unknown_at(values) = values.each_index.select { |at| at.positive? && values[at].nil? }
 
-        def verbatim(words, depth)
+        def verbatim(words, depth, reading)
           script = script_of(words) if !depth.zero? && NAMED.call(words)
-          script ? read(script, depth - 1, VERBATIM) : []
+          script ? read(script, depth - 1, reading) : []
         end
 
         # Under the wrappers the resolver peels: an `env` that changes a variable, a shell option outside the
