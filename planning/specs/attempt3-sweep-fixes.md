@@ -1320,6 +1320,8 @@ Spec file: `spec/lain/tools/subagent_spec.rb`, `spec/lain/epic/submission_spec.r
 **Stop and report if:**
 - The reviewer's answer carries no issue or sha; the record must be keyed by the child's lease commit.
 
+**Ruling after the stop fired (run of 2026-11-22):** neither value reached `Answer#bounded`. Files grow by `lib/lain/isolation/leases.rb` (the hold block also yields the lease's origin, so `Subagent#leased` has the lease commit), `lib/lain/cli/wiring/toolset_build.rb` and `lib/lain/cli/epic_driver/issue_actor.rb` (the issue id passed as an explicit `issue_id:`, never parsed back out of the lane string), and their specs. `reviewer_code` holds no bash, so the `git show` read is pinned at the `Answer` level, where a role with bash can make it; the role catalog does not change. The gate is asked at the handback sha, which can differ from the reviewer's lease commit, so the gate reads the newest review record for the issue and names that record's own sha.
+
 ### T35: Check an issue's commits against its allowed paths, at the gate and at landing          [risk: high]
 
 **Depends on:** T14, T34
@@ -1359,6 +1361,8 @@ end
 
 **Stop and report if:**
 - Adding the section changes the `issue_plan` digest of issues that lack it (it must not).
+
+**Ruling after a wiring stop (run of 2026-11-22):** `Forge::LocalLanding` is built in `lib/lain/cli/epic_land.rb` and `lib/lain/cli/epic_driver/factory.rb`, and neither hands it the issue's allowed paths. Both join Files, with their specs, for 1 line each: a required `scope:` callable answering an issue's allowed paths (nil when the issue has no section), backed by a new `EpicSubmit#allowed_paths`. It has no default, so production cannot silently skip the check. The admitted prefixes are parsed from the approving verdict's note. The diffstat and the outside-scope list stay out of the gate's address, since both derive from the changeset already in it.
 
 ### T36: Keep each critic's parsed findings and accept blank lines          [risk: medium]
 
@@ -2063,3 +2067,33 @@ T33 landing attempt 1 08:50
 T33 attempt 1 hook red: plain_chat_prompt_guards_spec '/approve typed just before the call parked' seed 17971 (repeat of T41's) 08:53
 T33 flake: 6 of 6 green at seed 17971 (3 tree, 3 main); repeat of T41's, becomes F10; landing attempt 2 08:57
 T33 attempt 2 hook red: same example, seed 127; landing held; F10 written to plan 09:00
+F10 started (cut b97719621); T33 held until F10 lands 09:00
+T34 cut at b97719621, stacked on T33's 7 files 09:00
+T34 started, stacked on T33 09:01
+T34 stop fired (no issue id or lease sha reaches Answer#bounded); ruled option A: leases.rb yields origin, issue_id through toolset_build and issue_actor; gate reads newest review by issue; card amended in plan 09:03
+F10 handed back: resolve woke the call before writing the decision (io_uring write yields); fixed order in parked/queue.rb; asked for a queue_spec regression 09:10
+F10 queue_spec regression added (red on old order, green on fix); high review ae1af3f6204374bb3 started 09:11
+F10 review APPROVE-WITH-FIXES: cancel mid-write hangs the call; timeout during write returns before record; fix round 1 sent 09:13
+F10 fix round 1 done (ensure-wake, timeout awaits decided); re-review round 2 sent 09:17
+T34 handed back (option A; 8333 green); high review ab891508bef0f3d64 started 09:17
+T34 review REQUEST-CHANGES (no epic slug on the record; Untyped crash; CLEAN_EXIT dup); fix round 1 sent 09:20
+F10 round 2 APPROVE-WITH-FIXES; only finding (a wedged journal write leaves the call unbounded) accepted: a wedged journal stalls every record in the session, so a grace window here buys nothing. Landing F10 attempt 1 09:21
+- 09:24 F10 landed fe4713e58
+F10 landed fe4713e58 09:24
+T33 landing attempt 3 09:24
+- 09:27 33 landed e4a71ad7e
+T33 landed e4a71ad7e 09:27
+T34 fix round 1 done (epic slug on record, Untyped skipped, real-bash clean-exit spec); re-review round 2 sent 09:29
+T34 round 2 APPROVE; landing attempt 1 with A3S_CUT=HEAD (main changed these paths only by T33, which WT already holds) 09:30
+- 09:33 34 landed d286720d9
+T34 landed d286720d9 09:33
+T35 cut 09:34
+T35 started 09:34
+T35 stop (LocalLanding has no route to allowed paths); ruled: epic_land.rb and factory.rb join Files with a required scope: callable; card amended 09:36
+T35 handed back (5612 + 383 slow green); high review a41b0b13ea5d97db9 started 09:46
+T35 review APPROVE-WITH-FIXES (admit over-parse, merge fails open, no submit-level spec, + 4 nits); fix round 1 sent 09:56
+T35 fix round 1 done (7 items + HTML comment strip); re-review round 2 sent 10:01
+T35 round 2 APPROVE-WITH-FIXES (empty prefix unpinned, [""] journaled, unadmittable paths unexplained); fix round 2 sent 10:11
+T35 fix round 2 done; re-review round 3 sent 10:13
+T35 round 3 APPROVE-WITH-FIXES, 3 nits; fix round 3 sent 10:16
+T35 round 4 APPROVE; folding plan then landing attempt 1 10:19
