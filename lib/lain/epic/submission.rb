@@ -273,7 +273,7 @@ module Lain
     # inside a plan's content address, because the gate decision and the
     # sign-off queue partition on the issue, and a grader joins on the criteria.
     Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset,
-                             :review, :manual_commands) do
+                             :review, :manual_commands, :procedure) do
       # `sources` maps each source name to its text, so an approval of the
       # research is an approval of the facts it cites. With none the digest is
       # the text's alone, as it was before sources existed.
@@ -348,13 +348,15 @@ module Lain
       # `tests` is evidence for the human and stays out of the address, so a
       # re-asked gate over the same commit is the same gate.
       # `manual_commands` is nil for an issue judged by tests, and for one a
-      # human judges, the commands its scenarios name.
-      def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil)
+      # human judges, the commands its scenarios name. `procedure` is that
+      # human's steps in the issue's own words; like `tests` it is shown, not
+      # addressed, so editing a step reopens no gate.
+      def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil, procedure: nil)
         issue_id = clean_issue_id(issue_id)
         fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}#{manual_said(manual_commands)}"
         Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
         new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
-            changeset: digest, manual_commands:)
+            changeset: digest, manual_commands:, procedure:)
       end
 
       def self.manual_said(commands)
@@ -363,17 +365,21 @@ module Lain
         ", manual acceptance (a human runs: #{commands.empty? ? "none named" : commands.join("; ")})"
       end
 
+      # The one rendering of a test run, for the gate's fact and the sign-off listing alike.
+      #
+      # @param tests [#ran, #passed, #failed, #errors, #why, nil] what ran on the sha, or nil when nothing recorded it
+      # @return [String]
       def self.tests_said(tests)
         return "not run (no test run was recorded for this submission)" if tests.nil?
         return "not run (#{tests.why})" unless tests.ran
 
-        [count(tests.passed, "passed"), (count(tests.failed, "failed") if tests.failed.positive?),
-         (count(tests.errors, tests.errors == 1 ? "error" : "errors") if tests.errors.positive?)].compact.join(", ")
+        [count(tests.passed, "passed"), (count(tests.failed, "failed") if tests.failed.to_i.positive?),
+         (count(tests.errors, tests.errors == 1 ? "error" : "errors") if tests.errors.to_i.positive?)]
+          .compact.join(", ")
       end
 
       def self.count(number, word) = "#{number} #{word}"
       private_class_method :count
-      private_class_method :tests_said
 
       def self.implemented(digest, issue_id) = Canonical.digest("changeset" => digest, "issue" => issue_id)
       private_class_method :implemented
@@ -389,7 +395,7 @@ module Lain
       private_class_method :clean_issue_id
 
       def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil, changeset: nil,
-                     review: nil, manual_commands: nil)
+                     review: nil, manual_commands: nil, procedure: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -404,8 +410,11 @@ module Lain
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
               issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
               changeset: changeset && -changeset.to_s, review:,
-              manual_commands: manual_commands&.map { |command| -command.to_s }&.freeze)
+              manual_commands: interned(manual_commands), procedure: interned(procedure))
       end
+
+      def interned(lines) = lines&.map { |line| -line.to_s }&.freeze
+      private :interned
 
       def manual_acceptance? = !manual_commands.nil?
 
@@ -429,10 +438,13 @@ module Lain
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
         head = "Approve the #{stage} stage for #{slug.inspect}? (#{fact})"
-        return -"#{head} #{GateReply::INSTRUCTION}" unless review
+        return -"#{head} #{GateReply::INSTRUCTION}" unless review || procedure&.any?
 
-        -[head, *review.gate_lines([self]), GateReply::INSTRUCTION].join("\n")
+        -[head, *procedure_lines, *review&.gate_lines([self]), GateReply::INSTRUCTION].join("\n")
       end
+
+      def procedure_lines = procedure&.any? ? ["a human runs, in order:", *procedure.map { "- #{_1}" }] : []
+      private :procedure_lines
     end
 
     class Submission

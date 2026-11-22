@@ -44,9 +44,13 @@ module Lain
         # @return [Tested, Manual]
         def self.of_issue(issue) = of(issue.level, scenarios: Gherkin::Criteria.parse(issue.criteria).scenarios)
 
-        def self.commands_in(scenarios)
-          scenarios.flat_map { |scenario| acted(scenario.clauses).flat_map { |text| text.scan(COMMAND).flatten } }.uniq
-        end
+        # The whole When and Then clauses, because a procedure written in prose names no backticked command.
+        #
+        # @param scenarios [Array<Gherkin::Scenario>]
+        # @return [Array<String>]
+        def self.procedure(scenarios) = scenarios.flat_map { |scenario| acted(scenario.clauses) }
+
+        def self.commands_in(scenarios) = procedure(scenarios).flat_map { |text| text.scan(COMMAND).flatten }.uniq
 
         # A Given is setup, so a span in it is not a command the human runs;
         # an And or But belongs to the keyword before it.

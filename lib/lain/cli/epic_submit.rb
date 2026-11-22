@@ -258,12 +258,13 @@ module Lain
 
         def implementation(stage)
           id = issue!(stage)
-          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: id, digest: implemented!(id, stage),
-                                                tests: @tests, manual_commands: manual_commands(id))
-        end
-
-        def manual_commands(id)
-          EpicDriver::Acceptance.of_issue(@home.read_epic.fetch(id)).manual_commands
+          digest = implemented!(id, stage)
+          view = Lain::Epic::IssueView.read(@home, id)
+          scenarios = view.criteria.scenarios
+          commands = EpicDriver::Acceptance.of(view.issue.level, scenarios:).manual_commands
+          Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: id, digest:, tests: @tests,
+                                                manual_commands: commands,
+                                                procedure: commands && EpicDriver::Acceptance.procedure(scenarios))
         end
 
         # The red step's commit passes every gate a real changeset does, so an

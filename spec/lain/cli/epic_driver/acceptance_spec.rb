@@ -20,7 +20,8 @@ RSpec.describe Lain::CLI::EpicDriver::Acceptance do
       found = described_class.of("manual", scenarios: scenarios("`scripts/fetch-models.sh --check` exits 0",
                                                                 "`cargo build` and `scripts/fetch-models.sh --check`"))
 
-      expect(found).to eq(described_class::Manual.new(commands: ["scripts/fetch-models.sh --check", "cargo build"]))
+      expect(found).to be_a(described_class::Manual)
+      expect(found.commands).to eq(["scripts/fetch-models.sh --check", "cargo build"])
     end
 
     it "takes the backticked spans of When and Then clauses, And or But following either, and never a Given's" do
@@ -51,13 +52,22 @@ RSpec.describe Lain::CLI::EpicDriver::Acceptance do
     end
   end
 
+  describe ".procedure" do
+    it "carries the whole When and Then steps, prose included, and never a Given" do
+      steps = scenario(["Given", "a built checkout"], ["When", "the human opens the battery doc"],
+                       ["And", "runs `make check` from the root"], ["Then", "every row reads green"])
+
+      expect(described_class.procedure(steps))
+        .to eq(["the human opens the battery doc", "runs `make check` from the root", "every row reads green"])
+    end
+  end
+
   describe ".of_issue" do
     it "reads the level and the criteria off the issue itself" do
       criteria = "```gherkin\nScenario: it fetches\n  Then `scripts/fetch-models.sh --check` exits 0\n```"
       issue = Lain::Epic::Issue.new(id: "a", title: "A", level: "manual", criteria:)
 
-      expect(described_class.of_issue(issue))
-        .to eq(described_class::Manual.new(commands: ["scripts/fetch-models.sh --check"]))
+      expect(described_class.of_issue(issue).commands).to eq(["scripts/fetch-models.sh --check"])
     end
 
     it "reads an issue with no criteria at its level" do

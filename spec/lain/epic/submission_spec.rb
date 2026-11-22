@@ -583,6 +583,50 @@ RSpec.describe Lain::Epic::Submission do
       expect(submission.gate_question).to include("manual acceptance", "scripts/fetch-models.sh --check")
     end
 
+    describe "a manual issue's procedure" do
+      let(:steps) { ["open the battery doc", "run row 1 by hand", "run row 2 by hand", "record the readings"] }
+      let(:with_steps) do
+        described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40, manual_commands: [],
+                                       procedure: steps)
+      end
+      let(:without_steps) do
+        described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40, manual_commands: [])
+      end
+
+      it "quotes every step in the question under a human runs" do
+        expect(with_steps.gate_question).to include("a human runs", *steps.map { "- #{_1}" })
+      end
+
+      it "stays out of the gate address and the fact" do
+        expect(with_steps).to have_same_digest_as(without_steps)
+        expect(with_steps.content_digest).to eq(without_steps.content_digest)
+        expect(with_steps.fact).to eq(without_steps.fact)
+      end
+
+      it "is nil on a record built without it, as an old journaled gate loads" do
+        old = described_class.new(stage: "implementation", slug: "demo", content_digest: "d", fact: "f")
+
+        expect(old.procedure).to be_nil
+        expect(old.gate_question).not_to include("a human runs")
+      end
+
+      it "is deeply frozen" do
+        expect(Ractor.shareable?(with_steps)).to be(true)
+      end
+    end
+
+    describe ".tests_said" do
+      def said(**given) = described_class.tests_said(Lain::Telemetry::TestsRan.new(issue_id: "a", sha: "s", **given))
+
+      it "says each count with its word" do
+        expect(said(ran: true, passed: 3, failed: 1, errors: 2)).to eq("3 passed, 1 failed, 2 errors")
+      end
+
+      it "says not run, with the reason in parentheses" do
+        expect(said(ran: false, why: "judged by a human")).to eq("not run (judged by a human)")
+      end
+    end
+
     # One commit can be offered as two issues' work. Keyed on the commit alone,
     # approving it for issue c would open issue b's gate over the same commit.
     it "gives two issues' implementations of the same commit two gate identities" do

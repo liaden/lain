@@ -498,17 +498,10 @@ module Lain
         def tests_of(item)
           sha = parks.dig(address(item), "sha")
           ran = sha && test_runs[[item.issue_id.to_s, sha]]
-          ran && tests_said(ran)
+          ran && Lain::Epic::Submission.tests_said(Telemetry::TestsRan.new(**tests_ran_fields(ran)))
         end
 
-        def tests_said(ran)
-          return "not run (#{ran["why"]})" unless ran["ran"]
-
-          counts = [[ran["passed"], "passed"], [ran["failed"], "failed"],
-                    [ran["errors"], "error".pluralize(ran["errors"])]]
-          counts.select { |number, word| word == "passed" || number.to_i.positive? }
-                .map { |number, word| "#{number} #{word}" }.join(", ")
-        end
+        def tests_ran_fields(record) = record.symbolize_keys.slice(*Telemetry::TestsRan.members)
 
         # A deferral stamped AFTER now is refused here rather than downstream:
         # left alone it reached {Contracts::GateDecision} as a negative latency

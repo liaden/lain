@@ -236,6 +236,23 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to include(include("deferred" => true, "summary" => /manual acceptance/))
     end
 
+    it "puts a manual issue's prose procedure in the question a human is asked", :seam do
+      criteria = "```gherkin\nScenario: the battery\n  When the human opens the battery doc\n  " \
+                 "And runs row 1 by hand\n  Then every row reads green\n```\n"
+      home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual",
+                                                                criteria:)]))
+      write_research
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.issue("a").write("the prose for a\n")
+      command.submit("issue_plan", issue: "a")
+
+      command.submit("implementation", issue: "a", digest: commit_sha)
+
+      summaries = session_records.select { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" }
+      expect(summaries.map { _1["summary"] }.join)
+        .to include("a human runs", "- the human opens the battery doc", "- runs row 1 by hand")
+    end
+
     # `Bench::EpicMetrics` folds round trips on the record's `issue_id`, and an
     # epic-wide decision is the nil member of that key -- present, not absent.
     it "journals an epic-wide decision with a nil issue" do
