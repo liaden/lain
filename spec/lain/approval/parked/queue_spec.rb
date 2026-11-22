@@ -2,6 +2,7 @@
 
 require "json"
 require "stringio"
+require "tmpdir"
 
 # Kept out of the RSpec block (Lint/ConstantDefinitionInBlock), the same shape
 # queue_concurrency_spec's fixture uses.
@@ -1215,6 +1216,60 @@ RSpec.describe Lain::Approval::Parked::Queue do
       end
 
       expect(allowed("cargo test", within: able)).to be_nil
+    end
+
+    describe "a human's plain yes to a networked call that read no secrets" do
+      let(:fetch) { "curl -sL https://example.org/a.tar.gz -o a.tgz" }
+      let(:ledger) { Lain::Sensitivity::Ledger.new }
+      let(:replay) { Lain::Approval::RememberedAllow.new(queue: able, ledger:) }
+
+      def answer_plainly
+        answered(runs(fetch), in_dir("/srv/p"), within: able) do |pending|
+          expect(pending.offers_network?).to be(false)
+          pending.approve(surface: "spec", authority: :human)
+        end
+      end
+
+      def call_of(command)
+        Lain::Effect::ToolCall.new(tool_use_id: "tu_2", name: "bash", input: { "command" => command })
+      end
+
+      def profile_for(ruling)
+        base = Dir.mktmpdir("lain-network-pin")
+        profiles = Lain::Confine::Profiles.new(masks: Struct.new(:masks).new([]), probe: probe_with_strace, home: base,
+                                               root: base)
+        profiles.for(Lain::Confine::Request.new(ruling:, executables: [], cwd: base, root: base, tool_use_id: "tu_1"))
+      ensure
+        FileUtils.remove_entry(base)
+      end
+
+      def probe_with_strace
+        answers = { "bwrap" => ["", true], "strace" => ["strace 6.1", true],
+                    "lain-fence" => ["{\"abi\":6,\"rights\":{},\"skipped\":[]}\n", true] }
+        Lain::Confine::Probe.new(fence: "/x/lain-fence", journal: [], ptrace_scope: -> { "1\n" },
+                                 runner: ->(argv) { answers.fetch(File.basename(argv.first)) })
+      end
+
+      it "replays the identical call in the same directory unconfined, with the network open" do
+        answer_plainly
+
+        ruling = replay.call(call_of(fetch), in_dir("/srv/p"))
+
+        expect([ruling.verdict, ruling.contained?, profile_for(ruling)])
+          .to eq([:allow, false, Lain::Confine::Profile::TRACED])
+      end
+
+      it "parks a different URL" do
+        answer_plainly
+
+        expect(replay.call(call_of(fetch.sub("a.tar.gz", "b.tar.gz")), in_dir("/srv/p"))).to be_nil
+      end
+
+      it "parks the identical call once its disclosure holds secrets" do
+        answer_plainly
+
+        expect(replay.call(call_of(fetch), secret_in("/srv/p"))).to be_nil
+      end
     end
 
     it "remembers no secrets answer" do
