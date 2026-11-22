@@ -1569,6 +1569,17 @@ Repeat flake family: Errno::ENOTEMPTY on the tmpdir cleanup in `keeps vi's mode 
 
 Same misread as F2: a pending example in supervisor_reactor_spec expected a real defect, and the example sat on the known-flake list. `Supervisor::Drain::Expired` now carries the drain's own expiry. Landed 0150044bf.
 
+### F9: Keep the disk guard in the approval replay spec from catching a lazy I18n load          [risk: low]
+
+The approval_replay_spec example "disk is never asked" was red 3 of 3 on main at seed 37921 during T17's landing: the first I18n lookup loaded its locale files inside the guard. `forbid_the_disk` now warms I18n first. Landed a222c5df7.
+
+### F10: Run a /approve typed just before the call parked, every time          [risk: high]
+
+**Depends on:** T41 (it changed how a park is numbered and closed)
+**Files:** `spec/lain/seams/plain_chat_prompt_guards_spec.rb`, and the production file the cause is found in (likely under `lib/lain/approval/parked/`, `lib/lain/cli/switchboard.rb` or `lib/lain/frontend/intake*`)
+
+The seam example "a cockpit's command> over typeahead runs a /approve typed just before the call parked, once it has" went red in 3 full-suite hook runs (T41 attempt 1, T33 attempts 1 and 2, seeds 17971 and 127): `terminal.verdicts` is `[]` where `[["tty", "approve"]]` is expected, after SETTLED. It is green alone every time (12 runs), so it is a race that shows under load. Find the race, not a longer wait: name the ordering that lets the call settle without the tty verdict, reproduce it deterministically (a forced delay or a stress loop under the lock), and fix the cause. A spec-only fix is right only if the spec reads a state production does not promise; say which.
+
 ## Integration checks
 
 After the last card lands:
@@ -1983,3 +1994,72 @@ After the last card lands:
 - 06:07 F6 second review APPROVE-WITH-FIXES (no fresh budget found; realistic commands read in full; fanout 4x; 2 rules unpinned, READ_BYTES not tied to MAX_BYTES). Last round sent.
 - 06:08 T45 stopped on its condition: the judge approved 1 of 44 routeable unsafe rows (R32 mv $(ls) to a Trash dir outside the root). judge_opaque stays off. Result file copied untracked into the user's planning/binary-identity-research-2026-10/ (that dir is untracked; not committed). Worktree removed, nothing landed.
 - 06:10 F6 last round done (3 pins red against mutants; 2241/0). Verified by main; fold, then landing attempt 1.
+- 06:17 T17 second review APPROVE-WITH-FIXES (blockers closed; bwrap and in-process refuse alike; checkout root unpinned, .. strip). Last round sent.
+- 06:19 F6 landed aac44d379
+- 06:20 F6 landed aac44d379
+- 06:20 F7 started (cut aac44d379).
+- 06:21 T17 last round done (checkout-root lend pinned, .. strip fixed; 867/0). Verified by main; landing attempt 1.
+- 06:22 T26 high review REQUEST-CHANGES (replay keyed on reads only: rm -rf, writes, sh of the released file ran with human authority; releases run-wide). Ruled: a release lifts only the secrets reason, per requester; human authority only on a pure read; anything else goes down the ladder. Fix round sent.
+- 06:25 T17 land attempt 1 red: 37665 examples, 1 failure: approval_replay_spec 'the disk is never asked while a call of any tool the replay holds is re-decided at any level' (I18n lazily loads en.yml under the File.realpath trap, worker seed 37921). Not on the known list. Alone run and 3x seed on main running.
+- 06:27 approval_replay_spec 'the disk is never asked' fails alone in T17 and 3/3 on main with seed 37921: pre-existing, order-dependent (I18n loads en.yml lazily inside the realpath trap). Not card-caused; becomes F9, landed before T17 attempt 2.
+- 06:27 F9 started (cut aac44d379).
+- 06:29 F9 done (I18n warmed in forbid_the_disk; red at seed 37921; green at 3 seeds). Verified by main; landing attempt 1, then T17 attempt 2.
+- 06:30 F7 stop at step 3: Rust query 2 s ({ ) and 3 s (a=( , plus 2 more ShellRuns queries) at 32 KB; caps not raised. trailing? bisected (0.43 s to 0.022 s at 4 KB; red 52875 vs 400; parity 155007/0); 5 provisional bench rows. Ruled: land steps 1 and 2; cap raise is a follow-up needing a Rust query fix. Medium review started.
+- 06:36 T26 fix round done (pure-read replay only, releases per requester; 18 red; 9397/0; probe 11/0). Non-pure calls keep the secrets reason (stricter; accepted). Second high review started (sed w/e/r, sort -o).
+- 06:38 F9 landed a222c5df7
+- 06:50 17 landed fcab5e299
+- 06:50 F9 landed a222c5df7. T17 landed fcab5e299 (attempt 2).
+- 06:50 T30 started (cut fcab5e299).
+- 06:52 T30 stop: Gc expires a retained tree on age alone while an attempt reads it (lend is in memory only). Ruled option 1: hold the aside tree with a held lock while lent, restore the retained lock with its original since on release, and a dead holder falls back to the original age; the age-from-cut ruling stays. Continued.
+- 06:54 T26 second review APPROVE-WITH-FIXES (nothing widened; sed w/e/r, sort -o and kin all fall through; 12/13 mutants red; dead sink check). Last round sent.
+- 06:59 F7 medium review APPROVE-WITH-FIXES (bisect exact, 287292 offsets 0 mismatches; corpus never touches pieces so 2 boundary mutants survive; arrays bench row times a broken parse). Last round sent.
+- 07:02 T26 last round done (dead check dropped, key comment; 9397/0). Verified by main; landing attempt 1.
+- 07:02 F7 last round done (touching pieces in parity, both mutants red; arrays row parses; 2597/0). Verified by main; landing attempt 1 queued after T26.
+- 07:05 26 landed ba9d15798
+- 07:05 T26 landed ba9d15798
+- 07:05 T44 started (cut after ba9d15798; F7 landing queued).
+- 07:08 T30 done (held lock while the lease lives, since= restored on release, brief names the tree, lent beside References; 6 red; 2450/0). write_file into the tree goes to the gate, not refused: asked of the review. High review started.
+- 07:10 F7 landed d172ba149
+- 07:11 F7 landed d172ba149 (steps 1 and 2; caps unchanged).
+- 07:13 T44 done (network answer kept for the exact call with no secrets; Remembered#network default false; 3 red; 2033/0). Medium review started.
+- 07:18 T44 medium review REQUEST-CHANGES (network branch unreachable: network is offered only when secret-bearing; scenario 1 already met by the plain-allow memory). Ruled: drop the change, pin both scenarios through the real offer path, profile asserted.
+- 07:19 T30 high review APPROVE-WITH-FIXES (Gc holds in every state; writes refused by LEASE before the gate; anchored next attempt in a new lane gets nothing). Ruled the new-lane case in scope; newest tree only. Fix round sent.
+- 07:21 T44 revised (production reverted; 3 pins of the existing plain-allow path, each red against a mutant; 2253/0). Verified by main; landing attempt 1.
+- 07:24 44 landed 080850f1a
+- 07:24 T44 landed 080850f1a (pins only).
+- 07:24 T41 started (cut 080850f1a).
+- 07:29 T30 fix round done (new-lane earlier_work hold, lend and brief; 6 red; pins red against mutants; 2457/0). Second high review started.
+- 07:36 T30 second review APPROVE-WITH-FIXES (both lanes and Gc hold in every state; newest-rule and hold-before-red unpinned; unchecked lock in held_in_place). Last round sent.
+- 07:41 T30 last round done (newest and hold-before-red pinned, rename, lock result checked; 2461/0). Verified by main; landing attempt 1.
+- 07:43 T41 done (park-N per queue on awaiting_human and approval_decision; decision journaled on resolve; 4 red; 9815/1, the approval_replay fixtures need regenerating). Park ids restart at park-1 on resume: collision; fix sent before review.
+- 07:46 T30 land attempt 1 red: 37721 examples, 1 failure: input_pane_socket_spec 'joins the drafts of 2 dropped offers with 1 space at the next you>' (seed 17998). Not on the known list. Alone and 3x seed on main running.
+- 07:47 T41 resume fix (injected park_ids, RANDOM_PARKS in production via switchboard wiring by main; counter default keeps fixtures stable). Red was a NameError; sent back to prove the collision and pin the switchboard id source.
+- 07:57 input_pane_socket_spec 'joins the drafts of 2 dropped offers with 1 space at the next you>': green alone in T30 (whole file), 3/3 on main and 3/3 in T30 at seed 17998. Neither reproduces: record by name, land T30 (attempt 2). T41 fixtures fixed (counter poke in the fixture builder; 9817/0); review after the T30 landing.
+- 08:00 30 landed 1e0408c35
+- 08:00 T30 landed 1e0408c35 (attempt 2).
+- 08:00 T31 started (cut 1e0408c35). T41 medium review started.
+- 08:05 T41 medium review APPROVE-WITH-FIXES (RANDOM_PARKS Enumerator raises FiberError across threads; fixture ivar poke; counter default unsafe). Fix round sent: callable id source, random default, Switchboard.for park_ids:.
+- 08:05 T31 done (stop text: branch tip, kept tree lent read-only, conversation does not carry; 16 red; 2323/0). Review started.
+- 08:06 T31 review APPROVE-WITH-FIXES (@kept run-level state across settles; red was a NameError; HUMAN_ABANDONED still says fresh attempt). Fix round sent.
+- 08:12 T31 fix round done (kept paths passed down; behavioural red 3; HUMAN_ABANDONED reworded, the next run reuses the branch; 2324/0). Verified by main; landing attempt 1.
+- 08:15 T41 fix round done (callable id sources, random default, Switchboard park_ids:, fixtures regenerated; 9819/0). Verified by main; landing queued after T31.
+- 08:18 31 landed 80c16f945
+- 08:18 T31 landed 80c16f945; cleanup waits for the T41 hook.
+- 08:21 T41 land attempt 1 red: 37735 examples, 1 failure: plain_chat_prompt_guards_spec 'a cockpit's command> over typeahead runs a /approve typed just before the call parked, once it has' (verdicts [] not tty approve; seed 31535). Approval path, may be card-caused. Alone and 3x seed on main running. T31 cleaned up.
+- 08:21 T32 started (cut 80c16f945).
+- 08:26 plain_chat_prompt_guards_spec '/approve typed just before the call parked': green alone in T41, 3/3 at seed 31535 in T41 and 3/3 on main. Neither reproduces: record by name, land T41 attempt 2.
+- 08:29 41 landed 54a19f4ab
+- 08:29 T41 landed 54a19f4ab (attempt 2).
+- 08:30 T32 done (manual issues skip TipTests; cargo with no manifest says no test command applies; 3 red; 2408/0). Medium review started.
+- 08:33 T32 medium review APPROVE-WITH-FIXES (type query in Run; nested parens in gate text). Fix round sent. Notes for T33: keep 'not run (why)', a why never holds parentheses; 1 renderer for Submission.tests_said and EpicQueue#tests_said; lain queue shows no tests line for a manual issue.
+- 08:36 T32 fix round done (IssueTests decide, cargo message without parens, gate text pinned; 2427/0). Verified by main; landing attempt 1.
+- 08:39 32 landed 0973c4bbd
+- 08:39 T32 landed 0973c4bbd
+- 08:39 T33 started (cut 0973c4bbd).
+T33 handed back 08:48
+T33 review started 08:48
+T33 review APPROVE-WITH-FIXES (comment overclaim, dead spec, long line); fixes sent 08:50
+T33 landing attempt 1 08:50
+T33 attempt 1 hook red: plain_chat_prompt_guards_spec '/approve typed just before the call parked' seed 17971 (repeat of T41's) 08:53
+T33 flake: 6 of 6 green at seed 17971 (3 tree, 3 main); repeat of T41's, becomes F10; landing attempt 2 08:57
+T33 attempt 2 hook red: same example, seed 127; landing held; F10 written to plan 09:00
