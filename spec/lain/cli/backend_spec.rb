@@ -1783,16 +1783,12 @@ RSpec.describe Lain::CLI::Backend do
     end
   end
 
-  # An escalation trigger: Context#cache_marked always marks the LAST
-  # system block, and CacheBreakpoints budgets exactly ONE system cache slot --
-  # Anthropic's cache_control cap is 4 breakpoints, so a second system mark here
-  # is a live 400 risk, not a style nit. A role's
-  # prelude is TWO segments (the shared bulk, then the role tail --
-  # {Lain::Role#prelude_segments}); rendering them as two ordinary text
-  # blocks -- neither pre-marked -- through Context must spend that ONE mark
-  # on the tail and leave the bulk unmarked, not double it. This spec is the
-  # guard: if it ever found two marked blocks, that is the recorded risk, and
-  # spending it is the orchestrator's call, not this glue's.
+  # CacheBreakpoints budgets exactly ONE system cache slot against Anthropic's
+  # cap of 4 breakpoints, so a second system mark is a refused request on a
+  # long session. A role's prelude is TWO segments (the shared bulk, then the
+  # role tail -- {Lain::Role#prelude_segments}); rendered as two ordinary text
+  # blocks, neither pre-marked, Context#cache_marked finds no caller mark and
+  # must spend that ONE mark on the tail, leaving the bulk unmarked.
   describe "a role prelude rendered through Context spends exactly one cache mark" do
     let(:store) { Lain::Dag::Factory.store }
     let(:timeline) do

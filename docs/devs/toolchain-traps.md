@@ -184,11 +184,8 @@ Added 2026-09-11, from a run with 2 to 5 agents running rspec at once. Each of t
 
 - `Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim pane and a chat pane sharing one socket and one cwd`
 - `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured Async::TimeoutError is not misread as the drain's bound`
-- `role_prelude_wiring_spec`'s `sends no more than Anthropic's 4 cache_control blocks for a long-lived role child`
 - `lain.rb without the compiled extension keeps Ruby's own LoadError message rather than replacing it`
 - `the review annotation runtime a buffer that goes away drops the orphaned entry once it has settled it, so a reused bufnr inherits nothing`
-
-Seen again 2026-10-28: the `role_prelude_wiring_spec` example above counted 5 `cache_control` blocks against its bound of 4 in a pre-commit suite at load 20, and was green 3 of 3 on the same seed on both the base and the change. A second repeat makes it a card, not a list entry.
 
 Added 2026-10-06, a wall-clock example red under a load average of about 12 (agents running specs beside a suite) and green alone each time: `a chat whose terminal is gone ends at its prompt once the terminal is closed`. The walk-budget example that was on this list is retired below.
 
@@ -367,6 +364,7 @@ A live demonstration of why this list is by NAME and not by line: `buffers_spec.
 
 Keep a retired name here so a later red under it reads as a regression, not as a known flake.
 
+- 2026-11-22: `role_prelude_wiring_spec`'s `sends no more than Anthropic's 4 cache_control blocks for a long-lived role child` (recorded red 2026-09-11, 2026-10-28 and 2026-11-22). Never a flake: the example was pending from 2026-07-17 and counted 5 on every run, and each "red" was its expected failure in the Pending section, read as the run's failure (on 2026-11-22 the real one was a `project_dir_spec` locator example). The 5 was a real defect: a role child's system carried its persona's mark and a 2nd on the role tail, so a long one was refused at encode. `Context#cache_marked` now keeps exactly 1 system mark, and the example runs unpended.
 - 2026-11-22: `a stalled stream under an Async reactor two concurrent streams, one of them stalling raises the stall in the fiber that owns the dead stream` and `a stalled stream under an Async reactor two healthy streams interleaving lets both finish, each with its own content` (`Errno::ECONNRESET` in `StreamingUpstream::Chunk#emit`, green alone and with the failing seed on the base). A client that had left made the upstream's next write raise in its connection thread, and `stop` joins that thread, which re-raises it over the example's own verdict; `StreamingUpstream#serve` now treats EPIPE and ECONNRESET on a write as the client leaving.
 
 - 2026-11-22: `Lain::Frontend::TTY a note rendered while a prompt is drawn keeps vi's mode and cursor, so a command typed after the note does what it says` (red once in a landing hook, seed 64684, `Errno::ENOTEMPTY` from the `Dir.mktmpdir` cleanup, green 3 of 3 alone). `kill-server` only signals the tmux child, which could still be writing into the dir as mktmpdir removed it; the group's `around` now waits, bounded at 10s, for the server and the pane's process to exit, and a child made to outlive the HUP by 0.5s while writing failed it every time before and never after.

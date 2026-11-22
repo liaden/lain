@@ -111,6 +111,21 @@ RSpec.describe Lain::Context do
       expect(request.system.last["cache"]).to be(true)
     end
 
+    # CacheBreakpoints reserves exactly 1 slot for the system, so a second
+    # system mark would put a long session past Anthropic's 4.
+    it "keeps a caller's own system mark as the only one, rather than adding the last block's" do
+      persona = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                    system: [{ "type" => "text", "text" => "bulk", "cache" => true },
+                                             { "type" => "text", "text" => "tail" }])
+      expect(persona.render(timeline:, toolset:).system.map { |block| block.key?("cache") }).to eq([true, false])
+    end
+
+    it "marks only the final block of an unmarked multi-block system" do
+      plain = described_class.new(model: "claude-opus-4-8", max_tokens: 1024,
+                                  system: %w[a b c].map { |text| { "type" => "text", "text" => text } })
+      expect(plain.render(timeline:, toolset:).system.map { |block| block.key?("cache") }).to eq([false, false, true])
+    end
+
     it "composes CacheBreakpoints, marking the last content block of the final message" do
       request = context.render(timeline:, toolset:)
       expect(request.messages.last["content"].last["cache"]).to be(true)

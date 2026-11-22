@@ -261,11 +261,14 @@ module Lain
     end
 
     # Caching the system prompt caches the tools with it, since tools lead the
-    # matched prefix. Marks the final block; a no-op on nil or an empty list.
+    # matched prefix. CacheBreakpoints reserves exactly 1 slot for the system,
+    # so the system carries exactly 1 mark: the caller's last one, which a
+    # persona places on its shared bulk, else the final block.
     def cache_marked(blocks)
       return blocks if blocks.nil? || blocks.empty?
 
-      blocks[0..-2] + [blocks.last.merge("cache" => true)]
+      at = blocks.rindex { |block| block["cache"] == true } || (blocks.size - 1)
+      blocks.each_with_index.map { |block, index| index == at ? block.merge("cache" => true) : block.except("cache") }
     end
   end
 end

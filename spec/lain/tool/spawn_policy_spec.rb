@@ -140,12 +140,10 @@ RSpec.describe Lain::Tool::SpawnPolicy do
           expect(strategy.child_context(bare).system).to eq([{ "type" => "text", "text" => template }])
         end
 
-        # The double-mark trap, pinned at the source: Context#cache_marked marks the
-        # final system block UNCONDITIONALLY, so a strategy that pre-marked the
-        # template would put TWO marks in system -- and CacheBreakpoints budgets
-        # its message markers assuming system spends exactly one slot, so the
-        # extra mark can reach 5 on the wire (Anthropic 400s at >4). Leaving
-        # every block unmarked makes Context's own mark the template boundary.
+        # Context#cache_marked keeps a caller's last system mark as the only
+        # one and marks the final block only when there is none, so leaving
+        # every block unmarked is what makes Context's own mark the template
+        # boundary.
         it "pre-marks nothing: every block it builds is markerless" do
           expect(strategy.child_context(factory_context).system).to all(satisfy { |b| !b.key?("cache") })
         end

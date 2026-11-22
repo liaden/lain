@@ -180,24 +180,16 @@ RSpec.describe "a spawned role's persona" do
     end
   end
 
-  # The ≤4-mark invariant, PINNED PENDING. Segment 0 carries the seam's mark AND
-  # Context#cache_marked marks the last system block (the role tail), so a role
-  # child renders TWO system marks; once CacheBreakpoints spends its cap-1 = 3
-  # message budget, the wire carries 5 cache_control blocks -- past Anthropic's
-  # 4-cap, a latent 400. The fix is OUT of this card's file scope (it lives in
-  # Context/CacheBreakpoints: move the role tail into a seed MESSAGE after the
-  # breakpoint so system holds ONE block -- SpawnPolicy::SiblingTemplate's
-  # existing doctrine). This pin fails today (green suite, visible known-failure)
-  # and flips to a real failure the moment persona is wired into exe without the
-  # Context fix.
-  it "sends no more than Anthropic's 4 cache_control blocks for a long-lived role child",
-     pending: "role tail belongs in a seed message; fix lives in Context/CacheBreakpoints -- see follow-up" do
+  # Segment 0 carries the persona's mark and CacheBreakpoints spends its whole
+  # 3-mark message budget on a long timeline, so a second system mark on the
+  # role tail would be a 5th, which Anthropic rejects.
+  it "sends no more than Anthropic's 4 cache_control blocks for a long-lived role child" do
     with_project do |slots|
       child = Lain::Role::Catalog.fetch(:researcher).child_context(
         Lain::Context.new(model: "child-model", max_tokens: 256, system: slots.render), slots:
       )
       # Pile up content blocks (EVERY = 15) so CacheBreakpoints places its full
-      # cap-1 message budget on top of the two system marks.
+      # cap-1 message budget beside the persona's system mark.
       timeline = 30.times.inject(Lain::Dag::Factory.timeline(store:)) do |t, i|
         t.commit(role: i.even? ? :user : :assistant,
                  content: Array.new(4) { { "type" => "text", "text" => "block #{i}" } })

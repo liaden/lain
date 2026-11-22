@@ -4,7 +4,7 @@ module Lain
   class Tool
     # The two orthogonal axes of a spawn, as small strategy objects the
     # {Tools::Subagent} tool reads at dispatch. A leaf that references
-    # {Dag::Factory} and {Toolset} only from inside method bodies, never at load
+    # {Dag::Factory} and `Toolset` only from inside method bodies, never at load
     # time, so nothing here pulls either unit in merely by being read.
     #
     # * **Prefix strategy** decides whose render prefix the child's bytes share:
@@ -38,7 +38,7 @@ module Lain
       # `prefix`/`posture` accept either a strategy instance or its short name
       # (`:fresh`, `:handler_union`) so a caller writes the arm, not a
       # constructor. `only` normalizes to a frozen Array of INTERNED Strings --
-      # the same String names {Toolset#only} keys on, deduped so the frozen
+      # the same String names `Toolset#only` keys on, deduped so the frozen
       # Array is deeply frozen and the whole value stays `Ractor.shareable?`.
       #
       # `unattended` normalizes to a REAL boolean, for the same reason: every
@@ -58,7 +58,7 @@ module Lain
 
       # The child's capability set: the union attenuated DOWN to `only`, or the
       # union unchanged when `only` is empty (an unattenuated worker). Requesting
-      # a tool the union does not hold raises through {Toolset#only}, keeping the
+      # a tool the union does not hold raises through `Toolset#only`, keeping the
       # "read one line to know what it can do" guarantee honest.
       def attenuate(union)
         only.empty? ? union : union.only(*only)
@@ -169,26 +169,22 @@ module Lain
           end
 
           # The factory's Context with the template appended as the LAST
-          # system block, deliberately UNMARKED: {Context#cache_marked} marks
-          # the final system block unconditionally, so the template boundary
-          # and Context's own mark become the SAME mark. Pre-marking here
-          # would put a second marker in system, and {Context::CacheBreakpoints}
-          # budgets its message markers assuming system spends exactly one
-          # slot -- the extra mark can reach 5 on the wire, which Anthropic
-          # 400s (a recorded risk). Corollary: the context's own system joins
-          # the shared prefix AHEAD of the template, so siblings share it only
-          # where that system is the same bytes. A bare factory's is, riding
+          # system block, deliberately UNMARKED: with no caller mark in system,
+          # {Context#cache_marked} marks the final block, so the template
+          # boundary and Context's own mark become the SAME mark. Corollary:
+          # the context's own system joins the shared prefix AHEAD of the
+          # template, so siblings share it only where that system is the same
+          # bytes. A bare factory's is, riding
           # one injected factory per spawn seam; a role persona's is not for
           # siblings working in different places, whose role tails each name
           # their own directory.
           #
-          # The same cap is why caller-placed marks are STRIPPED from the
-          # factory's system rather than kept: alone, a last-block mark merges
-          # idempotently with Context's own, but the template demotes that
-          # block to non-last, so a surviving caller mark would sit beside the
-          # tail mark -- two system marks, five on the wire at full message
-          # budget. Under this arm the strategy owns ALL mark placement for
-          # the child; discarding caller intent is journaled, never silent.
+          # Caller-placed marks are STRIPPED from the factory's system rather
+          # than kept because {Context#cache_marked} keeps a caller's last mark
+          # as the system's only one: a surviving mark would win, and the
+          # template block would go unmarked. Under this arm the strategy owns
+          # ALL mark placement for the child; discarding caller intent is
+          # journaled, never silent.
           def child_context(context, journal: Channel::Null.instance)
             return context if @template.empty?
 
@@ -234,7 +230,7 @@ module Lain
 
         # A name maps to a fresh instance; an already-built strategy passes
         # through. Unknown names fail loudly, naming the set -- the same posture
-        # {Toolset#only} takes toward an absent tool.
+        # `Toolset#only` takes toward an absent tool.
         def self.fetch(name)
           klass = REGISTRY.fetch(name.to_sym) do
             raise Error, "unknown prefix strategy #{name.inspect}, expected one of #{REGISTRY.keys.inspect}"
