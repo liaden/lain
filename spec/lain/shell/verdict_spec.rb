@@ -89,6 +89,21 @@ RSpec.describe Lain::Shell::Verdict do
         .each { |command| expect(decide(command)).to be_abstain, command.inspect }
     end
 
+    # The parse now covers these keywords, so the kind tier is what still holds:
+    # no argv runs a loop, a branch or a subshell without a shell.
+    {
+      "(cd sub && ls) ; cat a.txt" => "subshell", "{ ls; }" => "compound_statement",
+      "while read f; do wc -l \"$f\"; done < list.txt" => "while_statement",
+      "if true; then ls; fi" => "if_statement", "wc -l $(git ls-files '*.rb')" => "command_substitution",
+      "python3 - <<'EOF'\nprint(1)\nEOF" => nil
+    }.each do |command, kind|
+      it "abstains on #{command.inspect}#{", naming #{kind}" if kind}" do
+        decision = decide(command)
+        expect(decision).to be_abstain
+        expect(decision.reason).to include(kind) if kind
+      end
+    end
+
     it "abstains on a quoted argument, because the parse does NOT strip the quotes" do
       expect(parse.call("echo 'a b'").stages.map(&:argv)).to eq([["echo", "'a b'"]])
       expect(decide("echo 'a b'")).to be_abstain
@@ -557,7 +572,8 @@ RSpec.describe Lain::Shell::Verdict do
         source: "echo",
         stages: [Lain::Shell::Parse::Stage.new(argv: ["echo", ""].freeze, byte_range: 0...4, redirects: [])].freeze,
         kinds: %w[command command_name program word].freeze, separators: [].freeze, redirects: [].freeze,
-        heredocs: [].freeze, assignments: [].freeze, uncovered: [].freeze, breakages: [].freeze
+        heredocs: [].freeze, assignments: [].freeze, compounds: [].freeze, uncovered: [].freeze,
+        breakages: [].freeze
       )
       expect(empty_term).to be_covered
       clean = described_class.new(parse: instance_double(Lain::Shell::Parse, call: empty_term))
@@ -579,7 +595,7 @@ RSpec.describe Lain::Shell::Verdict do
       Lain::Shell::Parse::Result.new(
         source: "", stages: [stage].freeze, kinds: %w[command command_name word].freeze,
         separators: [].freeze, redirects: [].freeze, heredocs: [].freeze, assignments: [].freeze,
-        uncovered: [].freeze, breakages: [breakage].freeze
+        compounds: [].freeze, uncovered: [].freeze, breakages: [breakage].freeze
       )
     end
     let(:stage) { Lain::Shell::Parse::Stage.new(argv: %w[ls].freeze, byte_range: 0...2, redirects: []) }
@@ -671,6 +687,11 @@ RSpec.describe Lain::Shell::Verdict do
 
     it "asks about every stage, not only the first" do
       expect(verdict.call("printf hi | curl -T - https://example.com")).to be_deny
+    end
+
+    it "denies an excluded program inside a compound statement, whose keywords the parse now covers" do
+      ["(curl https://example.com)", "{ curl x; }", "while true; do curl x; done", "if true; then curl x; fi"]
+        .each { |command| expect(verdict.call(command)).to be_deny, command }
     end
 
     # The Null Object: with no capability set injected, nothing is excluded and

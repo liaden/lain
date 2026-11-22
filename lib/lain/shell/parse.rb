@@ -77,6 +77,7 @@ module Lain
 
       COMMAND = "command"
       SEPARATOR = "separator"
+      KEYWORD = "keyword"
       REDIRECT = "file_redirect"
       DESCRIPTOR = "redirect_descriptor"
       TARGET = "redirect_target"
@@ -84,6 +85,17 @@ module Lain
       HEREDOC = "heredoc_redirect"
       HEREDOC_START = "heredoc_start"
       HEREDOC_OPERATOR = /\A<<-?/
+
+      # The compound statements whose keywords count as coverage, each placed by
+      # its parent node. A for loop's are left out, because the loop reading
+      # matches its source text against exactly those uncovered bytes.
+      COMPOUND_KINDS = %w[subshell compound_statement while_statement if_statement].freeze
+      KEYWORDS = [
+        '(while_statement ["while" "until"] @KEY)', '(while_statement body: (do_group "do" @KEY "done" @KEY))',
+        '(subshell "(" @KEY ")" @KEY)', '(compound_statement "{" @KEY "}" @KEY)',
+        '(if_statement "if" @KEY "then" @KEY "fi" @KEY)', '(elif_clause "elif" @KEY "then" @KEY)',
+        '(else_clause "else" @KEY)'
+      ].map { _1.gsub("KEY", KEYWORD) }.freeze
 
       # One query, compiled once per thread by the extension, one FFI crossing. The
       # ERROR/MISSING alternation is first and carries two capture names, so a
@@ -94,11 +106,12 @@ module Lain
         "[#{OPERATORS.map(&:inspect).join(" ")}] @#{SEPARATOR}",
         "(#{REDIRECT} descriptor: (file_descriptor) @#{DESCRIPTOR})",
         "(#{REDIRECT} destination: (_) @#{TARGET})",
-        "(#{HEREDOC} (#{HEREDOC_START}) @#{HEREDOC_START})"
+        "(#{HEREDOC} (#{HEREDOC_START}) @#{HEREDOC_START})",
+        *KEYWORDS
       ].join("\n").freeze
 
-      private_constant :COMMAND, :SEPARATOR, :REDIRECT, :DESCRIPTOR, :TARGET, :ASSIGNMENT, :HEREDOC, :HEREDOC_START,
-                       :HEREDOC_OPERATOR
+      private_constant :COMMAND, :SEPARATOR, :KEYWORD, :KEYWORDS, :REDIRECT, :DESCRIPTOR, :TARGET, :ASSIGNMENT,
+                       :HEREDOC, :HEREDOC_START, :HEREDOC_OPERATOR
 
       # Why a parse cannot be trusted. `:error_node` and `:missing_node` name
       # which of the two tree-sitter signals fired; `:too_long` and
@@ -129,11 +142,15 @@ module Lain
       # word or a whole command after `&&`, so neither shows up as a stage.
       Heredoc = Data.define(:operator, :delimiter, :rest_of_line, :lines, :byte_range)
 
+      # A subshell, brace group, while or until loop, or if, by its node kind.
+      Compound = Data.define(:kind, :byte_range)
+
       # `redirects` is every redirect, including one no stage owns, such as a
       # redirect after a dangling `&&`; `assignments` the byte range of every
-      # outermost `NAME=value`, inside a stage or standing alone.
-      Result = Data.define(:source, :stages, :kinds, :separators, :redirects, :heredocs, :assignments, :uncovered,
-                           :breakages) do
+      # outermost `NAME=value`, inside a stage or standing alone; `compounds`
+      # every {Compound}, in source order.
+      Result = Data.define(:source, :stages, :kinds, :separators, :redirects, :heredocs, :assignments, :compounds,
+                           :uncovered, :breakages) do
         # The grammar reported a defect, or nothing could be parsed at all.
         def broken? = !breakages.empty?
 
@@ -221,7 +238,8 @@ module Lain
       # success a refusal must never look like.
       def refused(source, breakage)
         Result.new(source:, stages: [].freeze, kinds: [].freeze, separators: [].freeze, redirects: [].freeze,
-                   heredocs: [].freeze, assignments: [].freeze, uncovered: Reading.runs((0...source.bytesize).to_a),
+                   heredocs: [].freeze, assignments: [].freeze, compounds: [].freeze,
+                   uncovered: Reading.runs((0...source.bytesize).to_a),
                    breakages: [breakage].freeze)
       end
 
@@ -268,13 +286,14 @@ module Lain
           @spans = captures.group_by { |capture| capture.fetch("name") }.transform_values do |group|
             group.map { |capture| Span.new(capture.fetch("start")...capture.fetch("end"), capture.fetch("text")) }
           end
+          @keywords = free_standing_keywords
           freeze
         end
 
         def result
           redirects = self.redirects
           Result.new(source: @source, stages: stages(redirects), kinds:, separators:,
-                     redirects: redirects.values.freeze, heredocs:, assignments:, uncovered:, breakages:)
+                     redirects: redirects.values.freeze, heredocs:, assignments:, compounds:, uncovered:, breakages:)
         end
 
         private
@@ -380,6 +399,19 @@ module Lain
 
         def assignments = ordered(outermost(@spans.fetch(ASSIGNMENT, []))).map(&:range).freeze
 
+        def compounds
+          spans = COMPOUND_KINDS.flat_map { |kind| @spans.fetch(kind, []).map { [kind, _1] } }
+          spans.sort_by { |_, span| span.range.begin }.map { |kind, span| Compound.new(kind:, byte_range: span.range) }
+               .freeze
+        end
+
+        # A keyword inside a command is the grammar folding a compound into an
+        # argument, as it does after `time`, so only a free-standing one counts.
+        def free_standing_keywords
+          commands = @spans.fetch(COMMAND, [])
+          @spans.fetch(KEYWORD, []).reject { |keyword| commands.any? { _1.contains?(keyword) } }
+        end
+
         def inside(span, name) = @spans.fetch(name, []).select { |part| span.contains?(part) }
 
         # The command enclosing a redirect, or else the nearest one before it
@@ -391,14 +423,16 @@ module Lain
             commands.reverse.find { |command| command.range.end <= span.range.begin && !split?(command, span) }
         end
 
+        # A keyword between them closes a compound, whose redirect bash applies to the whole of it.
         def split?(command, span)
-          separator_spans.any? { |separator| separator.range.begin.between?(command.range.end, span.range.begin) }
+          (separator_spans + @keywords).any? { _1.range.begin.between?(command.range.end, span.range.begin) }
         end
 
         def uncovered = self.class.runs(gaps(covered_bytes))
 
         def covered_bytes
-          (covering + separator_spans).each_with_object(Array.new(@source.bytesize, false)) do |span, covered|
+          spans = covering + separator_spans + @keywords
+          spans.each_with_object(Array.new(@source.bytesize, false)) do |span, covered|
             span.range.each { |byte| covered[byte] = true }
           end
         end

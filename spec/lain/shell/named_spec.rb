@@ -1201,6 +1201,86 @@ RSpec.describe Lain::Shell::Named do
     end
   end
 
+  describe "a compound statement" do
+    def read(command) = named(command).paths.map { [_1.resolved, _1.written] }
+
+    it "names a while loop's input file, and stays opaque on the operand read from it" do
+      result = named(%(while read f; do wc -l "$f"; done < list.txt))
+      expect(result.paths.map(&:resolved)).to include("/p/list.txt")
+      expect(result).to be_opaque
+    end
+
+    it "reads a while or until loop whose body names only literal words" do
+      expect(read("while true; do cat a.txt; done < list.txt")).to eq([["/p/list.txt", false], ["/p/a.txt", false]])
+      expect(named("until false; do cat a.txt; done")).not_to be_opaque
+    end
+
+    it "makes a cd inside a loop opaque, since each pass starts where the last one left" do
+      expect(named("while true; do cat x && cd sub && cat a; done")).to be_opaque
+    end
+
+    it "keeps a cd inside a subshell from moving the stages after it" do
+      result = named("(cd sub && ls) ; cat a.txt")
+      expect(result.paths.map(&:resolved)).to eq(%w[/p/sub /p/a.txt])
+      expect(result).not_to be_opaque
+      expect(resolved("(cd x) && cat b")).to eq(%w[/p/x /p/b])
+    end
+
+    it "keeps a cd bound before a subshell for the stages inside it and after it" do
+      expect(resolved("cd x && (cat a) && cat b")).to eq(%w[/p/x /p/x/a /p/x/b])
+    end
+
+    it "reads a brace group and every branch of an if" do
+      expect(read("{ cat a; cat b; }")).to eq([["/p/a", false], ["/p/b", false]])
+      expect(read("if test -f a; then cat b; elif true; then cat c; else touch d; fi"))
+        .to eq([["/p/a", false], ["/p/b", false], ["/p/c", false], ["/p/d", true]])
+    end
+
+    it "names a write inside an if, a brace group or a subshell, and one redirected from the whole of it" do
+      expect(read("if true; then echo x > out; fi")).to eq([["/p/out", true]])
+      expect(read("if true; then echo x; fi > out")).to eq([["/p/out", true]])
+      expect(read("{ echo x; } >> out")).to eq([["/p/out", true]])
+      expect(read("(echo x) > out")).to eq([["/p/out", true]])
+    end
+
+    it "makes a redirect after a compound opaque when a cd may have moved where bash opens it" do
+      ["cd x && { cat a; } > o", "(cd x && cat a) > o"].each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "keeps a case statement opaque" do
+      expect(named("case x in a) cat b;; esac")).to be_opaque
+    end
+
+    it "places each stage of a subshell where it runs" do
+      placed = described_class.stages(Lain::Shell::Parse.new.call("(cd x && ls) ; cat a"), cwd: "/p", home: nil)
+      expect(placed).to eq([[%w[cd x], "/p"], [%w[ls], "/p/x"], [%w[cat a], "/p"]])
+    end
+  end
+
+  describe "an operand fed by a command substitution" do
+    it "is opaque whatever runs inside it, quoted or not" do
+      ["cat $(echo .env)", 'cat "$(printf %s .env)"', "cat x$(git ls-files)", "cat $(git ls-files > out)",
+       "cat $(git ls-files ../x)", "cat $(git ls-files; id)", "cat --file=$(git ls-files)", "$(git ls-files) a",
+       %(wc -l "$(git ls-files '*.rb')"), "cat $(git ls-files --full-name '*.rb')", "sort $(git ls-files)"]
+        .each { expect(named(_1)).to be_opaque, _1 }
+    end
+
+    it "stays opaque over a tracked name that word splitting turns into a path outside the pattern" do
+      Dir.mktmpdir do |dir|
+        carrier = File.join(dir, "d/x /home/alice/.ssh/id_ed25519 y.rb")
+        FileUtils.mkdir_p(File.dirname(carrier))
+        File.write(carrier, "")
+        expect(named("cat $(git ls-files -o '*.rb')", cwd: dir)).to be_opaque
+      end
+    end
+  end
+
+  describe "an interpreter reading its program from stdin" do
+    it "stays opaque" do
+      expect(named("python3 - <<'EOF'\nprint(1)\nEOF")).to be_opaque
+    end
+  end
+
   describe "what stays opaque" do
     it "keeps an option word a fill finishes opaque, since its letters are not known until bash runs it" do
       ['rsync -"$?"e "sh -c id" a h:b', 'curl -"$?"o /tmp/x https://e', 'false; grep -"$?"r TOKEN ~',

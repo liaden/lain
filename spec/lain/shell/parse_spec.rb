@@ -11,7 +11,7 @@ RSpec.describe Lain::Shell::Parse do
     expect do
       described_class::Result.new(source: "", stages: [], kinds: [], separators: [], redirects: [], uncovered: [],
                                   breakages: [])
-    end.to raise_error(ArgumentError, /heredocs, :assignments/)
+    end.to raise_error(ArgumentError, /heredocs, :assignments, :compounds/)
   end
 
   describe "a clean literal command" do
@@ -294,18 +294,52 @@ RSpec.describe Lain::Shell::Parse do
   # ordinary `word` nodes, and `time if true; then ls; fi` is fully covered.
   describe "compound syntax, written plainly" do
     {
-      "if true; then ls; fi" => "if",
-      "while true; do ls; done" => "while",
       "for f in a b; do echo x; done" => "for",
       "f() { ls; }" => "(",
-      "(cd /tmp && ls)" => "(",
-      "! ls" => "!"
+      "! ls" => "!",
+      "case x in a) ls;; esac" => "case"
     }.each do |command, keyword|
       it "leaves #{keyword.inspect} of #{command.inspect} uncovered" do
         result = result_for(command)
         expect(result).not_to be_covered
         uncovered_text = result.uncovered.map { |span| result.source.byteslice(span.begin, span.size) }
         expect(uncovered_text.join).to include(keyword)
+      end
+    end
+
+    it "leaves a for loop's own do and done uncovered, where the loop reading expects them" do
+      result = result_for("for f in a b; do echo x; done")
+      expect(result.uncovered.map { result.source.byteslice(_1) }).to eq(%w[for f in do done])
+    end
+  end
+
+  describe "a compound statement whose keywords the grammar places" do
+    ["if a; then b; elif c; then d; else e; fi", "while read f; do wc; done < l", "until x; do y; done",
+     "(cd sub && ls) ; cat a.txt", "{ cat a; } > o"].each do |command|
+      it "covers every byte of #{command.inspect} and reads each inner command as a stage" do
+        result = result_for(command)
+        expect(result).to be_covered
+        expect(result.stages).not_to be_empty
+      end
+    end
+
+    it "does not count a keyword inside a command, where the grammar folded a compound into an argument" do
+      expect(result_for("time (echo hi)")).not_to be_covered
+    end
+
+    it "reports each subshell, brace group, loop and if by its kind and span" do
+      result = result_for("(cd x && ls); while true; do { cat a; }; done; if a; then b; fi")
+      expect(result.compounds.map { [_1.kind, result.source.byteslice(_1.byte_range)] }).to eq(
+        [["subshell", "(cd x && ls)"], ["while_statement", "while true; do { cat a; }; done"],
+         ["compound_statement", "{ cat a; }"], ["if_statement", "if a; then b; fi"]]
+      )
+    end
+
+    it "gives a redirect after a compound statement to no stage, since bash applies it to the whole" do
+      ["(cat a) > o", "{ cat a; } > o", "while true; do cat a; done > o", "if a; then cat b; fi > o"].each do |command|
+        result = result_for(command)
+        expect(result.stages.flat_map(&:redirects)).to be_empty, command
+        expect(result.redirects.map(&:target)).to eq(["o"]), command
       end
     end
   end

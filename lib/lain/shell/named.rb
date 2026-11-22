@@ -1199,17 +1199,85 @@ module Lain
         private_class_method :command_safe?, :substitution_safe?, :closed?
       end
 
+      # Where a parse's compound statements bound its stages and redirects:
+      # which subshell a stage runs in, which loop repeats it, and which
+      # redirect bash applies to a whole compound rather than to one stage.
+      # Mutable while a walk enters and leaves subshells.
+      class Compounds
+        SUBSHELL = "subshell"
+        LOOP = "while_statement"
+
+        # @param result [Parse::Result]
+        def initialize(result)
+          @result = result
+          @open = []
+        end
+
+        # Bash opens one where its compound starts, so it lands where the walk
+        # started only when no stage before it moved the shell.
+        #
+        # @yieldparam stage [Parse::Stage] one that starts before a redirect no stage owns
+        # @yieldreturn [Boolean] whether that stage may move the shell
+        # @return [Array<Parse::Redirect>, nil] those no stage owns; nil when a stage before one moved
+        def unowned_at_start
+          found = unowned
+          found unless found.any? { |redirect| @result.stages.any? { before?(_1, redirect) && yield(_1) } }
+        end
+
+        # Each unowned redirect follows a compound with no stage or join
+        # between, so bash applies it to the whole of that compound.
+        def readable? = unowned.all? { trailing?(_1.byte_range.begin) }
+
+        # @param at [Integer] where a stage starts
+        def looped?(at) = !ranges(LOOP, at).empty?
+
+        # Bash runs a subshell in a copy of the shell, so leaving one restores
+        # the state it was entered with.
+        #
+        # @param at [Integer] where the next stage starts
+        # @param state [Object] the walk's state before it
+        # @return [Object] the state the stage runs with
+        def enter(at, state)
+          left = @open.reject { |range, _| range.cover?(at) }
+          state = left.first.last unless left.empty?
+          @open -= left
+          entered = ranges(SUBSHELL, at).reject { |range| @open.any? { _1.first == range } }
+          @open.concat(entered.map { [_1, state] })
+          state
+        end
+
+        private
+
+        def unowned = @result.redirects - @result.stages.flat_map(&:redirects)
+
+        def before?(stage, redirect) = stage.byte_range.begin < redirect.byte_range.begin
+
+        def ranges(kind, at)
+          @result.compounds.select { _1.kind == kind && _1.byte_range.cover?(at) }.map(&:byte_range)
+        end
+
+        def trailing?(at)
+          @result.compounds.any? do |compound|
+            from = compound.byte_range.end
+            from <= at && [*@result.stages, *@result.separators].none? { _1.byte_range.begin.between?(from, at) }
+          end
+        end
+      end
+
       # One pass over a parse, stage by stage, carrying the directory a bound
       # `cd` moved to. Mutable while it walks; what it hands back is frozen.
       class Walk
-        # Literal structure only. Anything else -- an expansion, a compound
-        # statement -- is read as opaque. A simple expansion, an assignment and
-        # a heredoc are here only because {Word}, {HARMLESS_ASSIGNMENT} and the heredoc
-        # check read the few they can and refuse every other.
+        # Literal structure and the compound statements whose keywords the parse
+        # places. Anything else -- an expansion, a function, a case -- is read as
+        # opaque. A simple expansion, an assignment and a heredoc are here only
+        # because {Word}, {HARMLESS_ASSIGNMENT} and the heredoc check read the few
+        # they can and refuse every other. A substitution is here so the walk
+        # reaches it, and it never reads, since bash splits and globs what it prints.
         READABLE_KINDS = %w[
           program list pipeline command command_name word number concatenation
           raw_string string simple_expansion file_redirect redirected_statement comment
-          variable_assignment heredoc_redirect
+          variable_assignment heredoc_redirect command_substitution
+          subshell compound_statement while_statement if_statement
         ].freeze
 
         # An allowlist, because a name nobody listed may choose the program
@@ -1256,13 +1324,14 @@ module Lain
           @paths = []
           @opaque = false
           @directories = []
+          @compounds = Compounds.new(result)
         end
 
         # @return [Named]
         def named
           return UNREADABLE unless readable?
 
-          @result.stages.each_index.all? { |index| step(index) }
+          compound_redirects && @result.stages.each_index.all? { |index| step(index) }
           Named.new(paths: @paths.uniq.freeze, opaque: @opaque)
         end
 
@@ -1287,8 +1356,7 @@ module Lain
         private
 
         def readable?
-          @result.covered? && (@result.kinds - READABLE_KINDS).empty? &&
-            @result.stages.sum { _1.redirects.size } == @result.redirects.size &&
+          @result.covered? && (@result.kinds - READABLE_KINDS).empty? && @compounds.readable? &&
             @result.heredocs.all? { literal_heredoc?(_1) } && @result.assignments.all? { prefixes_a_stage?(_1) }
         end
 
@@ -1305,6 +1373,16 @@ module Lain
             body.none? { _1.match?(/\A\s*#{word}(?:[\s;&|#]|\z)/) }
         end
 
+        def compound_redirects
+          unowned = @compounds.unowned_at_start { DIRECTORY_CHANGERS.include?(words_of(_1).texts.first) }
+          return halt unless unowned
+
+          found = unowned.filter_map { redirect_path(_1) }
+          @opaque ||= found.include?(:opaque)
+          @paths.concat(found.grep(Path))
+          true
+        end
+
         # One standing alone sets the variable for every stage after it.
         def prefixes_a_stage?(range) = @result.stages.any? { _1.byte_range.cover?(range.begin) }
 
@@ -1312,13 +1390,14 @@ module Lain
 
         # @return [Boolean, nil] nil once the rest of the command is opaque
         def step(index)
+          stage = @result.stages[index]
+          @dir, @moved = @compounds.enter(stage.byte_range.begin, [@dir, @moved])
           return halt if @moved && !AFTER_A_CD.include?(join_before(index))
 
-          stage = @result.stages[index]
           words = words_of(stage)
           @directories << @dir
           return halt if changes_the_shell?(stage, words)
-          return change_directory(index, words) if DIRECTORY_CHANGERS.include?(words.texts.first)
+          return change_directory(index, stage, words) if DIRECTORY_CHANGERS.include?(words.texts.first)
 
           name(stage, words)
           true
@@ -1380,10 +1459,11 @@ module Lain
         # A `cd` binds what follows only when its directory is literal and `&&`
         # joins it on both sides: after `;`, `||` or `&` the next stage may run
         # where the cd failed to leave, a cd after `||` may never run, and a cd
-        # in a pipeline runs in a subshell.
-        def change_directory(index, words)
+        # in a pipeline runs in a subshell. In a loop, each pass starts where the
+        # last one left.
+        def change_directory(index, stage, words)
           target = cd_target(words)
-          return halt unless target && joined_by_and?(index)
+          return halt unless target && joined_by_and?(index) && !@compounds.looped?(stage.byte_range.begin)
 
           @paths << Path.new(word: -words.raws.last, resolved: target, written: false, directory: true, pattern: nil)
           @dir = target
