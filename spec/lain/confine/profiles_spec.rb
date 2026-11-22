@@ -1067,6 +1067,273 @@ RSpec.describe Lain::Confine::Profiles do
         end
       end
 
+      describe "a mise install of a version the project pins", :seam do
+        let(:fresh_paths) { [] }
+        let(:fresh) do
+          paths = fresh_paths
+          Struct.new(:paths) do
+            def any_under?(root) = paths.any? { Lain::Landing.under?(_1, root) }
+            def fresh?(_path) = true
+          end.new(paths)
+        end
+        let(:registry) do
+          Struct.new(:answer, :asked) { def backend(**words) = (asked << words) && answer }.new("aqua:jqlang/jq", [])
+        end
+        let(:profiles) { installing({}) }
+        let(:data) { File.join(home, ".local/share/mise") }
+        let(:binary) do
+          File.join(home, ".local/bin/mise").tap do |path|
+            FileUtils.mkdir_p(File.dirname(path))
+            File.write(path, "#!/bin/sh\n")
+            File.chmod(0o755, path)
+          end
+        end
+
+        before do
+          git_init(root)
+          FileUtils.mkdir_p(data)
+          pin("mise.toml", %([tools]\njq = "1.8.1"\n))
+        end
+
+        def pin(name, body)
+          File.join(root, name).tap { FileUtils.mkdir_p(File.dirname(_1)) }.then { File.write(_1, body) }
+        end
+
+        def installing(env)
+          described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh:, env:, registry:)
+        end
+
+        def mise(realpath = binary) = executable("mise", realpath, :user)
+
+        def install(word, *rest, executable: mise, cwd: root)
+          Lain::Confine::Request.new(ruling: ruling("auto"), executables: [executable],
+                                     argv: [["mise", "install", word, *rest]], cwd:, root:, tool_use_id: "toolu_1")
+        end
+
+        def granted?(request) = profiles.for(request).then { _1.name == :grant && _1.connect_ports == [443] }
+
+        it "grants port 443 and mise's own prefix, runs that mise, and tells it to read no project config" do
+          profile = profiles.for(install("jq@1.8.1"))
+          own = File.join(profile.call_tmpdir, "mise")
+
+          expect(profile).to have_attributes(name: :grant, connect_ports: [443], private_net: false)
+          expect(profile.write_dirs.select { Lain::Landing.under?(_1, home) }).to eq([data])
+          expect(profile.runs?(binary)).to be(true)
+          expect(profile.env).to include("MISE_IGNORED_CONFIG_PATHS" => root, "MISE_CEILING_PATHS" => root,
+                                         "MISE_STATE_DIR" => File.join(own, "state"),
+                                         "MISE_CONFIG_DIR" => File.join(own, "config"),
+                                         "MISE_CACHE_DIR" => File.join(own, "cache"),
+                                         "XDG_CACHE_HOME" => File.join(own, "xdg-cache"), "MISE_DATA_DIR" => data)
+          expect(profile.env.fetch("MISE_DISABLE_BACKENDS").split(",")).to include("asdf", "vfox", "cargo", "go", "npm")
+        end
+
+        it "drops every other MISE_ name the session would hand the granted mise, such as one trusting a config" do
+          session = %w[MISE_TRUSTED_CONFIG_PATHS MISE_ALL_COMPILE MISE_DATA_DIR PATH]
+
+          env = profiles.for(install("jq@1.8.1")).env(session)
+
+          expect(env).to include("MISE_TRUSTED_CONFIG_PATHS" => nil, "MISE_ALL_COMPILE" => nil, "MISE_DATA_DIR" => data)
+          expect(env).not_to have_key("PATH")
+        end
+
+        it "grants nothing at a root whose path holds a colon, which would split mise's list of ignored roots" do
+          colon = File.join(@base, "pro:ject").tap { FileUtils.mkdir_p(_1) }
+          File.write(File.join(colon, "mise.toml"), %([tools]\njq = "1.8.1"\n))
+          at_colon = described_class.new(masks:, probe:, home:, root: colon, workspace: true, tmpdir: scratch, fresh:,
+                                         env: {}, registry:)
+          asked = Lain::Confine::Request.new(ruling: ruling("auto"), executables: [mise],
+                                             argv: [%w[mise install jq@1.8.1]], cwd: colon, root: colon,
+                                             tool_use_id: "toolu_1")
+
+          expect([at_colon.for(asked).name, registry.asked]).to eq([:workspace, []])
+        end
+
+        it "asks the backend of the very mise the call runs, under the same ignored-config env" do
+          profiles.for(install("jq@1.8.1"))
+
+          expect(registry.asked).to eq([{ mise: binary, name: "jq", root: }])
+        end
+
+        it "reads the pins from .tool-versions and from the array and table forms of a config's tools" do
+          File.delete(File.join(root, "mise.toml"))
+          pin(".tool-versions", "jq 1.7 1.8.1 # two\nnode 22.1.0\n")
+          pin(".config/mise/config.toml", %([tools]\ncmake = ["4.5.1", "4.4.0"]\nninja = { version = "1.12.1" }\n))
+
+          words = %w[jq@1.8.1 jq@1.7 node@22.1.0 cmake@4.5.1 cmake@4.4.0 ninja@1.12.1 jq@1.9.0 ninja@1.12.0]
+          expect(words.map { granted?(install(_1)) }).to eq(([true] * 6) + ([false] * 2))
+        end
+
+        it "grants nothing for a version the project does not pin, and keeps mise hidden there" do
+          profile = profiles.for(install("jq@1.7.1"))
+
+          expect(profile).to have_attributes(name: :workspace, connect_ports: [])
+          expect(profile.runs?(binary)).to be(false)
+          expect(profile.env).to eq({})
+        end
+
+        it "reads no pin from a config that does not parse" do
+          pin("mise.toml", "[tools\njq = \"1.8.1\"\n")
+
+          expect(granted?(install("jq@1.8.1"))).to be(false)
+        end
+
+        it "admits only a short name at an exact version, with no other word, and parks the rest" do
+          pin("mise.toml", %([tools]\n"asdf:foo" = "1"\n"ubi:x/y" = "1"\ncmake = "latest"\njq = "1.8.1"\n))
+          asks = [["asdf:foo@1"], ["ubi:x/y@1"], ["cmake@latest"], ["jq@1.8.1", "--", "--x"], ["jq@1.8.1", "-v"],
+                  ["jq@1.8.1", "jq@1.8.1"], ["jq"]]
+
+          expect(asks.map { granted?(install(*_1)) }).to all(be(false))
+          expect(asks.map { described_class.grantable_ports([["mise", "install", *_1]]) }).to all(eq([]))
+          expect(described_class.grantable_ports([%w[mise install jq@1.8.1]])).to eq([443])
+        end
+
+        {
+          "an asdf plugin" => "asdf:mise-plugins/asdf-jq", "a vfox plugin" => "vfox:mise-plugins/vfox-jq",
+          "a cargo build" => "cargo:jq", "a go build" => "go:github.com/x/jq", "an npm package" => "npm:jq",
+          "ruby, which compiles" => "core:ruby", "python, which may compile" => "core:python",
+          "a name mise does not know" => nil
+        }.each do |what, answer|
+          it "grants nothing when the registry resolves the name to #{what}" do
+            registry.answer = answer
+
+            expect(granted?(install("jq@1.8.1"))).to be(false)
+          end
+        end
+
+        %w[aqua:jqlang/jq ubi:jqlang/jq github:jqlang/jq core:node].each do |answer|
+          it "grants the install when the registry resolves the name to #{answer}, which fetches a prebuilt release" do
+            registry.answer = answer
+
+            expect(granted?(install("jq@1.8.1"))).to be(true)
+          end
+        end
+
+        it "grants nothing to a program named mise that is not the box's mise" do
+          other = File.join(@base, "elsewhere/mise").tap { FileUtils.mkdir_p(File.dirname(_1)) && File.write(_1, "") }
+
+          expect(granted?(install("jq@1.8.1", executable: mise(other)))).to be(false)
+        end
+
+        it "grants nothing from a subdirectory, whose own configs mise would read" do
+          sub = File.join(root, "sub").tap { FileUtils.mkdir_p(_1) }
+
+          expect(granted?(install("jq@1.8.1", cwd: sub))).to be(false)
+        end
+
+        it "withdraws the grant once anything in the project was written this lineage, before asking mise" do
+          fresh_paths << File.join(root, "mise.toml")
+
+          expect([granted?(install("jq@1.8.1")), registry.asked]).to eq([false, []])
+        end
+
+        it "reads the backend the box's mise lists first for a short name, and none for a name it does not know" do
+          real = "/usr/bin/mise"
+          skip "no mise at #{real}" unless File.executable?(real)
+
+          answers = %w[jq no-such-tool-anywhere].map do |name|
+            described_class::MiseRegistry.backend(mise: real, name:, root:)
+          end
+
+          expect(answers).to match([a_string_starting_with("aqua:"), nil])
+        end
+
+        it "asks mise from the root, under the env that ignores its config and drops the session's MISE_ names" do
+          seen = File.join(@base, "seen")
+          fake = File.join(@base, "bin/mise").tap { FileUtils.mkdir_p(File.dirname(_1)) }
+          File.write(fake, "#!/bin/sh\n{ pwd; env; } > #{seen}\necho 'aqua:x/y asdf:x/y'\n")
+          File.chmod(0o755, fake)
+          ENV["MISE_TRUSTED_CONFIG_PATHS"] = root
+
+          answer = described_class::MiseRegistry.backend(mise: fake, name: "jq", root:)
+          lines = File.readlines(seen, chomp: true)
+
+          expect([answer, lines.first]).to eq(["aqua:x/y", root])
+          expect(lines).to include("MISE_IGNORED_CONFIG_PATHS=#{root}", "MISE_CEILING_PATHS=#{root}")
+          expect(lines.grep(/\AMISE_TRUSTED_CONFIG_PATHS=/)).to eq([])
+        ensure
+          ENV.delete("MISE_TRUSTED_CONFIG_PATHS")
+        end
+
+        it "reads no backend from a mise that does not answer in time" do
+          slow = File.join(@base, "bin/mise").tap { FileUtils.mkdir_p(File.dirname(_1)) }
+          File.write(slow, "#!/bin/sh\nsleep 5\necho aqua:x/y\n")
+          File.chmod(0o755, slow)
+
+          expect(described_class::MiseRegistry.backend(mise: slow, name: "jq", root:, timeout: 0.2)).to be_nil
+        end
+
+        it "grants nothing when mise's data dir is home itself, since that write cannot be bounded" do
+          expect(installing({ "MISE_DATA_DIR" => home }).for(install("jq@1.8.1")).name).to eq(:workspace)
+        end
+
+        it "writes the data dir the env names for mise" do
+          named = File.join(@base, "xdg/data/mise").tap { FileUtils.mkdir_p(_1) }
+
+          expect(installing({ "XDG_DATA_HOME" => File.dirname(named) }).for(install("jq@1.8.1")).write_dirs)
+            .to include(named)
+        end
+
+        it "keeps mise hidden from every other workspace call" do
+          plain = profiles.for(request(ruling("auto")))
+
+          expect([plain.runs?(binary), plain.env]).to eq([false, {}])
+        end
+
+        it "reads the granted mise as runnable where the planner asks, and the unpinned one as not" do
+          expect(profiles.unrunnable(install("jq@1.8.1"))).to eq([])
+          expect(profiles.unrunnable(install("jq@1.7.1"))).to eq([binary])
+        end
+
+        it "runs none of a trusted project config's hooks under the grant, which run without it" do
+          real = "/usr/bin/mise"
+          skip "no mise at #{real}" unless File.executable?(real)
+          fence = Lain::Confine::Bwrap.fence_binary
+          skip "lain-fence is not built at #{fence}" unless File.executable?(fence)
+
+          marks = File.join(root, "marks").tap { FileUtils.mkdir_p(_1) }
+          state = File.join(root, ".mise-state")
+          # Landlock refuses the proxy's port, so the fetch fails at loopback and no name is resolved.
+          call_env = { "MISE_DATA_DIR" => data, "MISE_STATE_DIR" => state, "HTTPS_PROXY" => "http://127.0.0.1:9",
+                       "HOME" => home }
+          pin("env.sh", "touch #{marks}/env-source\n")
+          pin("mise.toml", <<~TOML)
+            [hooks]
+            preinstall = "touch #{marks}/preinstall"
+            postinstall = "touch #{marks}/postinstall"
+
+            [env]
+            _.source = "#{root}/env.sh"
+            PROBE = "{{ exec(command='touch #{marks}/env-exec') }}"
+
+            [tools]
+            jq = "1.8.1"
+          TOML
+          ran = lambda do
+            system(call_env, real, "trust", File.join(root, "mise.toml"), chdir: root, out: File::NULL, err: File::NULL)
+            offline = call_env.merge("MISE_OFFLINE" => "1")
+            system(offline, real, "install", "jq@1.8.1", chdir: root, out: File::NULL, err: File::NULL)
+            Dir.children(marks).sort.tap { FileUtils.rm_f(Dir.glob(File.join(marks, "*"))) }
+          end
+          real_probe = Lain::Confine::Probe.new(fence:, journal:)
+          granting = described_class.new(masks:, probe: real_probe, home:, root:, workspace: true, tmpdir: scratch,
+                                         fresh:, env: call_env)
+          exec = Lain::Exec::Sandboxed.new(
+            inner: Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h)), journal:,
+            profiles: granting, launcher: Lain::Confine::Bwrap.new(fence:)
+          )
+
+          expect(ran.call).to eq(%w[env-exec env-source postinstall preinstall])
+          result = exec.call(command: "#{real} install jq@1.8.1", cwd: root, env: call_env, timeout: 60,
+                             confinement: install("jq@1.8.1", executable: executable("mise", real, :system)))
+
+          expect(result.stderr).to include("Failed to install aqua:jqlang/jq@1.8.1")
+            .and(satisfy { !_1.include?("trusted") }), result.stderr
+
+          expect(journal.grep(Lain::Telemetry::Sandbox).map { [_1.profile, _1.network] }).to eq([[:grant, ["443"]]])
+          expect(Dir.children(marks)).to eq([])
+        end
+      end
+
       describe "the seal set", :seam do
         before { git_init(root) }
 

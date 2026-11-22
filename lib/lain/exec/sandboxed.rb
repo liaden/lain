@@ -202,7 +202,7 @@ module Lain
 
       def masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         guarded(profile, stages(command)) do |bound, guard, masked|
-          run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard), **sinks }
+          run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard, env), **sinks }
           told_contained(confinement, profile, masked, command:, cwd:, env:) do
             profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
           end
@@ -232,8 +232,8 @@ module Lain
         guard_notice(settled).then { _1.empty? ? capture : appended(capture, _1) }
       end
 
-      def spawn_options(profile, bound, guard)
-        { launch: launch(profile, bound), pinned_env: pinned_env(profile).merge(guard.env),
+      def spawn_options(profile, bound, guard, env)
+        { launch: launch(profile, bound), pinned_env: pinned_env(profile, env).merge(guard.env),
           **(bound.fds.empty? ? {} : { fds: bound.fds }) }
       end
 
@@ -278,10 +278,11 @@ module Lain
         ports.empty? ? CONTAINED : format(CONTAINED_PORTED, ports: ports.join(", "))
       end
 
-      def pinned_env(profile)
+      # The child inherits this process's env with the call's laid over it, so both name what it would see.
+      def pinned_env(profile, env)
         return {} unless profile.confined?
 
-        profile.call_tmpdir ? CONFINED_ENV.merge("TMPDIR" => profile.call_tmpdir) : CONFINED_ENV
+        CONFINED_ENV.merge(profile.env([*ENV.keys, *env.keys]), { "TMPDIR" => profile.call_tmpdir }.compact)
       end
 
       def finishing(confinement, profile)

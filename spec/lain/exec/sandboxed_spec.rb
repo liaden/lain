@@ -1565,6 +1565,24 @@ RSpec.describe Lain::Exec::Sandboxed do
       expect(run(term(%w[printenv BUNDLE_USER_CONFIG])).stdout).to eq("/dev/null\n")
     end
 
+    describe "a mise install of a version the project pins" do
+      let(:data) { File.join(home, ".local/share/mise") }
+      let(:granted) { Lain::Confine::Profile.reader(root:, home:).with(ignored_configs: [root], mise_data: data) }
+      let(:sandboxed) do
+        described_class.new(inner: Lain::Exec::Local.new, launcher:, journal:,
+                            profiles: Struct.new(:profile) { def for(_request) = profile }.new(granted))
+      end
+
+      it "hands the child the profile's mise env, and none of the session's own MISE_ names" do
+        session = { "MISE_TRUSTED_CONFIG_PATHS" => root, "MISE_ALL_COMPILE" => "1" }
+
+        seen = run(term(%w[env]), env: session).stdout.lines(chomp: true)
+
+        expect(seen).to include("MISE_IGNORED_CONFIG_PATHS=#{root}", "MISE_DATA_DIR=#{data}")
+        expect(seen.grep(/\AMISE_(TRUSTED_CONFIG_PATHS|ALL_COMPILE)=/)).to eq([])
+      end
+    end
+
     it "leaves nothing alive in the sandbox once a timeout has killed the call" do
       marker = "30.#{Process.pid}#{rand(1000)}"
 

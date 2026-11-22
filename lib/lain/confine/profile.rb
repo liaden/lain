@@ -7,7 +7,8 @@ require "pathname"
 module Lain
   module Confine
     Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
-                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net, :unmasked)
+                          :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net, :unmasked,
+                          :ignored_configs, :mise_data)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
@@ -23,7 +24,8 @@ module Lain
     # workspace shows empty and never runs, and `private_net` says each stage
     # of the call has a network namespace of its own, holding only loopback,
     # so the stages of one pipeline cannot reach each other over it. `unmasked` says a human let the call
-    # read the project's secrets, so what it wrote is scanned for them after. Both unconfined
+    # read the project's secrets, so what it wrote is scanned for them after. `ignored_configs` are the roots
+    # whose mise config a granted mise install reads none of, and `mise_data` the dir it installs to. Both unconfined
     # profiles still run under lain-fence as a reaper, so a stopped call
     # leaves no descendant behind; that covers a call made through a sandbox,
     # and `--confine off` or a box lacking bwrap or Landlock builds none.
@@ -83,7 +85,10 @@ module Lain
       # The TCP ports each build tool fetches on. Landlock bounds a port, never
       # a host, so a granted port is open to whatever code the build runs, and
       # `Profiles` grants one only while nothing the build could load is fresh.
-      GRANTS = { "bundle" => [443, 80], "cargo" => [443], "git" => [443] }.freeze
+      GRANTS = { "bundle" => [443, 80], "cargo" => [443], "git" => [443], "mise" => [443] }.freeze
+
+      # The backends that build from source or run a plugin's scripts, none of which a granted mise install may use.
+      MISE_REFUSED_BACKENDS = %w[asdf vfox cargo go npm pipx gem spm dotnet].freeze
 
       # nss-resolve's socket dir: a name resolves through it, so no grant needs a
       # datagram socket, which the fence refuses whatever the profile says.
@@ -165,14 +170,15 @@ module Lain
 
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
                      connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil,
-                     homes: [], hidden: [], private_net: false, unmasked: false)
-        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs:, hidden: }
-        absolute([*grants.values.flatten, *sealed.map(&:path), *homes.map(&:path)])
+                     homes: [], hidden: [], private_net: false, unmasked: false, ignored_configs: [],
+                     mise_data: nil)
+        grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs:, hidden:, ignored_configs: }
+        absolute([*grants.values.flatten, *sealed.map(&:path), *homes.map(&:path), *mise_data])
         raise ArgumentError, "a private network has no host port to connect to" if private_net && connect_ports.any?
 
         super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze, sealed: sealed.dup.freeze,
               call_tmpdir: call_tmpdir&.then(&:-@), homes: homes.dup.freeze, private_net: private_net == true,
-              unmasked: unmasked == true,
+              unmasked: unmasked == true, mise_data: mise_data&.then(&:-@),
               **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
 
@@ -207,6 +213,38 @@ module Lain
 
       # @return [Boolean] whether the kernel bounds what the call may reach
       def confined? = Profile.confines?(name)
+
+      # A granted mise keeps its state, its cache and sigstore's in the call's own dir, and reads its own config
+      # there, so it trusts nothing a human trusted and writes nothing that lasts beyond its data dir.
+      #
+      # @param session [Array<String>] the names the child would otherwise inherit or be lent
+      # @return [Hash{String => String, nil}] what the call's env must say for the profile to hold, nil unsetting a
+      #   name; none but for a granted mise install
+      def env(session = [])
+        return {} if ignored_configs.empty?
+
+        own = File.join(call_tmpdir || "/tmp", "mise")
+        Profile.mise_env(ignored_configs, session).merge("MISE_STATE_DIR" => File.join(own, "state"),
+                                                         "MISE_CONFIG_DIR" => File.join(own, "config"),
+                                                         "MISE_CACHE_DIR" => File.join(own, "cache"),
+                                                         "XDG_CACHE_HOME" => File.join(own, "xdg-cache"),
+                                                         "MISE_DATA_DIR" => mise_data)
+      end
+
+      # Read by mise wherever it starts, so no hook, `[env]` script or template in a config under `roots` runs,
+      # and no backend that builds or runs a plugin is used. Every other MISE_ name is unset, since one can trust
+      # a config, name another, or turn a download into a build.
+      #
+      # @param roots [Array<String>] absolute, none holding a path separator
+      # @param session [Array<String>] the names the child would otherwise see
+      # @return [Hash{String => String, nil}]
+      def self.mise_env(roots, session = [])
+        joined = roots.join(File::PATH_SEPARATOR)
+        session.grep(/\AMISE_/).to_h { [_1, nil] }.merge(
+          "MISE_IGNORED_CONFIG_PATHS" => joined, "MISE_CEILING_PATHS" => joined,
+          "MISE_DISABLE_BACKENDS" => MISE_REFUSED_BACKENDS.join(",")
+        )
+      end
 
       # @return [Boolean] whether the call could read the project's secret files
       def unmasked? = unmasked
@@ -451,10 +489,13 @@ module Lain
 
       # @param home [String] absolute; the home whose toolchain files are looked for
       # @return [Array<String>] the landing of each toolchain file a workspace mounts empty
-      def self.hidden(home)
-        [*landing_file(File.join(home, BUNDLE_CONFIG)),
-         *[*MISE, File.join(home, HOME_MISE), *shim_target(File.join(home, MISE_SHIMS))].flat_map { landing_file(_1) }]
-          .uniq
+      def self.hidden(home) = [*landing_file(File.join(home, BUNDLE_CONFIG)), *mise_binaries(home)].uniq
+
+      # @param home [String] absolute
+      # @return [Array<String>] where each mise binary, and the one mise's shims link to, lands
+      def self.mise_binaries(home)
+        binaries = [*MISE, File.join(home, HOME_MISE), *shim_target(File.join(home, MISE_SHIMS))]
+        binaries.flat_map { landing_file(_1) }.uniq
       end
 
       def self.shim_target(shims)
@@ -505,8 +546,9 @@ module Lain
         return self unless tool
 
         with(name: :grant, connect_ports: ports, unix_dirs: [RESOLVER], read_dirs: [*read_dirs, RESOLVER],
-             write_dirs: [*write_dirs, *tool.writes],
-             sealed: [*sealed, *tool.seals], homes: homes.map { _1.opening(tool.writes) }, private_net: false)
+             write_dirs: [*write_dirs, *tool.writes], sealed: [*sealed, *tool.seals],
+             homes: homes.map { _1.opening(tool.writes) }, private_net: false, hidden: hidden - tool.shown,
+             ignored_configs: tool.ignored_configs, mise_data: tool.mise_data)
       end
 
       # git's answer is read a line per path, and a TMPDIR at or above home grants home.
@@ -611,15 +653,23 @@ module Lain
       end
       private_class_method :linked_git_dir
 
-      BuildTool = Data.define(:writes, :seals)
+      BuildTool = Data.define(:writes, :seals, :shown, :ignored_configs, :mise_data)
 
       # What one build tool needs beyond the workspace, or nil where a write
       # cannot be bounded. GEM_HOME and CARGO_HOME are read from the host env,
       # names {Exec::ChildEnv} keeps; a GEM_HOME the worker env lends to one
       # call is not seen here, so that call's install is denied its writes and
       # fails closed. No BUNDLE_USER_ name reaches the child, so bundler's cache
-      # is the one beneath ~/.bundle.
+      # is the one beneath ~/.bundle. `shown` are the hidden files the tool runs
+      # as, `ignored_configs` the roots whose config it must not read, and `mise_data` where mise installs.
       class BuildTool
+        # @param writes [Array<String>]
+        # @param seals [Array<Seal>]
+        # @param shown [Array<String>]
+        # @param ignored_configs [Array<String>]
+        # @param mise_data [String, nil]
+        def initialize(writes:, seals:, shown: [], ignored_configs: [], mise_data: nil) = super
+
         # @param program [String]
         # @param project [String]
         # @param home [String]
@@ -629,6 +679,7 @@ module Lain
           case program
           when "bundle" then bundle(project, home, env)
           when "cargo" then cargo(project, home, env)
+          when "mise" then mise(project, home, env)
           else new(writes: [], seals: [])
           end
         end
@@ -656,6 +707,17 @@ module Lain
           new(writes: CARGO_WRITES.map { File.join(cargo_home, _1) }, seals: [])
         end
 
+        # mise's data dir, which holds what it fetches and installs; `Profile#env` puts the rest of what it
+        # writes in the call's own dir. It must be there already, as lain-fence grants only what exists.
+        def self.mise(project, home, env)
+          data = named(env, "MISE_DATA_DIR") ||
+                 File.join(named(env, "XDG_DATA_HOME") || File.join(home, ".local/share"), "mise")
+          return unless bounded?(data, home) && File.directory?(data) && holds_nothing?(data, project, home, own: data)
+
+          new(writes: [data], seals: [], shown: Profile.mise_binaries(home), ignored_configs: [project],
+              mise_data: data)
+        end
+
         def self.named(env, key) = env[key].to_s.empty? ? nil : env[key]
 
         # TMPDIR's rule: never /, home or a dir above it, and only where it says
@@ -681,7 +743,7 @@ module Lain
 
           [Seal.new(path: -Profile.landing(bindir), absent: false)]
         end
-        private_class_method :bundle, :cargo, :named, :bounded?, :holds_nothing?, :installs_in
+        private_class_method :bundle, :cargo, :mise, :named, :bounded?, :holds_nothing?, :installs_in
       end
 
       PrivateHome = Data.define(:path, :reads, :writes, :files)

@@ -152,8 +152,9 @@ module Lain
       # @param classifier [#classify, #related] the session's policy on a path, asked before a git config file
       #   outside the project is granted, and the related directories a reader may read, each with its masks; by
       #   default every path is ordinary and none is related
+      # @param registry [#backend] which backend mise fetches a short name through
       def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV,
-                     classifier: Unclassified)
+                     classifier: Unclassified, registry: MiseRegistry)
         @masks = masks
         @probe = probe
         @home = home
@@ -164,7 +165,7 @@ module Lain
         @env = env
         @classifier = classifier
         @sealed = Sealed.new(home:, tmpdir:)
-        @granting = Granting.over(fresh:, home:, root:)
+        @granting = Granting.over(fresh:, home:, root:, registry:)
       end
 
       # @param request [Request]
@@ -445,14 +446,20 @@ module Lain
           "git" => { "fetch" => %w[--quiet --verbose --prune --tags --all --depth=],
                      "clone" => %w[--quiet --verbose --single-branch --no-tags --depth=],
                      "pull" => %w[--quiet --verbose --ff-only],
-                     "ls-remote" => %w[--quiet --heads --tags --refs] }
+                     "ls-remote" => %w[--quiet --heads --tags --refs] },
+          "mise" => { "install" => [] }
         }.then { |table| Profile::GRANTS.keys.to_h { [_1, table.fetch(_1).freeze] } }.freeze
+
+        # A short name, so no backend is named, at a version of digits: `latest`, a prefix or a ref resolves online.
+        MISE_PIN = /\A[a-z0-9][a-z0-9_-]*@\d+(?:\.\d+)*\z/
 
         # @param fresh [#any_under?]
         # @param home [String] absolute
-        def initialize(fresh:, home:)
+        # @param registry [#backend] which backend mise fetches a short name through
+        def initialize(fresh:, home:, registry: MiseRegistry)
           @fresh = fresh
           @home = home
+          @mise = MiseInstall.new(home:, registry:)
         end
 
         # ComposedTerm's test: a user program that shadows another of its name is how an old plant shows. A
@@ -475,8 +482,9 @@ module Lain
           stage, argv = sole(request)
           name = argv && self.class.asked(argv)
           return unless name && trusted?(stage, name) && inside?(request.cwd, root)
+          return if vouched ? @fresh.changed_under?(root) : @fresh.any_under?(root)
 
-          name unless vouched ? @fresh.changed_under?(root) : @fresh.any_under?(root)
+          name if mise_admits?(name, stage, argv, request.cwd, root)
         end
 
         # @param argv [Array<String>]
@@ -485,8 +493,13 @@ module Lain
           name = argv.first
           subcommands = OPTIONS.fetch(name, nil)
           listed = subcommands&.fetch(argv[1], nil)
-          name if listed && argv.drop(2).select { _1.start_with?("-") }.all? { listed?(listed, _1) }
+          name if listed && argv.drop(2).select { _1.start_with?("-") }.all? { listed?(listed, _1) } &&
+                  operands?(name, argv.drop(2))
         end
+
+        # mise takes one tool at one version and nothing after it, since `--` hands the rest to the install.
+        def self.operands?(name, words) = name != "mise" || (words.one? && MISE_PIN.match?(words.first))
+        private_class_method :operands?
 
         def self.listed?(listed, option)
           counted = option.sub(COUNT, "=")
@@ -507,14 +520,114 @@ module Lain
         end
 
         def inside?(cwd, root) = cwd.nil? || Landing.under?(Profile.landing(cwd), Profile.landing(root))
+
+        # Asked last, since it may ask mise itself.
+        def mise_admits?(name, stage, argv, cwd, root)
+          name != "mise" || @mise.admits?(stage.realpath, argv.last, cwd:, root:)
+        end
+      end
+
+      # What lain, never mise, decides of a mise install: the binary is the box's mise, the call starts at the
+      # root, since mise reads a config in each dir from its cwd up, the root's path holds no separator that would
+      # split mise's list of ignored roots, the project pins that tool at that version, and the backend the name
+      # resolves through fetches a prebuilt release.
+      class MiseInstall
+        PREBUILT = /\A(?:aqua|ubi|github):/
+        # Core tools that download a build; the rest, ruby and python among them, may compile.
+        CORE_PREBUILT = %w[bun deno go java node zig].map { "core:#{_1}" }.freeze
+
+        # @param home [String] absolute
+        # @param registry [#backend]
+        def initialize(home:, registry:)
+          @home = home
+          @registry = registry
+        end
+
+        # @param mise [String] the resolved program
+        # @param word [String] `name@version`
+        # @param cwd [String, nil]
+        # @param root [String]
+        # @return [Boolean]
+        def admits?(mise, word, cwd:, root:)
+          tool, version = word.split("@", 2)
+          project = Profile.landing(root)
+          Profile.mise_binaries(@home).include?(mise) && (cwd.nil? || Profile.landing(cwd) == project) &&
+            !project.include?(File::PATH_SEPARATOR) && MisePins.of(project).include?([tool, version]) &&
+            prebuilt?(@registry.backend(mise:, name: tool, root:))
+        end
+
+        private
+
+        def prebuilt?(backend) = backend.is_a?(String) && (PREBUILT.match?(backend) || CORE_PREBUILT.include?(backend))
+      end
+
+      # The tool versions a project pins, read by lain's own TOML parser from the config files mise would read at
+      # the root. A config that does not parse pins nothing.
+      module MisePins
+        CONFIGS = Profile::PROJECT_SEALED.grep(/mise/).freeze
+        TOOL_VERSIONS = ".tool-versions"
+
+        # @param project [String] absolute, landed
+        # @return [Array<Array(String, String)>] each pinned tool and version
+        def self.of(project)
+          [*CONFIGS.flat_map { toml(File.join(project, _1)) }, *tool_versions(File.join(project, TOOL_VERSIONS))]
+        end
+
+        def self.toml(path)
+          tools = Ext::Toml.parse(File.read(path)).fetch("tools", nil)
+          tools.is_a?(Hash) ? tools.flat_map { |name, spec| versions(spec).map { [name, _1] } } : []
+        rescue SystemCallError, Ext::Toml::Invalid
+          []
+        end
+
+        def self.versions(spec)
+          case spec
+          when String then [spec]
+          when Array then spec.flat_map { versions(_1) }
+          when Hash then versions(spec["version"])
+          else []
+          end
+        end
+
+        def self.tool_versions(path)
+          File.readlines(path, chomp: true).flat_map do |line|
+            name, *versions = line.sub(/#.*/, "").split
+            versions.map { [name, _1] }
+          end
+        rescue SystemCallError
+          []
+        end
+        private_class_method :toml, :versions, :tool_versions
+      end
+
+      # Asks the box's mise which backend a short name resolves through, under the env a granted install runs
+      # with, so the project's config cannot rename it.
+      module MiseRegistry
+        TIMEOUT = 5
+
+        # @param mise [String] the resolved program
+        # @param name [String]
+        # @param root [String]
+        # @param timeout [Numeric] seconds before mise is killed and nothing is answered
+        # @return [String, nil] the first backend mise lists, nil where it lists none or does not answer
+        def self.backend(mise:, name:, root:, timeout: TIMEOUT)
+          env = Profile.mise_env([Profile.landing(root)], ENV.keys)
+          out = Shell::Out.new(mise, "registry", name, environment: env, cwd: root, timeout:).run_command
+          out.stdout.split.first if Shell::Out.ok?(out)
+        rescue Shell::Out::Timeout, SystemCallError
+          nil
+        end
       end
 
       Granting = Data.define(:grant, :root) do
         # @param fresh [#any_under?, #changed_under?] the lineage's freshness
         # @param home [String] absolute
         # @param root [String] absolute
+        # @param registry [#backend] which backend mise fetches a short name through
         # @return [Granting]
-        def self.over(fresh:, home:, root:) = new(grant: BuildGrant.new(fresh:, home:), root:)
+        def self.over(fresh:, home:, root:, registry: MiseRegistry)
+          new(grant: BuildGrant.new(fresh:, home:, registry:), root:)
+        end
 
         # @param request [Request]
         # @param vouched [Boolean] whether to answer as if a human had vouched for the lineage's unread command
