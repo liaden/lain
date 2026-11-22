@@ -1105,6 +1105,16 @@ read is guarded three ways, and each guard is a check:
    retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
    not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
    answer.)*
+6. **A note goes to the pane that owns the prompt.** With a cockpit running and a held line, type
+   `/held clear` in the input pane: `dropped 1 held line` is stamped in the input pane above the
+   input row, a half-typed draft is intact, and nothing lands in the chat pane. While an ask is in
+   flight, type half a line in the pane and run `/stop` from another pane: the note appears above
+   the header, and the header and the draft are drawn again beneath it. At an approval prompt, type
+   `maybe`: `this prompt takes y or n` appears in the pane. The `/held` listing, a `held: ...` notice
+   and a human note echo go to the pane too. With plain `lain chat` (no pane), every note appears in
+   the chat as before.
+   *Wrong looks like:* a note in the chat pane while a pane is connected, a note printed over the
+   draft row, or a header left missing after the note.
 
 ### Reading a long command back: the rows are cut on purpose
 

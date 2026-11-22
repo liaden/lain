@@ -207,7 +207,7 @@ module Lain
       def sweep = nil
 
       # Whether nothing has been typed at `prompt` in ANY pane drawing it, which
-      # is what {Frontend::Intake#untouched?}'s `all?` means for an
+      # is what `Frontend::Intake#untouched?`'s `all?` means for an
       # in-process producer. One pane mid-edit is enough to keep an answer's
       # prompt from taking the terminal, even beside a pane sitting idle. A pane
       # that has said nothing has said nothing was typed.
@@ -220,6 +220,17 @@ module Lain
 
       # Text typed at an offer, put back in every pane's `you>` line unsent.
       def keep(text) = broadcast(Codec.dump({ "v" => "draft", "text" => text }))
+
+      # Words for the human, drawn by the pane that owns the prompt. A pane from an older lain ignores a `note`
+      # frame, so its note is lost: there is no handshake to tell the chat to say it itself.
+      #
+      # @param text [String] the note, one line or several
+      # @param kind [String] how the pane says it: `note`, `held` or `human`
+      # @return [Integer] how many panes took it; none means the caller says it on the chat's screen
+      def note(text, kind: "note")
+        frame = Codec.dump({ "v" => "note", "kind" => kind, "text" => text })
+        connected.count { |client| deliver(client, frame) }
+      end
 
       # Say goodbye, then take the path down. The order is the contract: a pane
       # that reads `closed` exits, and one whose stream simply ends waits for
@@ -428,7 +439,7 @@ module Lain
       def broadcast(frame) = connected.each { |client| deliver(client, frame) }
 
       def deliver(client, frame)
-        let_go(client) unless client << frame
+        (client << frame).tap { |live| let_go(client) unless live }
       end
 
       # A short write leaves bytes queued and only a write moves them, so the

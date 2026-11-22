@@ -3,7 +3,7 @@
 module Lain
   module CLI
     class Wiring
-      # The chat's one {Frontend::Intake}, built over the command registry that
+      # The chat's one `Frontend::Intake`, built over the command registry that
       # does not exist yet: the registry is assembled from objects built after
       # the Intake, so it is read at each line rather than taken.
       module IntakeBuild
@@ -73,9 +73,57 @@ module Lain
           end
         end
 
+        # The chat's screen, except that a note is said in an input pane when one is connected: the human is
+        # looking at the pane that owns the prompt, not at the chat's transcript.
+        class PaneNotes < SimpleDelegator
+          # @param tty [#render_note] the chat's own screen, which says a note when no pane takes it
+          def initialize(tty)
+            super
+            @lock = Thread::Mutex.new
+            @panes = []
+          end
+
+          # @param producer [Object] a producer attached to the rail; only one that answers `note` is kept
+          def attached(producer) = (@lock.synchronize { @panes << producer } if producer.respond_to?(:note))
+
+          def detached(producer) = @lock.synchronize { @panes.delete(producer) }
+
+          def render_note(text) = said(text, "note") { super }
+
+          def render_held(text) = said(text, "held") { super }
+
+          def render_human_note(text) = said(text, "human") { super }
+
+          private
+
+          def said(text, kind)
+            panes = @lock.synchronize { @panes.dup }
+            yield unless panes.sum { |pane| pane.note(text, kind:) }.positive?
+          end
+        end
+
+        # The rail as a producer sees it, so the screen learns which producers are panes.
+        class Rail < SimpleDelegator
+          def initialize(rail, notes)
+            super(rail)
+            @notes = notes
+          end
+
+          def attach(producer)
+            @notes.attached(producer)
+            super
+          end
+
+          def detach(producer)
+            @notes.detached(producer)
+            super
+          end
+        end
+
         def self.rail(tty:, human:, notes:, on_cycle:, surface:)
-          Frontend::Intake.new(screen: tty, history: human.history_for(tty), notes:, on_cycle:,
-                               commands: Probe.new(bound: -> { surface.call&.commands }, screen: tty))
+          screen = PaneNotes.new(tty)
+          Rail.new(Frontend::Intake.new(screen:, history: human.history_for(tty), notes:, on_cycle:,
+                                        commands: Probe.new(bound: -> { surface.call&.commands }, screen:)), screen)
         end
       end
     end

@@ -144,6 +144,7 @@ module Lain
         @shown = @wanted = ""
         @draft = Draft.new(keys: @keys)
         @redraft = +""
+        @note = NoteLine.new(tty: @tty, view: method(:underneath))
       end
 
       # A signal the pane's traps or its line editor recorded. With a chat to
@@ -268,6 +269,7 @@ module Lain
         when "unpublished" then idle(task, client, frame["header"].to_s, frame["closed"].to_s)
         when "context" then @commands.replace(Array(frame["commands"]))
         when "draft" then held_back(frame["text"])
+        when "note" then @note.say(frame["text"].to_s, frame["kind"])
         when "closed" then :closed
         end
       end
@@ -313,11 +315,9 @@ module Lain
           (HeaderRows.same_count?(@shown, @wanted) || @draft.seen?)
       end
 
-      def redrafted
-        up = @shown.split("\n").size + @draft.rows(columns) - 1
-        @tty.print_prompt("\e[#{up}A\r\e[J#{CLEAR_ROW}#{@wanted}\n#{@draft.shown}")
-        @adopted = @wanted.split("\n").size if @adopted.to_i.positive?
-      end
+      def redrafted = @note.redraw(@wanted).tap { |rows| @adopted = rows if @adopted.to_i.positive? }
+
+      def underneath = ([@shown, @draft, columns] if @idle && @settled && !@resized && !@shown.empty? && @draft.seen?)
 
       def columns
         @input.respond_to?(:winsize) ? @input.winsize.last : 0

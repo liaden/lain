@@ -1,5 +1,9 @@
 # frozen_string_literal: true
 
+require "json"
+require "socket"
+require "tmpdir"
+
 RSpec.describe Lain::CLI::Wiring::IntakeBuild do
   let(:screen) do
     Class.new do
@@ -74,6 +78,123 @@ RSpec.describe Lain::CLI::Wiring::IntakeBuild do
 
   # A pane's reader is a thread of its own with no reactor, and a command that asks a question reads the very
   # rail that thread feeds: running it there would leave the answer unreadable.
+  describe "where a note is said" do
+    let(:pane) do
+      Class.new do
+        attr_reader :said
+
+        def initialize(takes)
+          @takes = takes
+          @said = []
+        end
+
+        def note(text, kind: "note")
+          return 0 unless @takes
+
+          @said << [kind, text]
+          1
+        end
+      end
+    end
+
+    before { surface[0] = bound }
+
+    it "says it in the pane that owns the prompt, and not in the chat" do
+      input = pane.new(true)
+      rail.attach(input)
+      typed("/approve")
+
+      expect([input.said, screen.said]).to eq([[["note", "no pending approvals"]], []])
+    end
+
+    it "says it once in each of two panes, and not in the chat" do
+      panes = [pane.new(true), pane.new(true)]
+      panes.each { |input| rail.attach(input) }
+      typed("/approve")
+
+      expect([panes.map(&:said), screen.said]).to eq([[[["note", "no pending approvals"]]] * 2, []])
+    end
+
+    it "says a held line's notice in the pane, and not in the chat" do
+      input = pane.new(true)
+      rail.attach(input)
+      typed("plain words")
+
+      expect([input.said, screen.said]).to eq([[["held", "plain words"]], []])
+    end
+
+    it "says a human note in the pane, and in the chat when no pane takes it" do
+      screen.define_singleton_method(:render_human_note) { |text| said << "human: #{text}" }
+      input = pane.new(true)
+      notes = described_class::PaneNotes.new(screen)
+      notes.render_human_note("one")
+      notes.attached(input)
+      notes.render_human_note("two")
+
+      expect([input.said, screen.said]).to eq([[%w[human two]], ["human: one"]])
+    end
+
+    it "says it in the chat when no pane is attached" do
+      typed("/approve")
+
+      expect(screen.said).to eq(["no pending approvals"])
+    end
+
+    it "says it in the chat when the attached pane has no one connected" do
+      input = pane.new(false)
+      rail.attach(input)
+      typed("/approve")
+
+      expect(screen.said).to eq(["no pending approvals"])
+    end
+
+    it "says it in the chat once the pane is detached" do
+      input = pane.new(true)
+      rail.attach(input)
+      rail.detach(input)
+      typed("/approve")
+
+      expect([input.said, screen.said]).to eq([[], ["no pending approvals"]])
+    end
+
+    it "says a command's outcome in the pane too" do
+      ping = Struct.new(:name) do
+        def usage = "/ping -- probe"
+        def call(_args, _env) = "pong"
+        def disposition = :control
+        def refusal(_env) = nil
+      end.new("ping")
+      surface[0] = Lain::CLI::Command::Registry.new([ping]).bind(build_command_env)
+      input = pane.new(true)
+      rail.attach(input)
+      Sync { typed("/ping") }
+
+      expect([input.said, screen.said]).to eq([[%w[note pong]], []])
+    end
+  end
+
+  describe "with the real input socket over the rail", :seam do
+    let(:dir) { Dir.mktmpdir("lain-intake-build") }
+    let(:sock) { File.join(dir, "in.sock") }
+
+    after { FileUtils.remove_entry(dir) }
+
+    it "sends a command's refusal to the connected pane as a note frame and says nothing in the chat" do
+      surface[0] = bound
+      socket = Lain::CLI::InputSocket.new(rail:, path: sock).bind
+      Sync do |task|
+        socket.start(task)
+        pane = UNIXSocket.new(sock).tap { |io| io.timeout = 5 }
+        pane.gets
+        pane.write("#{JSON.generate({ "v" => "line", "text" => "/approve", "generation" => 0 })}\n")
+        note = Enumerator.produce { JSON.parse(pane.gets.to_s) }.find { |frame| frame["v"] == "note" }
+        expect([note["text"], screen.said]).to eq(["no pending approvals", []])
+      ensure
+        socket.stop
+      end
+    end
+  end
+
   describe "a control command with something to act on, typed on a thread with no reactor" do
     let(:effect) { Struct.new(:name, :input, :tool_use_id).new("bash", { "command" => "ls" }, "tu") }
     let(:pending) do

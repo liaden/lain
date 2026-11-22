@@ -168,6 +168,25 @@ RSpec.describe Lain::Frontend::InputPane do
     expect(screen.string).to include("🔥 fleet:1 inbox:0")
   end
 
+  it "prints a note the chat sends on the pane's own screen" do
+    chat = open_pane
+    publish(chat, { "header" => "hud" })
+    settles { screen.string.include?("you> ") || nil }
+
+    say(chat, { "v" => "note", "text" => "dropped 1 held line" })
+
+    expect(settles { screen.string.include?("dropped 1 held line") || nil }).to be(true)
+  end
+
+  it "prints a note while no prompt is published, as when an ask is in flight" do
+    chat = open_pane
+    say(chat, { "v" => "unpublished", "header" => "hud", "closed" => "" })
+
+    say(chat, { "v" => "note", "text" => "this prompt takes y or n" })
+
+    expect(settles { screen.string.include?("this prompt takes y or n") || nil }).to be(true)
+  end
+
   describe "an approval prompt too long for the pane's rows" do
     let(:call) { "FIRST #{"x" * 2600} LAST" }
     let(:parts) do
@@ -1131,6 +1150,54 @@ RSpec.describe Lain::Frontend::InputPane do
       say(chat, { "v" => "unpublished", "header" => "fleet:2\nrow b" })
 
       expect(settles { screen.string.include?("row b") ? screen.string : nil }).to start_with("\e[3A\r\e[J")
+    end
+
+    it "prints a note above the header and the draft an idle pane holds, and draws both again under it" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      keyboard.write("abc")
+      taken("abc")
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "note", "text" => "dropped 1 held line" })
+
+      expect(settles { screen.string.include?("fleet:1") ? screen.string : nil })
+        .to match(/\A\e\[1A\r\e\[J.*dropped 1 held line\r?\n\r\e\[Kfleet:1\nabc\z/m)
+    end
+
+    it "prints a note plain after a resize, since the rows it would walk up are no longer where they were drawn" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      keyboard.write("abc")
+      taken("abc")
+      window.script([6, 80])
+      sleep(0.3)
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "note", "text" => "dropped 1 held line" })
+
+      expect(settles { screen.string.include?("dropped 1 held line") ? screen.string : nil })
+        .not_to include("\e[1A")
+    end
+
+    it "says a held notice and a human note through the same path, keeping the draft drawn" do
+      chat = open_pane
+      publish(chat, { "generation" => 3, "header" => "fleet:1" })
+      settles { screen.string.include?("fleet:1") || nil }
+      say(chat, { "v" => "unpublished", "header" => "fleet:1" })
+      keyboard.write("abc")
+      taken("abc")
+      screen.truncate(0) && screen.rewind
+
+      say(chat, { "v" => "note", "kind" => "held", "text" => "ls" })
+      say(chat, { "v" => "note", "kind" => "human", "text" => "remember this" })
+
+      expect(settles { screen.string.include?("remember this") ? screen.string : nil })
+        .to match(/held.*ls.*remember this.*\r\e\[Kfleet:1\nabc\z/m)
     end
 
     it "prints the draft back under a header drawn below an answered echo" do

@@ -66,7 +66,11 @@ module E2E
       tmux("send-keys", "-t", pane(:input), "Enter")
     end
 
-    def capture(name) = tmux("capture-pane", "-p", "-t", pane(name))
+    # @param name [Symbol] the pane
+    # @param scrollback [Boolean] the pane's history too, not only the rows on screen
+    def capture(name, scrollback: false)
+      tmux("capture-pane", "-p", *("-S" if scrollback), *("-" if scrollback), "-t", pane(name))
+    end
 
     # The pane keeps its history, so the first prompt's you> stays on screen: only its last line
     # shows a prompt is back.

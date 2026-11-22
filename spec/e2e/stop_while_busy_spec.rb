@@ -60,9 +60,13 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
     wait_until(timeout: 20, reason: "you> as the input pane's last line") { cockpit.prompt_back? }
   end
 
-  def held_notes(cockpit) = cockpit.capture(:chat).scan(format(Lain::Frontend::TTY::HELD, "")).size
+  # The input pane is a few rows tall, so each notice is waited for as it is said rather than counted at the end.
+  def input_scrollback(cockpit) = cockpit.capture(:input, scrollback: true)
 
-  def agent_notes(cockpit) = cockpit.capture(:chat).scan(Lain::Frontend::TTY::NOTED).size
+  def typed_and_said(cockpit, typed, said)
+    cockpit.type(typed)
+    wait_until(timeout: 20, reason: "#{said.inspect} in the input pane") { input_scrollback(cockpit).include?(said) }
+  end
 
   def inbox_lines(cockpit) = cockpit.editor.evaluate("getbufline(bufnr('lain://inbox'), 1, '$')").join("\n")
 
@@ -123,11 +127,8 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
     journey([holding, saying("first")]) do |cockpit, _sandbox, upstream|
       cockpit.type("Start")
       await_chats(upstream, 1)
-      ["/goal off", "hello", "one", "two"].each { |typed| cockpit.type(typed) }
-
-      wait_until(timeout: 20, reason: "1 held line and 3 notes in the chat pane") do
-        held_notes(cockpit) >= 1 && agent_notes(cockpit) >= 3
-      end
+      typed_and_said(cockpit, "/goal off", format(Lain::Frontend::TTY::HELD, "/goal off"))
+      %w[hello one two].each { |typed| typed_and_said(cockpit, typed, "#{Lain::Frontend::TTY::NOTED}#{typed}") }
       upstream.release
       wait_until(timeout: 20, reason: "the pending note said as the run ends") do
         cockpit.capture(:chat).include?(Lain::Frontend::TTY::NOTE_WAITS)
@@ -137,7 +138,6 @@ RSpec.describe "typing in a real cockpit while the model is busy", :e2e do
       end
 
       expect(user_prompts(upstream)).to eq(["Start"])
-      expect(held_notes(cockpit)).to eq(1)
 
       cockpit.type("Next")
       await_chats(upstream, 2)

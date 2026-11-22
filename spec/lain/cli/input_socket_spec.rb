@@ -97,6 +97,47 @@ RSpec.describe Lain::CLI::InputSocket do
     answered
   end
 
+  describe "#note" do
+    it "sends the text to a connected pane as a note frame and counts it delivered" do
+      socket.bind.start(nil)
+      client = connect
+      next_frame(client, of: "context")
+
+      delivered = socket.note("dropped 1 held line")
+
+      expect([delivered, next_frame(client, of: "note")["text"]]).to eq([1, "dropped 1 held line"])
+    end
+
+    it "counts every connected pane, each told once" do
+      socket.bind.start(nil)
+      panes = Array.new(2) { connect.tap { |pane| next_frame(pane, of: "context") } }
+
+      expect([socket.note("x"), panes.map { |pane| next_frame(pane, of: "note")["text"] }]).to eq([2, %w[x x]])
+    end
+
+    it "carries the kind the pane should say it as" do
+      socket.bind.start(nil)
+      pane = connect.tap { |io| next_frame(io, of: "context") }
+
+      socket.note("ls", kind: "held")
+
+      expect(next_frame(pane, of: "note")).to include("kind" => "held", "text" => "ls")
+    end
+
+    it "does not count a pane it let go of for falling behind, so the chat says the note itself" do
+      socket.bind.start(nil)
+      connect.tap { |io| next_frame(io, of: "context") }
+
+      expect(socket.note("x" * (described_class::Client::BACKLOG * 20))).to eq(0)
+    end
+
+    it "says nothing was delivered when no pane is connected, so the chat can render it itself" do
+      socket.bind.start(nil)
+
+      expect(socket.note("dropped 1 held line")).to eq(0)
+    end
+  end
+
   describe ".named" do
     it "reads the socket's name out of an --input option" do
       expect(described_class.named("socket:s1")).to eq("s1")
