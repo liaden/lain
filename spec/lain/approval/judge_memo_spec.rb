@@ -53,7 +53,8 @@ RSpec.describe Lain::Approval::JudgeMemo do
                 facts: Lain::Approval::Judge::Facts.new([], masked: ["/repo/.env"]),
                 request: Lain::Approval::Judge::Request.new(text: "run the tests", model_written: false),
                 human_checkout: "/home/u/repo", read_roots: ["/state/epics"], related: ["/home/u/shared"],
-                classified: { "/repo/notes.txt" => Lain::Sensitivity::Verdict.new(level: :ordinary, reason: :exempt) } }
+                classified: { "/repo/notes.txt" => Lain::Sensitivity::Verdict.new(level: :ordinary, reason: :exempt) },
+                opaque: true }
 
     expect(changed.keys).to match_array(Lain::Approval::Judge::Place.members)
     changed.each { |member, value| expect(key(member => value)).not_to eq(key), "#{member} did not change the key" }

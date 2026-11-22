@@ -376,11 +376,20 @@ RSpec.describe LainCLI do
   # docker example means the same thing on a box that HAS docker -- where the
   # unguarded version would resolve, construct a chat, and park on a terminal.
   describe "the arm flags' help text" do
-    %i[confine judge_facts judge_denials tripwire round_budget round_dedup].each do |arm|
+    %i[confine judge_facts judge_denials judge_opaque tripwire round_budget round_dedup].each do |arm|
       it "states --#{arm.to_s.tr("_", "-")}'s default as Arms::DEFAULT holds it" do
         expect(described_class.commands.fetch("chat").options.fetch(arm).description)
           .to include("default #{Lain::CLI::Arms::DEFAULT.public_send(arm)}")
       end
+    end
+
+    it "parses the flag a resume notice tells the human to pass, for every arm" do
+      parsed = Lain::CLI::Arms::SETS.to_h do |arm, values|
+        options = Thor::Options.new(described_class.commands.fetch("chat").options)
+        [arm, options.parse([Lain::CLI::Arms.flag(arm), values.last.to_s])[arm.to_s]]
+      end
+
+      expect(parsed).to eq(Lain::CLI::Arms::SETS.transform_values { _1.last.to_s })
     end
 
     it "states the denial breaker's thresholds from DenialBreaker in --judge-denials' help" do

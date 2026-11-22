@@ -55,6 +55,7 @@ module Lain
 
       # The tilde bash expands from HOME alone; {Verdict} expands the same one.
       HOMED = %r{\A~(/|\z)}
+      PROCESS_FILE = %r{\A/(proc|dev/fd)/}
       COMMAND = "command"
       RUNS_IN = "cwd"
       UNPLACED = "/.lain-unplaced-cwd"
@@ -1481,10 +1482,15 @@ module Lain
         def name(stage, words)
           inner = unbundled(words)
           program = Program.new(inner.texts, untrusted: !inner.equal?(words))
-          named = program.opaque? || filled_option?(inner) ? [:opaque] : stage_paths(stage, inner, program)
+          named = opaque_stage?(program, inner) ? [:opaque] : stage_paths(stage, inner, program)
           @opaque ||= named.include?(:opaque)
           @paths.concat(named.grep(Path))
         end
+
+        def opaque_stage?(program, words) = program.opaque? || filled_option?(words) || descriptor?(words.texts.first)
+
+        # The file behind a process's own entry or descriptor is whatever that process holds, so no word names it.
+        def descriptor?(word) = word&.include?("/") && Named.resolved(word, @dir, home: @home).to_s.match?(PROCESS_FILE)
 
         # Argv reads an option's letters from its text, but bash hands the
         # program digits where a fill sits, so the cluster it runs is unknown.

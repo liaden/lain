@@ -89,7 +89,7 @@ module Lain
                           rules: [Lain::Approval::Remembered.from(config)].reject(&:empty?),
                           approving: approving_under(arms, masks, child_env),
                           sensitivity:, spike: PlanSpike.new(project:, paths:),
-                          classifiers: factory, middleware:,
+                          classifiers: factory, middleware:, child_env:,
                           test_layout: test_layout(project:, paths:, file_facts: sensitivity.file_facts),
                           approval_timeout: Config.approval_timeout(root: project.root, paths:),
                           silence: Lain::Approval::Silence.from(config), judge:, display:, arms:,

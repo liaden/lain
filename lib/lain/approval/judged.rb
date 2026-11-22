@@ -11,8 +11,11 @@ module Lain
     # approval, or one whose path the classifier gated for what it is (a
     # credential, a name, an operator's rule, a protected or malformed path),
     # never reaches the judge, because a model approve could not apply to it.
-    # A `bash` call is held to every path its command names ({Shell::Named}),
-    # and one whose paths cannot be named never reaches the judge either.
+    # A `bash` call is held to every path its command names ({Shell::Named}).
+    # One whose paths cannot be named reaches the judge only where a route was
+    # built for it and the workspace sandbox's masks hold what it runs; it is
+    # still held to the paths it did name, told the judge without the request
+    # it was made for, and never settled by a human's earlier allow.
     #
     # Whether the judge may weigh a call is decided once, before it is paid
     # for (`Judgement`): past the facts lain computed (`Judge::Facts#bar`), a
@@ -229,10 +232,14 @@ module Lain
       # @param masks [Judgement::Masking, Judgement::Unmasked] the sandbox a call the judge approves runs under
       # @param memo [JudgeMemo, JudgeMemo::Off] the approvals an exact repeat is settled by; none by default
       # @param allows [RememberedAllow, RememberedAllow::None] a human's allows an exact repeat is settled by
+      # @param opaque [Judge::Facts::Resolving, Judge::Facts::Unrouted] the facts of a call whose paths cannot be
+      #   named, which it is weighed on under the workspace masks; never weighed by default
       def initialize(judge:, policy:, asking:, journal:, display: ::Lain::Channel::Null.instance,
                      facts: Judge::Facts::Off, request: Judge::Unrequested, denials: DenialBreaker::Off,
-                     masks: Judgement::Unmasked, memo: JudgeMemo.off, allows: RememberedAllow::None)
+                     masks: Judgement::Unmasked, memo: JudgeMemo.off, allows: RememberedAllow::None,
+                     opaque: Judge::Facts::Unrouted)
         @judge = judge
+        @opaque = opaque
         @allows = allows
         @memo = memo
         @masks = masks
@@ -264,8 +271,10 @@ module Lain
       private
 
       def judgement_of(effect, context)
-        Judgement.of(effect, bounds: held_to(context), named: named_in(effect, context),
-                             facts: -> { facts_for(effect, context) }, masks: @masks,
+        named = named_in(effect, context)
+        Judgement.of(effect, bounds: held_to(context), named:,
+                             facts: -> { facts_for(effect, context, named.opaque? ? @opaque : @facts) },
+                             masks: @masks, opaque: @opaque.routes? && @masks.on?,
                              verdict: ->(path) { verdict_on(path, context) }, barred: Escalation.barred?(context),
                              env: ::Lain::Session.worker_env_of(context).env)
       end
@@ -276,15 +285,20 @@ module Lain
 
       # A weighable call has passed the resolved-program bar already.
       def weigh(effect, context, facts)
-        replayed(effect, @allows.call(effect, context)) || judged(effect, context, facts)
+        replayed(effect, remembered_allow(effect, context)) || judged(effect, context, facts)
       end
+
+      # An opaque command can mean another call on each run, so a human's yes to it is never replayed.
+      def remembered_allow(effect, context) = (@allows.call(effect, context) unless opaque?(effect, context))
+
+      def opaque?(effect, context) = named_in(effect, context).opaque?
 
       # These calls stopped before the resolved-program bar and the protected-target check, so both are read
       # here, and only for a remembered yes.
       def replayable(unweighed, effect, context)
         return unless REPLAYABLE.include?(unweighed.reason)
 
-        ruling = @allows.call(effect, context)
+        ruling = remembered_allow(effect, context)
         replayed(effect, ruling) if ruling && !protected_target?(effect, context) &&
                                     facts_for(effect, context).bar.empty?
       end
@@ -413,9 +427,10 @@ module Lain
       def place_for(effect, context, facts)
         root = own_tree(context) || @policy.root || ::Lain::Sensitivity::Policy.base_of(context)
         cwd = ::Lain::Session.cwd_of(context)
-        Judge::Place.new(root:, cwd:, requester: requester_of(context),
+        opaque = opaque?(effect, context)
+        Judge::Place.new(root:, cwd:, requester: requester_of(context), opaque:,
                          outside: outside(effect, context, cwd),
-                         facts: disclosed(facts, context), request: @request.call(context),
+                         facts: disclosed(facts, context), request: (@request.call(context) unless opaque),
                          human_checkout: (@policy.root unless root == @policy.root),
                          read_roots: read_roots(context), related: @policy.related_directories,
                          classified: classified(effect, context, cwd))
@@ -449,13 +464,13 @@ module Lain
 
       def outside_of?(held, path, writes, cwd) = writes ? held.writes_outside?(path, cwd:) : held.outside?(path, cwd:)
 
-      def facts_for(effect, context)
+      def facts_for(effect, context, builder = @facts)
         command = command_in(effect.input)
         cwd = command_cwd(effect, context)
         return Judge::Facts::NONE unless effect.name == BASH && command.is_a?(String) && cwd
 
-        @facts.call(command, cwd, tool_use_id: effect.tool_use_id,
-                                  parsed: ::Lain::Middleware::ParsedCommand.carried(command, context))
+        builder.call(command, cwd, tool_use_id: effect.tool_use_id,
+                                   parsed: ::Lain::Middleware::ParsedCommand.carried(command, context))
       end
 
       # @return [Array<Array(String, Boolean)>] each path, and whether the call writes it

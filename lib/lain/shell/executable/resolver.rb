@@ -46,6 +46,8 @@ module Lain
           # glibc's execvp searches this when PATH is unset.
           DEFAULT_PATH = "/bin:/usr/bin"
 
+          DESCRIPTORS = %w[/proc/ /dev/fd/].freeze
+
           # A word still holding an expansion was never a literal program name.
           EXPANSION = /[$`]/
 
@@ -77,7 +79,10 @@ module Lain
           # @param path [String] absolute
           # @return [RunFiles::Entry]
           def run_file(path)
-            paths = paths_of(links([path]), @stat.realpath(path))
+            chain = links([path])
+            return RunFiles::Entry.new(path:, klass: :unresolved, fresh: false) if descriptor_chain?(chain)
+
+            paths = paths_of(chain, @stat.realpath(path))
             RunFiles::Entry.new(path:, klass: klass(paths), fresh: fresh?(paths))
           rescue SystemCallError
             RunFiles::Entry.new(path:, klass: :unresolved, fresh: false)
@@ -158,12 +163,18 @@ module Lain
 
           def resolve(name, env, wrappers)
             return unresolved(name, env, wrappers) if opaque?(name)
-            return by_path(name, env, wrappers) if name.include?("/")
 
-            search(name, env, wrappers)
+            found = name.include?("/") ? by_path(name, env, wrappers) : search(name, env, wrappers)
+            descriptor?(found) ? unresolved(name, env, wrappers) : found
           rescue SystemCallError
             unresolved(name, env, wrappers)
           end
+
+          # The file behind a process's own entry or descriptor is whatever that process holds, never a path
+          # the words name.
+          def descriptor?(found) = descriptor_chain?([found.resolved, *found.chain].compact)
+
+          def descriptor_chain?(paths) = paths.any? { |path| path.start_with?(*DESCRIPTORS) }
 
           def opaque?(name) = name.empty? || name.match?(EXPANSION)
 

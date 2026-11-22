@@ -1747,7 +1747,8 @@ RSpec.describe Lain::CLI::ChatLaunch, "the session a door selects" do
 
       expect(chat.wiring.arms)
         .to eq(Lain::CLI::Arms.new(confine: :workspace, judge_facts: :facts, tripwire: :observe,
-                                   round_budget: :window, round_dedup: :on, judge_denials: :off))
+                                   round_budget: :window, round_dedup: :on, judge_denials: :off,
+                                   judge_opaque: :off))
       expect(resumed_notices(chat)).to be_empty
     end
 

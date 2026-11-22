@@ -73,11 +73,12 @@ module Lain
       # @param verdict [#call] `path -> Sensitivity::Verdict`, as the gate judges the path
       # @param barred [Boolean] whether the session barred the command from automatic approval
       # @param env [Hash{String=>String}] the environment the call runs with
+      # @param opaque [Boolean] whether a call whose paths cannot be named is weighed on the paths it did name
       # @return [Weighable, Unweighable]
-      def self.of(effect, bounds:, named:, facts:, masks:, verdict:, barred: false, env: {})
+      def self.of(effect, bounds:, named:, facts:, masks:, verdict:, barred: false, env: {}, opaque: false)
         return Unweighable.new(reason: :barred) if barred
 
-        Weighing.new(bounds:, masks:, verdict:, env:).call(effect, named, facts)
+        Weighing.new(bounds:, masks:, verdict:, env:, opaque:).call(effect, named, facts)
       end
 
       # Whether a git command prints only history the output mask was read
@@ -233,7 +234,8 @@ module Lain
       class Weighing
         WHOLE_TREE = "**"
 
-        def initialize(bounds:, masks:, verdict:, env:)
+        def initialize(bounds:, masks:, verdict:, env:, opaque:)
+          @opaque = opaque
           @env = env
           @bounds = bounds
           @files = bounds.file_facts
@@ -242,7 +244,7 @@ module Lain
         end
 
         def call(effect, named, facts)
-          return Unweighable.new(reason: :opaque) if named.opaque?
+          return Unweighable.new(reason: :opaque) if named.opaque? && !@opaque
           return Unweighable.new(reason: :below_top) if named.paths.any? { below_top?(_1) }
 
           walked(effect, named, facts)

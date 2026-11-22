@@ -2046,4 +2046,562 @@ RSpec.describe Lain::Approval::Judged do
       expect([scripted.prompts.size, asked_human.size]).to eq([2, 2])
     end
   end
+
+  describe "a call whose paths cannot be named, routed to the judge" do
+    around do |example|
+      Dir.mktmpdir("lain-judged-opaque") do |dir|
+        @base = File.realpath(dir)
+        FileUtils.mkdir_p(File.join(@base, "home", "project"))
+        example.run
+      end
+    end
+
+    let(:home) { File.join(@base, "home") }
+    let(:root) { File.join(home, "project") }
+    let(:stages) do
+      Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+        home:, cwd: root, root:,
+        resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                                        host_env: {}),
+        worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin" })
+      )
+    end
+    let(:opaque) do
+      Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new(home:), stages:,
+                                                  runs: Lain::Tools::Bash::ShellRuns.new(home:))
+    end
+    let(:sandboxed) { Lain::Approval::Judgement::Masking.new(Struct.new(:masks).new([])) }
+    let(:heard) { ->(_context) { Lain::Approval::Judge::Request.new(text: "read a.json", model_written: false) } }
+    let(:inline) { "python3 -I a.py $(ls)" }
+    let(:unlooked) { "the judge did not look: #{described_class::OPAQUE}" }
+
+    before do
+      skip "needs /usr/bin/python3" unless File.executable?("/usr/bin/python3")
+      File.write(File.join(root, "a.py"), "print(1)\n")
+    end
+
+    def routed(scripted, **) = rung(scripted, opaque:, masks: sandboxed, request: heard, **)
+
+    def opaque?(command) = Lain::Shell::Named.of(command, cwd: root, home:).opaque?
+
+    def reason(name) = Lain::Tools::Bash::ShellRuns.const_get(name).reason
+
+    # Scenario: with the arm on, an opaque call whose every stage resolves reaches the judge
+    it "asks the judge about a script whose program resolves to a system file, though judge facts are off" do
+      scripted = answering("approve")
+
+      ruling = ruled(routed(scripted), bash(inline))
+
+      prompt = scripted.prompts.sole.lines.map(&:chomp)
+      expect(opaque?(inline)).to be(true)
+      expect([ruling.verdict, ruling.authority, ruling.rung]).to eq([:allow, :automatic, "auto"])
+      expect(prompt).to include(match(%r{\Apython3 -> /usr/bin/python3[\d.]* \[system\]\z}),
+                                Lain::Approval::Judge::OPAQUE_LINE)
+      expect(prompt.grep(/the user's request/)).to be_empty
+    end
+
+    it "parks the heredoc form before any judge call, since its interpreter reads a script lain cannot place" do
+      scripted = answering("approve")
+      heredoc = "python3 - <<'EOF'\nimport json; print(json.load(open('a.json')))\nEOF"
+
+      ruling = settled(routed(scripted), bash(heredoc))
+
+      expect([ruling.verdict, ruling.rung, scripted.prompts]).to eq([:deny, "surfaces", []])
+      expect(escalations.sole).to include("rung" => "auto", "reason" => "bar", "bar" => ["python3: not resolved"])
+    end
+
+    # Scenario: the bar still defers before any model runs
+    it "parks without a judge call when a program word is not a literal, a builtin runs code, or a loop repeats" do
+      barred = {
+        'eval "$X"' => "eval: not resolved",
+        "$X a.json" => "$X: not resolved",
+        "for f in *.json; do cat $f; done" => "#{reason(:LOOP)}: not resolved",
+        "while read f; do cat \"$f\"; done < list" => "#{reason(:LOOP)}: not resolved",
+        "trap 'cat a.json' EXIT; cat $(ls)" => "trap: not resolved",
+        "enable -f ./x.so x; cat $(ls)" => "enable: not resolved",
+        "bind -x '\"\\C-a\": cat a.json'; cat $(ls)" => "bind: not resolved",
+        "complete -C ./x cat" => "complete: not resolved",
+        "fc -s cat; cat $(ls)" => "fc: not resolved",
+        "mapfile -C ./x -c 1 lines < list" => "mapfile: not resolved",
+        "declare -f x" => "#{reason(:ASSIGNED)}: not resolved",
+        "source x.sh" => "source: not resolved",
+        ". x.sh" => ".: not resolved",
+        "PATH=./bin python3 -c 1" => "#{reason(:ASSIGNED)}: not resolved",
+        "xargs cat < list" => "xargs: not resolved",
+        "read -r 'a[$(id)]' < list; cat $(ls)" => "read: not resolved",
+        "let 'a[$(id)]'; cat $(ls)" => "let: not resolved",
+        "printf -v 'a[$(id)]' x; cat $(ls)" => "printf: not resolved",
+        "test -v 'a[$(id)]'; cat $(ls)" => "test: not resolved",
+        "[ -v 'a[$(id)]' ]; cat $(ls)" => "#{reason(:SUBSCRIPTED)}: not resolved",
+        "[[ -v 'a[$(id)]' ]]; cat $(ls)" => "#{reason(:SUBSCRIPTED)}: not resolved",
+        "unset 'a[$(id)]'; cat $(ls)" => "#{reason(:SUBSCRIPTED)}: not resolved",
+        "readarray 'a[$(id)]' < list; cat $(ls)" => "readarray: not resolved",
+        "typeset 'a[$(id)]'=1; cat $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "cd sub && ./tool $(ls)" => "#{reason(:MOVED)}: not resolved",
+        "cd sub && python3 x.py $(ls)" => "#{reason(:MOVED)}: not resolved",
+        "cd sub; python3 ./x.py $(ls)" => "#{reason(:MOVED)}: not resolved",
+        "nice sh -c '$X'" => "$X: not resolved",
+        "env sh -c '$X'" => "$X: not resolved",
+        "timeout 5 bash -c 'eval \"$Y\"'" => "eval: not resolved",
+        "time bash -c '$X'" => "$X: not resolved",
+        "rbash -c '$X'" => "$X: not resolved",
+        "/proc/self/exe -c '$X' $(ls)" => "/proc/self/exe: not resolved",
+        "/proc/self/exe -c '$X'" => "/proc/self/exe: not resolved",
+        "sh -c \"echo \\$(id)\"" => "#{reason(:SPLICED)}: not resolved",
+        "sh -c 'echo \\x'" => "#{reason(:ESCAPED)}: not resolved",
+        "sh -c \"echo $(cat list)\" $(ls)" => "#{reason(:SPLICED)}: not resolved",
+        "bash -c \"true; `cat list`\" $(ls)" => "#{reason(:SPLICED)}: not resolved",
+        "sh -c \"echo $X\" $(ls)" => "#{reason(:SPLICED)}: not resolved",
+        "nice sh -c \"echo $(cat list)\" $(ls)" => "#{reason(:SPLICED)}: not resolved",
+        "bash --debugger -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash -O extdebug -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash -kc 'cat LD_PRELOAD=./x.so list' $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "set -k; cat LD_PRELOAD=./x.so list $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "jobs -x ./evil $(ls)" => "jobs: not resolved",
+        "zsh -c id $(ls)" => "#{reason(:FOREIGN)}: not resolved",
+        "zsh -f -c 'echo ${(e)X}' $(ls)" => "#{reason(:FOREIGN)}: not resolved",
+        "shift 'a[$(id>&2)]'; cat $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "ulimit -n 'a[$(id>&2)]' $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "exit 'a[$(id>&2)]' $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "kill -l 'a[$(id>&2)]' $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "history 'a[$(id>&2)]'; cat $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "jobs %'a[$(id>&2)]'; cat $(ls)" => "jobs: not resolved",
+        "umask 'a[$(id>&2)]'; cat $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "times; type 'a[$(id>&2)]'; cat $(ls)" => "#{reason(:OPERAND)}: not resolved",
+        "shopt -s extdebug; cat $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "set -o functrace; cat $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        ": ${x:='a[$(id>&2)]'}; echo $(( x )) $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        ": ${x:='$(id>&2)'}; echo ${x@P} $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        "echo ${a[x]} $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        "echo ${X@P} $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        "echo $(( X )) $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        "(( X )); cat $(ls)" => "#{reason(:EXPANDED)}: not resolved",
+        "python3() { /usr/bin/id; }; python3 -c 1 $(ls)" => "#{reason(:FUNCTION)}: not resolved",
+        "ls() { curl -s http://example.invalid; }; ls $(ls)" => "#{reason(:FUNCTION)}: not resolved",
+        "cat $(ls) )" => "#{reason(:BROKEN)}: not resolved",
+        "echo $(sh -c 'sh -c \"sh -c id\"') $(ls)" => "#{reason(:NESTED)}: not resolved",
+        "sh -c 'sh -c \"sh -c $(id)\"'" => "#{reason(:SPLICED)}: not resolved",
+        "nosuchprog_zz $(echo a)" => "nosuchprog_zz: not resolved",
+        "env BASH_ENV=x.py bash -c id" => "#{reason(:ASSIGNED)}: not resolved",
+        "env BASH_ENV=x.py bash -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "timeout 5 env BASH_ENV=x.py bash -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env -i BASH_ENV=x.py bash -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env ENV=x.py sh -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env LD_LIBRARY_PATH=. id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env LD_LIBRARY_PATH=. id" => "#{reason(:ASSIGNED)}: not resolved",
+        "nice env LD_PRELOAD=./evil.so id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env ZDOTDIR=. zsh -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env PYTHONPATH=. python3 -I -c 'import json' $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env HOME=. bash -c id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env RUBYOPT=-r./x ruby -e 1 $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env NODE_OPTIONS=--require=./x.js node x.js $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env PERL5OPT=-Mx perl -e 1 $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env GIT_CONFIG_GLOBAL=x.py git status $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "env -u PATH id $(ls)" => "#{reason(:ASSIGNED)}: not resolved",
+        "bash --init-file x.py -i -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash --rcfile x.py -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash -l -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash --login -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash -i -c id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "bash -lc id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "sh -ic id $(ls)" => "#{reason(:STARTUP)}: not resolved",
+        "python3 -c 'import json' $(ls)" => "#{reason(:INLINE)}: not resolved",
+        "python3 - < x.py $(ls)" => "python3: not resolved",
+        "python3 < x.py $(ls)" => "python3: not resolved",
+        "perl < x.py $(ls)" => "perl: not resolved",
+        "sh < x.py $(ls)" => "sh: not resolved"
+      }
+      scripted = answering("approve")
+
+      barred.each_key { |command| settled(routed(scripted), bash(command)) }
+
+      expect(barred.keys.reject { opaque?(_1) }).to be_empty
+      expect(scripted.prompts).to be_empty
+      expect(escalations.map { [_1["reason"], _1["bar"]] }).to match(barred.values.map { ["bar", include(_1)] })
+    end
+
+    # Every word resolves to the system file `files` names, so a row reads only the rule under test.
+    def stubbed(files)
+      Class.new do
+        define_method(:environment) { {} }
+        define_method(:executables) do |term, _cwd|
+          term.stages.map do |stage|
+            path = files.fetch(stage.argv.first) { "/usr/bin/#{stage.argv.first}" }
+            Lain::Shell::Executable.new(name: stage.argv.first, resolved: path, realpath: path, chain: [path],
+                                        shadowed: [], anomalies: [], klass: :system, fresh: false, run_files: [],
+                                        wrappers: [])
+          end
+        end
+      end.new
+    end
+
+    def judged_over(files, command)
+      scripted = answering("approve")
+      route = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new(home:),
+                                                          stages: stubbed(files),
+                                                          runs: Lain::Tools::Bash::ShellRuns.new(home:))
+      settled(rung(scripted, opaque: route, masks: sandboxed), bash(command))
+      scripted.prompts.size
+    end
+
+    it "reads the applet after busybox as the shell it runs" do
+      expect(judged_over({ "busybox" => "/usr/bin/busybox" }, "busybox sh -c '$X' $(ls)")).to eq(0)
+      expect(escalations.sole["bar"]).to eq(["$X: not resolved"])
+    end
+
+    it "reads a shell linked to busybox by its own name, keeping its first word" do
+      expect(judged_over({ "ash" => "/bin/busybox" }, "ash -c '$X' $(ls)")).to eq(0)
+      expect(escalations.sole["bar"]).to eq(["$X: not resolved"])
+    end
+
+    # Each rule reads a word as bash passes it, its quotes removed, and an option of a listed program only from
+    # that program's list.
+    # Each rule reads a word as bash passes it, its quotes removed, and an option of a listed program only from
+    # that program's list. The `cat $(ls)` before each makes the call opaque while every word of the stage under
+    # test stays readable.
+    it "parks a partly quoted option and an unlisted option of a listed program" do
+      parked = [
+        "cat $(ls); find . -'exec' ./evil ';'",
+        "cat $(ls); find . -exe'c' ./evil ';'",
+        "cat $(ls); git grep -O./evil hello",
+        "cat $(ls); git grep --open-files-in-pager=./evil hello",
+        "cat $(ls); git gr'ep' -O./evil hello",
+        "cat $(ls); git grep -'O'./evil hello",
+        "cat $(ls); git grep --open=./evil hello",
+        "cat $(ls); git diff --ext-diff",
+        "cat $(ls); sort -S 64K --compress-program=./evil list",
+        "cat $(ls); rg --pre ./evil hello",
+        "cat $(ls); rg --pre=./evil hello",
+        "cat $(ls); rg -z hello",
+        "cat $(ls); make --eval='$(shell ./evil)'",
+        "cat $(ls); make CC=./evil",
+        "cat $(ls); sed 's|x|./evil|e' list",
+        "cat $(ls); sed 's,x,./evil,e' list",
+        "cat $(ls); sed '\\%x%e ./evil' list",
+        "cat $(ls); sed '/x/Ie ./evil' list",
+        "cat $(ls); sed -nf x.sed list",
+        "cat $(ls); sed --fil=x.sed list",
+        "cat $(ls); sed -s -f x.sed list",
+        "cat $(ls); sed s/x/./evil/'e' list",
+        "cat $(ls); sed 's/x/./evil/'\"e\" list",
+        "cat $(ls); busybox sed 's|x|id|e' list",
+        "cat $(ls); python3 -'c' 'import x'",
+        "cat $(ls); python3 \"-c\" 'import x'",
+        "cat $(ls); ruby -'r'./evil -e 1",
+        "cat $(ls); perl -'I'. -'M'Evil -e 1",
+        "cat $(ls); perl -'d' -e 1",
+        "cat $(ls); jq -n 'incl''ude \"x\"; 1'",
+        "cat $(ls); jq -n 'imp''ort \"x\" as y; 1'",
+        "cat $(ls); jq -'f' x.py list",
+        "cat $(ls); node -'e' 'require(\"x\")'",
+        "cat $(ls); sed -n -e p -ne '1e ./evil' list",
+        "cat $(ls); sed -n -e p -se '1e ./evil' list",
+        "cat $(ls); sed -ne'1e ./evil' list",
+        "cat $(ls); git grep -iO./evil hello",
+        "cat $(ls); git grep -nO./evil hello",
+        "cat $(ls); git grep -3O./evil hello",
+        "cat $(ls); git grep -h3O./evil hello"
+      ]
+      asked = [
+        "cat $(ls); git status",
+        "cat $(ls); git log --format=%H",
+        "cat $(ls); sed 's/x/y/' list",
+        "cat $(ls); sed -n 's|x|y|p' list",
+        "cat $(ls); sed -E -e 's/a/b/g' list",
+        "cat $(ls); sort -n -k 2 list",
+        "cat $(ls); rg -n -i hello",
+        "cat $(ls); find . -name '*.rb' -type f",
+        "cat $(ls); make -j 4 test",
+        "cat $(ls); sed -i 's/x/y/' list",
+        "cat $(ls); sed -i.bak 's/x/y/' list",
+        "cat $(ls); sed --in-place=.bak 's/x/y/' list",
+        "cat $(ls); sed -ni -e 's/x/y/p' list",
+        "cat $(ls); cat list"
+      ]
+      files = { "busybox" => "/usr/bin/busybox" }
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      unknown = "#{reason(:UNKNOWN_WORD)}: not resolved"
+      expect(escalations.map { _1["bar"] }).to all(satisfy { |bar| !bar.include?(unknown) })
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "parks a listed program given a word whose value cannot be read where it may be an option" do
+      parked = ["sort $(echo --compress-program=./evil) list", "git status $(ls)", "sed 's/x/y/' list $(ls)",
+                "ruby x.rb -I $(ls)", "bash $(echo -c) id", "sort -t -- $(echo --compress-program=./evil) list",
+                "make -- $(cat v) all", "jq -- \"$(cat prog)\" list", "jq -n -- \"$(cat prog)\"",
+                "find -- . $(cat args.txt)", "sed -n -- \"$(cat s)\" list"]
+      asked = ["python3 -I x.py $(ls)", "node x.js $(ls)", "sh -c 'id' $(ls)", "mawk '{print}' list $(ls)",
+               "sed 's/x/y/' -- $(ls)", "git log -- $(ls)", "sort -n -- $(ls)", "sort -t , -- $(ls)",
+               "rg -e x -- $(ls)", "sed -e p -- $(cat s) list", "sed -i -- 's/x/y/' $(ls)"]
+      files = { "python3" => "/usr/bin/python3.14" }
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    # Inline interpreter code parks on this route, by ruling; a script by path is a run file and goes on.
+    it "parks every spelling of an interpreter's inline code, and asks about a script by path" do
+      files = { "python3" => "/usr/bin/python3.14" }
+      parked = ["cat $(ls); python3 -I -c'exec(open(\"x.py\").read())'",
+                "cat $(ls); python3 -I -c 'exec(open(\"x\" \".py\").read())'",
+                "cat $(ls); python3 -I -c 'exec(open(\"x\"+\".py\").read())'",
+                "cat $(ls); python3 -I -c 'import sys; sys.path[:0]=[\"\"]; import x'",
+                "cat $(ls); ruby -e'load \"./x.py\"'", "cat $(ls); ruby -e '$:.unshift Dir.pwd; require \"x\"'",
+                "cat $(ls); perl -e 'use lib q(.); require Evil;'", "cat $(ls); perl -e'do \"./x.py\"'",
+                "cat $(ls); perl -E 'say 1'", "cat $(ls); python3 -I -c 'exec(open(\"x.py\").read())'",
+                "python3 -Ic 1 $(ls)", "cat $(ls); ruby -ne 1 list", "cat $(ls); node -p 1"]
+      asked = ["python3 -I x.py $(ls)", "ruby x.rb $(ls)", "perl x.pl $(ls)", "node x.js $(ls)"]
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      expect(escalations.map { _1["bar"] }).to all(include("#{reason(:INLINE)}: not resolved"))
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "parks a make whose makefile includes another or reads one through a function, which is no run file" do
+      scripted = answering("approve")
+      ["include other.mk\n", "$(eval $(file <other.mk))\n", "X := $(file <other.mk)\n",
+       "X := $(shell cat other.mk)\n"].each do |line|
+        File.write(File.join(root, "Makefile"), "#{line}test:\n\ttrue\n")
+        settled(routed(scripted), bash("cat $(ls); make test"))
+      end
+      File.write(File.join(root, "Makefile"), "test:\n\ttrue\n")
+      ruled(routed(scripted), bash("cat $(ls); make test"))
+
+      expect(scripted.prompts.size).to eq(1)
+      expect(escalations.first(4).map { _1["bar"] }).to all(eq(["#{reason(:INCLUDED)}: not resolved"]))
+    end
+
+    it "reads a lent git config as a run file, parking only one written this session" do
+      config = File.join(home, "gitconfig")
+      File.write(config, "[core]\n")
+      scripted = answering("approve")
+      [false, true].each do |written|
+        fresh = Struct.new(:path, :written) { def fresh?(each) = written && each == path }.new(config, written)
+        lending = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home:, cwd: root, root:, resolver: Lain::Shell::Executable::Resolver.new(root:, fresh:, host_env: {}),
+          worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin", "GIT_CONFIG_GLOBAL" => config })
+        )
+        route = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new(home:),
+                                                            stages: lending,
+                                                            runs: Lain::Tools::Bash::ShellRuns.new(home:))
+        settled(rung(scripted, opaque: route, masks: sandboxed), bash("cat $(ls); git status"))
+      end
+
+      expect(scripted.prompts.size).to eq(1)
+      expect(escalations.last["bar"]).to include("git runs #{config}: written this session")
+    end
+
+    # Measured on this box: python's -c and node's -e and -p find a module in the cwd, and gawk's
+    # @include reads "." first; ruby and perl leave the cwd off their load paths.
+    it "parks an interpreter's inline code, and asks about a script by path" do
+      files = { "python3" => "/usr/bin/python3.13", "awk" => "/usr/bin/gawk", "mawk" => "/usr/bin/mawk" }
+      parked = ["python3 -c 1 $(ls)", "python3 -cI 1 $(ls)", "python3 -Sc 1 $(ls)", "node -e 1 $(ls)",
+                "node -p 1 $(ls)", "node --eval=1 $(ls)", "node -pe 1 $(ls)", "awk '{print}' $(ls)",
+                "awk -f x.awk $(ls)"]
+      asked = ["python3 -I x.py $(ls)", "python3 -P x.py $(ls)", "ruby x.rb $(ls)", "perl x.pl $(ls)",
+               "mawk '{print}' $(ls)"]
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      expect(escalations.map { _1["bar"] }).to all(eq(["#{reason(:INLINE)}: not resolved"]))
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "still asks the judge about a shell given only options known to run no file, and plain builtin operands" do
+      asked = ["bash -o xtrace -c id $(ls)", "bash --norc --noprofile -c id $(ls)", "bash +O extglob -c id $(ls)",
+               "bash -euc id $(ls)", "shift 2; cat $(ls)", "sh -c 'echo $(id)' $(ls)", "set -e; cat $(ls)",
+               "shopt -s extglob; cat $(ls)", "set -o pipefail; cat $(ls)"]
+      scripted = answering("approve")
+
+      asked.each { |command| ruled(routed(scripted), bash(command)) }
+
+      expect(scripted.prompts.size).to eq(asked.size)
+    end
+
+    it "parks a preload, a load flag, and every interpreter not listed as safe" do
+      files = { "python3" => "/usr/bin/python3.13", "lua" => "/usr/bin/lua5.4", "awk" => "/usr/bin/gawk",
+                "luajit" => "/usr/bin/luajit-2.1.1785763465" }
+      parked = ["lua -e 'require \"x\"' $(ls)", "luajit -e 1 $(ls)", "perl -I. -MEvil -e 1 $(ls)",
+                "perl -Mlib=. -e 1 $(ls)", "ruby -I. -revil -e 1 $(ls)", "ruby -r./evil -e 1 $(ls)",
+                "jq -n -L . 'include \"x\"; 1' $(ls)", "python3 -I -i -c 1 $(ls)",
+                "node -r ./evil x.js $(ls)", "node --require=./evil x.js $(ls)",
+                "node --import=./evil x.js $(ls)", "guile -c 1 $(ls)", "sqlite3 -cmd x :memory: $(ls)",
+                "php -r 1 $(ls)", "mawk -i x '{print}' $(ls)"]
+      asked = ["cat $(ls); jq -n 1", "node x.js $(ls)", "ruby x.rb $(ls)", "perl -w x.pl $(ls)"]
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      expect(escalations.map { _1["bar"] }).to all(eq(["#{reason(:INLINE)}: not resolved"]))
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "parks every program the route does not list, and asks about the listed ones" do
+      files = { "python3" => "/usr/bin/python3.14", "pypy3" => "/usr/bin/pypy3", "python3t" => "/usr/bin/python3.14t",
+                "awk" => "/usr/bin/mawk", "sh" => "/bin/busybox", "ash" => "/bin/busybox",
+                "busybox" => "/bin/busybox" }
+      parked = ["nvim --clean --headless -c q $(ls)", "emacs --batch $(ls)", "pypy3 -c 1 $(ls)",
+                "micropython -c 1 $(ls)", "python3t -I -c 1 $(ls)", "tar xf a.tar $(ls)", "less list $(ls)",
+                "unknowntool $(ls)", "sed -n '1e ./evil' list $(ls)", "sed -f x.sed list $(ls)",
+                "sed 's/a/b/e' list $(ls)", "git -c core.pager=id log $(ls)", "git push $(ls)",
+                "busybox httpd $(ls)", "node --run t $(ls)", "node --test $(ls)", "node --env-file=list x.js $(ls)",
+                "node --watch x.js $(ls)", "jq -n 'include \"x\"; 1' $(ls)", "jq -n 'import \"x\" as y; 1' $(ls)",
+                "jq -f x.jq list $(ls)", "perl -d -e 1 $(ls)", "perl -d:Trace -e 1 $(ls)", "ruby -C sub x.rb $(ls)"]
+      asked = ["cat list $(ls)", "grep -rn x . $(ls)", "cat $(ls); rg x", "cat $(ls); sed -n 1p list",
+               "awk '{print}' list $(ls)", "wc -l list $(ls)", "head list $(ls)", "cat $(ls); sort list",
+               "cat $(ls); find . -name x", "cat $(ls); git status", "cat $(ls); git log", "cat $(ls); make test",
+               "cat $(ls); jq . list", "python3 -I x.py $(ls)", "ruby x.rb $(ls)", "perl x.pl $(ls)",
+               "node x.js $(ls)", "sh -c 'id' $(ls)", "ash -c 'id' $(ls)", "busybox sh -c 'id' $(ls)",
+               "bash -c id $(ls)", "id $(ls)"]
+
+      expect(parked.map { judged_over(files, _1) }).to all(eq(0))
+      expect(escalations.map { _1["bar"] }).to all(satisfy { |bar| bar.size == 1 })
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "asks about an interpreter whose stdin is data, beside code it reads from its own words" do
+      files = { "python3" => "/usr/bin/python3.13", "mawk" => "/usr/bin/mawk" }
+      asked = ["cat $(ls) | jq .", "cat $(ls) | mawk '{print}'", "cat $(ls) | python3 -I x.py",
+               "python3 -I x.py < list $(ls)", "cat $(ls); ruby x.rb < list", "cat $(ls); jq . <<EOF\n{}\nEOF"]
+
+      expect(asked.map { judged_over(files, _1) }).to all(eq(1))
+    end
+
+    it "parks without a judge call when the session lends a variable that loads code before the command" do
+      scripted = answering("approve")
+      lent = %w[BASH_ENV ENV ZDOTDIR PYTHONPATH PYTHONHOME PYTHONSTARTUP NODE_PATH NODE_OPTIONS RUBYLIB RUBYOPT
+                PERL5LIB PERL5OPT PERLLIB LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GIT_CONFIG_SYSTEM]
+      lent.each do |name|
+        lending = Lain::CLI::Wiring::BoardBuild::Classifiers.new(
+          home:, cwd: root, root:,
+          resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh,
+                                                          host_env: {}),
+          worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin", name => "#{root}/hook.sh" })
+        )
+        hooked = Lain::Approval::Judge::Facts::Resolving.new(verdict: Lain::Shell::Verdict.new(home:), stages: lending,
+                                                             runs: Lain::Tools::Bash::ShellRuns.new(home:))
+        settled(rung(scripted, opaque: hooked, masks: sandboxed), bash(inline))
+      end
+
+      expect(scripted.prompts).to be_empty
+      expect(escalations.size).to eq(lent.size)
+      expect(escalations.map { _1["bar"] }).to all(include("#{reason(:SESSION_ENV)}: not resolved"))
+    end
+
+    # Scenario: no sandbox, no routing
+    it "parks as before where no workspace sandbox holds the call" do
+      scripted = answering("approve")
+
+      settled(rung(scripted, opaque:, request: heard), bash(inline))
+
+      expect(scripted.prompts).to be_empty
+      expect(escalations.sole).to include("reason" => described_class::UNJUDGEABLE, "note" => unlooked)
+    end
+
+    # Scenario: the arm ships off
+    it "parks as before when no route was built, sandbox or not" do
+      scripted = answering("approve")
+
+      settled(rung(scripted, masks: sandboxed), bash(inline))
+
+      expect(scripted.prompts).to be_empty
+      expect(escalations.sole).to include("rung" => "auto", "verdict" => "abstain",
+                                          "reason" => described_class::UNJUDGEABLE, "note" => unlooked)
+    end
+
+    it "never replays a human's allow of an opaque call, which can mean another call on each run" do
+      scripted = answering("defer")
+      remembering = routed(scripted, allows: Lain::Approval::RememberedAllow.new(queue:))
+      2.times do
+        ruled(remembering, bash(inline)) { |pending| pending.approve(surface: "human_spec", authority: :human) }
+      end
+
+      expect(scripted.prompts.size).to eq(2)
+    end
+
+    it "still parks a judge's allow whose sandbox cannot run the program" do
+      containment = Lain::Confine::Sandbox::Containment::Deferred.new(
+        unrunnable: ->(*, &) { "cannot run /usr/bin/python3" }
+      ) { Lain::Confine::Sandbox::Containment::ABLE }
+      planner = Class.new do
+        def planned_run(_input, _context, tool_use_id:)
+          [Lain::Confine::Request.new(ruling: Lain::Confine::Request::UNRULED, executables: [], cwd: "/",
+                                      root: nil, tool_use_id:), []]
+        end
+      end.new
+      tools = Struct.new(:tool) { def fetch(_name) = tool }.new(planner)
+      asking = Lain::Approval::Escalation::Surfaces.new(queue)
+      ladder = Lain::Approval::Escalation.new([routed(answering("approve"))], journal:, containment:, tools:, asking:)
+      held = format(Lain::Approval::Escalation::UNRUNNABLE, who: "the judge", why: "cannot run /usr/bin/python3")
+
+      pending = Sync do |task|
+        ruling = task.async { ladder.rule(bash(inline), context) }
+        task.with_timeout(1) { queue.dequeue }.tap { _1.deny(surface: "human_spec") }.tap { ruling.wait }
+      end
+
+      expect(pending.reasons.map(&:to_s)).to include(held)
+    end
+
+    describe "built by the board, as a chat builds it", :seam do
+      let(:chronicle) { instance_double(Lain::CLI::Chronicle, record_journal: journal) }
+
+      let(:process) { { "PATH" => "/usr/bin", "HOME" => home } }
+
+      def board(arms, scripted, env: process, child_env: Lain::Exec::ChildEnv.new(env: process))
+        project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+        Lain::CLI::Wiring::BoardBuild.for(
+          chronicle:, options: { approval: "auto" }, human: Lain::CLI::Human.new(kind: :none), model: "m",
+          toolset: Lain::Toolset.new([]), project:, paths: Lain::Paths.new(env: { "HOME" => home }),
+          judge: JudgedSpecSupport.judge(scripted, timeout: 5),
+          verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new),
+          arms:, masks: sandboxed,
+          resolver: Lain::Shell::Executable::Resolver.new(root:, fresh: Lain::Shell::Executable::Resolver::NeverFresh),
+          worker_env: Lain::WorkerEnv.new(cwd: root, env:), child_env:
+        )
+      end
+
+      def judged_by(arms, **)
+        scripted = answering("approve")
+        board(arms, scripted, **).policy_switch.call(bash(inline, "cwd" => root), nil)
+        scripted.prompts
+      end
+
+      # A chat's worker env is the whole process env; these four are scrubbed before any bash child sees them.
+      it "asks the judge when the process env holds loader variables the child never receives" do
+        loaded = process.merge("LD_LIBRARY_PATH" => "/opt/lib", "RUBYLIB" => "/opt/rb", "RUBYOPT" => "-W0",
+                               "NODE_OPTIONS" => "--no-warnings")
+
+        armed = Lain::CLI::Arms::DEFAULT.with(judge_opaque: :on)
+        prompts = judged_by(armed, env: loaded, child_env: Lain::Exec::ChildEnv.new(env: loaded))
+
+        expect(prompts.size).to eq(1)
+      end
+
+      it "asks the judge when lain lends the child a credential, which loads no code" do
+        source = Struct.new(:environment).new({ "GH_TOKEN" => "gho_example" })
+        lending = Lain::Exec::ChildEnv.new(env: process, lend: Lain::Exec::ChildEnv::Lend.new(source))
+
+        prompts = judged_by(Lain::CLI::Arms::DEFAULT.with(judge_opaque: :on), child_env: lending)
+
+        expect(prompts.size).to eq(1)
+      end
+
+      it "parks when a project passes the child a name outside the kept set" do
+        passed = process.merge("TOOL_PLUGIN_DIR" => "/opt/plugins")
+
+        armed = Lain::CLI::Arms::DEFAULT.with(judge_opaque: :on)
+        lending = Lain::Exec::ChildEnv.new(env: passed, pass: %w[TOOL_PLUGIN_DIR])
+        prompts = judged_by(armed, env: passed, child_env: lending)
+
+        expect(prompts).to be_empty
+        expect(escalations).to include(a_hash_including("reason" => "bar",
+                                                        "bar" => ["#{reason(:SESSION_ENV)}: not resolved"]))
+      end
+
+      it "asks the judge under the arm, and parks as before under the launch defaults" do
+        expect(judged_by(Lain::CLI::Arms::DEFAULT.with(judge_opaque: :on)).sole)
+          .to include(Lain::Approval::Judge::OPAQUE_LINE)
+        expect(judged_by(Lain::CLI::Arms::DEFAULT)).to be_empty
+        expect(escalations).to include(a_hash_including("reason" => described_class::UNJUDGEABLE, "note" => unlooked))
+      end
+    end
+  end
 end

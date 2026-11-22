@@ -54,6 +54,10 @@ module Lain
                             "being asked about that requester (breaker) " \
                             "(#{Lain::CLI::Arms::JUDGE_DENIALS.join(", ")}; " \
                             "default #{Lain::CLI::Arms::DEFAULT.judge_denials})".freeze
+        ARM_JUDGE_OPAQUE = "Bench arm: whether a command whose paths cannot be named goes to the auto judge, " \
+                           "under the workspace sandbox and only when every program it runs resolves " \
+                           "(#{Lain::CLI::Arms::JUDGE_OPAQUE.join(", ")}; " \
+                           "default #{Lain::CLI::Arms::DEFAULT.judge_opaque})".freeze
         ARM_TRIPWIRE = "Binary identity tripwire (#{Lain::CLI::Arms::TRIPWIRE.join(", ")}; " \
                        "default #{Lain::CLI::Arms::DEFAULT.tripwire}). " \
                        "stop fails closed on the seeded signals, honest calls included: a stopped agent's next calls " \
@@ -73,6 +77,7 @@ module Lain
           thor.method_option :confine, type: :string, banner: "ARM", desc: ARM_CONFINE
           thor.method_option :judge_facts, type: :string, banner: "ARM", desc: ARM_JUDGE_FACTS
           thor.method_option :judge_denials, type: :string, banner: "ARM", desc: ARM_JUDGE_DENIALS
+          thor.method_option :judge_opaque, type: :string, banner: "ARM", desc: ARM_JUDGE_OPAQUE
           thor.method_option :tripwire, type: :string, banner: "ARM", desc: ARM_TRIPWIRE
           thor.method_option :round_budget, type: :string, banner: "ARM", desc: ARM_ROUND_BUDGET
           thor.method_option :round_dedup, type: :string, banner: "ARM", desc: ARM_ROUND_DEDUP

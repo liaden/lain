@@ -667,6 +667,11 @@ module Lain
       # and process substitution the grammar finds, which is how quoting and heredoc bodies are read as bash reads
       # them, and each stage of a shell's `-c` script, to a depth of {DEPTH}. Leading assignments are dropped; a
       # builtin, and a program word that still expands, name nothing a resolver could find.
+      #
+      # {#executables} reads for a caller that must name every program a command runs, so what it cannot read is
+      # never dropped: each word that expands and each builtin in {RUNS_CODE} is unresolved, and so is each
+      # {Unread} reason the command shows. Where a list decides, it lists what is known to be safe, so a shape
+      # nobody listed parks.
       class ShellRuns
         DEPTH = 3
         SHELLS = %w[sh bash dash zsh].freeze
@@ -676,8 +681,517 @@ module Lain
         ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
         EXPANDS = /[$`*?\[{]/
         QUOTED = /\A(['"])(.*)\1\z/m
+        SINGLE_QUOTED = /\A'.*'\z/m
+        SPLICES = /[$`]/
         SUBSTITUTIONS = "(command_substitution) @substitution\n(process_substitution) @substitution"
         DELIMITERS = /\A(?:\$\(|[<>]\(|`)|(?:\)|`)\z/
+        # Each runs a string as code (`eval`, `trap`, `bind -x`, `complete -C`, `fc`, `mapfile -C`), loads a file
+        # as code (`source`, `.`, `enable -f`), or chooses what a later word runs (`exec`, `command`, `builtin`,
+        # `hash -p`, `alias`, `jobs -x`), so no file a resolver finds for the word stands for what runs. The rest
+        # assign to or test a variable they are named (`read`, `let`, `printf -v`, `test -v`, `[ -v`, `getopts`,
+        # `wait -p`), and bash evaluates an array subscript in that name, which can hold a command substitution the
+        # quoting hides.
+        RUNS_CODE = (%w[eval trap bind complete compgen fc mapfile readarray source . enable exec command builtin hash
+                        alias read let printf test getopts wait jobs] << "[").freeze
+        # Builtins that bash runs whatever PATH holds, beyond those the shell verdict lists.
+        BUILTINS_ON_PATH = %w[kill].freeze
+        # A builtin's operand may be evaluated as arithmetic (`shift`, `exit`, `ulimit`, `kill`), and an array
+        # subscript there runs a command substitution, so a builtin is dropped only when every operand is plain.
+        PLAIN_OPERAND = %r{\A[-+]?[A-Za-z0-9_.,:/=%@+]*\z}
+
+        # Why a command's words cannot name what it runs.
+        Unread = Data.define(:reason) do
+          # @return [Shell::Executable] a stage nothing is known about but this reason
+          def executable = Shell::Executable.unresolved(reason)
+        end
+
+        # A loop's body runs on words its head makes up at run time.
+        LOOP = Unread.new(reason: "a loop's body")
+        # A variable can choose which file a later word runs (`PATH`) or what a program loads (`LD_PRELOAD`).
+        ASSIGNED = Unread.new(reason: "a variable assignment or declaration")
+        BROKEN = Unread.new(reason: "a command the parser could not read")
+        NESTED = Unread.new(reason: "a script nested past the reading depth")
+        # `[[ -v ]]`, `[ -v ]` and `unset` evaluate an array subscript in the name they are given.
+        SUBSCRIPTED = Unread.new(reason: "a test or unset that may evaluate an array subscript")
+        # Both resolve against the call's cwd, never the directory a `cd` before them moved to.
+        MOVED = Unread.new(reason: "a relative word after a directory change")
+        # A function can take the name of any program, so the word no longer names the file that runs.
+        FUNCTION = Unread.new(reason: "a shell function")
+        # `${x:=...}` assigns, and an arithmetic, a subscript or `@P` evaluates what a value holds.
+        EXPANDED = Unread.new(reason: "a parameter or arithmetic expansion that can assign or evaluate")
+        # The shell that receives the script undoes a backslash this reading keeps.
+        ESCAPED = Unread.new(reason: "a script whose backslashes the shell would undo")
+        # The outer shell expands a `$` or a backtick in a script it does not single-quote, before the inner one runs.
+        SPLICED = Unread.new(reason: "a script the outer shell expands before the inner one reads it")
+        SESSION_ENV = Unread.new(reason: "a variable the session lends that loads code before the command")
+        # Only the options listed in {ShellOptions} are known to run no startup file, profile or hook.
+        STARTUP = Unread.new(reason: "a shell option that may run a startup file or hook")
+        # Only bash-family grammar is read, so a zsh, ksh, csh or fish script's expansions are not.
+        FOREIGN = Unread.new(reason: "a script in a shell whose grammar lain does not read")
+        # Only {Interpreters} lists what inline code or a preload cannot reach a file the words do not name.
+        INLINE = Unread.new(reason: "an interpreter's code or preload that may load a file the words do not name")
+        # Only {ROUTE_PROGRAMS}, each with its options read, is known to load no code beyond what its words and
+        # run files show.
+        UNLISTED = Unread.new(reason: "a program lain does not know to load only the code its words show")
+        # A listed program's options are read by value, so a word whose value is not known could be any of them.
+        UNKNOWN_WORD = Unread.new(reason: "a word whose value lain cannot read, given to a program with options")
+        # make reads an included makefile, which is no run file the resolver names. A heuristic, read line by line:
+        # it parks an `include` and any `$(eval`, `$(file` or `$(shell`, which can load another file with no include
+        # line, and a makefile it cannot read.
+        INCLUDED = Unread.new(reason: "a makefile that includes another")
+        # A builtin evaluates its operand as arithmetic, where a subscript runs a command.
+        OPERAND = Unread.new(reason: "a builtin operand that may be evaluated")
+        DIRECTORY = Unread.new(reason: "a directory change")
+        private_constant :DIRECTORY
+
+        DIRECTORY_CHANGERS = %w[cd pushd popd].freeze
+        SETTERS = %w[set shopt].freeze
+        # Each names a file or library a shell, an interpreter, the loader or git reads before the command's own
+        # words run, so with any of them in the child's env no word names everything that runs. None is in
+        # `Exec::ChildEnv::KEEP`; GIT_CONFIG_GLOBAL is, and its file is read as git's run file instead.
+        LOADER_ENV = %w[BASH_ENV ENV ZDOTDIR PYTHONPATH PYTHONHOME PYTHONSTARTUP NODE_PATH NODE_OPTIONS RUBYLIB RUBYOPT
+                        PERL5LIB PERL5OPT PERLLIB LD_LIBRARY_PATH LD_PRELOAD LD_AUDIT GIT_CONFIG_SYSTEM].freeze
+        # The shells whose scripts are bash grammar, which is all the parse reads.
+        BASH_GRAMMAR = %w[sh bash dash rbash ash busybox].freeze
+        SUBSCRIPTING = %w[test_command unset_command].freeze
+        SUBSTITUTED = %w[command_substitution process_substitution].freeze
+        DECLARATION = "declaration_command"
+        FUNCTION_KIND = "function_definition"
+        ARITHMETIC = "arithmetic_expansion"
+        SHAPES = "(for_statement) @loop\n(c_style_for_statement) @loop\n(while_statement) @loop\n" \
+                 "(expansion) @expansion\n(compound_statement) @compound"
+        PLAIN_EXPANSION = /\A\$\{[A-Za-z_][A-Za-z0-9_]*\}\z/
+        ARITHMETIC_COMMAND = "(("
+        ESCAPE = "\\"
+        ENV_CHANGE = /\A-|=/
+
+        # The options a shell stage may carry and still run no file the words do not name.
+        module ShellOptions
+          LETTERS = %w[c e u x v f n a C h B E H P T b m p r].freeze
+          LONG = %w[--norc --noprofile --posix --noediting --].freeze
+          SET = %w[errexit nounset pipefail xtrace noglob verbose noclobber].freeze
+          SHOPT = %w[extglob nullglob globstar dotglob nocaseglob failglob].freeze
+          CLUSTER = /\A[-+][A-Za-z]+\z/
+
+          # @param words [Array<String>] a shell stage, its program first
+          # @return [Boolean] whether any option before its operands is outside these lists
+          def self.unread?(words)
+            index = 1
+            while (option = words[index])&.match?(OPTION)
+              return true unless known?(option, words[index + 1])
+
+              index += option.match?(VALUED) ? 2 : 1
+            end
+            false
+          end
+
+          # `set -o NAME` and `shopt -s NAME` change the running shell as a flag at launch would.
+          #
+          # @param words [Array<String>] a `set` or `shopt` stage
+          # @return [Boolean] whether it names an option outside these lists
+          def self.unset?(words)
+            words.first == "shopt" ? (words.drop(1).reject { _1.start_with?("-") } - SHOPT).any? : unread?(words)
+          end
+
+          def self.known?(option, value)
+            return SET.include?(value) if option.match?(/\A[-+]o\z/)
+            return SHOPT.include?(value) if option.match?(/\A[-+]O\z/)
+
+            LONG.include?(option) || (option.match?(CLUSTER) && (option[1..].chars - LETTERS).empty?)
+          end
+          private_class_method :known?
+        end
+
+        # The interpreters whose code and preloads are read: what each allows, all else parks. Inline code parks
+        # in every spelling (python's `-c`, ruby's `-e`, perl's `-e` and `-E`, node's options), since code can load
+        # a file however it likes; a script given by path is a run file, held to the freshness check. Stdin as data
+        # passes; one reading its program from stdin names no script, which the resolver already leaves
+        # unresolved. ruby and perl leave the cwd off their load paths until a load flag (`-I`, `-r`, `-M`, `-m`,
+        # perl's `-d`) or ruby's `-C` puts it back; mawk reads no code but its program word unless `-f` names a
+        # file; jq searches only its own library paths until a program `include`s or `import`s a module or `-f`
+        # reads one from a file; gawk's `@include` and lua's `require` search ".".
+        module Interpreters
+          PYTHON = /\Apython[23]?\z/
+          RUBY_LOADS = /\A-[A-Za-z]*[IrMLimCe]/
+          PERL_LOADS = /\A-[A-Za-z]*[IrMLimdeE]/
+          MAWK_LOADS = /\A-[A-Za-z]*[IrMLimf]/
+          PYTHON_OPTION = /\A-[A-Za-z]/
+          PYTHON_VALUED = %w[-W -X].freeze
+          PYTHON_CODE = %w[c i].freeze
+          JQ_LOADS = /\A(?:-L|--library-path|-f\z|--from-file)|\b(?:include|import)\b/
+          OTHERS = %w[lua luajit gawk nawk original-awk php guile tclsh wish Rscript R julia deno bun sqlite
+                      osascript expect].freeze
+
+          # @param name [String] the file the stage runs, as {ShellRuns#program_name} names it
+          # @param argv [Array<String>] the stage, its program first
+          # @return [Boolean] whether its code may load a file no word names
+          def self.unread?(name, argv)
+            words = argv.drop(1)
+            return python?(words) if name.match?(PYTHON)
+            return words.any? { _1.match?(RUBY_LOADS) } if name == "ruby"
+            return words.any? { _1.match?(PERL_LOADS) } if name == "perl"
+            return words.any? { _1.match?(MAWK_LOADS) } if name == "mawk"
+            # Every node option is a way to load code (`--run`, `--test`, `--env-file`, `--watch`, `-r`, `-e`).
+            return words.first.to_s.start_with?("-") if %w[node nodejs].include?(name)
+            return words.any? { _1.match?(JQ_LOADS) } if name == "jq"
+
+            OTHERS.include?(name)
+          end
+
+          # `-c` is inline code, and `-i` reads more code from stdin once the script ends.
+          def self.python?(words) = options(words).flat_map { _1.delete_prefix("-").chars }.intersect?(PYTHON_CODE)
+
+          def self.options(words)
+            word = words.first
+            return [] unless word&.match?(PYTHON_OPTION)
+
+            [word, *options(words.drop(PYTHON_VALUED.include?(word) ? 2 : 1))]
+          end
+          private_class_method :python?, :options
+        end
+
+        # The programs the opaque route lets through, each known to load no code but what its words and run files
+        # show once its options are read: a program none of whose options runs another program passes with any,
+        # and one that has such options (sed, git, sort, rg, find, make, and the interpreters) passes only the
+        # options {Listed} names for it. Any other program parks, so a tool nobody listed is never the gap.
+        ROUTE_PROGRAMS = %w[cat ls grep egrep fgrep rg sed mawk wc head tail sort uniq cut tr tee echo true false pwd
+                            basename dirname realpath readlink stat date id whoami uname hostname sleep diff cmp comm
+                            paste join fold fmt nl od xxd md5sum sha1sum sha256sum sha512sum b2sum base64 du df seq
+                            tac rev expand nproc touch mkdir cp mv rm ln chmod find git make jq python ruby perl node
+                            nodejs sh bash dash rbash ash busybox].freeze
+        # The listed programs read by their options; every other listed one has no option that runs a program.
+        WITH_OPTIONS = %w[sed git sort rg find make jq mawk python ruby perl node nodejs sh bash dash rbash ash].freeze
+        MAKEFILES = %w[GNUmakefile makefile Makefile].freeze
+        INCLUDE = /^[ \t]*-?s?include[ \t]|\$[({](?:eval|file|shell)\b/
+
+        # The options of each listed program that has some that run a program, as an allowlist: a long option
+        # passes only spelled whole, since an abbreviation names whatever option it is a prefix of.
+        module Listed
+          Options = Data.define(:flags, :valued, :long, :long_valued)
+
+          SORT = Options.new(flags: "bcCdfghiMmnRrsuVz", valued: "kotST",
+                             long: %w[--ignore-leading-blanks --check --dictionary-order --ignore-case
+                                      --general-numeric-sort --human-numeric-sort --ignore-nonprinting --month-sort
+                                      --merge --numeric-sort --random-sort --reverse --stable --unique --version-sort
+                                      --zero-terminated --debug],
+                             long_valued: %w[--key --output --field-separator --buffer-size --temporary-directory
+                                             --parallel --sort])
+          RG = Options.new(flags: "nilcwvFSHhoUuLqsxNIa0p.", valued: "egtTABCmMrEjdf",
+                           long: %w[--line-number --ignore-case --smart-case --case-sensitive --files-with-matches
+                                    --files-without-match --count --count-matches --word-regexp --line-regexp
+                                    --invert-match --fixed-strings --hidden --no-ignore --no-ignore-vcs --follow --files
+                                    --json --no-heading --heading --with-filename --no-filename --only-matching
+                                    --multiline --vimgrep --column --no-line-number --null --pretty --quiet
+                                    --unrestricted --one-file-system --stats --no-messages --trim --text],
+                           long_valued: %w[--regexp --glob --iglob --type --type-not --after-context --before-context
+                                           --context --max-count --max-depth --replace --color --colors --sort --sortr
+                                           --encoding --threads --max-filesize --ignore-file --file])
+          MAKE = Options.new(flags: "kisnBqSwrR", valued: "jl",
+                             long: %w[--keep-going --silent --quiet --dry-run --just-print --always-make --question
+                                      --no-print-directory --print-directory],
+                             long_valued: %w[--jobs --load-average])
+          SED = Options.new(flags: "nErsuz", valued: "el",
+                            long: %w[--quiet --silent --regexp-extended --separate --unbuffered --null-data --posix
+                                     --sandbox --debug],
+                            long_valued: %w[--expression --line-length])
+          # git takes any unambiguous prefix of a long option, so a prefix of one of these counts as it.
+          SED_SCRIPT = %w[-e --expression].freeze
+          FIND_OPERATORS = %w[! ( ) ,].freeze
+          SHELLS = %w[sh bash dash rbash ash].freeze
+          # `-O` opens the matches in a pager it names, in any short cluster (`-iO./evil`).
+          PAGER_CLUSTER = /\A-[^-]*O/
+          GIT_RUNS = %w[--open-files-in-pager --ext-diff --textconv --exec --upload-pack --receive-pack].freeze
+          FIND_TESTS = %w[-name -iname -path -ipath -wholename -iwholename -type -xtype -maxdepth -mindepth -mtime
+                          -mmin -atime -amin -ctime -cmin -newer -size -perm -user -group -uid -gid -regex -iregex
+                          -regextype -links -inum -samefile -printf -print -print0 -prune -empty -readable -writable
+                          -executable -true -false -quit -ls -not -o -a -or -and -L -P -H -xdev -mount -follow
+                          -depth -noleaf -daystart ! ( ) ,].freeze
+          FIND_VALUED = %w[-name -iname -path -ipath -wholename -iwholename -type -xtype -maxdepth -mindepth -mtime
+                           -mmin -atime -amin -ctime -cmin -newer -size -perm -user -group -uid -gid -regex -iregex
+                           -regextype -links -inum -samefile -printf].freeze
+
+          # @param name [String] the program, as the route names it
+          # @param words [Array<String>] its words after the program, each as bash passes it
+          # @return [Boolean] whether every option it is given is on its list
+          def self.pass?(name, words)
+            case name
+            when "sort" then only?(words, SORT)
+            when "rg" then only?(words, RG)
+            when "make" then only?(words, MAKE) && words.none? { !_1.start_with?("-") && _1.include?("=") }
+            when "sed" then (scripts = sed_scripts(words)) && SedScript.plain?(scripts)
+            when "git" then git?(words)
+            when "find" then find?(words)
+            else true
+            end
+          end
+
+          # Every option a word spells must be listed; a valued one takes the rest of its word or the next.
+          def self.only?(words, allowed) = walked(words, allowed) != false
+
+          # Stepped as the tool reads them, so a `--` counts only where an option could stand.
+          #
+          # @return [Integer, nil, false] where a `--` ends the options; nil when none does; false at an unlisted one
+          def self.walked(words, allowed)
+            index = 0
+            while (word = words[index])
+              return index if word == "--"
+
+              taken = option_takes(word, allowed)
+              return false if taken.nil?
+
+              index += taken
+            end
+            nil
+          end
+
+          # @return [Integer, nil] how many words the option spends; nil when it is not listed
+          def self.option_takes(word, allowed)
+            return 1 unless word.start_with?("-") && word.size > 1
+            return long_takes(word, allowed) if word.start_with?("--")
+
+            letters = word[1..]
+            letters.each_char.with_index do |letter, at|
+              return (at == letters.size - 1 ? 2 : 1) if allowed.valued.include?(letter)
+              return nil unless allowed.flags.include?(letter)
+            end
+            1
+          end
+
+          def self.long_takes(word, allowed)
+            name, value = word.split("=", 2)
+            return 1 if allowed.long.include?(name) && value.nil?
+            return (value.nil? ? 2 : 1) if allowed.long_valued.include?(name)
+
+            nil
+          end
+
+          # sed's options read as getopt does: a cluster's `e` takes the rest of the cluster or the next word as a
+          # script, `l` a value, `i` the rest as a backup suffix, and an `f` anywhere parks.
+          #
+          # @return [Array<String>, nil] each script, or nil when an option is not on sed's list
+          def self.sed_scripts(words) = sed_read(words)&.first
+
+          # Past a `--` the first operand is still the script when no `-e` gave one, so that word must be read too.
+          #
+          # @return [Integer, nil] the last index that may be an option or the script; nil when no `--` ends them
+          def self.sed_end(words)
+            scripts, _, at = sed_read(words)
+            at && (scripts.empty? ? at + 1 : at)
+          end
+
+          # @return [Array(Array<String>, Array<String>, Integer), nil] the scripts, the operands, and where a `--`
+          #   ended the options; nil when an option is not on sed's list
+          def self.sed_read(words)
+            scripts = []
+            operands = []
+            index = 0
+            while (word = words[index])
+              taken = sed_word(word, words[index + 1], scripts, operands)
+              return nil if taken.nil?
+              return [finished(scripts, operands + words.drop(index + 1)), operands, index] if taken.zero?
+
+              index += taken
+            end
+            [finished(scripts, operands), operands, nil]
+          end
+
+          # @return [Integer, nil] words spent; 0 at `--`; nil for an unlisted option
+          def self.sed_word(word, following, scripts, operands)
+            return 0 if word == "--"
+            return operands.push(word) && 1 unless word.start_with?("-") && word.size > 1
+            return sed_long(word, following, scripts) if word.start_with?("--")
+
+            sed_cluster(word[1..], following, scripts)
+          end
+
+          def self.sed_long(word, following, scripts)
+            name, value = word.split("=", 2)
+            return 1 if SED.long.include?(name) && value.nil?
+            return 1 if name == "--in-place"
+            return nil unless SED.long_valued.include?(name)
+
+            scripts << (value || following) if name == "--expression"
+            value.nil? ? 2 : 1
+          end
+
+          def self.sed_cluster(letters, following, scripts)
+            at = letters.each_char.find_index { !SED.flags.include?(_1) }
+            return 1 if at.nil? || letters[at] == "i"
+            return nil unless SED.valued.include?(letters[at])
+
+            rest = letters[(at + 1)..]
+            scripts << (rest.empty? ? following : rest) if letters[at] == "e"
+            rest.empty? ? 2 : 1
+          end
+
+          def self.finished(scripts, operands) = scripts.empty? ? operands.first(1) : scripts
+
+          def self.git?(words)
+            Shell::GitReads.facet?(words.first, :read_only) &&
+              words.drop(1).none? { |word| word.match?(PAGER_CLUSTER) || runs_by_prefix?(word) }
+          end
+
+          def self.runs_by_prefix?(word)
+            name = word.split("=", 2).first
+            name.start_with?("--") && name.size > 2 && GIT_RUNS.any? { _1.start_with?(name) }
+          end
+
+          def self.find?(words)
+            index = 0
+            while (word = words[index])
+              listed = !word.start_with?("-") && !FIND_OPERATORS.include?(word)
+              return false unless listed || FIND_TESTS.include?(word)
+
+              index += FIND_VALUED.include?(word) ? 2 : 1
+            end
+            true
+          end
+
+          # Where a program stops reading options: GNU tools read them anywhere; an interpreter or a shell stops at
+          # its code or script, after which every word is an argument to that code.
+          #
+          # @param name [String]
+          # @param stage [Array<String>] the program and its words
+          # @return [Integer] the index of the last word that may be an option
+          def self.options_end(name, stage)
+            case name
+            when Interpreters::PYTHON then code_or_operand(stage, /\A-[A-Za-z]*c\z/)
+            when "ruby", "perl" then code_or_operand(stage, nil, /\A-[A-Za-z]*[eE]\z/)
+            when "node", "nodejs", "mawk" then operand(stage)
+            when *SHELLS then stage.index { _1.match?(SCRIPT_FLAG) }&.+(1) || operand(stage)
+            when "sort" then past(walked(stage.drop(1), SORT), stage)
+            when "rg" then past(walked(stage.drop(1), RG), stage)
+            when "sed" then past(sed_end(stage.drop(1)), stage)
+            when "git" then ended_at(stage) || stage.size
+            else stage.size
+            end
+          end
+
+          # An index into the words after the program, as an index into the stage; none means every word may be one.
+          def self.past(at, stage) = at ? at + 1 : stage.size
+
+          # git's read options are too many to step through, so a `--` ends them only after a word that is no bare
+          # option: a value-taking option before it would take the `--` as its value.
+          def self.ended_at(stage)
+            stage.each_index.find do |at|
+              at.positive? && stage[at] == "--" && (!stage[at - 1].start_with?("-") || stage[at - 1].include?("="))
+            end
+          end
+
+          def self.code_or_operand(stage, code, valued = nil)
+            index = 1
+            while (word = stage[index])
+              return index + 1 if code && word.match?(code)
+              return index unless word.start_with?("-")
+
+              index += valued && word.match?(valued) ? 2 : 1
+            end
+            index
+          end
+
+          def self.operand(stage) = stage.each_index.find { _1.positive? && !stage[_1].start_with?("-") } || stage.size
+          private_class_method :only?, :option_takes, :long_takes, :sed_scripts, :sed_word, :sed_long, :sed_cluster,
+                               :finished, :git?, :runs_by_prefix?, :find?,
+                               :code_or_operand, :operand, :ended_at, :walked, :sed_read, :sed_end, :past
+        end
+
+        # A sed script read command by command, each `s` and `y` by its own delimiter: it passes only when no
+        # command runs the pattern space (`e`, or `s`'s `e` flag) and every command is one this reads.
+        module SedScript
+          PLAIN = "=dDgGhHlnNpPxzF"
+          TO_EOL = "aicrRwW"
+          LABELS = "btT:"
+          NUMBERED = "qQlL"
+          FLAGS = /\A[gIiMmp0-9]*w?/
+
+          # @param scripts [Array<String>]
+          # @return [Boolean]
+          def self.plain?(scripts)
+            !scripts.empty? && scripts.all? { readable?(_1) }
+          end
+
+          def self.readable?(script)
+            scanner = StringScanner.new(script)
+            until scanner.eos?
+              scanner.skip(/[\s;}]*/)
+              break if scanner.eos?
+              return false unless command?(scanner)
+            end
+            true
+          end
+
+          def self.command?(scanner)
+            return scanner.skip_until(/\n|\z/) if scanner.scan("#")
+            return false unless address(scanner) && address_rest(scanner)
+
+            scanner.skip(/\s*!?\s*/)
+            letter = scanner.getch
+            return false if letter.nil?
+            return true if letter == "{"
+
+            body(letter, scanner)
+          end
+
+          def self.address(scanner)
+            return true if scanner.skip(/\d+|\$/)
+            return delimited?(scanner, "/") && scanner.skip(/[IM]*/) if scanner.scan(%r{/})
+            return true unless scanner.scan("\\")
+
+            delimiter = scanner.getch
+            delimiter && delimited?(scanner, delimiter) && scanner.skip(/[IM]*/)
+          end
+
+          def self.address_rest(scanner)
+            return true unless scanner.skip(/\s*(?:,|~)\s*/)
+
+            scanner.skip(/[+~]?\d+/) || address(scanner)
+          end
+
+          def self.body(letter, scanner)
+            case letter
+            when "s" then substitute(scanner)
+            when "y" then (delimiter = scanner.getch) && Array.new(2) { delimited?(scanner, delimiter) }.all?
+            when *TO_EOL.chars then scanner.skip_until(/\n|\z/)
+            when *LABELS.chars then scanner.skip(/[^;\n]*/)
+            when *NUMBERED.chars then scanner.skip(/\s*\d*/)
+            else PLAIN.include?(letter)
+            end
+          end
+
+          def self.substitute(scanner)
+            delimiter = scanner.getch
+            return false if delimiter.nil? || delimiter.match?(/[\s\\]/)
+            return false unless Array.new(2) { delimited?(scanner, delimiter) }.all?
+
+            flags = scanner.scan(FLAGS).to_s
+            scanner.skip_until(/\n|\z/) if flags.end_with?("w")
+            scanner.check(/\s*(?:[;}\n]|\z)/) || flags.end_with?("w")
+          end
+
+          # Up to the next unescaped delimiter, which it consumes.
+          def self.delimited?(scanner, delimiter)
+            until scanner.eos?
+              character = scanner.getch
+              return true if character == delimiter
+
+              scanner.getch if character == "\\"
+            end
+            false
+          end
+          private_class_method :readable?, :command?, :address, :address_rest, :body, :substitute, :delimited?
+        end
+
+        VERSION = /[-\d.]+\z/
+        BUSYBOX = "busybox"
+
+        # What one reading keeps and how it tells a shell from a stage: by name, or by the file the stage runs, which
+        # is resolved whole because a shell given no `-c` reads its program from somewhere the words do not name.
+        Reading = Data.define(:reports_unread, :shell)
+        # One stage a reporting reading found, and where its words have no value lain can read.
+        Run = Data.define(:argv, :unknown)
+        NAMED = ->(argv) { SHELLS.include?(argv.first.rpartition("/").last) && argv.first }
+        VERBATIM = Reading.new(reports_unread: false, shell: NAMED)
+        private_constant :Reading, :Run, :NAMED, :VERBATIM
 
         # @param home [String, nil] what a leading `~/` names, as the shell's HOME
         # @param parse [Shell::Parse]
@@ -689,43 +1203,239 @@ module Lain
         # @param source [String] the command as bash reads it
         # @param depth [Integer] how many nested scripts deep to read
         # @return [Array<Array<String>>]
-        def argvs(source, depth = DEPTH)
-          stages = @parse.call(source).stages.flat_map { stage(_1.argv, depth) }
-          depth.zero? ? stages : [*stages, *substituted(source, depth - 1)]
+        def argvs(source, depth = DEPTH) = read(source, depth, VERBATIM)
+
+        # A `-c` script is found under the wrappers the resolver peels, and a shell is told by the file its name
+        # resolves to, so neither `nice sh -c` nor `rbash -c` hides one.
+        #
+        # @param source [String] the command as bash reads it
+        # @param env [#call] `-> Hash{String=>String, nil}`, what the call's commands are lent
+        # @yieldparam argv [Array<String>] one stage whose program is a literal word
+        # @yieldreturn [Shell::Executable] that stage, resolved where the call runs
+        # @return [Array<Shell::Executable>] one per program and per {Unread} reason; none when the words show none
+        def executables(source, env:)
+          shell = ->(argv) { shell_file(yield(argv)) }
+          entries = settled(read(source, DEPTH, Reading.new(reports_unread: true, shell:)))
+          entries = [SESSION_ENV, *entries] if lends_code?(env.call)
+          entries.map { |entry| entry.is_a?(Unread) ? entry.executable : resolved_stage(entry) { yield _1 } }
         end
 
         private
 
+        def read(source, depth, reading)
+          parse = @parse.call(source)
+          stages = parse.stages.flat_map { stage(_1.argv, depth, reading) }
+          [*unread_in(parse, depth, reading), *stages, *(depth.zero? ? [] : substituted(source, depth - 1, reading))]
+        end
+
+        # A name past the kept set reached the child on purpose, through a project's pass list, and nothing says
+        # what reads it; a kept one that loads code is barred by name. The kept toolchain names (GEM_*, MISE_*,
+        # CARGO_HOME, RUSTUP_HOME, XDG_*, HOME) pass: they are the user's own environment, fixed at launch, and
+        # the model cannot set them in a call. Lain's own lend is left out before this reads the env.
+        def lends_code?(received)
+          received.any? { |name, value| !Exec::ChildEnv::KEEP.match?(name) || loader?(name, value) }
+        end
+
+        def loader?(name, value) = LOADER_ENV.include?(name) && !value.to_s.empty?
+
+        def resolved_stage(run)
+          argv = run.argv
+          program = argv.first
+          return Shell::Executable.unresolved(program) if RUNS_CODE.include?(program) || program.match?(EXPANDS)
+
+          found = yield(argv)
+          return found if found.klass == :unresolved
+
+          name = program_name(found, argv)
+          return INLINE.executable if Interpreters.unread?(name, argv)
+
+          reason = unlisted(name, argv, run.unknown, found)
+          reason ? reason.executable : found
+        end
+
+        def unlisted(name, argv, unknown, found)
+          return UNLISTED unless ROUTE_PROGRAMS.include?(name)
+
+          offset = argv.first.rpartition("/").last == BUSYBOX ? 1 : 0
+          stage = argv.drop(offset)
+          last = Listed.options_end(name, stage) + offset
+          return UNKNOWN_WORD if WITH_OPTIONS.include?(name) && unknown.any? { _1 <= last }
+          return UNLISTED unless Listed.pass?(name, stage.drop(1))
+
+          INCLUDED if name == "make" && includes?(found)
+        end
+
+        def includes?(found)
+          found.run_files.select { MAKEFILES.include?(File.basename(_1.path)) }
+               .any? { File.foreach(_1.path).any? { |line| line.match?(INCLUDE) } }
+        rescue SystemCallError, IOError
+          true
+        end
+
+        # The file's name without a version, and a busybox applet by the name it is run as.
+        def program_name(found, argv)
+          name = File.basename(found.realpath || found.resolved).sub(VERSION, "")
+          return name unless name == BUSYBOX
+
+          applet = argv.first.rpartition("/").last == BUSYBOX ? argv[1] : argv.first
+          applet.to_s.rpartition("/").last
+        end
+
+        def shell_file(executable)
+          path = executable.realpath || executable.resolved
+          path && Shell::Programs::SHELLS.include?(File.basename(path)) ? File.basename(path) : nil
+        end
+
+        def settled(entries)
+          moved, rest = entries.partition { _1 == DIRECTORY }
+          moved.any? && rest.any? { relative_words?(_1) } ? [MOVED, *rest] : rest
+        end
+
+        # A bare program name is searched on PATH, so only a word with a slash, or an operand, is relative.
+        def relative_words?(entry)
+          entry.is_a?(Run) && entry.argv.each_with_index.any? do |word, index|
+            !word.start_with?(File::SEPARATOR, "-") && (index.positive? || word.include?(File::SEPARATOR))
+          end
+        end
+
+        def unread_in(parse, depth, reading)
+          return [] unless reading.reports_unread
+          return [BROKEN] if parse.broken?
+
+          [*by_kind(parse, depth), *by_shape(parse)].uniq
+        end
+
+        def by_kind(parse, depth)
+          kinds = parse.kinds
+          [(ASSIGNED if !parse.assignments.empty? || kinds.include?(DECLARATION)),
+           (SUBSCRIPTED if kinds.intersect?(SUBSCRIPTING)), (FUNCTION if kinds.include?(FUNCTION_KIND)),
+           (EXPANDED if kinds.include?(ARITHMETIC)), (NESTED if depth.zero? && kinds.intersect?(SUBSTITUTED))].compact
+        end
+
+        def by_shape(parse)
+          shapes = Ext::TreeSitter.query(parse.source, Shell::Parse::LANGUAGE, SHAPES)
+          [(LOOP if shapes.any? { _1.fetch("name") == "loop" }), (EXPANDED if shapes.any? { evaluates?(_1) })].compact
+        end
+
+        def evaluates?(capture)
+          text = capture.fetch("text")
+          case capture.fetch("name")
+          when "expansion" then !text.match?(PLAIN_EXPANSION)
+          when "compound" then text.start_with?(ARITHMETIC_COMMAND)
+          else false
+          end
+        end
+
         # Every substitution, nested ones too, so each is read for its own stages only.
-        def substituted(source, depth)
+        def substituted(source, depth, reading)
           return [] if source.bytesize > Shell::Parse::MAX_BYTES
 
           Ext::TreeSitter.query(source, Shell::Parse::LANGUAGE, SUBSTITUTIONS)
                          .flat_map { @parse.call(_1.fetch("text").gsub(DELIMITERS, "")).stages }
-                         .flat_map { stage(_1.argv, depth) }
+                         .flat_map { stage(_1.argv, depth, reading) }
         end
 
-        def stage(argv, depth)
-          words = argv.drop_while { _1.match?(ASSIGNMENT) }.map { unquoted(_1) }
-          script = script_of(words) unless depth.zero?
-          [*own(words), *(script ? argvs(script, depth - 1) : [])]
+        def stage(argv, depth, reading)
+          raws = argv.drop_while { _1.match?(ASSIGNMENT) }
+          return [*own(raws.map { unquoted(_1) }, reading), *verbatim(raws.map { unquoted(_1) }, depth)] \
+            unless reading.reports_unread
+
+          values = raws.map { Shell::Named::Word.read(_1)&.text }
+          words = values.zip(raws).map { |value, raw| value || raw }
+          [*reported_own(words, unknown: unknown_at(values)), *reported(raws, words, depth, reading)]
         end
 
-        def own(words)
+        # Where bash's quote removal leaves a word lain cannot compute, past the program word.
+        def unknown_at(values) = values.each_index.select { |at| at.positive? && values[at].nil? }
+
+        def verbatim(words, depth)
+          script = script_of(words) if !depth.zero? && NAMED.call(words)
+          script ? read(script, depth - 1, VERBATIM) : []
+        end
+
+        # Under the wrappers the resolver peels: an `env` that changes a variable, a shell option outside the
+        # known ones, a shell whose grammar is not bash's, and the `-c` script a shell is given.
+        def reported(raws, words, depth, reading)
+          layers = layers(words)
+          inner = layers.last
+          shell = reading.shell.call(inner)
+          inner = inner.drop(1) if inner.first.rpartition("/").last == BUSYBOX
+          [*(ASSIGNED if layers.any? { env_change?(_1) }), *(shell ? shell_reasons(raws, inner, shell) : []),
+           *script_runs(raws, inner, shell, depth, reading)]
+        end
+
+        def shell_reasons(raws, inner, shell)
+          [(STARTUP if ShellOptions.unread?(inner)), (FOREIGN unless BASH_GRAMMAR.include?(shell)),
+           (SPLICED if spliced?(raws, inner))].compact
+        end
+
+        def script_runs(raws, inner, shell, depth, reading)
+          script = shell && BASH_GRAMMAR.include?(shell) && !spliced?(raws, inner) && script_of(inner)
+          script ? nested(script, depth, reading) : []
+        end
+
+        # The script word as written: a `$` or a backtick outside single quotes is the outer shell's to expand.
+        def spliced?(raws, inner)
+          at = script_index(inner)
+          raw = at && raws[raws.size - inner.size + at]
+          !raw.nil? && !raw.match?(SINGLE_QUOTED) && raw.match?(SPLICES)
+        end
+
+        def layers(words)
+          peel = Shell::Executable::Resolver::Peel.of(words, {})
+          peel&.outcome == :run ? [words, *layers(peel.command)] : [words]
+        end
+
+        def env_change?(words) = words.first.rpartition("/").last == "env" && words[1].to_s.match?(ENV_CHANGE)
+
+        def nested(script, depth, reading)
+          return [ESCAPED] if script.include?(ESCAPE)
+          return read(script, depth - 1, reading) unless depth.zero?
+
+          [NESTED]
+        end
+
+        def own(words, reading)
           program = words.first
-          return [] if program.nil? || program.match?(EXPANDS) || Shell::Verdict.builtin?(program)
+          return [] if program.nil? || dropped?(program, reading)
 
           [[homed(program), *words.drop(1)]]
+        end
+
+        def reported_own(words, unknown:)
+          program = words.first
+          return [] if program.nil?
+          return [DIRECTORY] if DIRECTORY_CHANGERS.include?(program)
+          return builtin(words) if builtin?(program) && !RUNS_CODE.include?(program)
+
+          [Run.new(argv: [homed(program), *words.drop(1)], unknown:)]
+        end
+
+        def builtin?(program) = Shell::Verdict.builtin?(program) || BUILTINS_ON_PATH.include?(program)
+
+        def builtin(words)
+          return [OPERAND] unless words.drop(1).all? { _1.match?(PLAIN_OPERAND) }
+
+          SETTERS.include?(words.first) && ShellOptions.unset?(words) ? [STARTUP] : []
+        end
+
+        def dropped?(program, reading)
+          return !reading.reports_unread if program.match?(EXPANDS)
+
+          Shell::Verdict.builtin?(program) && !(reading.reports_unread && RUNS_CODE.include?(program))
         end
 
         # The word after the first option that clusters a `c`, as in `bash -e -c`, `bash -lc` and `sh -ec`, reading
         # past an option such as `-o pipefail` or `+O extglob` that takes the next word as its value.
         def script_of(words)
-          return unless SHELLS.include?(words.first.to_s.rpartition("/").last)
+          at = script_index(words)
+          at && words[at]
+        end
 
+        def script_index(words)
           index = 1
           while (option = words[index])&.match?(OPTION)
-            return words[index + 1] if option.match?(SCRIPT_FLAG)
+            return index + 1 if option.match?(SCRIPT_FLAG) && index + 1 < words.size
 
             index += option.match?(VALUED) ? 2 : 1
           end
@@ -735,7 +1445,6 @@ module Lain
 
         def unquoted(word) = word.match(QUOTED)&.[](2) || word
       end
-      private_constant :ShellRuns
 
       # A program reached by its path or under a PATH the command set shadows
       # nothing on the search that found it, so each user program is also

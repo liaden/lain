@@ -60,12 +60,12 @@ RSpec.describe Lain::CLI::Arms do
 
     it "takes an unset arm from the arms it is laid over, and a typed one wins" do
       recorded = described_class.new(confine: :classes, judge_facts: :facts, tripwire: :off, round_budget: :static,
-                                     round_dedup: :on, judge_denials: :breaker)
+                                     round_dedup: :on, judge_denials: :breaker, judge_opaque: :off)
 
       expect(described_class.from({}, recorded)).to eq(recorded)
       expect(described_class.from({ confine: "off" }, recorded))
         .to eq(described_class.new(confine: :off, judge_facts: :facts, tripwire: :off, round_budget: :static,
-                                   round_dedup: :on, judge_denials: :breaker))
+                                   round_dedup: :on, judge_denials: :breaker, judge_opaque: :off))
     end
   end
 
@@ -117,13 +117,44 @@ RSpec.describe Lain::CLI::Arms do
     end
   end
 
+  describe "the judge_opaque arm" do
+    # Scenario: the arm ships off
+    it "is off by default and on only when typed, and refuses a value outside its set" do
+      expect(described_class::JUDGE_OPAQUE).to eq(%i[off on])
+      expect([described_class::DEFAULT.judge_opaque, described_class.from({}).judge_opaque]).to eq(%i[off off])
+      expect(described_class.from({ judge_opaque: "on" }).judge_opaque).to eq(:on)
+      expect { described_class.from({ judge_opaque: "always" }) }
+        .to raise_error(described_class::Unknown, /--judge-opaque.*off, on/)
+    end
+
+    it "routes opaque calls only when on, under the workspace sandbox" do
+      expect(described_class::DEFAULT.judge_opaque?).to be(false)
+      expect(described_class::DEFAULT.with(judge_opaque: :on).judge_opaque?).to be(true)
+      expect(described_class::DEFAULT.with(judge_opaque: :on, confine: :reader).judge_opaque?).to be(false)
+      expect(described_class::UNSET.judge_opaque?).to be(false)
+    end
+
+    it "leaves a plain launch's header as it was, and reads a header without it as off" do
+      expect(described_class.from({}).to_header.keys).not_to include("judge_opaque")
+      expect(described_class.from({ judge_opaque: "on" }).to_header).to include("judge_opaque" => "on")
+      expect(described_class.from_header({ "arms" => { "confine" => "workspace" } }).judge_opaque).to eq(:off)
+    end
+
+    it "is named by every caller that builds the arms by hand" do
+      expect do
+        described_class.new(confine: :reader, judge_facts: :off, tripwire: :off, round_budget: :off,
+                            round_dedup: :off, judge_denials: :off)
+      end.to raise_error(ArgumentError, /judge_opaque/)
+    end
+  end
+
   describe ".from_header" do
     it "reads the arms a session header recorded" do
       header = { "arms" => { "confine" => "reader", "tripwire" => "observe" } }
 
       expect(described_class.from_header(header))
         .to eq(described_class.new(confine: :reader, judge_facts: :off, tripwire: :observe, round_budget: :off,
-                                   round_dedup: :off, judge_denials: :off))
+                                   round_dedup: :off, judge_denials: :off, judge_opaque: :off))
     end
 
     it "reads a recorded round budget back" do
@@ -133,7 +164,7 @@ RSpec.describe Lain::CLI::Arms do
     it "reads an arm the header left out as off, and a header with no arms as every arm off" do
       expect(described_class.from_header({ "arms" => { "confine" => "classes" } }))
         .to eq(described_class.new(confine: :classes, judge_facts: :off, tripwire: :off, round_budget: :off,
-                                   round_dedup: :off, judge_denials: :off))
+                                   round_dedup: :off, judge_denials: :off, judge_opaque: :off))
       expect(described_class.from_header({ "model" => "qwen3:4b" })).to eq(described_class::OFF)
     end
 

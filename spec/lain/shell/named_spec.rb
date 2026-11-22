@@ -98,6 +98,14 @@ RSpec.describe Lain::Shell::Named do
       expect(named("/usr/bin/env cat /etc/shadow")).to be_opaque
     end
 
+    it "is any program reached through a process's own entry or descriptor, wherever the word starts" do
+      commands = ["/proc/self/exe -c '$X'", "/proc/1/exe cat a", "/dev/fd/3 3<x.py", "./fd/3 a",
+                  "~/../../proc/self/exe -c id"]
+
+      expect(commands.map { named(_1, cwd: "/dev").opaque? }).to all(be(true))
+      expect(named("/usr/bin/cat a")).not_to be_opaque
+    end
+
     it "makes a shell given -c, or reading its commands from stdin, opaque" do
       ["sh -c 'cat x'", "bash -lc x", "zsh -c x", "echo x | bash"].each do |command|
         expect(named(command)).to be_opaque, command

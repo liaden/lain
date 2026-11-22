@@ -15,6 +15,26 @@ RSpec.describe Lain::Exec::ChildEnv do
 
   def child_of(lent) = child_env.call(lent).compact
 
+  describe "#received" do
+    it "is what a child handed that env holds: the kept, the passed and the lent, never a scrubbed loader" do
+      process = { "PATH" => "/usr/bin", "LD_LIBRARY_PATH" => "/opt/lib", "RUBYOPT" => "-W0", "EDITOR" => "vi",
+                  "TOOL_DIR" => "/opt/t" }
+
+      received = described_class.new(env: process, pass: %w[TOOL_DIR]).received(process.merge("ADDED" => "1"))
+
+      expect(received).to eq("PATH" => "/usr/bin", "TOOL_DIR" => "/opt/t", "ADDED" => "1")
+    end
+  end
+
+  describe "#received_unlent" do
+    it "is what the child holds beside what lain lends it" do
+      source = Struct.new(:environment).new({ "GH_TOKEN" => "gho_example" })
+      lending = described_class.new(env: { "PATH" => "/usr/bin" }, lend: described_class::Lend.new(source))
+
+      expect(lending.received_unlent({ "PATH" => "/usr/bin" })).to eq("PATH" => "/usr/bin")
+    end
+  end
+
   describe "#environment" do
     it "is the live parent environment" do
       live = { "PATH" => "/usr/bin" }

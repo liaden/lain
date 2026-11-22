@@ -31,13 +31,13 @@ RSpec.describe Lain::Approval::Judgement, :seam do
   def bash(command) = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => command })
 
   def judged(command, masks: described_class::Unmasked, facts: -> { Lain::Approval::Judge::Facts::NONE }, at: root,
-             env: {})
+             env: {}, **)
     effect = bash(command)
     within = Data.define(:worker_env).new(worker_env: Lain::WorkerEnv.new(cwd: at, env:))
     described_class.of(effect, bounds: Lain::Sensitivity::Policy.confined_at(policy, within),
                                named: Lain::Shell::Named.for_call(effect, within, home:), facts:, masks:,
                                env: within.worker_env.env,
-                               verdict: ->(path) { policy.judge(path, cwd: at) })
+                               verdict: ->(path) { policy.judge(path, cwd: at) }, **)
   end
 
   def reasons(commands, **)
@@ -179,6 +179,25 @@ RSpec.describe Lain::Approval::Judgement, :seam do
       commands = ["git add -A", "git stash", "git checkout -- ."]
 
       expect(reasons(commands, masks: masking).values).to all(be_a(Symbol))
+    end
+  end
+
+  describe "a call whose paths cannot be named" do
+    let(:opaque) { "cat $(ls src) | grep x" }
+
+    it "is not weighed unless the opaque route is open" do
+      expect(judged(opaque)).to eq(described_class::Unweighable.new(reason: :opaque))
+    end
+
+    it "is weighed with the facts it is given when the route is open" do
+      facts = Lain::Approval::Judge::Facts::NONE.masking([], history: true)
+
+      expect(judged(opaque, opaque: true, facts: -> { facts })).to eq(described_class::Weighable.new(facts:))
+    end
+
+    it "is still held to every path it did name" do
+      expect(judged("cat #{root}/.env $(ls src)", opaque: true))
+        .to eq(described_class::Unweighable.new(reason: :protected_target, details: [File.join(root, ".env")]))
     end
   end
 

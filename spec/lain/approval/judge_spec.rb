@@ -310,6 +310,26 @@ RSpec.describe Lain::Approval::Judge do
     asked(provider)
   end
 
+  describe "a call whose paths could not be named" do
+    def prompt_for(**rest)
+      provider = answering("defer")
+      judge(provider).call(tool: "bash", input: { "command" => "ls" }, place: place(**rest))
+      asked(provider)
+    end
+
+    it "is told so, on its own line after the named paths" do
+      lines = prompt_for(opaque: true).lines.map(&:chomp)
+
+      expect(lines[lines.index("named paths: none") + 1]).to eq(described_class::OPAQUE_LINE)
+      expect(described_class::OPAQUE_LINE).to start_with("paths could not be named")
+    end
+
+    it "keeps the prompt byte for byte for a call whose paths were named" do
+      expect(prompt_for(opaque: false)).to eq(prompt_for)
+      expect(prompt_for).not_to include("could not be named")
+    end
+  end
+
   describe "the request a call was made for" do
     it "tells the judge the user's request" do
       asked = described_class::Request.new(text: "summarize the README", model_written: false)

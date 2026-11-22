@@ -106,8 +106,9 @@ module Lain
       #   REQUIRED here, as `test_layout:` is: defaulted, a real chat's `auto`
       #   would quietly hand every call to a human
       # @param display [#<<] told each call the judge approves; the run's display channel
-      # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts, and
-      #   `judge_denials` what a judge's deny does
+      # @param arms [Arms] the bench arms; `judge_facts` decides whether the judge is told the facts,
+      #   `judge_denials` what a judge's deny does, and `judge_opaque` whether a call whose paths cannot be
+      #   named may go to the judge
       # @param request [#call] `context -> Approval::Judge::Request or nil`, what a judged call was made
       #   for; read only under `--judge-facts request`
       # @param secrets [Sensitivity::Secrets::Source] the launch's child environment and the history the project's
@@ -126,6 +127,8 @@ module Lain
       #   whose unread command bars a build every tool stack would otherwise run without its grant; none by default
       # @param granting [Confine::Profiles::Granting, Confine::Profiles::Granting::NONE] what the toolset's sandbox
       #   would grant a build; none by default
+      # @param child_env [Exec::ChildEnv] what a bash child is handed, whose env the opaque route reads; the
+      #   process default by default
       # @param human [Human] who answers this session, built once by the chat from
       #   its launch flags. Required: a default would hand a headless caller a
       #   queue nobody drains
@@ -142,10 +145,11 @@ module Lain
                    denied_tools: Set[].freeze, stops: Tripwire::Stops::None,
                    masks: Approval::Judgement::Unmasked, silence: Approval::Silence::DEFAULT,
                    memo: Approval::JudgeMemo.off, containment: Confine::Sandbox::Containment::NONE,
-                   fresh: Shell::Executable::Fresh::Unmarked, granting: Confine::Profiles::Granting::NONE)
+                   fresh: Shell::Executable::Fresh::Unmarked, granting: Confine::Profiles::Granting::NONE,
+                   child_env: Exec::ChildEnv::DEFAULT)
         new(journal: chronicle.record_journal, model:, toolset:, rules:, approving:, sensitivity:, classifiers:,
             verdict:, test_layout:, spike:, middleware:, approval_timeout:, silence:, judge:, display:, arms:,
-            request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:, fresh:, granting:,
+            request:, secrets:, denied_tools:, stops:, masks:, memo:, containment:, fresh:, granting:, child_env:,
             # A resumed session starts at the launch flag's approval, not its last recorded mode.
             attended: !human.ladder_refuses?, approval: options.fetch(:approval, :ask))
       end
@@ -261,6 +265,7 @@ module Lain
       # @param fresh [Shell::Executable::Fresh, Shell::Executable::Fresh::Unmarked] as on {.for}; none by default
       # @param granting [Confine::Profiles::Granting, Confine::Profiles::Granting::NONE] as on {.for}; none by
       #   default
+      # @param child_env [Exec::ChildEnv] as on {.for}; the process default by default
       def initialize(journal:, model:, toolset:, rules: [], approving: REMEMBERED,
                      sensitivity: Sensitivity::Policy::Null.instance,
                      classifiers: Approval::Escalation::Triage::AnyPath.new,
@@ -272,7 +277,8 @@ module Lain
                      stops: Tripwire::Stops::None, masks: Approval::Judgement::Unmasked,
                      silence: Approval::Silence::DEFAULT, memo: Approval::JudgeMemo.off,
                      containment: Confine::Sandbox::Containment::NONE, fresh: Shell::Executable::Fresh::Unmarked,
-                     granting: Confine::Profiles::Granting::NONE)
+                     granting: Confine::Profiles::Granting::NONE, child_env: Exec::ChildEnv::DEFAULT)
+        @child_env = child_env
         @attended = attended
         @journal = journal
         @spike = spike
@@ -459,6 +465,7 @@ module Lain
         @display = display
         @containment = containment
         @judge_facts = arms.judge_facts?
+        @judge_opaque = arms.judge_opaque?
         @denials = Approval::DenialBreaker.for(arms.judge_denials, journal: @journal)
         @request = arms.judge_requests? ? request : Approval::Judge::Unrequested
         @rules = rules.to_a.freeze
@@ -602,7 +609,7 @@ module Lain
         asking = attended_asking || Approval::Judged::Unattended.new
         Approval::Judged.new(judge: @judge, policy: @sensitivity, asking:, journal: @journal, display: @display,
                              facts: facts_over(classifiers), request: @request, denials: @denials, masks: @masks,
-                             memo: @memo, allows: remembered_allows)
+                             memo: @memo, allows: remembered_allows, opaque: opaque_over(classifiers))
       end
 
       # With no queue no human answered, so nothing stands to be replayed.
@@ -616,6 +623,16 @@ module Lain
         return Approval::Judge::Facts::Off unless @judge_facts
 
         Approval::Judge::Facts::Resolving.new(verdict: @verdict, stages: classifiers, faults:)
+      end
+
+      # Built whatever the facts arm says, because an opaque call is weighed only on what its programs resolve to;
+      # the judged rung still routes one only where the workspace masks hold it.
+      def opaque_over(classifiers)
+        return Approval::Judge::Facts::Unrouted unless @judge_opaque && @masks.on?
+
+        runs = ::Lain::Tools::Bash::ShellRuns.new(home: @sensitivity.home)
+        Approval::Judge::Facts::Resolving.new(verdict: @verdict, stages: classifiers, faults:, runs:,
+                                              received: @child_env.method(:received_unlent))
       end
 
       # `bypass` approval's ladder, built for attended and unattended sessions

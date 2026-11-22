@@ -50,6 +50,18 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     end
   end
 
+  it "resolves no program reached through a process's descriptors, whose file is whatever that fd holds" do
+    stages = resolve(%w[/proc/self/exe -c id], %w[/proc/self/fd/0], %w[/dev/fd/0], %w[/dev/stdin], path: "/usr/bin")
+
+    expect(stages.map(&:klass)).to all(eq(:unresolved))
+  end
+
+  it "classes no run file reached through a process's descriptors, whatever that process's stdin is" do
+    bound = resolver.for(Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin" }))
+
+    expect(%w[/dev/stdin /dev/fd/0 /proc/self/fd/0].map { bound.run_file(_1).klass }).to all(eq(:unresolved))
+  end
+
   it "classes a program no user can replace as :system" do
     stage = resolve(%w[cat README.md], path: "/usr/bin").sole
 

@@ -47,10 +47,12 @@ module Lain
       #   @return [Array<String>] the project's related directories, which a read may reach beyond its roots
       # @!attribute [r] classified
       #   @return [Hash{String => Sensitivity::Verdict}] each path the call names, as lain classified it
+      # @!attribute [r] opaque
+      #   @return [Boolean] whether the call may reach paths it does not name
       Place = Data.define(:root, :cwd, :requester, :outside, :facts, :request, :human_checkout, :read_roots,
-                          :related, :classified) do
+                          :related, :classified, :opaque) do
         def initialize(facts: Facts::NONE, request: nil, human_checkout: nil, read_roots: [], related: [],
-                       classified: {}, **rest)
+                       classified: {}, opaque: false, **rest)
           super
         end
       end
@@ -215,6 +217,8 @@ module Lain
         end
       end
 
+      OPAQUE_LINE = "paths could not be named: the command may read or write files beyond the named paths"
+
       VERDICT = /\A(approve|deny|defer)\.?\z/i
       IGNORED = ->(_cause) {}
       private_constant :VERDICT, :IGNORED
@@ -303,6 +307,9 @@ module Lain
 
       def checkout_line(checkout) = checkout ? "\nthe human's checkout: #{checkout.inspect}" : ""
 
+      # Empty for a call whose paths were all named, since the judge was given every path it reaches.
+      def opaque_line(opaque) = opaque ? "\n#{OPAQUE_LINE}" : ""
+
       def listed(items) = items.empty? ? "none" : items.join(", ")
 
       def classified(paths) = listed(paths.map { |path, verdict| "#{path.inspect} (#{class_of(verdict)})" })
@@ -324,7 +331,7 @@ module Lain
           working directory: #{place.cwd.inspect}
           outside the project root: #{listed(place.outside.map(&:inspect))}
           #{reach_lines(place)}
-          named paths: #{classified(place.classified)}
+          named paths: #{classified(place.classified)}#{opaque_line(place.opaque)}
           tool: #{tool}
           input: #{input.inspect}
 

@@ -140,6 +140,18 @@ module Lain
       # @return [Hash] the parent environment as it is now, with the lent values
       def environment = @env.to_h.merge(@lend.known)
 
+      # What a child handed `lent` really holds, so a reader judging that child reads the env it runs with.
+      #
+      # @param lent [Hash] the caller's environment ({WorkerEnv#env})
+      # @return [Hash{String=>String}] the parent's, with {#call}'s answer laid over it
+      def received(lent) = environment.merge(call(lent)).compact
+
+      # The child's env without the names lain lends it, each a credential that loads no code.
+      #
+      # @param lent [Hash] as on {#received}
+      # @return [Hash{String=>String}]
+      def received_unlent(lent) = received(lent).except(*@lend.known.keys)
+
       # What lain's own children see, such as the git it asks while approving
       # a call: the same allowlist with nothing lent, so they neither carry a
       # lent value nor make the source answer.
