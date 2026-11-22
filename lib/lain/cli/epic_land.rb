@@ -149,6 +149,7 @@ module Lain
         Lain::Forge::LocalLanding.new(
           epic_slug:, repo_root: root, base:, signoff:,
           plan: ->(issue) { submit.ensure_plan_approved!(issue, epic_slug) },
+          scope: ->(issue) { submit.allowed_paths(issue, epic_slug) },
           progress: -> { @epics.progress(epic_slug) }, scribe: Lain::Epic::Scribe.new(epic_slug:, journal:),
           queue: queue(base, journal, root), layout: Config.test_layout(root: @root, paths: @paths),
           landings: -> { landings.to_a }, shell_out_factory: @shell_out_factory

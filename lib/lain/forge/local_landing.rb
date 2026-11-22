@@ -7,12 +7,13 @@ module Lain
     # One approved issue's commit, landed onto its epic's working branch in
     # this repository, and nowhere else: nothing is pushed per issue. The epic
     # reaches the remote once, as one branch and one pull request, through
-    # {Landing}.
+    # `Forge::Landing`.
     #
     # EVERY CHECK BEFORE ANY MERGE, in this order: the issue is in flight; its
     # plan is approved as it stands now; its implementation gate approved this
-    # exact commit; and the tests the commit changes sit where the project's
-    # layout says. The plan is asked again here because an implementation
+    # exact commit; the tests the commit changes sit where the project's
+    # layout says; and every path it changes is one the issue allows or the
+    # approving answer admitted. The plan is asked again here because an implementation
     # parked before its plan was edited can still be approved from the queue.
     #
     # THE LAYOUT IS READ AT THE WORKER'S COMMIT. The commit's tree is checked
@@ -44,6 +45,10 @@ module Lain
         include RefusedBeforeActing
       end
 
+      class OutsideScope < Error
+        include RefusedBeforeActing
+      end
+
       # An issue whose commit passed every check, as the worker the queue lands.
       Admission = Data.define(:issue_id, :worker)
 
@@ -59,9 +64,11 @@ module Lain
       # @param repo_root [String] the parent checkout standing on `base`
       # @param base [Isolation::WorkingBranch] `epic/<slug>`
       # @param signoff [Epic::Signoff] the gate decisions, folded; each issue's
-      #   implementation is read off its own partition's {Epic::GateView}
+      #   implementation is read off its own partition's `Epic::GateView`
       # @param plan [#call] `call(issue_id)`, raising unless the issue's plan
       #   is approved as it stands now
+      # @param scope [#call] `call(issue_id)`, the paths the issue allows, or nil
+      #   when it names none, which checks nothing
       # @param progress [#call] answers the epic's {Epic::Progress}, read fresh
       # @param scribe [#issue_moved] {Epic::Scribe}
       # @param queue [#call] {Isolation::LandingQueue}, the only thing that merges
@@ -71,12 +78,13 @@ module Lain
       #   epic wrote; a commit already on the branch counts as this issue's
       #   landing only when one of them is this issue's merge
       # @param shell_out_factory [#call] builds the subprocess runner
-      def initialize(epic_slug:, repo_root:, base:, signoff:, plan:, progress:, scribe:, queue:, layout: TestLayout::None,
-                     landings: -> { [] }, shell_out_factory: Shell::Out.public_method(:new))
+      def initialize(epic_slug:, repo_root:, base:, signoff:, plan:, scope:, progress:, scribe:, queue:,
+                     layout: TestLayout::None, landings: -> { [] }, shell_out_factory: Shell::Out.public_method(:new))
         @epic_slug = epic_slug
         @base = base
         @signoff = signoff
         @plan = plan
+        @scope = scope
         @progress = progress
         @scribe = scribe
         @queue = queue
@@ -93,7 +101,8 @@ module Lain
       # @param sha [String] the full object name of the worker's commit
       # @param ref [String] the ref the commit is anchored under
       # @return [Admission]
-      # @raise [NotInFlight, Epic::Gate::NotApproved, MisplacedTests, AlreadyOnBranch] before anything merges
+      # @raise [NotInFlight, Epic::Gate::NotApproved, MisplacedTests, OutsideScope, AlreadyOnBranch] before
+      #   anything merges
       def admit(issue_id, sha:, ref:)
         ready!(issue_id)
         approved!(issue_id, sha)
@@ -139,7 +148,9 @@ module Lain
 
       # Whether `sha` would pass the gate and the layout for `issue_id`: what a
       # re-synced commit has to answer before it may land in the original's place.
-      def admissible?(issue_id, sha) = approved?(issue_id, sha) && @placement.refusals(sha).empty?
+      def admissible?(issue_id, sha)
+        approved?(issue_id, sha) && @placement.refusals(sha).empty? && outside(issue_id, sha).empty?
+      end
 
       private
 
@@ -183,6 +194,17 @@ module Lain
         raise MisplacedTests, misplaced(issue_id, sha, refused) unless refused.empty?
       end
 
+      def scoped!(issue_id, sha)
+        stray = outside(issue_id, sha)
+        raise OutsideScope, outside_scope(issue_id, sha, stray) unless stray.empty?
+      end
+
+      # The admitted prefixes are the approving answer's, and only an approval of this commit reaches here.
+      def outside(issue_id, sha)
+        admitted = Epic::GateDecision.admitted_in(view(issue_id).standing.verdict)
+        @placement.outside_scope(sha, allowed: @scope.call(issue_id), admitted:)
+      end
+
       # One commit per issue: the issue's standing approves at most one, so
       # several anchors of that commit are the only way approved holds more than one.
       def approved_commit(issue_id, candidates)
@@ -195,6 +217,7 @@ module Lain
 
       def admitted(issue_id, sha, ref)
         placed!(issue_id, sha)
+        scoped!(issue_id, sha)
         raise AlreadyOnBranch, "#{unjournaled(issue_id, sha)}, so nothing lands for issue #{issue_id}" if
           @commits.landed?(sha) && !@landings.merged?(issue_id)
 
@@ -334,6 +357,14 @@ module Lain
           .join("\n")
       end
 
+      def outside_scope(issue_id, sha, stray)
+        advice = Epic::GateDecision.admit_advice(stray)
+        ["issue #{issue_id}'s commit #{sha} makes changes outside the issue's allowed paths, so nothing landed:",
+         *stray.map { |path| "  #{path}" },
+         stray.all?(Epic::GateDecision::UNNAMEABLE) ? advice : "approve it again or take them out: #{advice}"]
+          .join("\n")
+      end
+
       def placed_at(verdict) = verdict.expected ? " -- it belongs at #{verdict.expected}" : ""
     end
 
@@ -411,25 +442,66 @@ module Lain
           @git = Isolation::Checkout.of(repo_root, shell_out_factory:)
         end
 
+        # @param sha [String] the commit
+        # @return [Array<String>] git's diffstat of the commit's changes, one line each
+        def diffstat(sha) = git!({}, *diff(sha, "--stat=100")).stdout.lines(chomp: true)
+
+        # @param sha [String] the commit
+        # @param allowed [Array<String>, nil] the issue's allowed paths; nil checks nothing
+        # @param admitted [Array<String>] prefixes the approving answer let in
+        # @return [Array<String>] each changed path, deletions included, that no allowed or admitted prefix covers
+        def outside_scope(sha, allowed:, admitted:)
+          return [] if allowed.nil?
+
+          prefixes = (allowed + admitted).map { segments(_1) }.reject(&:empty?)
+          changed(sha).reject { |path| prefixes.any? { |prefix| segments(path).first(prefix.size) == prefix } }
+        end
+
         # Every refusing verdict counts, `:no_source` included.
         # @return [Array<TestLayout::Guard::Verdict>]
         def refusals(sha)
           return [] unless @layout.in_force?
 
-          tests = changed(sha).select { |path| @layout.mapping.test_file?(path) }
+          tests = changed(sha, "--diff-filter=d").select { |path| @layout.mapping.test_file?(path) }
           tests.empty? ? [] : snapshot(sha) { |tree| checked(tree, tests) }
         end
 
         private
 
-        # Against the merge base, so a sibling's tests already on the branch
-        # are not judged as this commit's; `--relative` names them from the
-        # project, which may sit inside a larger repository, and drops the rest.
-        def changed(sha)
-          listed = git!({}, "diff", "--name-only", "-z", "--relative", "--no-renames", "--diff-filter=d",
-                        "#{@base.tip}...#{sha}")
+        # `--relative` names paths from the project, which may sit inside a
+        # larger repository, and drops the rest.
+        def changed(sha, *filter)
+          listed = git!({}, *diff(sha, "--name-only", "-z", "--no-renames", *filter))
           listed.stdout.split("\0").map { |path| path.force_encoding(FILESYSTEM) }
         end
+
+        # Against the merge base, so a sibling's work already on the branch is
+        # not judged as this commit's. A gate asked before the branch exists, or
+        # over a commit unrelated to it, diffs the commit against its first
+        # parent, so a merge commit lists what it brings in.
+        def diff(sha, *flags)
+          base = merge_base(sha)
+          return ["diff", "--relative", *flags, "#{base}...#{sha}"] if base
+
+          ["diff", "--relative", *flags, parent(sha), sha]
+        end
+
+        # A root commit's parent is the empty tree.
+        def parent(sha)
+          first = @git.run("rev-parse", "--verify", "--quiet", "#{sha}^1")
+          return first.stdout.strip if Shell::Out.ok?(first)
+
+          git!({}, "hash-object", "-t", "tree", File::NULL).stdout.strip
+        end
+
+        def merge_base(sha)
+          tip = @base.tip
+          tip if Shell::Out.ok?(@git.run("merge-base", tip, sha))
+        rescue Isolation::WorkingBranch::Refused
+          nil
+        end
+
+        def segments(path) = path.split("/").reject { _1.empty? || _1 == "." }
 
         def checked(tree, tests)
           guard = TestLayout::Guard.new(layout: @layout, root: tree)

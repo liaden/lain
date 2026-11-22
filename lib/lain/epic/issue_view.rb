@@ -21,6 +21,10 @@ module Lain
       CRITERIA_HEADING = "## Acceptance criteria"
       REFERENCES_HEADING = "## References"
       LINKS_HEADING = "## Links"
+      # Any case, level 2 or 3: a typo in the heading must not read as an issue with no limit.
+      ALLOWED_HEADING = /\A\#{2,3}[ \t]+allowed paths[ \t]*\z/i
+      # A list item's first word, its backticks and a leading `./` dropped.
+      ALLOWED_ITEM = %r{\A\s*[-*]\s+`?(?:\./)?(?<path>[^`\s,]+)}
       DERIVED_KINDS = [*Document::LINK_FIELDS.keys, *Document::DERIVED_LINKS.keys,
                        *Document::LABEL_LINKS.keys].freeze
       # What parts the words of a References line: markdown's own punctuation as well as space.
@@ -76,6 +80,14 @@ module Lain
         shown = @authored.references.gsub(HTML_COMMENT, " ")
         words = shown.split(REFERENCE_BREAKS).map { _1.sub(SENTENCE_END, "") }.grep(OUTSIDE)
         words.map { File.expand_path(_1.sub(/\A~/, home)) }.uniq
+      end
+
+      # The section stays in the prose as written, so an issue without one renders, and digests, as it always did.
+      #
+      # @return [Array<String>, nil] the paths the authored Allowed paths section lists; nil when it has none
+      def allowed_paths
+        shown = @authored.allowed_lines&.join("\n")&.gsub(HTML_COMMENT, " ")
+        shown&.lines&.filter_map { _1[ALLOWED_ITEM, :path] }&.uniq
       end
 
       # @return [Gherkin::Criteria] epic.md's scenarios, then the authored ones
@@ -174,6 +186,17 @@ module Lain
           @lines.reject(&:fenced).select { |line| line.text.start_with?("# ") || heading_text(line) == LINKS_HEADING }
         end
 
+        # @return [Array<String>, nil] the unfenced lines under the Allowed paths heading, up to the next heading
+        def allowed_lines
+          start = @lines.index { |line| !line.fenced && line.text.match?(ALLOWED_HEADING) }
+          return if start.nil?
+
+          @lines.drop(start + 1).take_while { |line| line.fenced || !line.text.start_with?("#") }
+                .reject(&:fenced).map(&:text)
+        end
+
+        def body(heading) = joined(@sections.select { |lines| heading_of(lines) == heading }.flat_map { _1.drop(1) })
+
         def stray_fences
           outside = @sections.reject { |lines| heading_of(lines) == CRITERIA_HEADING }
           outside.flatten.select { |line| gherkin_opener?(line) }
@@ -195,8 +218,6 @@ module Lain
             numbered
           end
         end
-
-        def body(heading) = joined(@sections.select { |lines| heading_of(lines) == heading }.flat_map { _1.drop(1) })
 
         def named?(lines) = [CRITERIA_HEADING, REFERENCES_HEADING].include?(heading_of(lines))
 

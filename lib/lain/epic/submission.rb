@@ -223,7 +223,7 @@ module Lain
     #
     #   Canonical.digest("stage" => stage, "epic" => slug, "artifact" => content_digest)
     #
-    # COMPUTED rather than stored, as {Epic::Issue#digest}/{Epic::Graph#digest}
+    # COMPUTED rather than stored, as `Epic::Issue#digest`/`Epic::Graph#digest`
     # are: the value is frozen and the hash is cheap, so memoizing would buy
     # nothing and cost the deep freeze. It is TOTAL over every constructible
     # Submission, which {Contracts::Submission#slug_is_canonicalizable} is what
@@ -273,7 +273,7 @@ module Lain
     # inside a plan's content address, because the gate decision and the
     # sign-off queue partition on the issue, and a grader joins on the criteria.
     Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset,
-                             :review, :manual_commands, :procedure, :reviewer_reads) do
+                             :review, :manual_commands, :procedure, :reviewer_reads, :diffstat, :outside_scope) do
       # `sources` maps each source name to its text, so an approval of the
       # research is an approval of the facts it cites. With none the digest is
       # the text's alone, as it was before sources existed.
@@ -353,13 +353,16 @@ module Lain
       # addressed, so editing a step reopens no gate. `reviewer_reads` is the
       # newest record of what the issue's reviewer read, shown and not
       # addressed for the same reason; nil when no review was recorded.
+      # `diffstat` and `outside_scope` are what the changeset touches and which
+      # of those paths the issue does not allow; both are read off the changeset
+      # the address already holds, so they are shown and not addressed.
       def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil, procedure: nil,
-                              reviewer_reads: nil)
+                              reviewer_reads: nil, diffstat: nil, outside_scope: nil)
         issue_id = clean_issue_id(issue_id)
         fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}#{manual_said(manual_commands)}"
         Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
         new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
-            changeset: digest, manual_commands:, procedure:, reviewer_reads:)
+            changeset: digest, manual_commands:, procedure:, reviewer_reads:, diffstat:, outside_scope:)
       end
 
       def self.manual_said(commands)
@@ -398,7 +401,8 @@ module Lain
       private_class_method :clean_issue_id
 
       def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil, changeset: nil,
-                     review: nil, manual_commands: nil, procedure: nil, reviewer_reads: nil)
+                     review: nil, manual_commands: nil, procedure: nil, reviewer_reads: nil, diffstat: nil,
+                     outside_scope: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -413,7 +417,8 @@ module Lain
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
               issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
               changeset: changeset && -changeset.to_s, review:,
-              manual_commands: interned(manual_commands), procedure: interned(procedure), reviewer_reads:)
+              manual_commands: interned(manual_commands), procedure: interned(procedure), reviewer_reads:,
+              diffstat: interned(diffstat), outside_scope: interned(outside_scope))
       end
 
       def interned(lines) = lines&.map { |line| -line.to_s }&.freeze
@@ -441,7 +446,7 @@ module Lain
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
         head = "Approve the #{stage} stage for #{slug.inspect}? (#{fact})"
-        lines = [*procedure_lines, *reviewer_line, *review&.gate_lines([self])]
+        lines = [*procedure_lines, *reviewer_line, *change_lines, *review&.gate_lines([self])]
         return -"#{head} #{GateReply::INSTRUCTION}" if lines.empty?
 
         -[head, *lines, GateReply::INSTRUCTION].join("\n")
@@ -449,6 +454,24 @@ module Lain
 
       def procedure_lines = procedure&.any? ? ["a human runs, in order:", *procedure.map { "- #{_1}" }] : []
       private :procedure_lines
+
+      def change_lines
+        return [] if diffstat.nil?
+
+        outside = outside_scope.to_a
+        admit = "outside allowed paths: #{outside.join(", ")}; #{GateDecision.admit_advice(outside)}"
+        ["changes:", *capped_diffstat, *(admit unless outside.empty?)]
+      end
+      private :change_lines
+
+      def capped_diffstat
+        *files, summary = diffstat
+        cap = Submission::DIFFSTAT_FILES
+        return diffstat if files.size <= cap
+
+        [*files.first(cap), "  ... #{files.size - cap} more files", summary]
+      end
+      private :capped_diffstat
 
       # A review whose every read failed approves what it never looked at.
       def reviewer_line
@@ -463,6 +486,11 @@ module Lain
     end
 
     class Submission
+      # The diffstat is context and the outside list, always whole, is the
+      # finding: 20 files fit a terminal screen beside the question without
+      # pushing the reply instruction out of sight.
+      DIFFSTAT_FILES = 20
+
       # One wave's issue plans put to the human as one question. Each issue is
       # still decided under its own {Submission}, so the wave adds a question
       # and a reading of the reply, and no gate identity of its own.

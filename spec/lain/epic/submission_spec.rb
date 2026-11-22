@@ -655,6 +655,69 @@ RSpec.describe Lain::Epic::Submission do
       end
     end
 
+    # Scenario: the gate shows a diffstat and the paths outside scope
+    describe "what the changeset touches" do
+      let(:stat) { [" docs/m0-findings.md | 3 +++", " spike/src/main.rs   | 1 +", " 2 files changed, 4 insertions(+)"] }
+      let(:bare) { described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40) }
+
+      def touching(outside_scope)
+        described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40, diffstat: stat, outside_scope:)
+      end
+
+      it "shows the diffstat and names each path outside the allowed ones, with how to admit it" do
+        expect(touching(["spike/src/main.rs"]).gate_question)
+          .to include("changes:", *stat,
+                      "outside allowed paths: spike/src/main.rs; answer admit <path> to land it anyway")
+      end
+
+      it "words the admit hint for every outside path in a form the gate reads back, root files included" do
+        expect(touching(["Makefile", "spike/src/main.rs"]).gate_question)
+          .to include('as in "approve, admit ./Makefile, spike/src/main.rs"')
+      end
+
+      # The outside list is always whole; the diffstat is context, and a long one would bury the question.
+      it "shows at most 20 files of a long diffstat, then how many more, then its summary" do
+        files = (1..25).map { " lib/file_#{_1}.rb | 1 +" }
+        summary = " 25 files changed, 25 insertions(+)"
+        question = described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40,
+                                                  diffstat: [*files, summary], outside_scope: []).gate_question
+
+        expect(question).to include(*files.first(20), "  ... 5 more files", summary)
+        expect(question).not_to include(files[20])
+      end
+
+      # A space, comma, semicolon or tab splits the reply, so such a path reads back as nothing.
+      it "says an outside path no reply can name has to leave the commit" do
+        expect(touching(["my file.rb", "spike/src/main.rs"]).gate_question)
+          .to include('as in "approve, admit spike/src/main.rs"',
+                      "my file.rb cannot be admitted by name; remove it from the commit")
+      end
+
+      it "shows the diffstat alone when nothing is outside" do
+        question = touching([]).gate_question
+
+        expect(question).to include(*stat)
+        expect(question).not_to include("outside allowed paths")
+      end
+
+      it "stays out of the gate address and the fact, which the changeset already decides" do
+        expect(touching(["spike/src/main.rs"])).to have_same_digest_as(bare)
+        expect(touching(["spike/src/main.rs"]).content_digest).to eq(bare.content_digest)
+        expect(touching(["spike/src/main.rs"]).fact).to eq(bare.fact)
+      end
+
+      it "says nothing of changes on a record built without them, as an old journaled gate loads" do
+        old = described_class.new(stage: "implementation", slug: "demo", content_digest: "d", fact: "f")
+
+        expect([old.diffstat, old.outside_scope]).to eq([nil, nil])
+        expect([old.gate_question, bare.gate_question]).to all(satisfy { !_1.include?("changes:") })
+      end
+
+      it "is deeply frozen" do
+        expect(Ractor.shareable?(touching(["spike/src/main.rs"]))).to be(true)
+      end
+    end
+
     describe ".tests_said" do
       def said(**given) = described_class.tests_said(Lain::Telemetry::TestsRan.new(issue_id: "a", sha: "s", **given))
 

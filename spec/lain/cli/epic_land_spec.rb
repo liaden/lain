@@ -111,8 +111,8 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
                                  answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:)
   end
 
-  def plan_approval(issue_id)
-    view = Lain::Epic::IssueView.new(issue: graph.fetch(issue_id), graph:, authored: "the prose for #{issue_id}\n")
+  def plan_approval(issue_id, authored: "the prose for #{issue_id}\n")
+    view = Lain::Epic::IssueView.new(issue: graph.fetch(issue_id), graph:, authored:)
     plan = Lain::Epic::Submission.issue_plan(view:, slug: "demo", issue_id:)
     decision("issue_plan", issue_id, plan.digest)
   end
@@ -123,9 +123,12 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
                                   ref: Lain::Isolation::Worktree::Handback::Naming.new(issue_id).ref)
   end
 
-  def implementation_approval(issue_id, sha)
-    decision("implementation", issue_id,
-             Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest)
+  def implementation_approval(issue_id, sha, note: nil)
+    Lain::Epic::GateDecision.new(
+      artifact_digest: Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest,
+      epic_slug: "demo", stage: "implementation", verdict: Lain::Approval::Verdict::Approve.new(note:),
+      answered_by: "human", policy: "hands_off", latency: 0.0, issue_id:
+    )
   end
 
   let(:calls) { [] }
@@ -462,6 +465,37 @@ RSpec.describe Lain::CLI::EpicLand, :seam do
 
       expect(contains?(sha)).to be(false)
       expect(lock_listed?).to be(false)
+    end
+  end
+
+  # Scenario: landing refuses a change outside scope unless the gate admitted it
+  describe "an issue's allowed paths" do
+    let(:scoped) { "the prose for a\n\n## Allowed paths\n\n- docs/m0-findings.md\n" }
+
+    def scoped_worker
+      home.issue("a").write(scoped)
+      worker("a", "docs/m0-findings.md" => "findings\n", "spike/src/main.rs" => "fn main() {}\n")
+    end
+
+    it "refuses a change outside them that the approval did not admit, and leaves epic/demo alone" do
+      sha = scoped_worker
+      session(plan_approval("a", authored: scoped), implementation_approval("a", sha))
+      before = tip
+
+      expect { command.land("a", "demo") }
+        .to raise_error(Lain::Forge::LocalLanding::OutsideScope,
+                        %r{outside the issue's allowed paths.*spike/src/main\.rs}m)
+      expect(tip).to eq(before)
+      expect(progress.status("a")).to eq("in_flight")
+    end
+
+    it "lands it when the approval admitted the directory" do
+      sha = scoped_worker
+      session(plan_approval("a", authored: scoped), implementation_approval("a", sha, note: "admit spike/"))
+
+      command.land("a", "demo")
+
+      expect(contains?(sha)).to be(true)
     end
   end
 

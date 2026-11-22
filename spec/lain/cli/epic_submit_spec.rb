@@ -1781,6 +1781,30 @@ RSpec.describe Lain::CLI::EpicSubmit do
       expect(screen.string).to include("(issue a, #{tip}, tests: 4 passed)")
     end
 
+    # Scenario: the gate shows a diffstat and the paths outside scope
+    it "shows the diffstat and the paths outside the issue's allowed ones in an implementation's question", :seam do
+      write_research
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"))
+      home.issue("a").write("the prose for a\n\n## Allowed paths\n\n- docs/m0-findings.md\n")
+      command.submit("issue_plan", issue: "a")
+      commit_sha
+      { "docs/m0-findings.md" => "findings\n", "spike/src/main.rs" => "fn main() {}\n" }.each do |path, body|
+        FileUtils.mkdir_p(File.dirname(File.join(root, path)))
+        File.write(File.join(root, path), body)
+      end
+      SeedRepo.git(root, "add", "docs", "spike")
+      SeedRepo.git(root, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false",
+                   "commit", "-q", "-m", "the findings and a spike")
+      sha = SeedRepo.git(root, "rev-parse", "HEAD").stdout.strip
+      screen = StringIO.new
+
+      command(gates: hands_off.merge("implementation" => "interactive"), output: screen)
+        .submit("implementation", issue: "a", digest: sha)
+
+      expect(screen.string).to include(" docs/m0-findings.md | 1 +", " spike/src/main.rs   | 1 +",
+                                       "outside allowed paths: spike/src/main.rs")
+    end
+
     it "says nothing ran for a hand submit given no tests", :seam do
       write_research
       session("started.ndjson", *epic_approved, stage_event("issue_plan"))

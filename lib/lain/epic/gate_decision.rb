@@ -3,13 +3,13 @@
 module Lain
   module Epic
     GateDecision = Data.define(:artifact_digest, :epic_slug, :stage, :verdict, :answered_by, :policy,
-                               :latency, :evidence_digest, :issue_id, :criteria_digest) do
+                               :latency, :evidence_digest, :issue_id, :criteria_digest, :admitted) do
       include Telemetry::Journalable
 
       # `reason` fills in a note the verdict does not carry: a policy's
       # rationale, forwarded by a caller that is not the one answering.
       def initialize(artifact_digest:, epic_slug:, stage:, verdict:, answered_by:, policy:, latency:,
-                     evidence_digest: nil, reason: nil, issue_id: nil, criteria_digest: nil)
+                     evidence_digest: nil, reason: nil, issue_id: nil, criteria_digest: nil, admitted: nil)
         # Stringified BEFORE the guard, so `presence:` judges the bytes that
         # actually get journaled: a stage object whose `#to_s` is blank passes a
         # presence check on the raw object and then writes an empty partition
@@ -26,7 +26,8 @@ module Lain
 
         super(artifact_digest: artifact_digest.dup.freeze, epic_slug:, stage:, verdict:, answered_by:, policy:,
               latency: latency.to_f, evidence_digest: frozen(evidence_digest),
-              issue_id:, criteria_digest: frozen(criteria_digest))
+              issue_id:, criteria_digest: frozen(criteria_digest),
+              admitted: (admitted || GateDecision.admitted_in(verdict)).map { -_1.to_s }.freeze)
       end
 
       # @return [String, nil] the verdict's note
@@ -39,8 +40,11 @@ module Lain
       def deferred? = GateDecision.deferred?(verdict)
 
       # @return [Hash{String=>Object}] the verdict as its word, its note as `reason`
+      # `admitted` only when it admits something: absent and empty read alike, and every other decision keeps
+      # the shape it always had.
       def to_journal
-        super.merge("verdict" => GateDecision.word(verdict), "reason" => reason)
+        journal = super.merge("verdict" => GateDecision.word(verdict), "reason" => reason)
+        admitted.empty? ? journal.except("admitted") : journal
       end
 
       private
@@ -85,6 +89,10 @@ module Lain
     # Both joined the shape after records were already on disk; a record
     # written before reads them as nil, which is exactly what it was.
     #
+    # `admitted` is the path prefixes an approval's note lets land outside the
+    # issue's allowed paths, as in "approve, admit spike/". It is read off the
+    # note, so a record written before the field existed reads the same way.
+    #
     # This reopen holds the verdict's wire form, and the one place a journaled
     # decision becomes a verdict again.
     class GateDecision
@@ -110,6 +118,49 @@ module Lain
       # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred]
       # @return [String] approve, hold, deny or deferred
       def self.word(verdict) = WORDS.fetch(verdict.class)
+
+      # The word, then what follows it up to the end of its clause.
+      ADMIT = /(?:\A|[\s;,])admit\s+(?<words>[^;\n]+)/i
+      # Only a word with a slash or a dot is a path, so "admit spike/ for lib" admits spike/ and stops,
+      # and "cannot admit defeat" admits nothing.
+      PATHLIKE = %r{[/.]}
+
+      # @param verdict [Approval::Verdict::Approve, Approval::Verdict::Hold, Approval::Verdict::Deny, Deferred]
+      # @return [Array<String>] the path prefixes an approval's note admits; none for any other verdict
+      def self.admitted_in(verdict)
+        return [] unless verdict.approved? && verdict.note
+
+        verdict.note.scan(ADMIT).flat_map { |(words)| leading_paths(words) }
+      end
+
+      def self.leading_paths(words)
+        paths = words.split(/[\s,]+/).reject(&:empty?).take_while { _1.match?(PATHLIKE) }
+        paths.map { _1.delete_prefix("./") }.select { |path| path.split("/").any? { !_1.empty? && _1 != "." } }
+      end
+      private_class_method :leading_paths
+
+      # @param paths [Array<String>] project-relative paths
+      # @return [String] the reply that approves and admits them all, each in a form {.admitted_in} reads back
+      def self.admit_reply(paths) = "approve, admit #{paths.map { _1.match?(PATHLIKE) ? _1 : "./#{_1}" }.join(", ")}"
+
+      # A space, comma, semicolon or tab splits a reply, so a path holding one reads back as nothing.
+      UNNAMEABLE = /[\s,;]/
+
+      # @param paths [Array<String>] the changed paths outside the issue's allowed ones
+      # @return [String] how to admit those a reply can name, and that the rest must leave the commit
+      def self.admit_advice(paths)
+        unnameable, named = paths.partition { _1.match?(UNNAMEABLE) }
+        [(admit_named(named) unless named.empty?), (unnameable_said(unnameable) unless unnameable.empty?)]
+          .compact.join("; ")
+      end
+
+      def self.admit_named(named) = "answer admit <path> to land it anyway, as in \"#{admit_reply(named)}\""
+      private_class_method :admit_named
+
+      def self.unnameable_said(paths)
+        "#{paths.join(", ")} cannot be admitted by name; remove #{paths.one? ? "it" : "them"} from the commit"
+      end
+      private_class_method :unnameable_said
 
       # The one test for a park, since a human's verdicts carry no `deferred?` of their own.
       #

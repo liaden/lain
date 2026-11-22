@@ -79,6 +79,11 @@ with it, so your prose starts where it stops. Prose may take any `##` sections y
 epic's scenarios and before the Links. Every added scenario goes under `## Acceptance criteria`;
 a gherkin fence anywhere else is refused.
 
+To bound what the issue may change, add a `## Allowed paths` section: a list, one path or
+directory per item (`- docs/m0-findings.md`, `- spike/`), test files included. It is optional, and
+an issue without it is unchecked. With it, the implementation gate names every changed path outside
+the list, and the landing refuses the commit unless the human answered `approve, admit <path>`.
+
 Write the added scenarios as Gherkin, one per behaviour, each observable from *outside* the
 object — behaviour, not structure. Add only what the epic left implicit: lain renders the epic's
 own scenarios above yours, and `epic_write` refuses a file that restates one of them by name.

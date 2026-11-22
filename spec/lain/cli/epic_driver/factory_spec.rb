@@ -627,6 +627,19 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo")).not_to include("order_extra_spec")
     end
 
+    # Scenario: landing refuses a change outside scope unless the gate admitted it
+    it "refuses at landing a change outside the issue's allowed paths" do
+      write_epic([issue("a")])
+      home.issue("a").write("the prose for a\n\n## Allowed paths\n\n- a.txt\n- red_a.txt\n")
+      approve_plan("a")
+
+      result = driven(width: 1, files: { "spike/main.rs" => "fn main() {}\n" })
+
+      expect(result.landed).to be_empty
+      expect(result.reported.first.reason).to include("outside the issue's allowed paths", "spike/main.rs")
+      expect(git(repo, "ls-tree", "-r", "--name-only", "refs/heads/epic/demo")).not_to include("spike/main.rs")
+    end
+
     # A live landing checkout is lain's to merge in, and the lock is how gc
     # outside this process knows it: judged unlocked, a checkout whose HEAD the
     # queue moved reads as work folded into the epic, and is reaped mid-run.

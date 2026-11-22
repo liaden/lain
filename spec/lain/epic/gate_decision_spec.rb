@@ -63,6 +63,98 @@ RSpec.describe Lain::Epic::GateDecision do
     end
   end
 
+  # Scenario: landing refuses a change outside scope unless the gate admitted it
+  describe "#admitted" do
+    def approved(note) = decision(Lain::Approval::Verdict::Approve.new(note:))
+
+    it "reads the path prefixes an approval's note admits" do
+      expect(approved("admit spike/").admitted).to eq(["spike/"])
+    end
+
+    it "reads several, split by commas or spaces, after other words of the note" do
+      expect(approved("re-signed; admit spike/, docs/notes.md").admitted).to eq(["spike/", "docs/notes.md"])
+    end
+
+    it "stops at the first word that is not a path" do
+      expect(approved("approve, admit spike/ for lib").admitted).to eq(["spike/"])
+    end
+
+    it "admits nothing when the word after admit is not a path" do
+      expect(approved("cannot admit defeat").admitted).to eq([])
+    end
+
+    it "reads admit only as a word of its own, never inside another" do
+      expect(approved("readmit spike/").admitted).to eq([])
+    end
+
+    it "admits nothing for a bare ./, so no empty prefix is journaled" do
+      expect(approved("admit ./").admitted).to eq([])
+    end
+
+    it "drops an entry that names no path segment" do
+      ["admit .", "admit /", "admit ././", "admit ./, /"].each do |note|
+        expect(approved(note).admitted).to eq([]), note
+      end
+    end
+
+    it "calls a path with a comma unnameable, since the reply splits on it" do
+      expect(described_class.admit_advice(["a,b.md"]))
+        .to eq("a,b.md cannot be admitted by name; remove it from the commit")
+    end
+
+    it "advises admitting the paths a reply can name, and removing those it cannot" do
+      expect(described_class.admit_advice(["spike/src/main.rs", "my file.rb", "a;b"]))
+        .to eq('answer admit <path> to land it anyway, as in "approve, admit spike/src/main.rs"; ' \
+               "my file.rb, a;b cannot be admitted by name; remove them from the commit")
+      expect(described_class.admit_advice(["a\tb"])).to eq("a\tb cannot be admitted by name; remove it from the commit")
+    end
+
+    it "reads a root file written as ./Makefile as Makefile" do
+      expect(approved("admit ./Makefile").admitted).to eq(["Makefile"])
+    end
+
+    it "words an admit reply for every path, root files included, in a form it reads back whole" do
+      paths = ["spike/src/main.rs", "Makefile", ".env"]
+      reply = described_class.admit_reply(paths)
+
+      expect(reply).to eq("approve, admit spike/src/main.rs, ./Makefile, .env")
+      expect(described_class.admitted_in(Lain::Epic::GateReply.read(reply))).to eq(paths)
+    end
+
+    it "admits nothing for an approval without the word, or none at all" do
+      expect([approved("looks right").admitted, decision(verdicts::Approve.new).admitted]).to eq([[], []])
+    end
+
+    it "admits nothing on a deny or a hold, whatever its note says" do
+      expect([decision(verdicts::Deny.new(note: "admit spike/")).admitted,
+              decision(verdicts::Hold.new(note: "admit spike/")).admitted]).to eq([[], []])
+    end
+
+    it "journals the admitted prefixes beside the reason" do
+      expect(approved("admit spike/").to_journal).to include("admitted" => ["spike/"], "reason" => "admit spike/")
+    end
+
+    it "journals no admitted key when it admits nothing, so the wire shape of every other decision stands" do
+      expect(approved("looks right").to_journal).not_to have_key("admitted")
+    end
+
+    it "reads an old record without the field as admitting nothing" do
+      record = decision(verdicts::Approve.new).to_journal.except("admitted")
+
+      expect(described_class.admitted_in(described_class.verdict_in(record))).to eq([])
+    end
+
+    it "reads the prefixes back off a journaled approval's verdict" do
+      record = approved("admit spike/").to_journal
+
+      expect(described_class.admitted_in(described_class.verdict_in(record))).to eq(["spike/"])
+    end
+
+    it "is deeply frozen" do
+      expect(Ractor.shareable?(approved("admit spike/"))).to be(true)
+    end
+  end
+
   describe "a gate with policy deferred" do
     it "journals the parked submission's verdict as deferred" do
       io = StringIO.new

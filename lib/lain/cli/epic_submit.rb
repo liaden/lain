@@ -268,7 +268,22 @@ module Lain
           Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: id, digest:, tests: @tests,
                                                 manual_commands: commands,
                                                 procedure: commands && EpicDriver::Acceptance.procedure(scenarios),
-                                                reviewer_reads: newest_review(id))
+                                                reviewer_reads: newest_review(id), **changes(digest, view))
+        end
+
+        # Read through the landing's own placement, so the gate lists what the landing will judge.
+        def changes(digest, view)
+          placement = Lain::Forge::LocalLanding::Placement.new(
+            repo_root: @root, layout: Lain::TestLayout::None, base: epic_branch,
+            shell_out_factory: Shell::Out.public_method(:new)
+          )
+          { diffstat: placement.diffstat(digest),
+            outside_scope: placement.outside_scope(digest, allowed: view.allowed_paths, admitted: []) }
+        end
+
+        def epic_branch
+          name = Lain::Isolation::WorkingBranch.epic_name(@home.slug)
+          Lain::Isolation::WorkingBranch.new(name, repo_root: @root, git: checkout)
         end
 
         # The newest, not the one at the gate's commit: the reviewer read the tip it was cut from, and the
@@ -900,6 +915,11 @@ module Lain
         plan = Artifacts.new(home: home(slug), root: @root, issue:).submission(Lain::Epic::Stage.new("issue_plan"))
         ensure_approved!(Lain::Epic::SignoffQueue.from_journal(journals.to_a), plan)
       end
+
+      # @param issue [String] the issue id
+      # @param slug [String, nil] the epic; omitted resolves to the sole one
+      # @return [Array<String>, nil] the paths the issue's Allowed paths section lists; nil when it has none
+      def allowed_paths(issue, slug = nil) = Lain::Epic::IssueView.read(home(slug), issue).allowed_paths
 
       private
 

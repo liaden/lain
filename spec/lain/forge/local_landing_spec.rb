@@ -43,6 +43,7 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
   end
   let(:signoff) { Lain::Epic::Signoff.from_journal(decisions.map(&:to_journal)) }
   let(:plan) { ->(issue_id) { planned << issue_id } }
+  let(:scope) { ->(_issue_id) {} }
   let(:progress) { -> { instance_double(Lain::Epic::Progress, status:) } }
   let(:scribe) { Lain::Epic::Scribe.new(epic_slug: "demo", journal:) }
   let(:landings) { -> { journal.map(&:to_journal) } }
@@ -779,8 +780,198 @@ RSpec.describe Lain::Forge::LocalLanding, :seam do
     end
   end
 
+  # Scenario: landing refuses a change outside scope unless the gate admitted it
+  describe "the issue's allowed paths, checked over the whole diff" do
+    let(:scope) { ->(_issue_id) { ["docs/m0-findings.md"] } }
+
+    def scoped_worker = worker("a", "docs/m0-findings.md" => "findings\n", "spike/src/main.rs" => "fn main() {}\n")
+
+    def admitting(note, sha) = approve("a", sha, verdict: Lain::Approval::Verdict::Approve.new(note:))
+
+    it "refuses a change outside them the gate did not admit, naming only that path, and lands nothing" do
+      sha, ref = scoped_worker
+      approve("a", sha)
+      before = tip
+
+      expect { landing.call("a", sha:, ref:) }.to raise_error(described_class::OutsideScope) { |error|
+        expect(error.message).to include("changes outside the issue's allowed paths", "spike/src/main.rs",
+                                         "approve, admit spike/src/main.rs")
+        expect(error.message).not_to include("docs/m0-findings.md")
+      }
+      expect(tip).to eq(before)
+      expect(transitions).to be_empty
+    end
+
+    it "lands it when the approving answer admitted the path's directory" do
+      sha, ref = scoped_worker
+      admitting("admit spike/", sha)
+
+      expect(landing.call("a", sha:, ref:).landed.first.report.kind).to eq(:merged)
+    end
+
+    it "matches an admitted prefix by whole path segments, never by a bare string prefix" do
+      sha, ref = scoped_worker
+      admitting("admit spi", sha)
+
+      expect { landing.call("a", sha:, ref:) }.to raise_error(described_class::OutsideScope, %r{spike/src/main\.rs})
+    end
+
+    it "counts a deleted file outside them" do
+      git("switch", "-q", "--detach", tip)
+      git("rm", "-q", "app/models/order.rb")
+      git("commit", "-q", "-m", "drop the order")
+      sha = git("rev-parse", "HEAD")
+      git("switch", "-q", "epic/demo")
+      anchor("a", 1, sha)
+      approve("a", sha)
+
+      expect { landing.anchored("a") }.to raise_error(described_class::OutsideScope, %r{app/models/order\.rb})
+    end
+
+    it "asks the scope of the issue being landed" do
+      asked = []
+      sha, ref = worker("a", "docs/m0-findings.md" => "findings\n")
+      approve("a", sha)
+
+      scope = ->(issue_id) { ["docs/"].tap { asked << issue_id } }
+
+      described_class.new(**wiring, scope:).call("a", sha:, ref:)
+
+      expect(asked).to eq(["a"])
+    end
+
+    it "does not admit a re-synced commit outside them" do
+      sha, = scoped_worker
+      approve("a", sha)
+
+      expect(landing.admissible?("a", sha)).to be(false)
+    end
+
+    context "when the section lists no path" do
+      let(:scope) { ->(_issue_id) { [] } }
+
+      it "refuses any change" do
+        sha, ref = worker("a", "docs/m0-findings.md" => "findings\n")
+        approve("a", sha)
+
+        expect { landing.call("a", sha:, ref:) }.to raise_error(described_class::OutsideScope, %r{docs/m0-findings\.md})
+      end
+    end
+
+    context "when the section lists only ./" do
+      let(:scope) do
+        graph = Lain::Epic::Graph.new(issues: [Lain::Epic::Issue.new(id: "a", title: "a")])
+        allowed = Lain::Epic::IssueView.new(issue: graph.fetch("a"), graph:,
+                                            authored: "## Allowed paths\n\n- ./\n").allowed_paths
+        ->(_issue_id) { allowed }
+      end
+
+      it "does not allow everything" do
+        sha, ref = worker("a", "docs/m0-findings.md" => "findings\n")
+        approve("a", sha)
+
+        expect { landing.call("a", sha:, ref:) }.to raise_error(described_class::OutsideScope, %r{docs/m0-findings\.md})
+      end
+    end
+
+    it "says only to take out a change no reply can admit, never to approve it again" do
+      sha, ref = worker("a", "docs/m0-findings.md" => "findings\n", "my notes.md" => "notes\n")
+      approve("a", sha)
+
+      expect { landing.call("a", sha:, ref:) }.to raise_error(described_class::OutsideScope) { |error|
+        expect(error.message).to include("my notes.md cannot be admitted by name; remove it from the commit")
+        expect(error.message).not_to include("approve it again")
+      }
+    end
+
+    it "requires a scope, so no caller lands unchecked" do
+      expect { described_class.new(**wiring.except(:scope)) }.to raise_error(ArgumentError, /scope/)
+    end
+
+    # Scenario: an issue without the section is unchecked
+    context "when the issue has no Allowed paths section" do
+      let(:scope) { ->(_issue_id) {} }
+
+      it "lands a change anywhere" do
+        sha, ref = scoped_worker
+        approve("a", sha)
+
+        expect(landing.call("a", sha:, ref:).landed.first.report.kind).to eq(:merged)
+      end
+    end
+  end
+
+  # The gate reads the same placement, before any landing, so it lists what the landing will judge.
+  describe "the placement the gate reads" do
+    def placement(on = base)
+      described_class::Placement.new(repo_root: @repo, layout: Lain::TestLayout::None, base: on,
+                                     shell_out_factory: recording)
+    end
+
+    def sha = worker("a", "docs/m0-findings.md" => "findings\n", "spike/src/main.rs" => "fn main() {}\n").first
+
+    it "states the diffstat against the working branch" do
+      expect(placement.diffstat(sha)).to include(a_string_including("spike/src/main.rs"),
+                                                 a_string_including("2 files changed"))
+    end
+
+    it "lists the changed paths no allowed or admitted prefix covers" do
+      expect(placement.outside_scope(sha, allowed: ["docs/m0-findings.md"], admitted: [])).to eq(["spike/src/main.rs"])
+      expect(placement.outside_scope(sha, allowed: ["docs/m0-findings.md"], admitted: ["spike"])).to eq([])
+      expect(placement.outside_scope(sha, allowed: ["docs/m0"], admitted: [])).to eq(%w[docs/m0-findings.md
+                                                                                        spike/src/main.rs])
+    end
+
+    it "lists nothing for an issue with no section" do
+      expect(placement.outside_scope(sha, allowed: nil, admitted: [])).to eq([])
+    end
+
+    it "lets no empty prefix cover every path" do
+      ["", ".", "/", "./"].each do |prefix|
+        expect(placement.outside_scope(sha, allowed: [], admitted: [prefix]))
+          .to eq(%w[docs/m0-findings.md spike/src/main.rs]), prefix.inspect
+      end
+    end
+
+    it "lists every changed path for a section that allows none" do
+      expect(placement.outside_scope(sha, allowed: [], admitted: [])).to eq(%w[docs/m0-findings.md spike/src/main.rs])
+    end
+
+    context "when the working branch does not exist, as for a gate asked by hand" do
+      let(:missing) do
+        Lain::Isolation::WorkingBranch.new("epic/missing", repo_root: @repo, git: Lain::Isolation::Checkout.new(@repo))
+      end
+
+      def built(parent, files, ref)
+        CommitBuilder.call(@repo, parent:, files:, message: "work", ref: "refs/lain-spec/#{ref}")
+      end
+
+      # The commit's parent is off every branch, so a diff from any branch tip would carry the parent's file too.
+      it "diffs the commit against its own parent" do
+        earlier = built(tip, { "docs/m0-findings.md" => "findings\n" }, "earlier")
+        commit = built(earlier, { "spike/src/main.rs" => "fn main() {}\n" }, "commit")
+
+        expect(placement(missing).diffstat(commit)).to eq([" spike/src/main.rs | 1 +",
+                                                           " 1 file changed, 1 insertion(+)"])
+        expect(placement(missing).outside_scope(commit, allowed: ["docs/"], admitted: [])).to eq(["spike/src/main.rs"])
+      end
+
+      it "diffs a merge commit against its first parent, so what the merge brings in is listed" do
+        side = built(tip, { "docs/m0-findings.md" => "findings\n" }, "side")
+        main = built(tip, { "spike/src/main.rs" => "fn main() {}\n" }, "main")
+        git("switch", "-q", "--detach", main)
+        git("merge", "-q", "--no-ff", "-m", "merge the side", side)
+        merge = git("rev-parse", "HEAD")
+        git("switch", "-q", "epic/demo")
+
+        expect(placement(missing).outside_scope(merge, allowed: ["spike/"],
+                                                       admitted: [])).to eq(["docs/m0-findings.md"])
+      end
+    end
+  end
+
   def wiring
-    { epic_slug: "demo", repo_root: @repo, base:, signoff:, plan:, progress:, scribe:, queue:, layout:,
+    { epic_slug: "demo", repo_root: @repo, base:, signoff:, plan:, scope:, progress:, scribe:, queue:, layout:,
       shell_out_factory: recording }
   end
 end

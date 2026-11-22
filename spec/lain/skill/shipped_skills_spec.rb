@@ -844,6 +844,14 @@ RSpec.describe "shipped skills" do
       end
     end
 
+    it "teaches create-epic-issues the optional Allowed paths section, tests included, and how a gate admits more" do
+      with_empty_project do |renderer|
+        phase = renderer.render("create-epic-issues")[/^## Phase 2 .*?(?=^## Phase 3 )/m]
+
+        expect(phase).to include("## Allowed paths", "test files", "approve, admit <path>")
+      end
+    end
+
     it "has plan-epic and create-epic-issues read status and issues through tools, never a lain epic command" do
       with_empty_project do |renderer|
         %w[plan-epic create-epic-issues].each do |name|

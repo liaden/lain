@@ -117,6 +117,57 @@ RSpec.describe Lain::Epic::IssueView do
     end
   end
 
+  # Scenario: the gate shows a diffstat and the paths outside scope
+  describe "#allowed_paths" do
+    let(:scoped) do
+      "#{authored}\n## Allowed paths\n\n- `docs/m0-findings.md`, the findings\n- ./spike/\n\nNothing else.\n"
+    end
+
+    it "lists each path the authored Allowed paths section names, in the order written" do
+      expect(view_of(scoped).allowed_paths).to eq(["docs/m0-findings.md", "spike/"])
+    end
+
+    it "reads the heading in any case, at level 2 or 3, so a typo there cannot leave the issue unchecked" do
+      ["## Allowed Paths", "### Allowed paths", "### ALLOWED PATHS"].each do |heading|
+        expect(view_of("#{authored}\n#{heading}\n\n- spike/\n").allowed_paths).to eq(["spike/"]), heading
+      end
+    end
+
+    # Rendered markdown hides a comment, so an item in one is nothing the approving human saw.
+    it "skips a list item inside an HTML comment, on one line or across several" do
+      text = "#{authored}\n## Allowed paths\n\n<!-- - spike/ -->\n- docs/\n<!--\n- lib/\n-->\n"
+
+      expect(view_of(text).allowed_paths).to eq(["docs/"])
+    end
+
+    it "skips a list item inside a fence" do
+      expect(view_of("#{authored}\n## Allowed paths\n\n- docs/\n```text\n- spike/\n```\n").allowed_paths)
+        .to eq(["docs/"])
+    end
+
+    it "is nil for an issue with no such section, which leaves it unchecked" do
+      expect(view_of.allowed_paths).to be_nil
+    end
+
+    it "is empty for a section that names no path, which allows nothing" do
+      expect(view_of("#{authored}\n## Allowed paths\n\nNone yet.\n").allowed_paths).to eq([])
+    end
+
+    it "keeps the section in the rendered view, so editing it reopens the plan" do
+      expect(view_of(scoped).to_markdown).to include("## Allowed paths\n\n- `docs/m0-findings.md`")
+      expect(view_of(scoped).digest).not_to eq(view_of.digest)
+    end
+
+    # Literal, so a change to the rendering cannot move an approved plan without this failing.
+    it "leaves the view and issue_plan digests of an issue without the section where they were" do
+      plan = Lain::Epic::Submission.issue_plan(view: view_of, slug: "demo", issue_id: "ingest")
+
+      expect([view_of.digest, plan.digest])
+        .to eq(%w[blake3:c2e4f19dae5b2dd645ef478b16ce345bc06fc7d150cb6cde538bea900253ada0
+                  blake3:897ad2da2a4c7c75776dec97b1ba554bd7c0ff6cd9c298e9b319d20ab9bacc03])
+    end
+  end
+
   describe "#lends" do
     let(:referenced) do
       <<~MARKDOWN
