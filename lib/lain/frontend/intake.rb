@@ -166,10 +166,11 @@ module Lain
       #   {Discretion} in a chat someone types into
       # @param notes [#take?] offered each line that arrives with nothing published, before it is held
       # @param on_cycle [#call] what the approval key does, called on the producer's own stack
+      # @param held [HeldLines] the lines kept for `you>`
       # @param commands [#disposition, #run_now] asked about each line that arrives with nothing published;
       #   `run_now` answers nil when it could not run the line, which is then held
       def initialize(screen: Unseen, history: Unrecorded, notes: CLI::HumanNotes::Null, on_cycle: UNCYCLED,
-                     commands: NoCommands)
+                     commands: NoCommands, held: HeldLines.new)
         @screen = screen
         @history = history
         @notes = notes
@@ -178,7 +179,7 @@ module Lain
         @inbound = Thread::Queue.new
         @lock = Thread::Mutex.new
         @turns = []
-        @held = []
+        @held = held
         @producers = {}
         @published = Unpublished
         @generation = 0
@@ -190,7 +191,9 @@ module Lain
       # A producer's value. A signal is delivered on the producer's stack; a
       # line or an end of stream waits for the reader whose prompt it answers.
       def <<(value)
-        sent = lifts?(value) ? Signal.new(name: :stop) : value
+        stop = Signal.new(name: :stop)
+        sent = lifts?(value) ? stop : value
+        say_dropped(@held.clear) if sent == stop && @sink.ask_in_flight?
         sent.is_a?(Signal) ? @sink.signal(sent.name) : deliver(sent)
         self
       end
@@ -276,9 +279,12 @@ module Lain
       end
 
       # The held lines in the order typed, left held.
-      def held_lines = @lock.synchronize { @held.dup }
+      def held_lines = @held.texts
 
-      def clear_held = @lock.synchronize { @held.slice!(0..) }
+      # {#held_lines} with where and when each was typed.
+      def held_entries = @held.entries
+
+      def clear_held = @held.clear
 
       # A producer on threads of its own has the chat's reactor drain the commands it queues.
       #
@@ -426,7 +432,7 @@ module Lain
       def decided(offered, answer)
         return if answer.equal?(OFFER_ENDED)
 
-        offered.opened(answer) { |line| @lock.synchronize { @held << line } } ? :taken : :dropped
+        offered.opened(answer) { |line| @held.keep(line, kind: :offer) } ? :taken : :dropped
       end
 
       def redraft(text) = @lock.synchronize { @producers.keys }.each { |producer| producer.keep(text) }
@@ -454,19 +460,24 @@ module Lain
       end
 
       # A line acted on already answered the human, so only one kept is told what does answer the prompt.
-      def refused(text, line)
-        text.respond_to?(:withhold) ? text.withhold(line) : keep(line)
+      def refused(text, line, answering: false)
+        text.respond_to?(:withhold) ? text.withhold(line) : keep(line, answering:)
         text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
       end
 
-      def keep(text)
-        @lock.synchronize { @held << text }
+      def keep(text, answering: false)
+        @lock.synchronize { @held.keep(text, kind: @published.kind, read: (@turns.first.object_id if answering)) }
         @screen.render_held(text)
+      end
+
+      def say_dropped(texts, tail = "")
+        texts.each { |text| @history.remember(text) }
+        @screen.render_note("#{HeldLines.dropped(texts.size)}#{tail}") unless texts.empty?
       end
 
       def unread?(value) = value.is_a?(Line) && glimpse.kind.nil?
 
-      def held_line = @lock.synchronize { @held.shift }
+      def held_line = @held.take
 
       def recalled(line)
         @history.remember(line) unless line.nil?
@@ -517,7 +528,9 @@ module Lain
         return value.generation == prompt.generation ? STEPPED_ASIDE : STILL_DRAWN if value.is_a?(Preempt)
         return Heard.new(text: value.text) if answers?(prompt, text, value)
 
-        refused(text, value.text) unless placed?(value.text, CLI::HumanNotes::Null)
+        unless placed?(value.text, CLI::HumanNotes::Null)
+          refused(text, value.text, answering: prompt.answer? && value.generation == prompt.generation)
+        end
         stale?(prompt, value) ? STILL_DRAWN : REDRAWN
       end
 
@@ -631,6 +644,7 @@ module Lain
           @turns.delete_if { |waiting| waiting.equal?(turn) }
           @turns.first&.gate&.push(true) if head
         end
+        say_dropped(@held.expire(turn.object_id).map(&:text), " typed at the prompt just answered")
       end
     end
 

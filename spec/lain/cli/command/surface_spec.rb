@@ -121,7 +121,7 @@ RSpec.describe Lain::CLI::Command::Surface do
       rail = Lain::Frontend::Intake.new
       rail.hold("later")
 
-      expect(held_over(rail)).to eq("held for you>:\n  1. later")
+      expect(held_over(rail)).to match(/\Aheld for you>:\n  1\. later \(typed with no prompt open, \d+s ago\)\z/)
     end
 
     it "is registered without a rail, listing nothing" do

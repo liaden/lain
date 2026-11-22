@@ -5738,7 +5738,7 @@ RSpec.describe Lain::CLI::Wiring do
           wiring.conductor.close(reason: :exit)
 
           expect([output.string.scan("no pending approvals").size, listing])
-            .to eq([1, "held for you>:\n  1. do this later"])
+            .to match([1, /\Aheld for you>:\n  1\. do this later \(typed with no prompt open, \d+s ago\)\z/])
         end
       end
     end

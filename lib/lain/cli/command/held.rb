@@ -9,13 +9,16 @@ module Lain
       class Held
         CLEAR = "clear"
 
+        WHERE = { nil => "with no prompt open", offer: "at a review offer" }.freeze
+        private_constant :WHERE
+
         # The chat with no rail to ask: nothing is ever held.
         module NoRail
-          def self.held_lines = []
+          def self.held_entries = []
           def self.clear_held = []
         end
 
-        # @param rail [#held_lines, #clear_held, nil] the chat's {Frontend::Intake}; nil until a chat has built one
+        # @param rail [#held_entries, #clear_held, nil] the chat's {Frontend::Intake}; nil until a chat has built one
         def initialize(rail:)
           @rail = rail || NoRail
           freeze
@@ -39,15 +42,20 @@ module Lain
         private
 
         def listing
-          lines = @rail.held_lines
+          lines = @rail.held_entries
           return "nothing held" if lines.empty?
 
-          ["held for you>:", *lines.each_with_index.map { |line, index| "  #{index + 1}. #{line}" }].join("\n")
+          ["held for you>:", *lines.each_with_index.map { |line, index| "  #{index + 1}. #{entry(line)}" }].join("\n")
         end
 
+        def entry(line) = "#{line.text} (typed #{where(line.kind)}, #{age(line.age)} ago)"
+
+        def where(kind) = WHERE.fetch(kind) { "at the #{kind} prompt" }
+
+        def age(seconds) = seconds < 60 ? "#{seconds.floor}s" : "#{(seconds / 60).floor}m"
+
         def cleared
-          dropped = @rail.clear_held.size
-          "dropped #{dropped} held #{dropped == 1 ? "line" : "lines"}"
+          Frontend::Intake::HeldLines.dropped(@rail.clear_held.size)
         end
       end
     end

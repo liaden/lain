@@ -189,6 +189,43 @@ RSpec.describe Lain::Frontend::Intake do
       expect(rail.take_held).to eq("yes please")
     end
 
+    it "drops a word typed at an answer's prompt once that prompt is answered, and says so" do
+      asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation == 1 }
+          rail << line("network", 1)
+          pumped_until(task) { rail.published.generation == 2 }
+          rail << line("n", 2)
+        end
+        rail.read(:approval, asked)
+      end
+
+      expect([rail.held_lines, rail.take_held, screen.said.last])
+        .to eq([[], nil, [:note, "dropped 1 held line typed at the prompt just answered"]])
+    end
+
+    it "keeps a command typed at the prompt for the next you>, which is not a word for that prompt" do
+      asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation == 1 }
+          rail << line("/goal off", 1)
+          pumped_until(task) { rail.published.generation == 2 }
+          rail << line("n", 2)
+        end
+        rail.read(:approval, asked)
+      end
+
+      expect(rail.held_lines).to eq(["/goal off"])
+    end
+
+    it "keeps a word held at you>, which no prompt answers" do
+      rail.hold("later")
+
+      expect(Sync { rail.read(:you, "you> ") }).to eq("later")
+    end
+
     it "is taken by a prompt that answers nothing, where typing ahead is what the human meant" do
       answer = Sync do |task|
         answered_when_published(task, generation: 0) { "/approve" }
@@ -319,7 +356,7 @@ RSpec.describe Lain::Frontend::Intake do
         noting.read(:approval, asked)
       end
 
-      expect([taking.taken, screen.said.map(&:first)]).to eq([[], [:held]])
+      expect([taking.taken, screen.said.map(&:first)]).to eq([[], %i[held note]])
     end
   end
 
@@ -339,7 +376,8 @@ RSpec.describe Lain::Frontend::Intake do
         rail.read(:approval, asked)
       end
 
-      expect(screen.said).to eq([[:held, "chatter"], [:note, "only n answers"]])
+      expect(screen.said).to eq([[:held, "chatter"], [:note, "only n answers"],
+                                 [:note, "dropped 1 held line typed at the prompt just answered"]])
     end
   end
 
@@ -852,6 +890,32 @@ RSpec.describe Lain::Frontend::Intake do
       expect([received, answer]).to eq([[:stop], :still_asking])
     end
 
+    it "drops every held line and says how many" do
+      in_flight(true)
+      rail.hold("later")
+
+      rail << line("/stop", 0)
+
+      expect([received, rail.held_lines, screen.said.last]).to eq([[:stop], [], [:note, "dropped 1 held line"]])
+    end
+
+    it "says nothing of held lines when none were held" do
+      in_flight(true)
+
+      rail << line("/stop", 0)
+
+      expect([received, screen.said]).to eq([[:stop], []])
+    end
+
+    it "leaves the held lines when no ask is in flight to stop" do
+      in_flight(false)
+      rail.hold("later")
+
+      rail << line("/stop", 0)
+
+      expect(rail.held_lines).to eq(["later", "/stop"])
+    end
+
     it "is an ordinary line at you>, where there is never an ask to stop" do
       in_flight(true)
 
@@ -1079,7 +1143,8 @@ RSpec.describe Lain::Frontend::Intake do
           rail.read(:approval, asked)
         end
 
-        expect(screen.said).to eq([[:held, "later"], [:note, "y, n or hold answers the approval"]])
+        expect(screen.said).to eq([[:held, "later"], [:note, "y, n or hold answers the approval"],
+                                   [:note, "dropped 1 held line typed at the prompt just answered"]])
       end
     end
 
@@ -1185,7 +1250,7 @@ RSpec.describe Lain::Frontend::Intake do
       Sync do |task|
         task.async do
           pumped_until(task) { rail.published.generation == 1 }
-          rail << line("yes please", 0)
+          rail << line("/yes please", 0)
           pumped_until(task) { rail.published.generation == 2 }
           rail << line("n", 2)
         end
@@ -1193,7 +1258,7 @@ RSpec.describe Lain::Frontend::Intake do
       end
       kept_while_held = history.kept.dup
 
-      expect([kept_while_held, rail.read(:you, "you> "), history.kept]).to eq([[], "yes please", ["yes please"]])
+      expect([kept_while_held, rail.read(:you, "you> "), history.kept]).to eq([[], "/yes please", ["/yes please"]])
     end
 
     it "keeps a held line taken for you> between reads, once" do
@@ -1220,6 +1285,44 @@ RSpec.describe Lain::Frontend::Intake do
       end
 
       expect(history.kept).to eq(["/goal off"])
+    end
+
+    it "keeps a word dropped with the answer prompt it was typed at, and dispatches none" do
+      asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
+      Sync do |task|
+        task.async do
+          pumped_until(task) { rail.published.generation == 1 }
+          rail << line("network", 1)
+          pumped_until(task) { rail.published.generation == 2 }
+          rail << line("n", 2)
+        end
+        rail.read(:approval, asked)
+      end
+
+      expect([history.kept, rail.take_held]).to eq([["network"], nil])
+    end
+
+    it "keeps the lines a /stop drops, and dispatches none" do
+      received = []
+      rail.route(sink_over(received, ask_in_flight: true))
+      rail.hold("later")
+      rail << line("/stop", 0)
+
+      expect([history.kept, received]).to eq([["later"], [:stop]])
+    end
+
+    it "keeps the typeahead a stop signal clears at you>, and dispatches none" do
+      received = []
+      rail.route(sink_over(received, ask_in_flight: true))
+      Sync do |task|
+        reading = task.async { rail.read(:you, "you> ") }
+        pumped_until(task) { rail.published.kind == :you }
+        rail.hold("typed ahead")
+        rail << described_class::Signal.new(name: :stop)
+        reading.stop
+      end
+
+      expect([history.kept, rail.held_lines, received]).to eq([["typed ahead"], [], [:stop]])
     end
 
     it "keeps nothing when the stream ends under you>" do
