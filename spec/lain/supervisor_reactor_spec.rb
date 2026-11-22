@@ -467,19 +467,10 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
       end
     end
 
-    # FINDING (Jeremy, NIT -- documented gap, left green as evidence): the
-    # TimeoutError pass-through keys on the exception CLASS, so an actor whose
-    # own captured failure happens to be Async::TimeoutError (a user tool
-    # could raise one; today no lib path leaves one in @failure during a
-    # drain) is indistinguishable from the Drain's bound: Registration#settle
-    # re-raises it, Drain journals a FALSE drain_timed_out long before the
-    # window closes, and the rest of the fleet's settle loop is abandoned. A
-    # dedicated exception (`with_timeout(@within, Drain::Expired)`) would make
-    # the pass-through exact.
+    # A user tool could raise Async::TimeoutError, and a pass-through keyed on
+    # that class read it as the Drain's own bound: a false drain_timed_out, and
+    # the rest of the fleet's settle loop abandoned.
     it "an actor's own captured Async::TimeoutError is not misread as the drain's bound" do
-      pending "Drain's pass-through keys on the exception CLASS, so it cannot tell its own " \
-              "with_timeout bound from an Async::TimeoutError the actor itself captured. " \
-              "`with_timeout(@within, Drain::Expired)` makes the pass-through exact."
       journal = Lain::Channel.new
       Sync do |task|
         supervisor = described_class.new(journal:).run(task)
@@ -491,13 +482,11 @@ RSpec.describe Lain::Supervisor, "as an actor reactor" do
         end
         entered.dequeue # live at the dead? check
 
-        started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         drain = task.async { supervisor.drain(within: 60).each(&:settle) }
         release.enqueue(:timeout) # the actor's OWN failure is a TimeoutError
 
-        expect { drain.wait }.not_to raise_error # the coordinator survives either way...
-        elapsed = Process.clock_gettime(Process::CLOCK_MONOTONIC) - started
-        expect(elapsed).to be < 1 # ...and returns at once, because the actor DID settle
+        expect { drain.wait }.not_to raise_error
+        expect(supervisor.map(&:state)).to eq(%i[failed]) # it settled as the actor's own failure
         timeouts = journal.drain.select { |r| r.to_journal["type"] == "drain_timed_out" }
         expect(timeouts).to be_empty # the 60s window never closed; nothing timed out
       ensure

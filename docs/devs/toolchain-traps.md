@@ -183,7 +183,6 @@ These were recorded 2026-08-18. All pass in isolation, all are driven by real `g
 Added 2026-09-11, from a run with 2 to 5 agents running rspec at once. Each of these went red in a pre-commit or `pspec` run while another suite was live, and passed alone. Run the named example by itself on a quiet box before believing any of them:
 
 - `Lain::CLI::Up against a real tmux server --nvim cockpit splits the chat window into an nvim pane and a chat pane sharing one socket and one cwd`
-- `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured Async::TimeoutError is not misread as the drain's bound`
 - `lain.rb without the compiled extension keeps Ruby's own LoadError message rather than replacing it`
 - `the review annotation runtime a buffer that goes away drops the orphaned entry once it has settled it, so a reused bufnr inherits nothing`
 
@@ -255,8 +254,6 @@ Added 2026-10-15, from a pre-commit run and a reviewer's run beside about 10 age
 - `Shift+Enter in a pane inserts a newline and submits the whole draft on Enter` (load 14, passed alone and 3 of 3 with its seed on the base commit)
 
 Added 2026-10-19, from a landing hook beside about 20 agents running specs: `Lain::Agent the graph CoreGraph hands out by default runs to completion holding no file descriptor of its own` saw 9 open descriptors where it counted 10 (another example in the same worker closed one mid-count). It passed alone, and 3 of 3 with its worker's seed on the base commit and on the card's tree.
-
-Added 2026-10-19, same landing window: `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured Async::TimeoutError is not misread as the drain's bound` timed out its 60s window once beside about 20 agents. It passed alone and 3 of 3 with its worker's seed, on a card that does not touch the supervisor.
 
 Added 2026-11-02, from the nyotes landing windows. Each passed alone and 3 of 3 on the base commit:
 
@@ -364,6 +361,7 @@ A live demonstration of why this list is by NAME and not by line: `buffers_spec.
 
 Keep a retired name here so a later red under it reads as a regression, not as a known flake.
 
+- 2026-11-22: `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured Async::TimeoutError is not misread as the drain's bound` (listed since 2026-09-11). It was never a flake: the example was `pending` on a real defect, so its expected failure was read as a red; the Drain's bound now raises its own `Supervisor::Drain::Expired`, so an actor's own `Async::TimeoutError` settles as that actor's failure, and the example runs unpended. Its 1 timeout of the 60s window on 2026-10-19, beside about 20 agents, was never explained, so a repeat is a regression to chase.
 - 2026-11-22: `role_prelude_wiring_spec`'s `sends no more than Anthropic's 4 cache_control blocks for a long-lived role child` (recorded red 2026-09-11, 2026-10-28 and 2026-11-22). Never a flake: the example was pending from 2026-07-17 and counted 5 on every run, and each "red" was its expected failure in the Pending section, read as the run's failure (on 2026-11-22 the real one was a `project_dir_spec` locator example). The 5 was a real defect: a role child's system carried its persona's mark and a 2nd on the role tail, so a long one was refused at encode. `Context#cache_marked` now keeps exactly 1 system mark, and the example runs unpended.
 - 2026-11-22: `a stalled stream under an Async reactor two concurrent streams, one of them stalling raises the stall in the fiber that owns the dead stream` and `a stalled stream under an Async reactor two healthy streams interleaving lets both finish, each with its own content` (`Errno::ECONNRESET` in `StreamingUpstream::Chunk#emit`, green alone and with the failing seed on the base). A client that had left made the upstream's next write raise in its connection thread, and `stop` joins that thread, which re-raises it over the example's own verdict; `StreamingUpstream#serve` now treats EPIPE and ECONNRESET on a write as the client leaving.
 

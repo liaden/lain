@@ -507,7 +507,7 @@ module Lain
       def unsettled_turn
         actor.settle
         actor.stopped? ? STOPPED_MIDTURN : ""
-      rescue Async::TimeoutError
+      rescue Drain::Expired
         raise
       rescue StandardError => e
         Agent::StopReason.for(e) == :quota ? actor.cause : "the actor's turn raised #{actor.cause}"
@@ -539,7 +539,7 @@ module Lain
       def settle
         actor.settle unless actor.dead?
         self
-      rescue Async::TimeoutError
+      rescue Drain::Expired
         raise
       rescue StandardError
         self
@@ -655,10 +655,14 @@ module Lain
       def quiet? = kind == :nothing_to_do
     end
 
-    # `with_timeout`'s expiry raises at whichever parked settle is in flight, and
-    # {Registration#settle} deliberately re-raises exactly that class, so the
-    # bound cannot be swallowed by the same rescue that absorbs actor failures.
+    # The bound raises `Drain::Expired` at whichever parked settle is in flight,
+    # and {Registration#settle} re-raises exactly that class, so the bound cannot
+    # be swallowed by the rescue that absorbs actor failures. It is its own class
+    # so an actor's own captured Async::TimeoutError settles as that actor's
+    # failure rather than passing for this bound.
     class Drain
+      class Expired < Async::TimeoutError; end
+
       def initialize(supervisor:, within:, journal:)
         @supervisor = supervisor
         @within = within
@@ -666,9 +670,9 @@ module Lain
       end
 
       def settle
-        Async::Task.current.with_timeout(@within) { @supervisor.each(&:settle) }
+        Async::Task.current.with_timeout(@within, Expired) { @supervisor.each(&:settle) }
         self
-      rescue Async::TimeoutError
+      rescue Expired
         @journal << DrainTimedOut.new(within: @within, roles: @supervisor.map(&:role))
         self
       end

@@ -546,6 +546,21 @@ RSpec.describe Lain::Tools::Subagent::Actor do
       end
     end
 
+    context "when drained during the wait, on the real clock" do
+      it "times the drain out on its own bound, and a stop then ends the wait at once" do
+        launched(provider(quota("retry-after" => "3600")), sleeper: described_class::Sleeper.new) do |actor, supervisor|
+          row = supervisor.find { |registration| registration.actor.equal?(actor) }
+          pumped_until(Async::Task.current, reason: "the pause note") { lifecycle_text("paused") }
+          supervisor.drain(within: 0.05).each(&:settle)
+          actor.stop
+
+          expect([journal_records(session_io, "drain_timed_out").size, actor.cause, row.state])
+            .to eq([1, nil, :stopped])
+          expect(lifecycle_text("stopped")).to eq("actor stopped")
+        end
+      end
+    end
+
     context "with no reset time" do
       it "tells the parent once that it checks every 15 minutes, not once per probe" do
         launched(provider(quota, quota, quota)) { |actor, _| actor.settle }

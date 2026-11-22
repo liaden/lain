@@ -1587,6 +1587,40 @@ RSpec.describe Lain::Supervisor do
       expect(report.detail).to include(row.cause)
     end
 
+    # A user tool could raise Async::TimeoutError; it is the actor's failure,
+    # and only a drain's own expiry may climb out of the retirement.
+    it "words an actor's own Async::TimeoutError as its turn raising" do
+      provider = Class.new(Lain::Provider::Mock) do
+        define_method(:complete) { |*, **| raise Async::TimeoutError, "the actor's own" }
+      end.new(responses: [])
+      tool = CoreGraph.subagent(provider:, toolset: CoreGraph.toolset([EchoTool.new]), parent: parent_timeline,
+                                journal: CoreGraph.journal, mode: :actor, log:)
+      report = nil
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([]))) do |supervisor, _task|
+        report = supervisor.retire(row_of(supervisor, adopted(supervisor, tool)))
+        supervisor.stop
+      end
+
+      expect(report.detail).to include("the actor's turn raised Async::TimeoutError: the actor's own")
+    end
+
+    it "lets a drain's expiry climb out of a retirement still awaiting the turn, stopping the actor" do
+      row = nil
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([]))) do |supervisor, task|
+        entered = Async::Queue.new
+        row = row_of(supervisor, adopted(supervisor, parking_tool(entered:, release: Async::Queue.new)))
+        entered.dequeue
+
+        expect { task.with_timeout(0.05, Lain::Supervisor::Drain::Expired) { supervisor.retire(row) } }
+          .to raise_error(Lain::Supervisor::Drain::Expired)
+        supervisor.stop
+      end
+
+      expect(row.state).to eq(:stopped)
+    end
+
     it "has no cause for an actor that settled" do
       row = nil
       supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
