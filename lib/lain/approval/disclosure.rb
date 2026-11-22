@@ -5,7 +5,7 @@ require "concurrent/map"
 
 module Lain
   module Approval
-    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned, :identifying)
+    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned, :identifying, :binaries)
 
     # What a bash call would reach before it runs: how many sensitive regions
     # each file it reads holds, where it would send, whether lain could name
@@ -29,11 +29,15 @@ module Lain
     #     directory or search root, a file past the cap, or one it could not open as a regular file
     # @!attribute [r] identifying
     #   @return [Boolean] whether a stage that sends names one of the account's identity values in its words
+    # @!attribute [r] binaries
+    #   @return [Array<String>] each executable the call reads whose printable text held no region, named as in
+    #     holdings; it counts as scanned and clean, so it is never in unscanned
     class Disclosure
       HOLDS = "%<path>s holds %<count>s sensitive %<noun>s"
       SENDS = "it names %<sinks>s as %<noun>s"
       UNNAMEABLE = "lain cannot name the files it touches"
       UNSCANNED = "reads files lain did not scan whole: %<paths>s"
+      BINARY = "%<path>s is binary; its text held no secret"
       IDENTIFYING = "it sends the account identity in an outgoing request"
       HERE = "."
       RECURSIVE = "/**"
@@ -52,8 +56,44 @@ module Lain
         #   @return [Integer, nil] nil when nothing was read
         # @!attribute [r] whole
         #   @return [Boolean] whether every byte was scanned
-        Count = Data.define(:regions, :whole)
+        # @!attribute [r] binary
+        #   @return [Boolean] whether the file is an executable whose printable text held no secret; a count
+        #     built without it says text
+        Count = Data.define(:regions, :whole, :binary) do
+          def initialize(regions:, whole:, binary: false) = super
+        end
+
         UNREAD = Count.new(regions: nil, whole: false)
+
+        # A scan of an executable's raw bytes reports noise as secrets, so an executable is judged by its
+        # printable runs instead, and is only listed unscanned when those hold no region. It is taken as one
+        # only when every test agrees, each a way text can look like a binary; a file that cannot be judged is
+        # text, and text appended to a binary is found by the runs scan.
+        module Binary
+          MAGICS = ["\x7fELF", "\xFE\xED\xFA\xCE", "\xFE\xED\xFA\xCF", "\xCE\xFA\xED\xFE",
+                    "\xCF\xFA\xED\xFE"].map { _1.b.freeze }.freeze
+          TEXT = "^\t\n\r\x20-\x7e"
+          SHARE = 0.5
+          STRING = /[\x20-\x7e\t]{8,}/n
+
+          # @param bytes [String] the whole file, read within the cap, tagged binary
+          def self.of?(bytes) = magic?(bytes) && !utf8?(bytes) && mostly_binary?(bytes)
+
+          # @return [String] each run of 8 or more printable bytes, one to a line
+          def self.strings(bytes) = bytes.scan(STRING).join("\n").force_encoding(Encoding::UTF_8)
+
+          def self.magic?(bytes) = MAGICS.include?(bytes.byteslice(0, 4))
+
+          def self.mostly_binary?(bytes) = bytes.count(TEXT) >= bytes.bytesize * SHARE
+
+          # Tagged and restored in place, so a file at the cap is not copied to be asked.
+          def self.utf8?(bytes)
+            bytes.force_encoding(Encoding::UTF_8).valid_encoding?
+          ensure
+            bytes.force_encoding(Encoding::BINARY)
+          end
+          private_class_method :magic?, :mostly_binary?, :utf8?
+        end
 
         # A replay's file facts record where files are, never what they hold, so
         # over them nothing is opened and no region is counted.
@@ -89,7 +129,11 @@ module Lain
           return UNREAD unless stat.file?
 
           bytes = file.read(CAP + 1).to_s
-          Count.new(regions: regions(path, bytes.byteslice(0, CAP)), whole: bytes.bytesize <= CAP)
+          whole = bytes.bytesize <= CAP
+          return Count.new(regions: regions(path, bytes.byteslice(0, CAP)), whole:) unless whole && Binary.of?(bytes)
+
+          found = regions(path, Binary.strings(bytes))
+          Count.new(regions: found, whole: true, binary: found.zero?)
         end
 
         def regions(path, text)
@@ -240,7 +284,8 @@ module Lain
         files, bulk = read.partition { _1.pattern.nil? }
         counts = files.map(&:resolved).uniq.filter_map { |path| scan.call(path)&.then { [path, _1] } }
         new(holdings: held(counts, cwd), sinks: Sinks.of(stages), unnameable: named.opaque?,
-            unscanned: unscanned(bulk, counts, cwd), identifying: Sinks.identifying?(stages, identity))
+            unscanned: unscanned(bulk, counts, cwd), identifying: Sinks.identifying?(stages, identity),
+            binaries: binaries(counts, cwd))
       end
 
       # @param context [Object, nil]
@@ -250,6 +295,8 @@ module Lain
       def self.held(counts, cwd)
         counts.reject { |_, count| count.regions.nil? }.to_h { |path, count| [shown(path, cwd), count.regions] }
       end
+
+      def self.binaries(counts, cwd) = counts.select { |_, count| count.binary }.map { |path, _| shown(path, cwd) }
 
       def self.unscanned(bulk, counts, cwd)
         partial = counts.reject { |_, count| count.whole }.map(&:first)
@@ -266,12 +313,13 @@ module Lain
         below = cwd.end_with?(File::SEPARATOR) ? cwd : "#{cwd}#{File::SEPARATOR}"
         path.start_with?(below) ? path.delete_prefix(below) : path
       end
-      private_class_method :held, :unscanned, :root, :shown
+      private_class_method :held, :binaries, :unscanned, :root, :shown
 
-      def initialize(holdings:, sinks:, unnameable:, unscanned: [], identifying: false)
+      def initialize(holdings:, sinks:, unnameable:, unscanned: [], identifying: false, binaries: [])
         super(holdings: Ractor.make_shareable(holdings.to_h { |path, count| [-path.to_s, Integer(count)] }),
               sinks: Ractor.make_shareable(sinks.map { -_1.to_s }.uniq), unnameable: unnameable == true,
-              unscanned: Ractor.make_shareable(unscanned.map { -_1.to_s }.uniq), identifying: identifying == true)
+              unscanned: Ractor.make_shareable(unscanned.map { -_1.to_s }.uniq), identifying: identifying == true,
+              binaries: Ractor.make_shareable(binaries.map { -_1.to_s }.uniq))
       end
 
       NONE = new(holdings: {}, sinks: [], unnameable: false)
@@ -288,14 +336,21 @@ module Lain
 
       # @return [Array<Parked::Queue::Reason>] lain's own words, each path and host inspected
       def notes
-        [*holdings.select { _2.positive? }.map { |path, count| Parked::Queue::Reason.own(held_note(path, count)) },
+        [*held_notes,
          *(Parked::Queue::Reason.own(sent_note) unless sinks.empty?),
+         *binary_notes,
          *(Parked::Queue::Reason.own(IDENTIFYING) if identifying),
          *(Parked::Queue::Reason.own(UNNAMEABLE) if unnameable),
          *(Parked::Queue::Reason.own(format(UNSCANNED, paths: unscanned.map(&:inspect).join(", "))) if unscanned.any?)]
       end
 
       private
+
+      def held_notes
+        holdings.select { _2.positive? }.map { |path, count| Parked::Queue::Reason.own(held_note(path, count)) }
+      end
+
+      def binary_notes = binaries.map { |path| Parked::Queue::Reason.own(format(BINARY, path: path.inspect)) }
 
       def held_note(path, count)
         shown = count >= Scanner::CEILING ? "#{count} or more" : count.to_s

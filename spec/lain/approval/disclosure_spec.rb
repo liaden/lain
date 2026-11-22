@@ -238,6 +238,117 @@ RSpec.describe Lain::Approval::Disclosure do
     end
   end
 
+  describe "a binary file" do
+    let(:cap) { described_class::Scanner::CAP }
+    let(:body) { "\x00\xff\x80\x01".b * 4096 }
+    let(:elf) { "\x7fELF\x02\x01\x01".b + body }
+    let(:pem) do
+      marker = %w[PRIVATE KEY].join(" ")
+      "-----BEGIN #{marker}-----\n#{[SecureRandom.random_bytes(96)].pack("m0")}\n-----END #{marker}-----\n"
+    end
+
+    it "is listed as binary and not scanned, holding no region, and is not a secret-bearing read" do
+      write("m0-spike", elf)
+
+      disclosure = disclosed("./m0-spike")
+
+      expect(disclosure).to have_attributes(holdings: { "m0-spike" => 0 }, binaries: ["m0-spike"], unscanned: [],
+                                            secret_bearing?: false)
+      expect(said(disclosure)).to eq(["\"m0-spike\" is binary; its text held no secret"])
+    end
+
+    it "leaves a binary out of the secrets a human's yes remembers" do
+      write("m0-spike", elf)
+      write("keys.env", "T=#{token}\n")
+
+      expect(Lain::Approval::Parked::Queue.secrets_of(disclosed("cat m0-spike keys.env"))).to eq(["keys.env"])
+    end
+
+    it "carries a Mach-O magic the same way" do
+      write("tool", "\xcf\xfa\xed\xfe".b + body)
+
+      expect(disclosed("cat tool")).to have_attributes(binaries: ["tool"])
+    end
+
+    {
+      "a UTF-16 text file" => ->(token) { "\uFEFFT=#{token}\n".encode("UTF-16LE") },
+      "a text file with one NUL" => ->(token) { "a\0b\nT=#{token}\n" },
+      "a text file saved with a BOM" => ->(token) { "\uFEFFT=#{token}\n" },
+      "a text file starting with the ELF magic" => ->(token) { "\x7fELF\nT=#{token}\n" }
+    }.each do |name, build|
+      it "does not class #{name} as binary" do
+        write("note.txt", build.call(token).b)
+
+        expect(disclosed("cat note.txt")).to have_attributes(binaries: [])
+      end
+    end
+
+    it "still counts the secret in a text file with one NUL, a BOM or the ELF magic" do
+      write("nul.txt", "a\0b\nT=#{token}\n")
+      write(".env", "\uFEFFAPI_T=#{token}\n")
+      write("elf.txt", "\x7fELF\nT=#{token}\n")
+
+      expect(disclosed("cat nul.txt .env elf.txt").holdings).to eq("nul.txt" => 1, ".env" => 1, "elf.txt" => 1)
+    end
+
+    it "still counts a PEM key" do
+      write("id.txt", pem)
+
+      expect(disclosed("cat id.txt")).to have_attributes(holdings: { "id.txt" => 1 }, binaries: [])
+    end
+
+    it "still counts a large text file's last line" do
+      write("big.log", "#{"x\n" * ((cap / 2) - 100)}T=#{token}\n")
+
+      expect(disclosed("cat big.log")).to have_attributes(holdings: { "big.log" => 1 }, binaries: [])
+    end
+
+    it "still counts text that follows a binary first block" do
+      write("mixed", elf + ("line one\n" * 20_000) + "T=#{token}\n")
+
+      expect(disclosed("cat mixed")).to have_attributes(holdings: { "mixed" => 1 }, binaries: [])
+    end
+
+    it "still counts text appended to a binary" do
+      write("appended", "#{elf}\nT=#{token}\n")
+
+      expect(disclosed("cat appended")).to have_attributes(holdings: { "appended" => 1 }, binaries: [])
+    end
+
+    it "still finds a key and a token a binary holds between non-text bytes, so it is not listed binary" do
+      key = "sk-ant-api03-#{SecureRandom.alphanumeric(93)}"
+      write("keyed", [elf, "\x00\xff\x01KEY=#{key}\x00\xfe\x02TOKEN=#{token}\x00\xff".b, body].join)
+
+      disclosure = disclosed("./keyed")
+
+      expect(disclosure).to have_attributes(holdings: { "keyed" => 2 }, binaries: [], secret_bearing?: true)
+    end
+
+    it "lists an executable shorter than a kilobyte" do
+      write("tiny", "\x7fELF\x02\x01\x01".b + ("\x00\xff".b * 100))
+
+      expect(disclosed("./tiny")).to have_attributes(holdings: { "tiny" => 0 }, binaries: ["tiny"])
+    end
+
+    it "rejects text between a binary head and a binary tail by its share of text alone" do
+      write("sandwich", "#{elf}#{"line one\n" * 20_000}#{"\x00\xff".b * 1024}")
+
+      expect(disclosed("cat sandwich")).to have_attributes(binaries: [])
+    end
+
+    it "rejects an executable made only of ASCII bytes by its encoding alone" do
+      write("ascii", "\x7fELF".b + ("\x00\x01\x02\x03".b * 4096))
+
+      expect(disclosed("cat ascii")).to have_attributes(binaries: [])
+    end
+
+    it "does not class a binary past the cap, which stays a read not scanned whole" do
+      write("huge", "\x7fELF".b + ("\x00\xff".b * cap))
+
+      expect(disclosed("cat huge")).to have_attributes(binaries: [], unscanned: ["huge"], secret_bearing?: true)
+    end
+  end
+
   describe "network sinks" do
     {
       "wget -qO- https://example.com/a" => ["example.com"],
