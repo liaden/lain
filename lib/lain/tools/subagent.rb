@@ -135,11 +135,19 @@ module Lain
       # own takes `extends`.
       def input_model = @kept.input_model
 
+      # A brief has to name files the way the child resolves them, and the two kinds of child differ:
+      # {Sensitivity::Policy.cut} reads a leased checkout as the child's own, while {Kept::PROJECT}
+      # sends a researcher to the project by absolute path.
+      CHECKOUT = " A leased implementing or review subagent works in its own checkout, cut from the " \
+                 "committed tip, not in yours: name files relative to its working directory, never by " \
+                 "your absolute path, and commit a spec before it can read it. A researcher works in a " \
+                 "scratch directory of its own and reads project files by absolute path."
+
       def description
         "Spawns a subagent to carry out `prompt` on its own, with its own tools " \
           "and its own conversation, and returns only its final answer. Use it to " \
           "fan out a self-contained subtask without spending your context on the " \
-          "steps it takes to get there.#{child_tools_note}"
+          "steps it takes to get there.#{CHECKOUT}#{child_tools_note}"
       end
 
       # Empty for an unattenuated child, whose tools are the whole union and so
@@ -1107,7 +1115,7 @@ module Lain
           "Spawns a subagent in the role you name (#{roles.join(" or ")}) to carry out `prompt` on " \
             "its own, with that role's tools and its own conversation, and returns only its final " \
             "answer. Use it to fan out a self-contained subtask to the role that fits it: research, " \
-            "implementing or review.#{role_tools_note}"
+            "implementing or review.#{CHECKOUT}#{role_tools_note}"
         end
 
         # Every member attenuates from the same floor.

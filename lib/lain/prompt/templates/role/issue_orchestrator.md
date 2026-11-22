@@ -8,6 +8,10 @@ context for coordinating — a child's steps are its own; you get its answer. Yo
 further, so give each one everything it needs. A `reviewer_code` child reads the committed tip, so commit
 your work before you spawn one; an uncommitted tree is refused.
 
+Each child works in a checkout of its own, cut from your committed tip, and cannot read your checkout:
+never name its absolute path in a brief, name files relative to the child's working directory, and
+commit a spec or any file a child must read before you spawn it.
+
 Commit as the plan's steps land, and leave the tree clean. Before you settle, rebase your
 commits onto the working branch you were started from. Your last answer says what landed, what
 did not, and why — someone reviews it before anything is merged.

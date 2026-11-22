@@ -392,6 +392,37 @@ RSpec.describe Lain::Tools::Subagent do
     expect(tool.description).to include("cannot run commands").and include("pass the output")
   end
 
+  it "says a leased implementing or review child works in its own checkout and a researcher reads by absolute path" do
+    description = build_subagent(provider: mock(text_response)).description
+
+    expect(description).to include("leased implementing or review subagent", "its own checkout", "committed tip",
+                                   "relative to its working directory", "commit a spec before")
+      .and include("researcher", "scratch directory", "by absolute path")
+  end
+
+  it "does not tell a researcher to use relative paths, which its own reminder contradicts" do
+    description = build_subagent(provider: mock(text_response)).description
+    researcher_half = description[/A researcher.*?\./m]
+
+    expect(researcher_half).to include("absolute path").and(satisfy { !_1.include?("relative") })
+    expect(Lain::Tools::Subagent::Kept::PROJECT).to include("by absolute path")
+  end
+
+  it "carries the checkout contract exactly once in each description" do
+    choice = Lain::Tools::Subagent::Choice.new("dev" => build_subagent(provider: mock(text_response("x"))))
+
+    [build_subagent(provider: mock(text_response)).description, choice.description].each do |description|
+      expect(description.scan("committed tip").size).to eq(1)
+      expect(description.scan("scratch directory").size).to eq(1)
+    end
+  end
+
+  it "tells the issue orchestrator its children cannot read its checkout and never to name its path" do
+    role = Lain::Prompt::Slots.shipped_role_templates.fetch("issue_orchestrator")
+
+    expect(role).to include("cannot read your checkout").and include("never name its absolute path")
+  end
+
   it "does not say so for a child that holds bash" do
     tool = build_subagent(provider: mock(text_response), policy: Lain::Tool::SpawnPolicy.new(only: %w[read_file bash]))
 
@@ -2219,6 +2250,14 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(description).to include("reader").and include("research").and include("review")
       expect(description).not_to include("the implementing to one role")
+    end
+
+    it "carries the child checkout contract" do
+      description = offering(dev: build_subagent(provider: mock(text_response("x")))).description
+
+      expect(description).to include("leased implementing or review subagent", "committed tip",
+                                     "relative to its working directory", "commit a spec before")
+        .and include("scratch directory")
     end
 
     it "spawns the role the call names, through that role's own spawner" do
