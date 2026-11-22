@@ -12,6 +12,23 @@ RSpec.describe Lain::Isolation::LeaseLock do
       expect(lock.reason).to eq("lain-lease pid=42 start=9001 host=box")
     end
 
+    it "reads a lease holding a retained tree back with the retention it keeps, aged from that once dead" do
+      reason = "lain-lease pid=42 start=9001 host=box since=2026-09-01T10:00:00Z"
+      table = instance_double(Lain::Isolation::LeaseLock::ProcessTable, verdict: :dead)
+
+      lock = described_class.parse(reason)
+
+      expect(lock.reason).to eq(reason)
+      expect([lock.held?(table), lock.aged_from(Time.utc(2026, 9, 20))]).to eq([false, Time.utc(2026, 9, 1, 10)])
+      expect(described_class.parse("lain-lease pid=42 start=9001 host=box since=yesterday"))
+        .to be_a(described_class::Foreign)
+    end
+
+    it "refuses to give back a retention from a lease that holds none" do
+      expect { described_class::Held.new(pid: 42, start: "9001", host: "box").retained }
+        .to raise_error(Lain::Error, /holds no retained tree/)
+    end
+
     it "reads a retention back into when it began" do
       lock = described_class.parse("lain-retained since=2026-09-01T10:00:00Z")
 

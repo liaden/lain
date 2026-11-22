@@ -16,17 +16,33 @@ module Lain
     # the worktree's age counts from. Anything lain cannot parse holds, because
     # a lock nobody can explain is one nobody may break.
     module LeaseLock
-      LEASE = /\Alain-lease pid=(\d+) start=(#{Liveness::START_TOKEN}) host=(\S+)\z/
+      LEASE = /\Alain-lease pid=(\d+) start=(#{Liveness::START_TOKEN}) host=(\S+)(?: since=(\S+))?\z/
       RETAINED = /\Alain-retained since=(\S+)\z/
 
       # Taken by a running process. Whether that process is still the one
       # holding it is the {ProcessTable}'s question, never this value's.
-      Held = Data.define(:pid, :start, :host) do
-        def initialize(pid:, start:, host:)
-          super(pid: Integer(pid), start: -start.to_s, host: -host.to_s)
+      #
+      # A retained tree a process holds for reading keeps its retention's
+      # `stamp`, so a holder that dies leaves it aged as it was, neither a
+      # fresh week nor held for good.
+      Held = Data.define(:pid, :start, :host, :stamp) do
+        def initialize(pid:, start:, host:, stamp: nil)
+          super(pid: Integer(pid), start: -start.to_s, host: -host.to_s, stamp: stamp&.then { -_1.to_s })
         end
 
-        def reason = "lain-lease pid=#{pid} start=#{start} host=#{host}"
+        # @param retained [Retained] the retention this hold stands over
+        # @return [Held] this lease, keeping that retention's age
+        def holding(retained) = with(stamp: retained.stamp)
+
+        # @return [Retained] the retention this hold stands over
+        # @raise [Error] for a lease that holds no retained tree
+        def retained
+          raise Error, "lain-lease pid=#{pid} on #{host} holds no retained tree, so it has no retention" if stamp.nil?
+
+          Retained.new(stamp:)
+        end
+
+        def reason = "lain-lease pid=#{pid} start=#{start} host=#{host}#{" since=#{stamp}" if stamp}"
 
         def held?(table) = table.verdict(self) != :dead
 
@@ -42,7 +58,7 @@ module Lain
           end
         end
 
-        def aged_from(created) = created
+        def aged_from(created) = stamp ? Time.iso8601(stamp) : created
       end
 
       # Written by a release that found uncommitted work. Nothing holds the
@@ -98,10 +114,17 @@ module Lain
       def self.parse(reason)
         case reason
         when nil then UNLOCKED
-        when LEASE then Held.new(pid: Regexp.last_match(1), start: Regexp.last_match(2), host: Regexp.last_match(3))
+        when LEASE then held(Regexp.last_match, reason)
         when RETAINED then retained(Regexp.last_match(1), reason)
         else Foreign.new(reason:)
         end
+      end
+
+      def self.held(match, reason)
+        stamp = match[4] && Time.iso8601(match[4]).utc.iso8601
+        Held.new(pid: match[1], start: match[2], host: match[3], stamp:)
+      rescue ArgumentError
+        Foreign.new(reason:)
       end
 
       def self.retained(stamp, reason)
@@ -109,7 +132,7 @@ module Lain
       rescue ArgumentError
         Foreign.new(reason:)
       end
-      private_class_method :retained
+      private_class_method :held, :retained
 
       # Whether the process a lease names is still the one that took it, as
       # {Liveness} judges it against the exact start the lease recorded.

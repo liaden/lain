@@ -216,7 +216,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   def issue_actor(supervisor)
     renderer = backend.library.renderer
     described_class.new(slug: "demo", supervisor:, subagent: build.method(:epic_subagent), renderer:, home:, plan:,
-                        repo_root: repo, tests: red_step(renderer), lanes: child_lanes, user_home:)
+                        repo_root: repo, tests: red_step(renderer), lanes: child_lanes, user_home:,
+                        aside: @isolation)
   end
 
   def red_step(renderer)
@@ -234,8 +235,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   # epic/demo, never from the chat's branch.
   def supervising
     Sync do |task|
-      supervisor = Lain::Supervisor.new(isolation: Lain::Isolation::Worktree.new(root: worktrees, repo_root: repo,
-                                                                                 base: @epic)).run(task)
+      @isolation = Lain::Isolation::Worktree.new(root: worktrees, repo_root: repo, base: @epic)
+      supervisor = Lain::Supervisor.new(isolation: @isolation).run(task)
       yield supervisor
     ensure
       supervisor&.stop
@@ -591,6 +592,164 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       expect(result_of("d_grep")["content"].to_s).not_to include("zq_env_mark")
       expect(gated & %w[o_lent d_lent d_grep]).to eq([])
       expect(gated).to include("o_beside")
+    end
+  end
+
+  # Scenario: the next attempt is told where the earlier work is and can read it
+  context "when an earlier attempt left spike/ and tools/ uncommitted" do
+    let(:switchboard) do
+      gate = containing_gate
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: user_home, cwd: repo, root: repo),
+                                             home: user_home, root: repo)
+      inputs = SpecNulls::NoSwitchboard.guard_inputs.with(sensitivity: policy, policy: gate, policy_for: ->(_) { gate })
+      Struct.new(:guard_inputs) do
+        def approvals = nil
+        def policy_switch = guard_inputs.policy
+        def sensitivity = guard_inputs.sensitivity
+        def secrets = Lain::Sensitivity::Secrets::Source::DEFAULT
+      end.new(inputs)
+    end
+    let(:build) do
+      Lain::CLI::Wiring::ToolsetBuild.new(
+        human: Lain::CLI::Human.new(kind: :terminal),
+        backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
+        parent: -> { CoreGraph.timeline }, journal: Lain::Channel::Null.instance,
+        library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
+        switchboard: -> { switchboard }, askers: SpecNulls::UnwiredAskers.build,
+        **SpecNulls.unloaded_project, exec: Lain::Exec::Local.new,
+        arms: Lain::CLI::Arms::OFF.with(confine: :workspace)
+      ).tap do |toolset|
+        ask_human = Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline })
+        toolset.build(Lain::Memory::Recorder.new, ask_human:)
+      end
+    end
+    let(:script) do
+      [*test_engineer,
+       tool_response(["o_read", "read_file", { "path" => File.join(aside, "spike", "probe.rb") }]),
+       tool_response(["o_ls", "bash", { "command" => "ls #{File.join(aside, "tools")}" }]),
+       tool_response(["o_write", "bash", { "command" => "echo x >> #{File.join(aside, "spike", "probe.rb")}" }]),
+       tool_response(["o_wf", "write_file", { "path" => File.join(aside, "spike", "new.rb"), "content" => "x\n" }]),
+       tool_response(["o_ef", "edit_file", { "path" => File.join(aside, "spike", "probe.rb"),
+                                             "old_string" => "zq_probe_mark", "new_string" => "edited" }]),
+       text_response("plan done")]
+    end
+
+    # Approves every call, containing the orchestrator's own bash, so a read that would have parked is seen
+    # without a human and the write meets the sandbox rather than a gate.
+    def containing_gate
+      Object.new.tap do |gate|
+        gate.define_singleton_method(:rule) do |effect, _context|
+          contained = Lain::Sensitivity::Policy.unwrapped(effect).tool_use_id.start_with?("o_")
+          Lain::Approval::Escalation::Ruling.allow(rung: "spec", because: "recorded", authority: :human, contained:)
+        end
+      end
+    end
+
+    def result_of(id)
+      provider.requests.flat_map(&:messages).flat_map { Array(_1["content"]) }.grep(Hash)
+              .find { _1["type"] == "tool_result" && _1["tool_use_id"] == id }["content"].to_s
+    end
+
+    def dead_table
+      Lain::Isolation::LeaseLock::ProcessTable.new(pid: Process.spawn("true").tap { |pid| Process.wait(pid) })
+    end
+
+    before do
+      fence = Lain::Confine::Bwrap.fence_binary
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+      allow(SecureRandom).to receive(:hex).and_call_original
+      allow(SecureRandom).to receive(:hex).with(4).and_return("0a1b2c3d")
+    end
+
+    # Attempt 1's lease, holding the work it never committed.
+    def attempt_one(table: Lain::Isolation::LeaseLock::ProcessTable.new)
+      lease = Lain::Isolation::Worktree.new(root: worktrees, repo_root: repo, base: @epic, process_table: table)
+                                       .acquire("issue.demo.a.1")
+      cwd = lease.worker_env.cwd
+      FileUtils.mkdir_p([File.join(cwd, "spike"), File.join(cwd, "tools")])
+      File.write(File.join(cwd, "spike", "probe.rb"), "zq_probe_mark\n")
+      File.write(File.join(cwd, "tools", "zq_run.sh"), "run\n")
+      lease
+    end
+
+    def refused_by_lease = "refused: this session's writes and commands are confined to"
+
+    def expect_read_listed_and_unwritten
+      expect(first_prompt(provider.requests.last)).to include(aside, "read-only")
+      expect(result_of("o_read")).to include("zq_probe_mark")
+      expect(result_of("o_ls")).to start_with("exit status: 0").and include("zq_run.sh")
+      expect_unwritten
+    end
+
+    def expect_unwritten
+      expect(result_of("o_write")).not_to start_with("exit status: 0")
+      expect([result_of("o_wf"), result_of("o_ef")]).to all(include(refused_by_lease))
+      expect(File.read(File.join(aside, "spike", "probe.rb"))).to eq("zq_probe_mark\n")
+      expect(File).not_to exist(File.join(aside, "spike", "new.rb"))
+    end
+
+    context "when it crashed, so this attempt's lane moved it aside" do
+      let(:aside) do
+        File.join(worktrees, Lain::Isolation::Worktree::RETAINED,
+                  "#{Lain::Paths.new.project_hash("issue.demo.a.1")}-0a1b2c3d")
+      end
+
+      before { attempt_one(table: dead_table) }
+
+      it "names the earlier work read-only in the brief, lets the orchestrator read and list it, and refuses writes" do
+        supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+        expect_read_listed_and_unwritten
+      end
+    end
+
+    context "when it was retained in place on release, and this attempt takes a lane of its own" do
+      let(:aside) { File.join(worktrees, Lain::Paths.new.project_hash("issue.demo.a.1")) }
+
+      let(:locks_in_red) { [] }
+
+      before { attempt_one.release }
+
+      # The red step, reading the earlier tree's lock as it starts: the hold has to stand before its turns.
+      def red_step(renderer)
+        tests = super
+        seen = locks_in_red
+        read = -> { lock_of(aside) }
+        Object.new.tap do |step|
+          step.define_singleton_method(:call) do |*args, **options|
+            seen << read.call
+            tests.call(*args, **options)
+          end
+        end
+      end
+
+      def lock_of(dir)
+        git(repo, "worktree", "list", "--porcelain").split("\n\n").find { _1.include?("worktree #{dir}\n") }
+                                                    .to_s[/^locked.*$/].to_s
+      end
+
+      it "names attempt 1's retained tree read-only in the brief, lends it, refuses writes, then retains it again" do
+        retained = lock_of(aside)
+        held = nil
+
+        supervising do |supervisor|
+          launch(supervisor, "a", attempt: 2).actor.settle
+          held = lock_of(aside)
+        end
+
+        expect_read_listed_and_unwritten
+        expect(held.to_s).to start_with("locked lain-lease pid=#{Process.pid} ")
+          .and end_with(retained.delete_prefix("locked lain-retained"))
+        expect(locks_in_red).to eq([held])
+        expect(lock_of(aside)).to eq(retained)
+      end
+
+      it "names attempt 1's tree to attempt 3 when attempt 2 left none" do
+        supervising { |supervisor| launch(supervisor, "a", attempt: 3).actor.settle }
+
+        expect_read_listed_and_unwritten
+      end
     end
   end
 

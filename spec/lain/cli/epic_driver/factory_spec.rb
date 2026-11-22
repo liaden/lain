@@ -512,6 +512,23 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(Lain::CLI::EpicDriver::Run).to have_received(:new).with(hash_including(width: 1))
     end
 
+    # The backend that moved an earlier attempt's work aside is the one that names it, so the issue actors
+    # are built over the run's own.
+    it "builds its issue actors over the run's own worktree backend, which names their earlier work" do
+      write_epic([issue("a")])
+      approve_plan("a")
+      factory = factory_over(mount, record: chronicle)
+      asides = []
+      allow(Lain::CLI::EpicDriver::IssueActor).to receive(:new) do |supervisor:, aside:, **|
+        asides << aside
+        FactorySpecActors.new(supervisor, log, repo)
+      end
+
+      factory.run(width: 1)
+
+      expect(asides).to contain_exactly(equal(factory.isolation))
+    end
+
     # The lent ladder reaches the object that climbs it. Asserted over a real run
     # because the gate is wired per run: a derivation checked on its own passes
     # while nothing carries the answer this far.

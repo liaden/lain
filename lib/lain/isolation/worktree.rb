@@ -42,10 +42,16 @@ module Lain
     #
     # A leftover checkout at the target path is either a crash's or one retained
     # on release, and neither is destroyed. It is moved aside under
-    # `retained/`, still locked as retained, and the new checkout takes the
-    # path. One whose lock names a live process is somebody else's lease, and
-    # the acquire refuses LOUDLY. A foreign directory git does not know is left
-    # alone, so `git worktree add` refuses rather than overwriting it.
+    # `retained/` and the new checkout takes the path. One whose lock names a
+    # live process is somebody else's lease, and the acquire refuses LOUDLY. A
+    # foreign directory git does not know is left alone, so `git worktree add`
+    # refuses rather than overwriting it.
+    #
+    # EARLIER WORK IS HELD FOR THE LEASE THAT READS IT ({#hold_earlier_work}). A
+    # tree moved aside, or a new lane's newest earlier checkout retained in
+    # place, is locked as held by this process with its old age, so {Gc}
+    # leaves it while the lease can read it, and locked as retained again
+    # when the lease ends.
     #
     # SERIALIZED per repository. Adds, removes, moves and prunes of one
     # repository's worktrees run one at a time across threads, fibers and
@@ -142,6 +148,7 @@ module Lain
         @repo_lock = RepoLock.for(repo_root)
         @leased = Set.new
         @retained = Set.new
+        @asides = {}
       end
 
       # @return [#tip, #name] the working branch every lease is cut from, and so
@@ -182,6 +189,22 @@ module Lain
       #   uncommitted work, rather than removing it
       def retained?(path) = @monitor.synchronize { @retained.include?(path) }
 
+      # A lease whose acquire moved nothing aside is a new lane, and takes the
+      # newest earlier worker's checkout a release retained in place instead.
+      #
+      # @param path [String] a lease's checkout, as its origin names it
+      # @param earlier [Array<Object>] earlier worker ids, newest first
+      # @return [Array<String>] each earlier checkout held for that lease to
+      #   read until it is released
+      def hold_earlier_work(path, earlier: [])
+        @monitor.synchronize do
+          if @leased.include?(path) && @asides.fetch(path, []).empty?
+            @asides[path] = @repo_lock.synchronize { @leftover.hold(earlier.map { worktree_path(_1) }) }
+          end
+          @asides.fetch(path, []).map(&:path)
+        end
+      end
+
       protected
 
       # The overridable seam a per-service strategy enriches with extra vars
@@ -201,18 +224,20 @@ module Lain
 
         base = @base.tip
         FileUtils.mkdir_p(@root)
-        @repo_lock.synchronize do
-          @leftover.clear(path)
-          add(path, base)
-        end
+        @repo_lock.synchronize { added(path, base, @leftover.clear(path)) }
         @leased << path
         @retained.delete(path)
         base
       end
 
-      def add(path, commit)
+      def added(path, commit, asides)
         shell = @registry.add(path, commit, reason: @process_table.current.reason)
         raise Refused.from_git("add", path, shell, label: @registry.label) unless Shell::Out.ok?(shell)
+
+        @asides[path] = asides
+      rescue Refused
+        asides.each { @leftover.restore(_1) }
+        raise
       end
 
       # Deregister then reclaim, serialized against acquire so a concurrent
@@ -222,6 +247,8 @@ module Lain
         @monitor.synchronize do
           @leased.delete(path)
           @retained << path if @release.call(path, discard:) == :retained
+        ensure
+          @asides.delete(path).to_a.each { @leftover.restore(_1) }
         end
       end
     end

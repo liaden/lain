@@ -644,7 +644,7 @@ module Lain
           IssueActor.new(slug:, supervisor: fleet, subagent: @toolset_build.method(:epic_subagent),
                          tests: issue_tests(layout), renderer: @library.renderer, home: @mount.home,
                          plan: ->(issue_id) { submit.ensure_plan_approved!(issue_id, slug) },
-                         repo_root: @root, lanes: child_lanes)
+                         repo_root: @root, lanes: child_lanes, aside: isolation)
         end
 
         def issue_tests(layout)

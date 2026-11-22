@@ -222,11 +222,19 @@ module Lain
           end
         end
 
+        # A backend that moves no earlier checkout aside.
+        module NothingAside
+          def self.hold_earlier_work(*, **) = []
+        end
+
         # What the actor is seeded with: the skill that runs a plan, then this
         # issue's own contract -- the issue as it was approved, the failing
-        # tests it must turn green, and where its work has to end up.
-        Brief = Data.define(:renderer, :slug, :view, :cut, :tests) do
-          def to_s = [renderer.render(SKILL), carrying, viewed, tests.briefed(self), settling].join("\n\n")
+        # tests it must turn green, where an earlier attempt's work was kept,
+        # and where its work has to end up.
+        Brief = Data.define(:renderer, :slug, :view, :cut, :tests, :earlier) do
+          def to_s
+            [renderer.render(SKILL), carrying, *earlier_work, viewed, tests.briefed(self), settling].join("\n\n")
+          end
 
           def working_branch = Lain::Isolation::WorkingBranch.epic_name(slug)
 
@@ -270,6 +278,22 @@ module Lain
 
             "Your checkout stands on `#{branch}`, reused as an earlier run left it at `#{cut.stood_at}` rather " \
               "than cut from the tip of `#{working_branch}`."
+          end
+
+          def earlier_work
+            return [] if earlier.empty?
+
+            listed = earlier.map { "- `#{_1}`" }.join("\n")
+            [<<~SECTION.strip]
+              ## Earlier work, read-only
+
+              An earlier attempt at this issue left uncommitted changes, kept in its worktree at:
+
+              #{listed}
+
+              It is lent to you and your children read-only: read it for what was tried, and never write
+              there. What you keep from it, carry into your own checkout and commit on `#{branch}`.
+            SECTION
           end
 
           # Embedded rather than pointed at, because these are the bytes the
@@ -332,8 +356,11 @@ module Lain
         # @param lanes [Lanes] builds the issue's own isolation and handoff
         # @param shell_out_factory [#call] builds the git subprocess runner
         # @param user_home [String] what a `~` in the issue's References names
+        # @param aside [#hold_earlier_work] the supervisor's backend, naming the
+        #   earlier attempt's checkout it holds for a lease to read
         def initialize(slug:, supervisor:, subagent:, tests:, renderer:, home:, plan:, repo_root:, lanes:,
-                       shell_out_factory: Lain::Shell::Out.public_method(:new), user_home: Dir.home)
+                       shell_out_factory: Lain::Shell::Out.public_method(:new), user_home: Dir.home,
+                       aside: NothingAside)
           @slug = slug
           @supervisor = supervisor
           @subagent = subagent
@@ -345,6 +372,7 @@ module Lain
           @lanes = lanes
           @shell_out_factory = shell_out_factory
           @user_home = user_home
+          @aside = aside
         end
 
         # @param issue_id [String] the issue to launch
@@ -371,7 +399,8 @@ module Lain
           view = approved!(Lain::Epic::IssueView.read(@home, issue_id))
           lane = lane_for(view.issue.id, attempt)
           unanchored!(lane)
-          adopted(view, lane, subject:, level:, acceptance:)
+          adopted(view, lane, subject:, level:, acceptance:,
+                              earlier: (attempt - 1).downto(1).map { lane_for(view.issue.id, _1) })
         end
 
         private
@@ -381,17 +410,21 @@ module Lain
         # then the launch. The actor's worker id and its children's lane are ONE
         # string, so a second attempt's children cannot compare-and-swap the
         # first attempt's anchors away. What the actor and its children are lent
-        # is read off the view {#approved!} checked, so a path added since is not.
-        def adopted(view, lane, subject:, level:, acceptance:)
+        # is read off the view {#approved!} checked, so a path added since is not,
+        # beside the newest earlier attempt's uncommitted work. That is held
+        # first, so a reap during the red step cannot take it, and the lease's
+        # release locks it as retained again whichever way the actor ends.
+        def adopted(view, lane, subject:, level:, acceptance:, earlier:)
           criteria = criteria_of(view)
           red = nil
           held = nil
           actor = @supervisor.adopt(role: ROLE, worker_id: lane) do |worker_env|
+            kept = @aside.hold_earlier_work(worker_env.cwd, earlier:)
             held = cut(worker_env, view.issue.id)
             step = acceptance.red_step(@tests)
             red = step.call(criteria, worker_env, subject:, level:, since: held.from, lane:, name: view.issue.id)
-            spawner(worker_env, held.branch, lane).lend_reads(view.lends(home: @user_home))
-                                                  .launch_actor(brief(view, held, red), worker_env:)
+            launched(worker_env, held, lane, lent: [*view.lends(home: @user_home), *kept],
+                                             prompt: brief(view, held, red, kept))
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
@@ -459,12 +492,16 @@ module Lain
                        "next attempt instead"
         end
 
+        def launched(worker_env, held, lane, lent:, prompt:)
+          spawner(worker_env, held.branch, lane).lend_reads(lent).launch_actor(prompt, worker_env:)
+        end
+
         def spawner(worker_env, branch, lane)
           @subagent.call(**@lanes.over(worker_env, branch.name), lane:)
         end
 
-        def brief(view, cut, red)
-          Brief.new(renderer: @renderer, slug: @slug, view:, cut:, tests: red).to_s
+        def brief(view, cut, red, earlier)
+          Brief.new(renderer: @renderer, slug: @slug, view:, cut:, tests: red, earlier:).to_s
         end
       end
     end

@@ -204,20 +204,150 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
     # A crash kills the process, taking the in-memory lease-set with it; the
     # restart is a FRESH backend that finds the on-disk leftover, whose lock
     # names a dead process, and moves it out of the way.
-    it "moves a crashed leftover aside, retained, rather than leaking or failing" do
+    # Held by the lease that set it aside, so a reaper leaves it while that
+    # lease may still read it, and retained again once the lease ends.
+    it "moves a crashed leftover aside, held by the new lease, then retained, rather than leaking or failing" do
       crashed_backend.acquire("worker-1")
       path = worktree_path("worker-1")
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:)
 
-      lease = described_class.new(repo_root: @repo_root, root: @root, base:).acquire("worker-1")
+      lease = restarted.acquire("worker-1")
       aside = registered_worktrees.scan(/^worktree (.*)$/).flatten.find do |dir|
         dir.start_with?(File.join(@root, "retained"))
       end
 
       expect(lease.worker_env.cwd).to eq(path)
       expect(File.directory?(aside)).to be(true)
-      expect(lock_line(aside)).to match(/\Alocked lain-retained since=\S+\z/)
+      expect(restarted.hold_earlier_work(path)).to eq([aside])
+      expect(lock_line(aside)).to match(/\Alocked lain-lease pid=#{Process.pid} start=\S+ host=\S+ since=\S+\z/)
+      lease.release
+      expect([lock_line(aside), restarted.hold_earlier_work(path)]).to match([/\Alocked lain-retained since=\S+\z/, []])
     ensure
       lease&.release
+    end
+
+    it "names nothing set aside for a lease whose path held no leftover" do
+      lease = backend.acquire("worker-1")
+
+      expect(backend.hold_earlier_work(lease.worker_env.cwd)).to eq([])
+    ensure
+      lease&.release
+    end
+
+    # A new lane finds nothing at its own path: an earlier attempt released
+    # with uncommitted work stays retained where it was, at its own lane.
+    it "holds the newest earlier lane's retained checkout for a new lane, and retains it again on release" do
+      first = backend.acquire("issue.demo.a.1")
+      File.write(File.join(first.worker_env.cwd, "spike.rb"), "probe\n")
+      first.release
+      earlier = worktree_path("issue.demo.a.1")
+      retained = lock_line(earlier)
+
+      second = backend.acquire("issue.demo.a.3")
+      named = backend.hold_earlier_work(second.worker_env.cwd, earlier: %w[issue.demo.a.2 issue.demo.a.1])
+      held = lock_line(earlier)
+      second.release
+
+      expect(named).to eq([earlier])
+      expect(held).to match(/\Alocked lain-lease pid=#{Process.pid} start=\S+ host=\S+ since=\S+\z/)
+      expect(held.split(" since=").last).to eq(retained.split(" since=").last)
+      expect(lock_line(earlier)).to eq(retained)
+    end
+
+    it "holds the newest of two earlier lanes retained in place, leaving the older one retained" do
+      %w[issue.demo.a.1 issue.demo.a.2].each do |worker|
+        lease = backend.acquire(worker)
+        File.write(File.join(lease.worker_env.cwd, "spike.rb"), "#{worker}\n")
+        lease.release
+      end
+      older = lock_line(worktree_path("issue.demo.a.1"))
+      third = backend.acquire("issue.demo.a.3")
+
+      named = backend.hold_earlier_work(third.worker_env.cwd, earlier: %w[issue.demo.a.2 issue.demo.a.1])
+
+      expect(named).to eq([worktree_path("issue.demo.a.2")])
+      expect(lock_line(worktree_path("issue.demo.a.2"))).to start_with("locked lain-lease pid=#{Process.pid} ")
+      expect(lock_line(worktree_path("issue.demo.a.1"))).to eq(older)
+    ensure
+      third&.release
+    end
+
+    # A hold git will not write leaves the retention as it was, and names nothing to read.
+    def refusing_holds
+      lambda do |*argv, **kwargs|
+        holding = argv.include?("lock") && argv.any? { _1.to_s.match?(/\Alain-lease .* since=/) }
+        holding ? Lain::Shell::Out.new("false") : Lain::Shell::Out.new(*argv, **kwargs)
+      end
+    end
+
+    it "names nothing and keeps the retention when git will not write the hold on an earlier lane" do
+      first = backend.acquire("issue.demo.a.1")
+      File.write(File.join(first.worker_env.cwd, "spike.rb"), "probe\n")
+      first.release
+      earlier = worktree_path("issue.demo.a.1")
+      retained = lock_line(earlier)
+      refusing = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: refusing_holds)
+      second = refusing.acquire("issue.demo.a.2")
+
+      expect(refusing.hold_earlier_work(second.worker_env.cwd, earlier: %w[issue.demo.a.1])).to eq([])
+      expect(lock_line(earlier)).to eq(retained)
+    ensure
+      second&.release
+    end
+
+    it "names nothing and keeps the retention when git will not write the hold on a leftover it moved aside" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      cut = Time.utc(2026, 9, 1, 12)
+      File.utime(cut, cut, File.join(crashed, ".git"))
+      refusing = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: refusing_holds)
+
+      lease = refusing.acquire("worker-1")
+
+      expect(refusing.hold_earlier_work(lease.worker_env.cwd)).to eq([])
+      expect(lock_line(Dir.glob(File.join(@root, "retained", "*")).first))
+        .to eq("locked lain-retained since=2026-09-01T12:00:00Z")
+    ensure
+      lease&.release
+    end
+
+    it "holds no earlier lane whose checkout is gone, or still leased" do
+      live = backend.acquire("issue.demo.a.1")
+      second = backend.acquire("issue.demo.a.3")
+
+      expect(backend.hold_earlier_work(second.worker_env.cwd, earlier: %w[issue.demo.a.2 issue.demo.a.1])).to eq([])
+      expect(lock_line(live.worker_env.cwd)).not_to include(" since=")
+    ensure
+      second&.release
+      live&.release
+    end
+
+    it "retains the leftover it set aside again, from its first stamp, when the add after it fails" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      cut = Time.utc(2026, 9, 1, 12)
+      File.utime(cut, cut, File.join(crashed, ".git"))
+      refusing = lambda do |*argv, **kwargs|
+        argv.include?("add") ? Lain::Shell::Out.new("false") : Lain::Shell::Out.new(*argv, **kwargs)
+      end
+      restarted = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: refusing)
+
+      expect { restarted.acquire("worker-1") }.to raise_error(described_class::Refused, /add/)
+      expect(lock_line(Dir.glob(File.join(@root, "retained", "*")).first))
+        .to eq("locked lain-retained since=2026-09-01T12:00:00Z")
+    end
+
+    it "retains the leftover it set aside again, from its first stamp, when the release itself raises" do
+      crashed = crashed_backend.acquire("worker-1").worker_env.cwd
+      cut = Time.utc(2026, 9, 1, 12)
+      File.utime(cut, cut, File.join(crashed, ".git"))
+      refusing = lambda do |*argv, **kwargs|
+        argv.include?("remove") ? Lain::Shell::Out.new("false") : Lain::Shell::Out.new(*argv, **kwargs)
+      end
+      lease = described_class.new(repo_root: @repo_root, root: @root, base:, shell_out_factory: refusing)
+                             .acquire("worker-1")
+
+      expect { lease.release }.to raise_error(described_class::Refused, /remove/)
+      expect(lock_line(Dir.glob(File.join(@root, "retained", "*")).first))
+        .to eq("locked lain-retained since=2026-09-01T12:00:00Z")
     end
 
     # A crash's checkout has been nobody's since it was cut, not since the
@@ -231,6 +361,8 @@ RSpec.describe Lain::Isolation::Worktree, :seam do
       lease = restarted.acquire("worker-1")
       aside = Dir.glob(File.join(@root, "retained", "*")).first
 
+      expect(lock_line(aside)).to end_with(" since=2026-09-01T12:00:00Z")
+      lease.release
       expect(lock_line(aside)).to eq("locked lain-retained since=2026-09-01T12:00:00Z")
     ensure
       lease&.release

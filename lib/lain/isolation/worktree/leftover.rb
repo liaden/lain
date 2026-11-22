@@ -22,10 +22,16 @@ module Lain
       # A leftover moved aside holds a commit, never a branch name: the retry
       # of a crashed issue switches its fresh checkout onto the branch the
       # leftover had out, which git refuses while any checkout still has it.
+      #
+      # The lease that moved it aside may read it, so until {#restore} it is
+      # locked as held by this process, carrying its retention's age.
       class Leftover
         DROPPED = "lain: anchored the commit of a checkout whose directory was gone"
 
         DETACHED = "lain: detached a leftover moved aside from its branch"
+
+        # A leftover moved aside, and the hold its lock names until {#restore}.
+        Aside = Data.define(:path, :hold)
 
         # @param registry [Registry] the repository's worktree list
         # @param root [String] the worktree root the aside directory sits under
@@ -39,15 +45,50 @@ module Lain
         end
 
         # @param path [String] the path about to be leased
+        # @return [Array<Aside>] each leftover moved aside, held by this process
         # @raise [Refused] when a held lock covers it, its lock changed while
         #   it was being cleared, or git will not move it
         def clear(path)
-          @registry.entries.select { |entry| entry.path == path }.each { |entry| move_aside(entry) }
+          @registry.entries.select { |entry| entry.path == path }.filter_map { |entry| move_aside(entry) }
         rescue Registry::Unlisted => e
           raise Refused, "#{@registry.label} could not be listed to clear #{path}: #{e.message}"
         end
 
+        # The first of `paths` that a release retained in place, held by this
+        # process for a new lease to read, as {#clear} holds a tree it moves.
+        # @param paths [Array<String>] earlier checkouts, newest first
+        # @return [Array<Aside>] the one held, or none
+        def hold(paths)
+          entries = @registry.entries
+          held = paths.lazy.filter_map { |path| entries.find { _1.path == path && retained?(_1) } }
+                      .filter_map { |entry| held_in_place(entry) }.first
+          held ? [held] : []
+        rescue Registry::Unlisted
+          []
+        end
+
+        # Locks a leftover moved aside as retained again, from its first
+        # retention. A lock that changed since it was held is left as it is,
+        # and a list git cannot give leaves the hold, which ages as retained
+        # once this process is gone.
+        # @param aside [Aside]
+        def restore(aside)
+          @registry.entries.select { |entry| entry.path == aside.path && entry.lock == aside.hold }
+                   .select { |entry| @registry.claim(entry) }
+                   .each { @registry.lock(aside.path, aside.hold.retained.reason) }
+        rescue Registry::Unlisted
+          nil
+        end
+
         private
+
+        def retained?(entry) = entry.lock.is_a?(LeaseLock::Retained) && File.directory?(entry.path)
+
+        def held_in_place(entry)
+          return unless @registry.claim(entry)
+
+          held(entry.path, @process_table.current.holding(entry.lock), entry.lock)
+        end
 
         def named(entry) = "#{@registry.label} at #{entry.path}"
 
@@ -104,7 +145,16 @@ module Lain
           moved = @registry.move(path, aside)
           raise Refused.from_git("move", path, moved, label: @registry.label) unless Shell::Out.ok?(moved)
 
-          @registry.lock(aside, retention.reason)
+          held(aside, @process_table.current.holding(retention), retention)
+        end
+
+        # A hold git will not write leaves the tree as retained as it was, and
+        # nothing for the lease to read.
+        def held(path, hold, retention)
+          return Aside.new(path:, hold:) if Shell::Out.ok?(@registry.lock(path, hold.reason))
+
+          @registry.lock(path, retention.reason)
+          nil
         end
       end
     end
