@@ -284,6 +284,29 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    context "when the text is public API JSON, C or Rust source, or a temporary path" do
+      corpus = YAML.load_file(File.expand_path("../../fixtures/sensitivity/public_corpus.yml", __dir__))
+
+      corpus.each do |row|
+        it "reports #{row.fetch("regions")} for #{row.fetch("label")}" do
+          expect(detect(Array(row.fetch("text")).join).map(&:bytes)).to have_attributes(size: row.fetch("regions"))
+        end
+      end
+    end
+
+    context "when a value from the hinted corpus sits bare in a line" do
+      corpus = YAML.load_file(File.expand_path("../../fixtures/sensitivity/hinted_corpus.yml", __dir__))
+      missed = ["b64 16", "hex 16", "hex 32", "hex 40", "hex 64", "pw Tr0ub4dor", "pw hunter2pass", "pw short",
+                "pw passphrase", "urlsafe 22", "url sig q short"]
+
+      it "finds every secret it found before, and no harmless value" do
+        found = corpus.reject { detect("x #{Array(_1.fetch("value")).join} y").empty? }
+
+        expect(found.map { _1.fetch("label") })
+          .to eq(corpus.select { _1.fetch("secret") }.map { _1.fetch("label") } - missed)
+      end
+    end
+
     context "when the content is ordinary prose" do
       it "reports nothing" do
         expect(detect(prose)).to be_empty

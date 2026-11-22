@@ -38,6 +38,9 @@ module Lain
       # (`word_count-46e9759e7fd1a230`). The hex is capped at a build hash's
       # width so a longer run behind a word is judged as a word segment.
       WORD_HEX = /\A[a-z][a-z0-9_]*(?:-[a-z][a-z0-9_]*)*-[0-9a-f]{8,16}\z/
+      # `Dir.mktmpdir` names a directory for the date, the pid and at most 7 random base-36
+      # characters, too few to hold a secret. The prefix is the caller's, so it is judged as words.
+      TMPNAME = /\A(?<prefix>.*?)(?:19|20)\d{6}-\d{1,10}-[0-9a-z]{1,7}\z/
       # Stores that name a directory by its content hash, each as the run of
       # segments that holds the hash. A hash segment is let through only in its
       # place in a run, so the same hex anywhere else in a URL is still a key.
@@ -138,7 +141,13 @@ module Lain
         end
 
         def word_segment?(segment)
-          (segment.match?(WORD_SEGMENT) && !high?(segment)) || segment.match?(WORD_HEX) || camel_name?(segment)
+          (segment.match?(WORD_SEGMENT) && !high?(segment)) || segment.match?(WORD_HEX) || camel_name?(segment) ||
+            tmpname?(segment)
+        end
+
+        def tmpname?(segment)
+          prefix = TMPNAME.match(segment)&.[](:prefix)
+          !prefix.nil? && (prefix.empty? || word_segment?(prefix))
         end
 
         def camel_name?(segment)

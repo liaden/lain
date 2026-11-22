@@ -163,7 +163,10 @@ RSpec.describe Lain::Sensitivity::Entropy do
       "huggingface repo with dashed names" =>
         "hub/models--meta-llama--Meta-Llama-3-8B/snapshots/a09a35458c702b33eeacc393d103063234e8bc28/config",
       "huggingface snapshot cut at a dot in its repo name" =>
-        "5-7B-Instruct/snapshots/6fbdb2765e2d88513dc1825bdd5b168c26453ddd/config"
+        "5-7B-Instruct/snapshots/6fbdb2765e2d88513dc1825bdd5b168c26453ddd/config",
+      "temporary directory named for its date, pid and a short random suffix" =>
+        "/home/alice/tmp/lain/lain-issue-actor20261121-3138037-uzht41",
+      "temporary directory with no prefix" => "/home/alice/tmp/d20261121-3138037-1x9k2p/out.log"
     }.each do |layout, path|
       it "is true for a #{layout} path" do
         expect(described_class.predictable?(path)).to be(true)
@@ -188,6 +191,15 @@ RSpec.describe Lain::Sensitivity::Entropy do
 
     it "is false for a random mixed-case segment" do
       expect(described_class.predictable?("files/Xk9mP2qR7vL4nT8wZ3bY6cH1/data")).to be(false)
+    end
+
+    {
+      "a long random suffix" => "/home/alice/tmp/lain-x20261121-3138037-Xk9mP2qR7vL4nT8wZ3bY6cH1",
+      "a random prefix" => "/home/alice/tmp/xk9mp2qr7vl4nt8wz3by6ch1q20261121-3138037-uzht41"
+    }.each do |what, path|
+      it "is false for a temporary directory name with #{what}" do
+        expect(described_class.predictable?(path)).to be(false)
+      end
     end
   end
 

@@ -1,0 +1,293 @@
+# Public text a trial read back as secrets, and near misses that must stay found. Each row is
+# labelled by how many regions it must report. Hex values are slices of sha512 over a fixed word,
+# ids are made up, and the texts are excerpts written for this file. A keyed value is written as
+# parts the spec joins, because a push scanner refuses a token behind a key, fake or not.
+- label: a GitHub release listing
+  regions: 0
+  text: |
+    [{"url":"https://api.github.com/repos/acme/widget/releases/184736251","id":184736251,"node_id":"RE_kwDOK8fHWs4LAtn7","tag_name":"v1.7.4","target_commitish":"694c24c429f9bf6f358ef0d0c276b2a53475c4d3",
+      "author":{"login":"alice","id":5839102,"node_id":"MDQ6VXNlcjU4MzkxMDI=","gravatar_id":""},
+      "assets":[{"id":291847363,"node_id":"RA_kwDOK8fHWs4RZTzD","name":"widget-x64.zip","digest":"sha256:d64583f6df0e4cfa3f8fef5b5486902fc77eeee546e36b8ae3e750056a3b48b2"},
+                {"id":291847364,"node_id":"MDEyOlJlbGVhc2VBc3NldDI5MTg0NzM2NA==","name":"widget-arm64.zip","digest":"sha256:f8f2d67ceaac7a0dd1158315ab47225a432708c1bbe9ad15e2a396ff92dc61be"}]}]
+- label: a pretty-printed GitHub release and review comment
+  regions: 0
+  text: |
+    {
+      "id": 184736251,
+      "node_id": "MDc6UmVsZWFzZTE4NDczNjI1MQ==",
+      "repository": {
+        "node_id": "MDEwOlJlcG9zaXRvcnk3MzQ1MTI5ODY=",
+        "id": "R_kgDOK8fHWg"
+      },
+      "comment": {
+        "node_id": "PRRC_kwDOK8fHWs8AAAG47Beh_Q",
+        "commit_id": "6df4189d87691ac3ebcd811ebf1734fee3969b36",
+        "original_commit_id": "1c75e868a1389eca27164c7698059c9293b708a8"
+      },
+      "etag": "W/\"4b9d70a2738b4fda722f16277f7e2f2370dd40049d0aecb66eda140034af2d19\""
+    }
+- label: a Hugging Face model card
+  regions: 0
+  text: |
+    {"_id":"7a1e5d63fefb13e85c256549","id":"acme/tiny-model","private":false,"sha":"0e9e6bde9c793bab7378e42e46308e5777e37c84","modelId":"acme/tiny-model",
+     "siblings":[{"rfilename":"model.safetensors","blobId":"78dfec637347c509fe8d78d55efbd28fa1666f14","lfs":{"sha256":"0f23d2f577126984fabb23326dc270dad8eedcbb270c2c56b6e790713b33c1ef","size":1048576}}],
+     "spaces":[{"_id":"7f9fdedf18f92c2625cacae1","id":"acme/demo"}]}
+- label: a whisper.h excerpt
+  regions: 0
+  text: |
+    typedef int32_t whisper_token;
+    typedef struct whisper_token_data {
+        whisper_token id;  // token id
+        whisper_token tid; // forced timestamp token id
+        float p;           // probability of the token
+    } whisper_token_data;
+    WHISPER_API struct whisper_full_params whisper_full_default_params(enum whisper_sampling_strategy strategy);
+    WHISPER_API struct whisper_full_params * whisper_full_default_params_by_ref(enum whisper_sampling_strategy strategy);
+    WHISPER_API const char * whisper_token_to_str(struct whisper_context * ctx, whisper_token token);
+    WHISPER_API whisper_token_data whisper_full_get_token_data_from_state(struct whisper_state * state, int i_segment, int i_token);
+        bool token_timestamps; // enable token-level timestamps
+- label: a whisper.cpp excerpt
+  regions: 0
+  text: |
+    for (int i = 0; i < n_tokens; ++i) {
+        const char * token = whisper_token_to_str(ctx, tokens[i]);
+        token_id = whisper_sample_token_topk(ctx, state, params.greedy.best_of);
+        auth_header = build_auth_header(params.api_client, user_agent);
+        struct whisper_full_params params = whisper_full_default_params(WHISPER_SAMPLING_GREEDY);
+    }
+- label: a Rust file using the words token and auth
+  regions: 0
+  text: |
+    pub fn auth_token_from_env(name: &str) -> Option<AuthToken> {
+        let token = std::env::var(name).ok()?;
+        let session = SessionBuilder::new().with_auth_header(AUTH_HEADER_NAME).build();
+        let token_count = tokenizer.encode_with_special_tokens(&prompt).len();
+        Some(AuthToken::new(token))
+    }
+- label: home paths with a random tmpdir and pid suffix
+  regions: 0
+  text: |
+    cwd: /home/alice/tmp/lain/lain-issue-actor20261121-3138037-uzht41
+    see /home/alice/tmp/lain/d20261121-3138037-1x9k2p/out.log for the run
+- label: a mixed-case key under token beside a sha key
+  regions: 1
+  text:
+  - '{"sha": "61ab33bf0d89a20b8a8dbbfbfe5f5599d638244b", "token": "Xk3Pq9'
+  - 'LmZr2Tv8NbWc5Hy1Jd7Fg4Sa6Qe0Ru2Ko8"}
+
+    '
+- label: a mixed-case key under a sha key
+  regions: 1
+  text: '{"sha": "Xk3Pq9LmZr2Tv8NbWc5Hy1Jd7Fg4Sa6Qe0Ru2Ko8"}
+
+    '
+- label: a mixed-case key under an _id key
+  regions: 1
+  text: '{"_id": "Qm9vT2s3x9ZpL1aBc7Yw2RtU"}
+
+    '
+- label: a 24-hex value under a key other than _id
+  regions: 1
+  text: '{"client_id": "85d7741af27f18cbefc7fdc9"}
+
+    '
+- label: a random base64 value under a node_id key
+  regions: 1
+  text: '{"node_id": "Qm9vT2s3x9ZpL1aBc7Yw2RtUv5NhGd8E"}
+
+    '
+- label: a random value behind a node id prefix
+  regions: 1
+  text: '{"node_id": "RA_kwDOXk3Pq9LmZr2Tv8NbWc5Hy1Jd"}
+
+    '
+- label: a tmpdir name with a long random suffix
+  regions: 1
+  text: "/home/alice/tmp/lain/lain-x20261121-3138037-Xk3Pq9LmZr2Tv8NbWc5Hy1Jd7F\n"
+- label: a home path ending in a key
+  regions: 1
+  text: "/home/alice/tmp/Xk3Pq9LmZr2Tv8NbWc5Hy1Jd7Fg4Sa6Qe0Ru2Ko8\n"
+- label: a key assigned whole to token
+  regions: 1
+  text:
+  - token = Xk3Pq9
+  - 'LmZr2Tv8NbWc5Hy1Jd7Fg4Sa6Qe0Ru2Ko8
+
+    '
+- label: a word password assigned to a name that names one
+  regions: 1
+  text: 'password = hunter2pass
+
+    '
+- label: a quoted argument to a call assigned to a hinting name
+  regions: 1
+  text: '    auth_header = std::string("hunter2pass");
+
+    '
+- label: a word argument to a call assigned to a hinting name
+  regions: 1
+  text: 'token = read_token(hunter2pass)
+
+    '
+- label: a quoted password that looks like a call
+  regions: 1
+  text: 'token = "hunter2_pass(x)"
+
+    '
+- label: a 64-hex secret glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - '4f60d222804a9b2d82ef8d5901bc6e86238fc92ed61d0fef1e22d2f1ed07bb34)
+
+    '
+- label: a 40-hex secret glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - '4f60d222804a9b2d82ef8d5901bc6e86238fc92e)
+
+    '
+- label: a 32-hex secret glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - '4f60d222804a9b2d82ef8d5901bc6e86)
+
+    '
+- label: a 16-hex secret glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - '4f60d222804a9b2d)
+
+    '
+- label: a 16-character base64 secret glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - '2VLjxveBmPlg4Hvv)
+
+    '
+- label: a word password glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(cfg_
+  - 'hunter2pass)
+
+    '
+- label: a password dotted onto a key in a call argument
+  regions: 1
+  text: 'password = decrypt_it(Hunter2pass.Xk3Pq9Lm)
+
+    '
+- label: a call whose argument indexes an array
+  regions: 0
+  text: "    token_text = token_text_at(state->tokens[i]);\n"
+- label: a password in a call argument's subscript
+  regions: 1
+  text: 'password = get_pw(a[hunter2pass])
+
+    '
+- label: a mongoexport line with an ObjectId under $oid
+  regions: 0
+  text: '{"_id": {"$oid": "ef6f819dfcd739acd7b1410b"}, "name": "alice"}
+
+    '
+- label: a mixed-case key under a $oid key
+  regions: 1
+  text: '{"_id": {"$oid": "Qm9vT2s3x9ZpL1aBc7Yw2RtU"}}
+
+    '
+- label: a GraphQL response with a legacy node id under id
+  regions: 0
+  text: '{"data": {"repository": {"id": "MDEwOlJlcG9zaXRvcnk3MzQ1MTI5ODY=", "name":
+    "widget"}}}
+
+    '
+- label: a random base64 value under an id key
+  regions: 1
+  text: '{"id": "Qm9vT2s3x9ZpL1aBc7Yw2RtUv5NhGd8E"}
+
+    '
+- label: a node id prefix over an integer array that does not open with 0
+  regions: 1
+  text: '{"node_id": "PRRC_kwXOK8fHWs8AAAG47Beh_Q"}
+
+    '
+- label: a legacy-shaped id whose length does not match its type name
+  regions: 1
+  text: '{"id": "MTI6U2VjcmV0ODI3NDYxOTUwMzgyNzQ2MTk1MDM4Mjc0NjE5NQ=="}
+
+    '
+- label: a snake callee holding digits
+  regions: 1
+  text: 'password = hunter2_pass()
+
+    '
+- label: a snake callee holding digits, assigned in a .env line
+  regions: 1
+  text: 'DB_PASSWORD=s3cr3t_pw4x(1)
+
+    '
+- label: a word password as the receiver of a call
+  regions: 1
+  text: 'password = hunter2pass.strip()
+
+    '
+- label: a namespaced callee mixing letters and digits
+  regions: 1
+  text: 'secret = Tr0ub4dor::Pw9x()
+
+    '
+- label: a long random dotted callee
+  regions: 1
+  text:
+  - token = Xk3Pq9
+  - 'LmZr2Tv8NbWc5Hy1Jd7Fg4.Sa6Qe0Ru2Ko8()
+
+    '
+- label: a word password in a trailing method chain
+  regions: 1
+  text: 'password = get_pw(x).hunter2pass()
+
+    '
+- label: a snake callee holding digits under a colon key
+  regions: 1
+  text: 'password: hunter2_pass(x)
+
+    '
+- label: a long number glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(pin_
+  - '84729103847591)
+
+    '
+- label: 4-digit groups glued to a name in a call argument
+  regions: 1
+  text:
+  - token = get_token(pin_
+  - '8472_9103_8475_9120)
+
+    '
+- label: a long letter run glued to a name in a call argument
+  regions: 1
+  text: 'password = hash_pw(cfg_qwmzxkvbtrplhnsdjfg)
+
+    '
+- label: a snake-case passphrase in a call argument
+  regions: 1
+  text: 'password = hash_pw(correct_horse_battery_staple)
+
+    '
+- label: a hyphenated passphrase in a call argument
+  regions: 1
+  text: 'password = hash_pw(correct-horse-battery-staple)
+
+    '
+- label: a snake-case passphrase dotted onto a name in a call argument
+  regions: 1
+  text: 'password = hash_pw(cfg.correct_horse_battery_staple)
+
+    '

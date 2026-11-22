@@ -147,6 +147,27 @@ module Lain
       # that no other key is trusted to name one.
       INTEGRITY_KEY = /#{FIELD_START}"?integrity"?[ \t]*[:=][ \t]*["']?|^#{YARN_INTEGRITY}/
       INTEGRITY_FIELD = %r{(?:#{INTEGRITY_KEY})(?<value>sha1-[A-Za-z0-9+/]{27}=)}
+      # Ids a hosting API prints for its objects, let through only under the key that names one and
+      # only in that id's shape: an ObjectId under `_id`, as Hugging Face prints it, or under `$oid`,
+      # as mongoexport does, and a GitHub node id, whose bytes {NodeId} parses first. Any other value
+      # under these keys is still judged as a token.
+      OBJECT_ID_FIELD = /"(?:_id|\$oid)"[ \t]*:[ \t]*"(?<value>[0-9a-f]{24})"/
+      NODE_ID_FIELD = %r{"(?:node_id|id)"[ \t]*:[ \t]*"(?<value>[A-Za-z0-9+/_=-]{12,})"}
+      # Code that reads a secret is not one: a call of a snake_case or a namespaced function whose
+      # arguments are all names, each compound or too short to be a value of substance. A bare
+      # `word(`, a quoted argument and a plain word argument stay found, since each can be a secret.
+      # Every piece of every name is a word or a small number, so a secret glued onto a name
+      # (`cfg_<hex>`, `hunter2_pass(`, `.hunter2pass()`) is not taken for code.
+      NAME_PIECE = /(?:[A-Za-z]{1,16}|\d{1,3})/
+      SNAKE_NAME = /#{NAME_PIECE}(?:_#{NAME_PIECE})*/
+      CALLEE = /(?:[a-z]{1,16}(?:_#{NAME_PIECE})+|_?#{SNAKE_NAME}(?:(?:::|\.)_?#{SNAKE_NAME})+)/
+      # An argument's snake_case name has at most 3 pieces, since a passphrase is words joined by `_`.
+      SHORT_SNAKE = /#{NAME_PIECE}(?:_#{NAME_PIECE}){0,2}/
+      CALL_ARGUMENT = /[&*:]?(?:[A-Za-z_]\w{0,#{CredentialPatterns::SUBSTANCE_LENGTH - 2}}|
+                       _?#{NAME_PIECE}(?:_#{NAME_PIECE}){1,2}|
+                       _?#{SHORT_SNAKE}(?:(?:::|\.|->)#{SHORT_SNAKE})+)(?:\[\w{0,4}\])?/x
+      CALL_VALUE = /\A#{CALLEE}\((?:#{CALL_ARGUMENT}(?:,[ \t]*#{CALL_ARGUMENT})*)?
+                    (?:,|\)(?:\.#{SNAKE_NAME}\(\))*[?;]*)?\z/x
       # `.b` returns a NEW, MUTABLE String, so `frozen_string_literal` does not
       # reach this one and it has to be frozen by hand.
       BOM = "\xEF\xBB\xBF".b.freeze
@@ -353,7 +374,8 @@ module Lain
         def candidates(scanned, matches_by_shape, checksums, hinted)
           public, disguised = matches_by_shape["PEM_PUBLIC"].partition { PublicKey.pem?(_1[1], _1[2]) }
           fields = checksums ? checksum_spans(matches_by_shape) : []
-          entropy = outside(entropy_candidates(scanned, matches_by_shape, hinted), fields)
+          allowed = fields + public_id_spans(matches_by_shape)
+          entropy = outside(entropy_candidates(scanned, matches_by_shape, hinted), allowed)
 
           outside(pattern_candidates(matches_by_shape, fields) + entropy, public_spans(matches_by_shape, public)) +
             disguised.map { span(_1.begin(0), _1[0], DISGUISED_KEY, :pattern) }
@@ -362,6 +384,11 @@ module Lain
         def checksum_spans(matches_by_shape)
           %w[CHECKSUM_FIELD INTEGRITY_FIELD].flat_map { matches_by_shape[_1] }
                                             .map { _1.begin(:value)..._1.end(:value) }
+        end
+
+        def public_id_spans(matches_by_shape)
+          node_ids = matches_by_shape["NODE_ID_FIELD"].select { NodeId.public?(_1[:value]) }
+          (matches_by_shape["OBJECT_ID_FIELD"] + node_ids).map { _1.begin(:value)..._1.end(:value) }
         end
 
         def outside(candidates, spans)
@@ -422,7 +449,8 @@ module Lain
           value_shaped = shaped && secret_shaped?(value)
           return value_shaped if VALUE_GATED_ONLY.include?(name)
 
-          (hinted?(assignment) && substantial?(value) && !ordinary?(key, value)) || value_shaped
+          (hinted?(assignment) && substantial?(value) && !ordinary?(key, value) && !value.match?(CALL_VALUE)) ||
+            value_shaped
         end
 
         # The `_KEY` hint needs a glued `=`, as a shell needs it and a Ruby constant is not written.
@@ -583,6 +611,55 @@ module Lain
         end
       end
       private_constant :PublicKey
+
+      # Whether a value is a GitHub node id, parsed exactly. The legacy form is base64 of
+      # `<type length>:<Type><number>`; the current form is a type prefix and base64url of a
+      # msgpack array of unsigned integers whose first is 0. Anything else is not an id.
+      module NodeId
+        LEGACY = /\A(?<length>\d{2,3}):(?<type>[A-Z][A-Za-z]+)\d+\z/
+        TYPED = /\A[A-Z]{1,8}_(?<payload>[A-Za-z0-9_-]+)\z/
+        # A msgpack unsigned integer's lead byte, and how many bytes follow it.
+        UINT_WIDTHS = { 0xcc => 1, 0xcd => 2, 0xce => 4, 0xcf => 8 }.freeze
+
+        module_function
+
+        # @param value [String]
+        def public?(value) = legacy?(value) || typed?(value)
+
+        def legacy?(value)
+          id = LEGACY.match(value.unpack1("m0"))
+          !id.nil? && id[:length].to_i == id[:type].size
+        rescue ArgumentError
+          false
+        end
+
+        def typed?(value)
+          payload = TYPED.match(value)&.[](:payload)
+          !payload.nil? && uint_array?(decoded(payload))
+        rescue ArgumentError
+          false
+        end
+
+        def decoded(payload)
+          base64 = payload.tr("-_", "+/")
+          "#{base64}#{"=" * (-base64.size % 4)}".unpack1("m0")
+        end
+
+        def uint_array?(bytes)
+          count = bytes.getbyte(0).to_i - 0x90
+          (1..15).cover?(count) && bytes.getbyte(1).to_i.zero? &&
+            count.times.inject(1) { |at, _| at && uint_end(bytes, at) } == bytes.bytesize
+        end
+
+        def uint_end(bytes, at)
+          lead = bytes.getbyte(at)
+          return nil if lead.nil?
+          return at + 1 if lead < 0x80
+
+          UINT_WIDTHS[lead]&.then { at + 1 + _1 }
+        end
+      end
+      private_constant :NodeId
 
       # The name a bare token sits under. A value often sits away from its key: on
       # the line after it, inside brackets, a call or a nested object, behind a YAML

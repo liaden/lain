@@ -15,7 +15,8 @@ module Lain
       class Untranslatable < Lain::Error; end
 
       SHAPES = Regions::CONTENT_SHAPES.merge(
-        %w[TOKEN PEM_PUBLIC OPENSSH_PUBLIC CHECKSUM_FIELD INTEGRITY_FIELD].to_h { [_1, Regions.const_get(_1)] }
+        %w[TOKEN PEM_PUBLIC OPENSSH_PUBLIC CHECKSUM_FIELD INTEGRITY_FIELD OBJECT_ID_FIELD NODE_ID_FIELD]
+          .to_h { [_1, Regions.const_get(_1)] }
       ).freeze
       NAMES = SHAPES.keys.freeze
       # The shapes no match of which can cross a newline, so a line one cannot finish is over-masked
