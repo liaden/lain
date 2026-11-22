@@ -281,11 +281,58 @@ RSpec.describe Lain::Prompt::Slots do
     end
   end
 
+  describe "the execution tiers paragraph" do
+    let(:reader) { Lain::Confine::Profile.reader(root: "/p", home: "/h") }
+    let(:lines) do
+      [*%i[reader workspace grant].map { reader.with(name: _1).tier_line },
+       reader.with(connect_ports: [443]).tier_line, reader.tier_line(net_enforced: false),
+       Lain::Confine::Profile::TRACED.tier_line, Lain::Confine::Profile::NONE.tier_line]
+    end
+
+    def paragraph(text) = text.squish[/Know where a bash call ran.*?before retrying\./]
+
+    it "is in the main agent's system text and a child's" do
+      with_project do |root|
+        slots = described_class.load(root:)
+
+        expect([slots.render, slots.render_child].map { paragraph(_1) }.compact.uniq.size).to eq(1)
+        expect(paragraph(slots.render)).to include("the last line of a bash result names its tier")
+      end
+    end
+
+    it "quotes only phrases a real tier line prints" do
+      with_project do |root|
+        quoted = paragraph(described_class.load(root:).render).scan(/`([^`]+)`/).flatten - ["[ran: ...]"]
+
+        expect(quoted).not_to be_empty
+        expect(quoted.reject { |phrase| lines.any? { _1.include?(phrase) } }).to eq([])
+      end
+    end
+
+    it "names no tier the line cannot show" do
+      with_project do |root|
+        text = paragraph(described_class.load(root:).render)
+
+        expect(text).to be_a(String)
+        expect(text).not_to match(/contained|secrets|writes/i)
+      end
+    end
+
+    it "holds no per-session value" do
+      with_project do |root|
+        one = described_class.load(root:, environment: Lain::Prompt::Environment.fixed)
+        two = described_class.new(fills: {}, environment: Lain::Prompt::Environment.fixed)
+
+        expect(one.render(sealed: true)).to eq(two.render)
+      end
+    end
+  end
+
   describe "legitimate fills still render, digests pinned" do
     # Recorded from `Slots.load(root: <empty dir>).digests` / `#render_role`
     # against shipped templates only (no project overrides), before the fix.
     # The escalation bar: if fixing the binding moves any of these, stop.
-    let(:shipped_system_digest) { "blake3:52885bf066932f00da6302f523aaefd5717e51e98abc8b5f9d8340c8ec3dc1e4" }
+    let(:shipped_system_digest) { "blake3:08c7bfbc06b1572f7a5d0d93545399ba5efc75bf56787732fb50c2ebd3fd31d4" }
     let(:shipped_role_digests) do
       {
         "court_clerk" => "blake3:4879b45773658d7cac5285a0bffc53ee79e7249d461df494fb8a579d3e00ed50",
