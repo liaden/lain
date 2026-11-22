@@ -1,7 +1,8 @@
 # nyotes attempt 3 fixes: 8 layers, 1 owner each
 
-status: in-progress
+status: done
 base: af86076ffbfa7efb7f06cc63c4157546c8949ee3
+head: bc7772a05ab9f437a04d151719c8a53d1a82feed
 commit-mode: orchestrator-commits
 language: ruby
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson)
@@ -2097,3 +2098,8 @@ T35 round 2 APPROVE-WITH-FIXES (empty prefix unpinned, [""] journaled, unadmitta
 T35 fix round 2 done; re-review round 3 sent 10:13
 T35 round 3 APPROVE-WITH-FIXES, 3 nits; fix round 3 sent 10:16
 T35 round 4 APPROVE; folding plan then landing attempt 1 10:19
+T35 attempt 1: yard-lint --staged refused 2 untouched cross-file refs; backticked them in WT 10:19
+- 10:22 35 landed 3cc68e6e6
+T35 landed 3cc68e6e6 10:22; all cards landed
+Close-out: pspec 37831/0, rubocop, cargo test/clippy, zeitwerk green; comment census taught ELF64 (37b84a754); bench check fails 4 rows (followups), masked row seeded 10:46
+- Close-out: bench ceiling for bash_true_workspace_masked seeded (db5e30bbe); flakes recorded by name (bc7772a05). Worktrees and card branches match the start; no spec processes left. Status done, head bc7772a05. User work re-staged after this fold.
