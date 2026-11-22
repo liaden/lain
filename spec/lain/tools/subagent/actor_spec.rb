@@ -379,4 +379,84 @@ RSpec.describe Lain::Tools::Subagent::Actor do
       expect(lifecycles).to eq(%w[launched failed])
     end
   end
+
+  describe "a child whose provider fails" do
+    let(:failure) { RuntimeError.new("socket closed") }
+    let(:tool) do
+      error = failure
+      provider = Class.new(Lain::Provider::Mock) { define_method(:complete) { |*, **| raise error } }.new(responses: [])
+      CoreGraph.subagent(provider:, parent:, journal: session_file, observer: scribe, mode: :actor)
+    end
+
+    def failed_text
+      Sync do |task|
+        supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+        actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+        expect { actor.settle }.to raise_error(failure.class)
+      ensure
+        supervisor&.stop
+      end
+      journal_records(session_io).find { |record| record.dig("payload", "lifecycle") == "failed" }
+                                 &.dig("payload", "text")
+    end
+
+    it "tells the parent a failed note naming the error class and message" do
+      expect(failed_text).to eq("RuntimeError: socket closed")
+    end
+
+    context "with a usage limit" do
+      let(:failure) do
+        response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
+        Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
+      end
+
+      it "tells the parent it was stopped by the limit, and when it resets" do
+        expect(failed_text).to match(/\Astopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)
+      end
+    end
+
+    context "when telling the parent fails too" do
+      let(:tool) do
+        error = failure
+        armed = false
+        provider = Class.new(Lain::Provider::Mock) do
+          define_method(:complete) do |*, **|
+            armed = true
+            raise error
+          end
+        end.new(responses: [])
+        once = [IOError.new("journal closed")]
+        observer = lambda do |event|
+          raise once.pop if armed && !once.empty?
+
+          scribe.call(event)
+        end
+        CoreGraph.subagent(provider:, parent:, journal: session_file, observer:, mode: :actor)
+      end
+
+      def run_to_failure
+        Sync do |task|
+          supervisor = Lain::Supervisor.new(journal: session_file).run(task)
+          actor = supervisor.adopt(role: "researcher") { |worker_env| tool.launch_actor("go", worker_env:) }
+          expect { actor.settle }.to raise_error(RuntimeError, "socket closed")
+        ensure
+          supervisor&.stop
+        end
+      end
+
+      it "surfaces the turn's own error from settle and records that the parent was not told" do
+        run_to_failure
+
+        failed = journal_records(session_io).select { |record| record["type"] == "observer_failed" }
+        expect(failed.map { |record| record["message"] }).to eq(["journal closed"])
+      end
+
+      it "never sends a stopped note for a child that failed" do
+        run_to_failure
+
+        stopped = journal_records(session_io).select { |record| record.dig("payload", "lifecycle") == "stopped" }
+        expect(stopped).to be_empty
+      end
+    end
+  end
 end

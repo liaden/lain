@@ -37,8 +37,8 @@ module Lain
     #   the session record itself, never its display Channel, which renders
     #   neither record.
     # @param isolation [#acquire] the isolation backend each adoption leases a
-    #   {WorkerEnv} from; the shared-process {Isolation::Null} by default, whose
-    #   lease is {WorkerEnv.default} and whose release is a no-op, so a supervisor
+    #   {Lain::WorkerEnv} from; the shared-process {Isolation::Null} by default, whose
+    #   lease is {Lain::WorkerEnv.default} and whose release is a no-op, so a supervisor
     #   with no isolation wired writes no `if isolation` anywhere.
     # @param handoff [#surrender] how a CRASHED worker's lease is given up
     #   ({#reap_crashed}, {#stop}); pairing {Isolation::WorkerHandoff} with an
@@ -107,7 +107,7 @@ module Lain
     # Any CRASHED worker is reaped first, so a fleet does not accumulate one
     # orphan checkout per crash while the replacements run.
     #
-    # A lease is acquired FIRST, inside the adopted task, and its {WorkerEnv} is
+    # A lease is acquired FIRST, inside the adopted task, and its {Lain::WorkerEnv} is
     # handed to the launch block. The block may ignore it -- a Proc drops the
     # extra arg -- which is the byte-identical no-isolation path. A launch that
     # raises OR is cancelled after the acquire releases the lease before
@@ -122,7 +122,7 @@ module Lain
     #   the issue's lane, `issue.<slug>.<id>` -- and a name git would not
     #   accept in a ref is refused ({Isolation::WorkerId::Refused}) before
     #   anything is leased.
-    # @yieldparam worker_env [WorkerEnv] the leased cwd/env the child runs under
+    # @yieldparam worker_env [Lain::WorkerEnv] the leased cwd/env the child runs under
     # @yieldreturn [Tools::Subagent::Actor] the launched actor
     # @return [Tools::Subagent::Actor]
     # @raise [LaunchStopped] when a stop through the launching row ended the
@@ -475,6 +475,9 @@ module Lain
 
       def head_digest = actor.timeline.head_digest
 
+      # @return [String, nil] why the actor's turn failed, for a report to word
+      def cause = actor.cause
+
       # A no-op on the shared-process {Isolation::Null} lease, so releasing one
       # worker's lease never tears down state a still-running sibling shares; a
       # Worktree lease removes exactly this worker's own checkout.
@@ -507,7 +510,8 @@ module Lain
       rescue Async::TimeoutError
         raise
       rescue StandardError => e
-        "the actor's turn raised #{e.class}: #{e.message}"
+        cause = Tools::Subagent::Actor.cause(e)
+        Agent::StopReason.for(e) == :quota ? cause : "the actor's turn raised #{cause}"
       end
 
       # An operator's own #stop is deliberate and is reclaimed with the rest of

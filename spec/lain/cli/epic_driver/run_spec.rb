@@ -12,13 +12,16 @@ end
 # The registry row a retirement is taken on, and the report it answers. The
 # report's `sha` is what the loop judges by -- never its kind.
 class RunSpecSupervisor
-  Row = Data.define(:actor)
+  Row = Data.define(:actor, :cause) do
+    def initialize(actor:, cause: nil) = super
+  end
 
   # `live` is shared with the actors fake: an actor is live from its launch
   # until the retirement that ends it, so counting it in one object and
   # discounting it in the other is what makes the width bound observable.
-  def initialize(reports, live, raising: [], log: [])
+  def initialize(reports, live, raising: [], log: [], causes: {})
     @reports = reports
+    @causes = causes
     @live = live
     @raising = raising
     @log = log
@@ -28,7 +31,7 @@ class RunSpecSupervisor
 
   attr_reader :retired
 
-  def adopt(row) = @rows << row
+  def adopt(row) = @rows << row.with(cause: @causes[row.actor.id])
 
   def find(&block) = @rows.find(&block)
 
@@ -235,9 +238,9 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # The loop, assembled over the fakes an example set up.
   def run_over(issues:, statuses:, reports:, landing: nil, gate: RunSpecGate.new, refusals: {}, retiring: [],
                width: 2, budget: nil, attempts: nil, grading: nil, log: [], red_only: nil, subjects: plans,
-               qa_gate: nil, tip_tests: nil, interrupt: nil)
+               qa_gate: nil, tip_tests: nil, interrupt: nil, causes: {})
     live = { now: 0 }
-    supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:)
+    supervisor = RunSpecSupervisor.new(reports, live, raising: retiring, log:, causes:)
     actors = RunSpecActors.new(supervisor, live, refusals:)
     settled = landing || RunSpecLanding.new(statuses)
     run = described_class.new(slug: "demo", progress: progress_over(issues, statuses), plans: subjects, actors:,
@@ -701,6 +704,69 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       described_class.new(slug: "demo", progress: -> {}, plans:, actors: nil, supervisor: nil, gate: nil, landing: nil)
     end
       .to raise_error(ArgumentError, /red_only/)
+  end
+
+  describe "an actor that failed its turn" do
+    let(:cause) { "stopped by the provider's usage limit; resets at 2026-01-01T00:00:00Z" }
+
+    def stopped_run(gate: RunSpecGate.new, landing: nil)
+      stopped = Lain::Isolation::WorkerHandoff::Report.new(kind: :declined, ref: "refs/lain/worker/sha-a", sha: "sha-a")
+      run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => stopped }, gate:, landing:,
+               causes: { "a" => cause })
+    end
+
+    it "names the cause instead of saying it settled having committed nothing" do
+      failed = Lain::Isolation::WorkerHandoff::Report.new(kind: :nothing_to_do, ref: nil, sha: nil)
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => failed },
+                      causes: { "a" => cause })
+
+      reason = run.call.reported.first.reason
+
+      expect(reason).to eq("its actor failed before committing anything, so there was no implementation to submit " \
+                           "(its actor failed: #{cause})")
+    end
+
+    it "carries the cause on the landed entry and reports nothing" do
+      gate = RunSpecGate.new
+      run, = stopped_run(gate:)
+
+      result = run.call
+
+      expect(gate.asked).not_to be_empty
+      expect(result.landed.map(&:note)).to eq([cause])
+      expect(result.reported).to be_empty
+    end
+
+    it "reads as landed with its cause, and counts the issue as landed alone in the footer" do
+      run, = stopped_run
+
+      expect(run.call.to_s.lines.map(&:chomp)).to eq(["landed a at sha-a (its actor failed: #{cause})",
+                                                      "1 landed, 0 left for you"])
+    end
+
+    it "carries the cause on the one reported entry of a denied gate" do
+      run, = stopped_run(gate: RunSpecGate.new(denied: ["a"]))
+
+      result = run.call
+
+      expect(result.reported.map(&:reason)).to match([a_string_including(cause)])
+      expect(result.landed).to be_empty
+    end
+
+    it "carries the cause on the one reported entry of a parked gate" do
+      run, = stopped_run(gate: RunSpecGate.new(parked: ["a"]))
+
+      expect(run.call.reported.map(&:reason)).to match([a_string_including(cause)])
+    end
+
+    it "adds nothing to an actor that settled" do
+      run, = run_over(issues: [issue("a")], statuses: { "a" => "in_flight" }, reports: { "a" => anchored("sha-a") })
+
+      result = run.call
+
+      expect(result.reported).to be_empty
+      expect(result.landed.map(&:note)).to eq([""])
+    end
   end
 
   describe "a settled actor that committed nothing" do

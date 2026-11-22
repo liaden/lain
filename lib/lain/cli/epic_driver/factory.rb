@@ -799,6 +799,7 @@ module Lain
         # that never ran.
         QA_UNRUN = "QA could not run, so the checkpoint holds everything it blocks: %<why>s"
 
+        ACTOR_FAILED_EMPTY = "its actor failed before committing anything, so there was no implementation to submit"
         NOTHING_COMMITTED = "its actor settled having committed nothing, so there was no implementation to submit"
 
         # The red step commits before the actor's first turn, so an actor that
@@ -1045,8 +1046,11 @@ module Lain
         Bounds = Data.define(:width, :budget, :interrupt)
 
         # One issue whose work reached the working branch.
-        Landed = Data.define(:issue_id, :sha) do
-          def initialize(issue_id:, sha:) = super(issue_id: -issue_id.to_s, sha: -sha.to_s)
+        # `note` is why its actor failed, when it did and its commits were gated anyway.
+        Landed = Data.define(:issue_id, :sha, :note) do
+          def initialize(issue_id:, sha:, note: "") = super(issue_id: -issue_id.to_s, sha: -sha.to_s, note: -note.to_s)
+
+          def note_suffix = note.empty? ? "" : " (its actor failed: #{note})"
         end
 
         # One issue the run did not carry, and the sentence a human acts on. Not
@@ -1081,7 +1085,7 @@ module Lain
 
           private
 
-          def landed_lines = landed.map { |entry| "landed #{entry.issue_id} at #{entry.sha}" }
+          def landed_lines = landed.map { |entry| "landed #{entry.issue_id} at #{entry.sha}#{entry.note_suffix}" }
 
           def audited_lines = audited.map { |verdict| "#{verdict.issue_id}: #{verdict.line}" }
 
@@ -1163,6 +1167,7 @@ module Lain
         #   anything
         def call
           @landed = []
+          @causes = {}
           @reported = []
           @audited = []
           @live = []
@@ -1434,7 +1439,9 @@ module Lain
           entry = @settling = @live.shift
           row = row_of(entry)
           @grading.call(entry.issue_id, row)
-          judge(entry, @supervisor.retire(row))
+          report = @supervisor.retire(row)
+          @causes[entry.issue_id] = row.cause
+          judge(entry, report)
         rescue StandardError => e
           reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}") if untouched?(entry.issue_id)
           raise if e.is_a?(JournalUnreadable)
@@ -1453,7 +1460,7 @@ module Lain
         # implementation.
         def judge(entry, report)
           return halted(entry, report) if @halted
-          return reported(entry, unkept(report)) if report.sha.nil?
+          return reported(entry, unkept(entry, report)) if report.sha.nil?
           return reported(entry, format(NO_WORK, sha: report.sha)) if
             entry.launch.tests.unworked?(report.sha, judge: @red_only)
 
@@ -1483,7 +1490,11 @@ module Lain
 
         def tested(entry, report) = @asking.watching { @tip_tests.call(entry.issue_id, report.sha) }
 
-        def unkept(report) = report.kind == :failed ? "#{ANCHOR_REFUSED} (#{report.detail})" : NOTHING_COMMITTED
+        def unkept(entry, report)
+          return "#{ANCHOR_REFUSED} (#{report.detail})" if report.kind == :failed
+
+          @causes[entry.issue_id] ? ACTOR_FAILED_EMPTY : NOTHING_COMMITTED
+        end
 
         # HONOUR THE QUEUE'S ANSWER. A call that returned is not a landing: the
         # queue says whether the work reached the branch, and a conflict that
@@ -1492,7 +1503,10 @@ module Lain
           # A landing under way is past what a stop can end, so a stop must not claim it.
           @settling = nil
           moved = Array(@landing.call(entry.issue_id, sha: report.sha, ref: report.ref))
-          return @landed << Landed.new(issue_id: entry.issue_id, sha: report.sha) if moved.all?(&:done)
+          if moved.all?(&:done)
+            return @landed << Landed.new(issue_id: entry.issue_id, sha: report.sha,
+                                         note: @causes[entry.issue_id])
+          end
 
           reported(entry, stood(moved))
         rescue StandardError => e
@@ -1520,7 +1534,11 @@ module Lain
           stalled.report.detail.to_s.empty? ? said : "#{said}: #{stalled.report.detail}"
         end
 
-        def reported(entry, reason) = @reported << Reported.new(issue_id: entry.issue_id, reason:)
+        def reported(entry, reason)
+          cause = @causes[entry.issue_id]
+          reason = "#{reason} (its actor failed: #{cause})" if cause
+          @reported << Reported.new(issue_id: entry.issue_id, reason:)
+        end
 
         def result = Result.new(landed: @landed, reported: @reported, stopped: @stopped, audited: @audited)
       end

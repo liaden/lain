@@ -13,6 +13,7 @@ class FactorySpecActor
   def settle = nil
   def stopped? = false
   def dead? = false
+  def cause = nil
   def stop = self
   def worker = self
   def address = "factory-spec"

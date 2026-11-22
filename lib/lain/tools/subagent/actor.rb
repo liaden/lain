@@ -140,6 +140,28 @@ module Lain
         # me" a supervisor consults.
         def dead? = stopped? || !@failure.nil?
 
+        # Truthy, so a stop after an untold failure does not send "stopped" for a child that failed.
+        UNTOLD = Object.new.freeze
+        private_constant :UNTOLD
+
+        QUOTA_STOPPED = "stopped by the provider's usage limit"
+
+        # Why a turn failed, in words a parent or a report can show: a usage
+        # limit says when it resets, anything else names its class and message.
+        #
+        # @param error [Exception]
+        # @return [String]
+        def self.cause(error)
+          return "#{error.class}: #{error.message}" unless Agent::StopReason.for(error) == :quota
+
+          reset = Agent::StopReason.reset_at(error)
+          reset ? "#{QUOTA_STOPPED}; resets at #{reset}" : QUOTA_STOPPED
+        end
+
+        # @return [String, nil] why the turn failed, in {.cause}'s words; nil for
+        #   an actor whose turn did not raise
+        def cause = (self.class.cause(@failure) if @failure)
+
         # Land a final attributed :message, unless a failed turn already told
         # the parent one, then cancel the fiber.
         # `Async::Task#stop` raises `Async::Stop` at the fiber's parked await,
@@ -213,6 +235,19 @@ module Lain
         rescue Response::Failed, Budget::Exceeded => e
           @farewell = reply(e.message, lifecycle: StatusFeed::SpawnLifecycle::FAILED)
           raise
+        rescue StandardError => e
+          @farewell = told_failed(e)
+          raise e
+        end
+
+        # Telling the parent must not replace the failure being told: the turn's
+        # own error is the one {#settle} and the supervisor have to see.
+        def told_failed(error)
+          reply(self.class.cause(error), lifecycle: StatusFeed::SpawnLifecycle::FAILED)
+        rescue StandardError => e
+          @journal << Telemetry::ObserverFailed.new(hook: :failed_farewell, digest: @agent.timeline.head_digest.to_s,
+                                                    message: e.message)
+          UNTOLD
         end
 
         # actor -> parent, naming the spawn and the child's head among its

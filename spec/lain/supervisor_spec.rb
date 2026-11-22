@@ -1518,6 +1518,36 @@ RSpec.describe Lain::Supervisor do
       end
     end
 
+    it "exposes a usage limit as the failed row's cause, with the reset time" do
+      response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
+      quota = Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
+      provider = Class.new(Lain::Provider::Mock) { define_method(:complete) { |*, **| raise quota } }.new(responses: [])
+      tool = CoreGraph.subagent(provider:, toolset: CoreGraph.toolset([EchoTool.new]), parent: parent_timeline,
+                                journal: CoreGraph.journal, mode: :actor, log:)
+      row = report = nil
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([]))) do |supervisor, _task|
+        row = row_of(supervisor, adopted(supervisor, tool))
+        report = supervisor.retire(row)
+        supervisor.stop
+      end
+
+      expect(row.cause).to match(/\Astopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)
+      expect(report.detail).to include(row.cause)
+    end
+
+    it "has no cause for an actor that settled" do
+      row = nil
+      supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
+                                     retirement: retirement([]))) do |supervisor, _task|
+        row = row_of(supervisor, adopted(supervisor, retiring_tool(text_response("done"))))
+        supervisor.retire(row)
+        supervisor.stop
+      end
+
+      expect(row.cause).to be_nil
+    end
+
     it "records the anchor on one handback record, carrying what the self-sync did" do
       journal = Lain::Channel.new
       supervised(described_class.new(isolation: RetireIsolation.new(shared_env, []),
@@ -1822,11 +1852,13 @@ RSpec.describe Lain::Supervisor do
         handbacks = records.grep(Lain::Telemetry::Handback)
         expect(handbacks.map { |record| [record.worker_key, record.sync] }).to eq([[worker(1), :current],
                                                                                    [worker(2), nil]])
-        # In order, one per retirement and none from #stop. By position, since
-        # two actors launched through separate Subagents over one parent head
-        # may share an address.
-        farewells = records.grep(Lain::Telemetry::Message).select { |m| m.payload["lifecycle"] == "stopped" }
-        expect(farewells.map(&:from)).to eq(addresses)
+        # One stopped farewell for the settled actor and a failed note, its own
+        # farewell, for the failed one; #stop adds none. By position, since two
+        # actors launched through separate Subagents over one parent head may
+        # share an address.
+        notes = records.grep(Lain::Telemetry::Message)
+        expect(notes.select { |m| m.payload["lifecycle"] == "stopped" }.map(&:from)).to eq(addresses.first(1))
+        expect(notes.select { |m| m.payload["lifecycle"] == "failed" }.map(&:from)).to eq(addresses.last(1))
       end
 
       def worker_refs = git(@repo_root, "for-each-ref", "--format=%(objectname)", "refs/lain/worker/").split
@@ -1943,6 +1975,58 @@ RSpec.describe Lain::Supervisor do
           expect(supervisor.to_a).to be_empty
           supervisor.stop
         end
+      end
+
+      # The real supervisor builds the report over a real checkout and the real
+      # run words it: nothing in the chain is a hand-built report.
+      it "words a usage-limit stop for a human, over a real retirement that kept the actor's commit" do
+        response = Struct.new(:status, :body, :headers).new(429, "", { "retry-after" => "3600" })
+        quota = Lain::Provider::HTTP::QuotaError.new(response, "limit reached")
+        stub_const("RetireQuotaProvider", Class.new(Lain::Provider::Mock) do
+          define_singleton_method(:quota) { quota }
+          def complete(request, **)
+            raise self.class.quota unless requests.empty?
+
+            super
+          end
+        end)
+        launch = Struct.new(:actor, :worker_id, :branch, :tests)
+        gate = lambda do |issue_id, sha:, **|
+          address = Lain::Epic::Submission.implementation(slug: "demo", issue_id:, digest: sha).digest
+          decision = Lain::Epic::GateDecision.new(artifact_digest: address, epic_slug: "demo", stage: "implementation",
+                                                  verdict: Lain::Approval::Verdict::Deny.new, answered_by: "human",
+                                                  policy: "hands_off", latency: 0.0, issue_id:)
+          Lain::Epic::Signoff.unit.step(decision)
+                             .view(Lain::Epic::SignoffQueue::Partition.new(epic_slug: "demo", stage: "implementation",
+                                                                           issue_id:), current: address)
+        end
+        statuses = { "a" => "in_flight" }
+        issue = Lain::Epic::Issue.new(id: "a", title: "the a issue", blocks: [],
+                                      criteria: "```gherkin\nScenario: s\n  Given g\n  When w\n  Then t\n```\n")
+        progress = lambda do
+          graph = Lain::Epic::Graph.new(issues: [issue.with_status(statuses.fetch("a"))])
+          Lain::Epic::Progress.new(graph:, stage: Lain::Epic::Stage.new("implementation"), epic_slug: "demo",
+                                   parked: [])
+        end
+        result = nil
+        supervised(described_class.new(journal:, isolation: backend,
+                                       retirement: real_retirement)) do |supervisor, _task|
+          actors = lambda do |issue_id, **|
+            actor, = committed(supervisor, RetireQuotaProvider.new(responses: [tool_response(["c1", "commit", {}])]))
+            launch.new(actor, "issue.demo.#{issue_id}.1", "lain/issue/demo/#{issue_id}",
+                       Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: "red-#{issue_id}"))
+          end
+          plans = ->(_id) { Lain::CLI::EpicDriver::PlanSubject.new(subject: "x") }
+          run = Lain::CLI::EpicDriver::Run.new(slug: "demo", progress:, plans:, actors:, supervisor:, gate:,
+                                               landing: ->(*) { [] }, width: 1,
+                                               red_only: Lain::CLI::EpicDriver::Run::Identical)
+          result = run.call
+          supervisor.stop
+        end
+
+        expect(result.reported.map(&:reason))
+          .to match([a_string_matching(/stopped by the provider's usage limit; resets at \d{4}-\d\d-\d\dT/)])
+        expect(result.landed).to be_empty
       end
 
       # With no handoff wired, a reap is Retain's: it anchors nothing and
