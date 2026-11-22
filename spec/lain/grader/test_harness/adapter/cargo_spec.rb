@@ -42,7 +42,33 @@ RSpec.describe Lain::Grader::TestHarness::Adapter::Cargo do
 
   describe "#command" do
     it "runs the whole workspace with no paths" do
-      expect(argv).to eq(%w[cargo test --workspace] + flags)
+      Dir.mktmpdir do |dir|
+        File.write(File.join(dir, "Cargo.toml"), "")
+
+        expect(described_class.new(dir).command(out_path: "/unused")).to eq(%w[cargo test --workspace] + flags)
+      end
+    end
+
+    it "says no test command applies when the workspace has no Cargo.toml" do
+      Dir.mktmpdir do |dir|
+        expect { described_class.new(dir).command(out_path: "/unused") }
+          .to raise_error(Lain::Error, "no Cargo.toml, so no test command applies")
+      end
+    end
+
+    it "reads on the gate as a suite that was not run, because no Cargo.toml exists" do
+      Dir.mktmpdir do |dir|
+        why = begin
+          described_class.new(dir).command(out_path: "/unused")
+        rescue Lain::Error => e
+          e.message
+        end
+        tests = Lain::Telemetry::TestsRan.unrun(issue_id: "a", sha: "abc1234", why:)
+
+        fact = Lain::Epic::Submission.implementation(slug: "demo", issue_id: "a", digest: "abc1234", tests:).fact
+
+        expect(fact).to include("tests: not run (no Cargo.toml, so no test command applies)")
+      end
     end
 
     it "filters a module file to its package and module path" do

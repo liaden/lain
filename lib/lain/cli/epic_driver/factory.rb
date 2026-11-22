@@ -1526,7 +1526,10 @@ module Lain
           Stopped.new(sha: report.sha, ref: report.ref, branch: entry.launch.branch, kept:, **)
         end
 
-        def tested(entry, report) = @asking.watching { @tip_tests.call(entry.issue_id, report.sha) }
+        def tested(entry, report)
+          id = entry.issue_id
+          entry.launch.tests.tip_tested(id, report.sha) { @asking.watching { @tip_tests.call(id, report.sha) } }
+        end
 
         def unkept(entry, report)
           return "#{ANCHOR_REFUSED} (#{report.detail})" if report.kind == :failed
@@ -1632,6 +1635,9 @@ module Lain
           # @return [Boolean] whether the tip carries nothing past this commit
           def unworked?(tip, judge:) = judge.call(sha, tip)
 
+          # @yield the project's suite run, for an issue judged by tests
+          def tip_tested(_issue_id, _sha) = yield
+
           def briefed(brief) = brief.failing
         end
 
@@ -1641,8 +1647,13 @@ module Lain
           # @return [Boolean] whether the tip changes nothing past the base
           def unworked?(tip, judge:) = judge.untouched?(base, tip)
 
+          # @return [Telemetry::TestsRan] an unjournaled stand-in: a manual issue's suite says nothing of its acceptance
+          def tip_tested(issue_id, sha) = Telemetry::TestsRan.unrun(issue_id:, sha:, why: Manual::JUDGED_BY_HUMAN)
+
           def briefed(brief) = brief.unscripted
         end
+
+        Manual::JUDGED_BY_HUMAN = "judged by a human"
 
         # The red step a manual issue takes: nothing generated, nothing run.
         module Unscripted

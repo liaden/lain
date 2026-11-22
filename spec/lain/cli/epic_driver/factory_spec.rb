@@ -1239,6 +1239,39 @@ RSpec.describe Lain::CLI::EpicDriver::Factory, :seam do
       expect(ran.first["why"]).to include("no tests preset")
     end
 
+    it "answers a manual red step's tip test without yielding, and a red one by yielding" do
+      manual = Lain::CLI::EpicDriver::IssueTests::Manual.new(base: "abc")
+      red = Lain::CLI::EpicDriver::IssueTests::Red.new(record: nil, run: nil, sha: "abc")
+
+      expect(manual.tip_tested("a", "def") { raise "ran" }).to have_attributes(ran: false, why: "judged by a human")
+      expect(red.tip_tested("a", "def") { :ran }).to eq(:ran)
+    end
+
+    it "runs no tests for a manual issue and tells the gate a human judges it" do
+      write_epic([issue("a", level: "manual")])
+      approve_plan("a")
+
+      driven(width: 1, manual: %w[a])
+
+      expect(chat_records.map { |row| row["type"] }).not_to include("tests_ran")
+      expect(File.read(File.join(paths.filing_dir(root: repo), "chat.ndjson"))).to include("judged by a human")
+    end
+
+    it "journals that no test command applies when a cargo project has no Cargo.toml" do
+      File.write(File.join(repo, ".lain/config.rb"), "tests preset: :cargo, source_roots: %w[app]\n")
+      git(repo, "commit", "-q", "-am", "declare the cargo preset")
+      trust_project(repo, paths:)
+      trust_project(repo)
+      write_epic([issue("a")])
+      approve_plan("a")
+
+      driven(width: 1)
+
+      ran = chat_records.select { |row| row["type"] == "tests_ran" }
+      expect(ran.map { |row| row.values_at("ran", "why") })
+        .to eq([[false, "no Cargo.toml, so no test command applies"]])
+    end
+
     # A preset with no adapter yet is a suite lain cannot run, which the gate
     # reports; it is no reason to refuse the whole run.
     it "journals that nothing ran, naming the preset, when the declared preset has no adapter" do

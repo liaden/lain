@@ -64,7 +64,7 @@ module Lain
           end
 
           def command(paths: [], **)
-            return ["cargo", "test", "--workspace", *FLAGS] if paths.empty?
+            return workspace_command if paths.empty?
 
             selections = paths.map { |path| selection_for(path) }
             ["cargo", "test", *package_args(selections), *target_args(selections), *FLAGS, *filter_args(selections)]
@@ -79,6 +79,13 @@ module Lain
           end
 
           private
+
+          # A directory with no manifest is a project this adapter has nothing to run in, not a failing build.
+          def workspace_command
+            raise Error, "no Cargo.toml, so no test command applies" unless File.file?(File.join(@root, "Cargo.toml"))
+
+            ["cargo", "test", "--workspace", *FLAGS]
+          end
 
           def new_module?(subject)
             subject.end_with?(".rs") && !NOT_MODULES.include?(File.basename(subject, ".rs")) &&
