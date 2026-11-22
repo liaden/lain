@@ -2,13 +2,14 @@
 
 module Lain
   module Confine
-    Request = Data.define(:ruling, :executables, :argv, :cwd, :root, :tool_use_id, :grants)
+    Request = Data.define(:ruling, :executables, :argv, :cwd, :root, :tool_use_id, :grants, :bounds)
 
     # What a bash call hands its exec: how the call was approved, what each
     # stage resolved to and the words it runs, and the call it belongs to.
     # {Profiles} reads the ruling to choose a profile, and the words to tell a
     # build tool's fetch from its other subcommands; {Exec::Sandboxed} checks
-    # the resolution against the profile.
+    # the resolution against the profile. {Profiles} also reads the asking
+    # agent's bounds, to bind what they lend it beyond the session's reads.
     class Request
       # @param ruling [Approval::Escalation::Ruling] the ruling that let the call run
       # @param executables [Array<Shell::Executable>] one per stage
@@ -18,10 +19,13 @@ module Lain
       # @param tool_use_id [String] the call's id, which the sandbox's journal records carry
       # @param grants [Array<Shell::Executable>] what the parsed stages resolved to on the string arm: programs the
       #   profile may run, never proof of what the shell will run, so nothing checks the call against them
-      def initialize(ruling:, executables:, cwd:, root:, tool_use_id:, argv: [], grants: [])
+      # @param bounds [Sensitivity::Bounds] the requesting agent's own, whose reads beyond the session's {Profiles}
+      #   lends the call; none by default
+      def initialize(ruling:, executables:, cwd:, root:, tool_use_id:, argv: [], grants: [],
+                     bounds: Sensitivity::Bounds::NONE)
         super(ruling:, executables: Ractor.make_shareable(executables.dup), argv: frozen(argv),
               cwd: cwd && -cwd, root: root && -root, tool_use_id: -tool_use_id,
-              grants: Ractor.make_shareable(grants.dup))
+              grants: Ractor.make_shareable(grants.dup), bounds: Ractor.make_shareable(bounds))
       end
 
       # Frozen copies, so the words the caller holds stay as they were.

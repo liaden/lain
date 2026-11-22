@@ -2149,6 +2149,86 @@ RSpec.describe Lain::Confine::Profiles do
     end
   end
 
+  describe "a directory the request's bounds lend", :seam do
+    let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+    let(:refs) { File.join(@base, "data", "refs").tap { FileUtils.mkdir_p(_1) } }
+    let(:listing) do
+      Class.new do
+        attr_reader :asked
+
+        def initialize = @asked = []
+
+        def related = Lain::Confine::MaskList::Related::NONE
+
+        def classify(path)
+          Data.define(:level) { def ordinary? = level == :ordinary }
+              .new(File.basename(path) == "secrets" ? :gated : :ordinary)
+        end
+
+        def lent(dirs)
+          @asked << dirs
+          masks = dirs.map { Lain::Sensitivity::Policy::Mask.new(path: File.join(_1, ".env"), reason: "secret") }
+          Lain::Confine::MaskList::Related.new(roots: dirs, masks:)
+        end
+      end.new
+    end
+    let(:lending) { described_class.new(masks:, probe:, home:, root:, classifier: listing) }
+
+    def lent(dir) = Lain::Sensitivity::Bounds.of(reads: [root, dir])
+
+    def bounded(bounds, ruling: ruling("rules", rule: "composed_term"))
+      Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "toolu_1", bounds:)
+    end
+
+    it "reads it with the masks its own listing names, writing nothing there" do
+      profile = lending.for(bounded(lent(refs)))
+
+      expect([profile.read_dirs, profile.masks]).to match([include(refs), include(File.join(refs, ".env"))])
+      expect(profile.write_dirs).not_to include(refs)
+      expect(listing.asked).to eq([[refs]])
+    end
+
+    it "reads nothing beyond the project for a request whose bounds lend nothing, and lists nothing" do
+      profile = lending.for(bounded(Lain::Sensitivity::Bounds.of(reads: [root])))
+
+      expect([profile.read_dirs, listing.asked]).to match([not_include(refs), []])
+    end
+
+    it "lists nothing for a read inside the project, which is read already" do
+      lending.for(bounded(lent(File.join(root, "docs").tap { FileUtils.mkdir_p(_1) })))
+
+      expect(listing.asked).to eq([])
+    end
+
+    it "names nothing for a lent directory that does not exist, which holds nothing to bind" do
+      profile = lending.for(bounded(lent(File.join(@base, "gone"))))
+
+      expect([profile.unread, listing.asked]).to eq([{}, []])
+    end
+
+    it "carries the lend to a workspace call too" do
+      workspace = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch,
+                                      classifier: listing)
+
+      profile = workspace.for(bounded(lent(refs), ruling: ruling("auto")))
+
+      expect([profile.read_dirs, profile.masks]).to match([include(refs), include(File.join(refs, ".env"))])
+      expect(profile.write_dirs).not_to include(refs)
+    end
+
+    it "refuses home, an ancestor of the project and a gated directory, naming why, and lists none of them" do
+      FileUtils.mkdir_p(home)
+      gated = File.join(@base, "secrets").tap { FileUtils.mkdir_p(_1) }
+
+      unread = [home, @base, gated].map { lending.for(bounded(lent(_1))) }.map { [_1.unread, _1.read_dirs] }
+
+      expect(unread).to match([[{ home => "it is the home directory or holds it" }, not_include(home)],
+                               [{ @base => "it holds the project root" }, not_include(@base)],
+                               [{ gated => "its path is classified gated" }, not_include(gated)]])
+      expect(listing.asked).to eq([])
+    end
+  end
+
   describe "#unrunnable" do
     let(:uv) { executable("uv", File.join(home, ".local/bin/uv"), :user) }
     let(:judge) { Lain::Approval::Judged::NAME }

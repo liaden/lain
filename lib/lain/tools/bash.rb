@@ -498,7 +498,8 @@ module Lain
         shadows = SessionShadows.new(context.worker_env.with(cwd:))
         ruling = context.respond_to?(:ruling) ? context.ruling : Confine::Request::UNRULED
         Confine::Request.new(ruling:, executables: shadows.over(stages), argv:, cwd:, root: context.worker_env.checkout,
-                             tool_use_id:, grants: shadows.over(grants))
+                             tool_use_id:, grants: shadows.over(grants),
+                             bounds: context.worker_env.bounds || Sensitivity::Bounds::NONE)
       end
 
       # On the string arm a shell reads the words, so none are vouched for.

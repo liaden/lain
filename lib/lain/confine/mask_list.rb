@@ -52,6 +52,8 @@ module Lain
       READ_ROOT_GIT_CONFIGS = File.join("*", "*", ".git", "config")
       # What {Related#refused} and the journal say of a refused related directory.
       CAPABILITY = :related_directory
+      NOT_A_DIRECTORY = "it is not a directory"
+      UNANSWERED = "its listing did not answer"
       # Follows a link, so a name is stamped by the directory it lives in, whatever its parent's spelling.
       DIRECTORY_STAT = File.method(:stat)
       private_constant :DIRECTORY_STAT
@@ -151,6 +153,7 @@ module Lain
                      journal: Channel::Null.instance)
         @journal = journal
         @journaled = Set.new
+        @journaling = Mutex.new
         @policy = policy
         @taint = taint
         @shell_out = shell_out
@@ -160,6 +163,8 @@ module Lain
         @project = Tree.new(root, shell_out, stat:, walks_unlisted: true)
         @priming = nil
         @related = {}
+        @lent = {}
+        @lending = Mutex.new
       end
 
       # Starts the first classification off the caller's thread, so a slow one
@@ -197,6 +202,23 @@ module Lain
         Related.new(roots: listed.map(&:root).freeze, masks:, reads:, execs: policy.bounds.execs, refused:)
       end
 
+      # Listed apart from {#related}, so a directory one agent was lent is bound for its calls alone. Each is
+      # listed and refused as a related directory is, on every call. Its tree is kept by directory, so a name
+      # already judged is not classified again, and a walk's refusal holds for the session.
+      #
+      # @param dirs [Array<String>] absolute; each a directory an agent's bounds lend it
+      # @return [Related] each directory whose listing answered, with its masks, and each left unread, with why
+      def lent(dirs)
+        join_priming
+        policy = @policy.call
+        @lending.synchronize do
+          dirs, missing = dirs.partition { File.directory?(_1) }
+          trees = dirs.map { |dir| @lent[dir] ||= related_tree(dir) }
+          trees.each { _1.refresh(-> { policy }) }
+          lent_listing(trees, missing.to_h { [_1, NOT_A_DIRECTORY] })
+        end
+      end
+
       # The session's own policy on one path, which a grant outside the project asks before it reads one.
       #
       # @param path [String] absolute
@@ -226,11 +248,22 @@ module Lain
         journal_refusals
       end
 
-      def journal_refusals
-        refused.except(*@journaled).each do |dir, reason|
-          @journaled << dir
-          @journal << Telemetry::CapabilityDegraded.new(capability: CAPABILITY, requirer: self.class.name,
-                                                        provider: "#{dir}: #{reason}")
+      def lent_listing(trees, unread)
+        listed = trees.select(&:listed?)
+        refusals = trees.reject(&:listed?).to_h { [_1.root, _1.refusal || UNANSWERED] }.merge(unread).freeze
+        journal_refusals(refusals)
+        Related.new(roots: listed.map(&:root).freeze, masks: listed.flat_map(&:current).uniq(&:path).freeze,
+                    refused: refusals)
+      end
+
+      # Locked, since the priming thread and a lent listing journal beside the caller's own refresh.
+      def journal_refusals(refusals = refused)
+        @journaling.synchronize do
+          refusals.except(*@journaled).each do |dir, reason|
+            @journaled << dir
+            @journal << Telemetry::CapabilityDegraded.new(capability: CAPABILITY, requirer: self.class.name,
+                                                          provider: "#{dir}: #{reason}")
+          end
         end
       end
 

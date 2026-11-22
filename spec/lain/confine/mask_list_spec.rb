@@ -678,6 +678,54 @@ RSpec.describe Lain::Confine::MaskList, :seam do
     end
   end
 
+  describe "#lent" do
+    let(:refs) { File.join(@base, "refs").tap { FileUtils.mkdir_p(_1) } }
+    let(:journal) { [] }
+
+    def hub_secret
+      FileUtils.mkdir_p(File.join(refs, "hub"))
+      File.write(File.join(refs, "hub", ".env"), "x\n")
+    end
+
+    it "lists a lent directory with its masks, and keeps it out of the session's related directories" do
+      hidden = File.join(refs, ".env").tap { File.write(_1, "KEY=value\n") }
+
+      lent = list.lent([refs])
+
+      expect([lent.roots, lent.masks.map(&:path), lent.refused]).to eq([[refs], [hidden], {}])
+      expect(list.related.roots).to eq([])
+    end
+
+    it "refuses a lent path that is not a directory, naming why" do
+      file = File.join(@base, "notes.md").tap { File.write(_1, "x\n") }
+
+      expect(list.lent([file])).to have_attributes(roots: [], refused: { file => "it is not a directory" })
+    end
+
+    it "refuses a lent repository whose listing did not answer, naming why" do
+      SeedRepo.git(refs, "init", "-q")
+      shell_out = lambda do |*argv, **opts|
+        argv.include?(refs) ? raise(Lain::Shell::Out::Timeout) : Lain::Shell::Out.new(*argv, **opts)
+      end
+
+      lent = described_class.new(root:, policy: -> { policy }, shell_out:).lent([refs])
+
+      expect(lent).to have_attributes(roots: [], refused: { refs => "its listing did not answer" })
+    end
+
+    it "journals each refusal once, however many calls are lent the directory" do
+      hub_secret
+      file = File.join(@base, "notes.md").tap { File.write(_1, "x\n") }
+      ticks = 0
+      bounded = described_class.new(root:, policy: -> { policy }, walk_bound: 0, clock: -> { ticks += 1 }, journal:)
+
+      2.times { bounded.lent([refs, file]) }
+
+      expect(journal.map(&:provider)).to contain_exactly(/\A#{Regexp.escape(refs)}: its walk took longer/,
+                                                         "#{file}: it is not a directory")
+    end
+  end
+
   describe "#prime" do
     it "leaves masks answering what an unprimed list answers" do
       write(".env")

@@ -1638,6 +1638,14 @@ RSpec.describe Lain::Tools::Bash do
         FileUtils.remove_entry(lease)
       end
 
+      it "carries the bounds the context's worker env holds, and none for one that holds none" do
+        bounds = Lain::Sensitivity::Bounds.of(reads: ["/data/refs"])
+        call_with(Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: ENV.to_h, bounds:)))
+        call_with(Lain::Session::Null.instance)
+
+        expect(requests.map(&:bounds)).to eq([bounds, Lain::Sensitivity::Bounds::NONE])
+      end
+
       it "carries an unruled request when the context does not answer ruling" do
         call_with(Lain::Session::Null.instance)
 
