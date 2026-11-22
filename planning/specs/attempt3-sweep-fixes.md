@@ -769,7 +769,7 @@ Spec file: `spec/lain/cli/epic_driver/issue_actor_spec.rb`
 ### T18: Name only the file operands of programs whose operands have known roles          [risk: high]
 
 **Depends on:** none
-**Files:** `lib/lain/shell/named/operand_roles.rb` (new), `lib/lain/shell/named.rb`, `spec/lain/shell/named/operand_roles_spec.rb` (new), `spec/lain/shell/named_spec.rb`
+**Files:** `lib/lain/shell/named/operand_roles.rb` (new), `lib/lain/shell/named.rb`, `spec/lain/shell/named/operand_roles_spec.rb` (new), `spec/lain/shell/named_spec.rb`, `spec/lain/approval/escalation_spec.rb`, `spec/lain/sensitivity/policy_spec.rb`
 **Reuse:** `Argv` value tables (`GREP`, `AWK`, named.rb:258-400), `Walk#argument_paths`/`operand_paths`/`data_paths` (:1488-1530), the `LoopReading` sibling as the file pattern
 **Shared-file wiring:** none
 **Reachable from:** `Shell::Named.from` (named.rb:141), read by `Judged`, `Triage`, `RememberedDenials`, `Sensitivity::Policy#shell_named`, `Parked::Queue#named_files`, `RedactSecretReads`, `Gate#commanded`
@@ -1559,3 +1559,114 @@ After the last card lands:
 - No path needs user approval. T45's live replay asks before more than 200 model calls.
 
 ### Run log
+
+- 17:30 T1 T2 T4 T5 T6 started, cut at 2417ab0e
+- 17:31 T6 stopped before code: :unstated rows never call Containment#choice (answers gates on offers_network?). Ruling: approval_policy.rb and approval_view.rb (+specs) join T6; bash :unstated rows only; one text source. Continued.
+- 17:32 T2 handed back (NameError red; 5/0, 81/0 with neighbours). Medium review started.
+- 17:33 T1 stopped: shipped_system_digest moves (renders Environment.fixed, not .none) and chat_launch_spec:868 asserts the home and user in the prompt. Ruling: slots_spec repin and chat_launch_spec inversion join T1. Continued.
+- 17:33 T2 medium review APPROVE-WITH-FIXES, substantive (single-pass alias against placeholder rescans; git ENOENT crashes launch) plus 2 tests that cannot fail, dedupe, private class methods. Fix round sent; second review after. Note for T42: restore only tool-input and file-write strings, never model prose.
+- 17:35 T1 handed back (15/4 red; chat_launch :868 red on old code; 1694/0 wide). Medium review started.
+- 17:35 T5 handed back (155/4 red; 2603/1 wide, the 1 is contained_approval_spec:277 pinning network false on a grant). Ruling: that spec joins T5; implementer edits it.
+- 17:35 T2 fixes done (9/4 red, 9/0). Ratchet red: git_lazy_fetch_discipline_spec flags the new git spawn; joins T2.
+- 17:36 T1 medium review APPROVE-WITH-FIXES, substantive: trailing-slash HOME leaks; role.rb child tail renders cwd raw (role.rb joins T1); unguarded boundary; dead user field. Fix round sent; second review after.
+- 17:37 T2 fixes done (lazy-fetch spec 14/1 red; lookbehind back-out red; 1086/0). Second review (same reviewer) started.
+- 17:38 T2 second review APPROVE (8 back-outs red). Landing attempt 1.
+- 17:38 T5 seam spec fixed (2603/0); human network answer runs TRACED or NONE. Medium review started.
+- 17:46 2 landed aec826fe
+- 17:46 T2 landed aec826fe (attempt 1; hook suite passed, 1331 runtime files).
+- 17:46 T42 T3 started, cut at aec826fe
+- 17:47 T6 handed back (310/3 red, 310/0; 3250/0 over 70 files). Low review started.
+- 17:48 T6 low review APPROVE-WITH-FIXES, substantive: line false when the session cannot reap; mixed nvim queue omits it. Fix round sent; second review after. T6 review a43eddefe78e9bbf8
+- 17:49 T5 medium review APPROVE-WITH-FIXES: dead private_net arm (M3 survived); substantive: best-effort Landlock without net ABI records false while net is reachable; carrier comment. Fix round sent; narrow re-check after.
+- 17:49 T1 fixes done (57/3 red, 57/0). 4 specs pin a raw child cwd under home; they join T1.
+- 17:52 T5 fixes 1 and 3 done (2603/0), main verified the diff. Item 2 (Landlock without the net ABI records false) needs confine/sandbox.rb, T6's file: deferred into T7 (its tier line makes the same claim), cut after T6 lands. Landing attempt 1.
+- 17:52 T1 4 specs in (3248/0 wide; 524/0 after a hand fix of a rubocop -a mangle). Second review waits for T5's landing.
+- 17:52 T6 fixes 2-4 done (117/1 red, 117/0; 3251/0). Item 1 contested: only PhoneAnswered is refused without reaping; terminal/nvim run bare, still unconfined. Second review (same reviewer) to verify.
+- 17:56 T4 handed back (402/5 red, 402/0; 10135/0 wide). Production wiring of paths: missing; board_build.rb and the bash Classifiers join T4. Continued.
+- 17:58 5 landed b5a407ff
+- 17:59 T5 landed b5a407ff (attempt 1; hook suite passed).
+- 17:59 T1 second review (same reviewer) started.
+- 17:59 T6 second review APPROVE (reaping premise verified: only PhoneAnswered refuses). Landing attempt 1.
+- 18:01 T1 second review APPROVE (5 back-outs red; ratchet 1883/0). Landing attempt 1 queued behind T6.
+- 18:02 T3 handed back (56/51 red from the missing identity: keyword; 4198/0 over 83 files). High review waits for the T6 and T1 landings.
+- 18:05 T4 wiring done (board_build 2/2 red; 10137/0). High review waits for landings.
+- 18:08 6 landed 84e43386
+- 18:08 T6 landed 84e43386 (attempt 1; hook suite passed).
+- 18:12 T1 landed 84e43386 (attempt 1; hook suite passed).
+- 18:13 T1 landing attempt 1 red, card-caused: 36977 examples, 3 failures (issue_actor_spec:273, research_lease_spec:98 and :178 pin a raw child cwd under home). Main restored clean by the script. Hook log a3s-hook-1-1.log.
+- 18:13 Main-session error: I removed T1's worktree after the red landing (read the wrapper's exit 0, not "landed"). Recovered all 9 files from the blobs the landing staged (matched by diff against HEAD); re-cut a3s-T1 at 84e43386. Sent back with the 3 specs plus a spec-tree grep for other cwd pins.
+- 18:13 T3 and T4 high reviews started; T7 started, cut at 84e43386 (+ net_enforced from T5's review; confine/sandbox.rb joins).
+- 18:15 T7 stopped: tier line would tip results within 60 bytes of the ceiling into a spill. Ruling: the line is outside the ceiling, appended after the spill decision; a spilled result still ends with it. 17 stderr-pinning specs to update without loosening. Continued.
+- 18:16 T42 stopped: 20 examples in 5 specs pin stack member lists (join T42); secret_oracle requests not aliased (joins T42). Entropy-masked tmp home path noted for T24. Continued.
+- 18:16 T1 3 specs fixed (57/3 red, 3306/0); spec-tree grep found no other cwd pins; main verified the diff. Landing attempt 2.
+- 18:23 T1 landing attempt 2 red, not card-caused: 36978 examples, 14 failures, every one STUCK/STARVED (load 119.7 on 16 cores, swap full). Cause: an agent's bare `lain chat --provider ollama --model qwen3:4b` drive outside the lock loaded a local model mid-suite; also the nyotes trial chat (pid 922631, 12h, ~70% CPU) is still running. Hook log a3s-hook-1-2.log. T1 needs a quiet-box rerun.
+- 18:23 T3 high review APPROVE-WITH-FIXES: substantive, local paths noted as sent identity (notes reach the judge as facts); SESSION memo global moved to T42 (it owns the one Identity copy and ToolGuard); 2 mechanical. Fix round sent; second review after.
+- 18:23 T1 landing attempt 3 queued (quiet pattern now includes llama-server and a bare lain chat on ollama).
+- 18:24 Stopped the nyotes trial chat (pid 922631) on the user's yes. Its nvim (3875076) and input pane (3874858) left running.
+- 18:31 1 landed 6a793f93
+- 18:31 T1 landed 6a793f93 (attempt 3; hook suite passed on a quiet box).
+- 18:31 T43 started, cut at 6a793f93
+- 18:34 T43 handed back (36/2 red, 1539/0). remote_surface.rb joins T43 (identity built once per surface); relay audit to finish. Continued.
+- 18:35 T42 done (52/52 red; oracle 16/1 red; 4212/0 over 88 files; guard entry built once in EgressLiterals#guard). High review started. The Disclosure SESSION threading goes to whichever of T3/T42 lands second.
+- 18:37 T3 fixes done (71/7 red, 71/0; 4213/0 over 83 files). Second review (same reviewer) started.
+- 18:38 T3 second review APPROVE-WITH-FIXES, substantive: the slash rule misses identity in unknown option values (wget -U probe/alice, git push origin alice/feature). Fix round 3 sent; third review after.
+- 18:38 T4 high review APPROVE-WITH-FIXES (8 mutants red; real chat drives gated). Rulings: gate trust/ not consent/ (consent names nothing; trust/ holds human decisions); the user's own config exempt lifts the gate, a project's cannot; symlinked state home resolved; rules built once per Paths; survey.rb joins. Fix round sent; second review after. The reviewer confirmed the 18:16 bare ollama drives were its own.
+- 18:39 T7 done (4/10 red new; 2660/0 over 49 paths); line on stderr after the spill decision, bash.rb#spilled appends it; Profile#network replaces Sandboxed#network_of (ClassLength). Medium review started.
+- 18:40 T43 done (36/2 red; publish-reads-once red first; 1540/0; daemon tier 18/0; relay audit clean). Medium review started.
+- 18:42 T43 medium review APPROVE-WITH-FIXES: substantive, Identity#alias misses a value after a JSON escape, so share's rendered HTML leaks a multi-line command's home path (fix: alias before serialization); refusal-path spec. Same defect likely in T42's EgressGuard (JSON bodies): sent to T42's reviewer to probe; the boundary fix in identity.rb would join T42. Fix round sent.
+- 18:44 T42 high review APPROVE-WITH-FIXES (11 mutants red; real drive: 5 bodies clean, journal real). Rulings: placeholders renamed to <lain:user> etc. (plain <host>/<user> collide with repo text and restore corrupts files); one Identity.session memo passed by Backend; patterns compiled once + hot_paths identity; JSON-escape boundary. identity.rb joins T42. Fix round sent; second review after.
+- 18:44 T3 round 3 fixes done (80/3 red, 80/0; 4222/0 over 83 files). Third review (same reviewer) started.
+- 18:45 T43 item 2 done (refusal-path spec, red by removal; 1541/0; daemon tier 18/0). Item 1 ruled: no new files; T42's JSON-escape boundary closes the share leak. T43 waits for T42, then gets main merged in and adds the multi-line share spec (and the <lain:user> placeholder form).
+- 18:45 T18 started, cut at 6a793f93
+- 18:45 T3 third review APPROVE-WITH-FIXES, mechanical (pin valued-flag exclusion and --opt= form; name=@ only for -F/--form/--data-urlencode). Sent; main verifies, then land. T18 started (opus).
+- 18:49 T4 fixes done (16/10 red, 619/0; 10145/0 over 190 files; classifier 90 us vs 224 us per-call rebuild). hot-path-bench bash rows skip in worktrees (stale lain-fence). Second review (same reviewer) started; item 3 interpretation to reconcile.
+- 18:49 Note: main's target/release/lain-fence (Nov 16) predates the last crates/lain-fence change (f8931d0e, Nov 18); hot-path-bench skips its bash rows as stale. Rebuild the fence once at a checkpoint (no hook running) before any bench --check.
+- 18:50 T3 mechanical fixes done (85/2 red, back-out 85/5; 4227/0); main verified. Landing attempt 1.
+- 18:57 T7 medium review APPROVE-WITH-FIXES (5 mutants red): stderr without newline glues the line (and spill misses it); ruling: timeout carries the line, pre-run refusals do not; profile_spec for #network; 'private ~/.cargo'. Fix round sent; second review after. Bench bash rows skipped (stale fence).
+- 19:00 3 landed a8d786dc
+- 19:00 T3 landed a8d786dc (attempt 1; hook suite passed).
+- 19:00 T3 landed first, so T42 owns the Disclosure SESSION threading. T42's changed files do not overlap main since aec826fe; after its fix round reports: git -C a3s-T42 merge --ff-only main, then send the threading item (disclosure.rb, parsed_command.rb join T42).
+- 19:01 T24 started, cut at a8d786dc
+- 19:05 T24 stopped before code: a keyword gate loses true positives under every shape (bare 40-char key; curl passwords; key on the previous line; bare slack/JWT/AWS values). User ruling: allowlists only, unhinted entropy arm kept. Continued.
+- 19:05 T42 fix round done (90/21 red; 4227/0 over 89 files; placeholders <lain:...>; one Identity.session memo; 2.3 MB probe 131 -> 16 ms). request_guarded_1000000 10.6 ms vs 5.49 ceiling. Worktree ff'd to a8d786dc. Sent: Disclosure SESSION threading (disclosure.rb, parsed_command.rb join) and one cheap bench try, else hand to the profiling pass.
+- 19:09 T18 done in card files (233/7 red; 241/0; wide 6933 with 4 escalation_spec failures that used grep's pattern as a path probe). escalation_spec joins T18. Continued.
+- 19:11 T18 escalation_spec edits done (1498/0). High review started.
+- 19:11 T4 second review REQUEST-CHANGES: blocker, my user-config-exempt ruling was false (no user-level sensitivity verb), so a project exemption could open ~/.config/lain/config.rb. Revised ruling: no exemption lifts the records gate (human y and bypass still work). Fix round 3 sent; narrow third review after.
+- 19:13 T42 round 3 done (268/3 red; 5337/0 over 105 files); SESSION deleted, identity threaded through ParsedCommand. Union-match bench try was slower (16.25 ms), reverted; row stays 10.6 vs 5.49, handed to the profiling pass. Second review (same reviewer) started.
+- 19:13 T7 fixes done (289/8 red; 2666/0); line logic in Sandboxed::Tier. Second review (same reviewer) started.
+- 19:15 T7 second review APPROVE-WITH-FIXES (4 back-outs red; real bash.rb spill ends with the line): substantive, over-bound and non-text timeouts drop the line. Ruling: every timeout ends with it, outside OUTPUT_BOUND. Tier to its own file; keep cause. Fix round sent; narrow third review after.
+- 19:18 T4 round 3 done (2/2 red; 10145/0 over 190 files). Narrow third review (same reviewer) started.
+- 19:18 T42 second review APPROVE (11 back-outs red; real drive: 9 bodies clean, literal <host>/<user> file byte-exact). Landing attempt 1.
+- 19:19 T7 round 3 done (8/4 red; 2819/0 over 50 paths); Tier in exec/sandboxed/tier.rb. Narrow third review waits for T42's landing.
+- 19:19 T18 high review REQUEST-CHANGES: BLOCKER grep long-option prefixes (--regex=, --reg=) leave FILE unnamed, so the confined Policy allows grep --regex=x ~/.ssh/id_ed25519; one home for displacing options; rg --files spec; jq import/include opaque; NITs. Fix round sent; second review after.
+- 19:19 Found outside the plan (pre-existing on main, T18 backed out too): `grep -n DB .env` printed `5:DB_PASSWORD=...` unmasked through the real ToolGuard stack; the output masker misses a KEY=value line with a grep N: prefix. Becomes card F1 (repeat-defect rule): mask grep-prefixed (N:, FILE:N:, FILE:) secret lines in bash output.
+- 19:20 T24 done as allowlists (531/7 red; 533/0; 6363/0 over 113 files; public_corpus 7 rows + 13 near misses, gitleaks clean). High review waits for T42's landing.
+- 19:23 42 landed 6892b26d
+- 19:23 T42 landed 6892b26d (attempt 1; hook suite passed).
+- 19:24 T43 ff'd to 6892b26d and continued (multi-line share spec, <lain:...> form, Identity.session default). T7 narrow third review and T24 high review started. F1 waits for a slot.
+- 19:25 T4 third review APPROVE (all back-outs red; exempt probe gated). Landing attempt 1.
+- 19:25 T7 narrow third review APPROVE (timeout back-out red; zeitwerk green). Landing attempt 1 queued behind T4.
+- 19:30 T4 landing attempt 1 red: 37051 examples, 1 failure: role_prelude_wiring_spec "sends no more than Anthropic's 4 cache_control blocks for a long-lived role child" (5 > 4, seed 31597). Green alone on main. Already on the known-flake list (toolchain-traps.md:187, seen again 2026-10-28): a repeat, so it becomes card F2; landing proceeds.
+- 19:30 T7 landing attempt 1 stopped before the hook: path list named the new directory lib/lain/exec/sandboxed/ instead of its file. Path list rebuilt with --untracked-files=all.
+- 19:30 T43 done (share multi-line spec red with a bare boundary, green on T42's; <lain:...> form; Identity.session defaults; 1542/0, daemon 18/0; last rubocop -a followed by 88/0 on 3 files only).
+- 19:36 T4 landing attempt 2 red, card-caused: 37051 examples, 1 failure: project_dir_spec:824 flags sensitivity.rb:962 composing sessions + state_home + trust (must go through Lain::ProjectDir). Sent back. Ratchet list gains spec/lain/project_dir_spec.rb.
+- 19:36 T7 landing attempt 2 stopped at yard-lint --staged: ReferenceTypo 'Confine::Profiles.readable' at sandboxed.rb:471 (same line passed at T5's landing). Sent back.
+- 19:36 T43 second review (same reviewer) started.
+- 19:37 T7 yard fix: yard-lint resolves {Ref} only within its run's files; link became backticked prose (yard-lint --changed clean). Landing attempt 3.
+- 19:44 T7 land attempt 3 red: e2e todos_drain and cockpit_approval cassettes stale on the new tier line (card-caused, sent back with a box-dependence question). Also red: seams/stall_under_reactor "two healthy streams interleaving" ECONNRESET; a sibling example of that file is on the known list; alone-run owed.
+- 19:44 T43 second review APPROVE; landing attempt 1.
+- 19:46 T18 fix round done (5 items; policy_spec.rb touched outside the list; jq -f now opaque). Second review queued behind the T43 landing.
+- 19:49 T4 ProjectDir fix done (Records.of takes Paths per spelling; BoardBuild builds a resolved Paths). Substantive delta on the gate: reviewer re-check queued behind T43.
+- 19:52 43 landed 8e623a77
+- 19:52 T43 landed 8e623a77
+- 19:53 T12 started. T4 delta review and T18 second review sent.
+- 19:53 T24 review APPROVE-WITH-FIXES (call-argument allowlist lost 7 true positives; 4 unpinned branches; LEGACY prefix). Fix round sent; second review after.
+- 19:59 stall_under_reactor flake: green alone, 3/3 base and 3/3 T7 seed 34692; repeat of listed sibling, becomes F3. T7 fix (cassette TIER_LINE normaliser) done; landing attempt 4. T4 delta review APPROVE-WITH-FIXES (symlinked lain dir regression), fix round sent. T18 second review APPROVE-WITH-FIXES (ack -f), round 3 sent. T12 stop condition (no ts on live path) ruled: observer stamps from injected clock.
+- 20:00 T18 round 3 done (ack -f/--match, comment, Argv passed in); mechanical, verified by main. Approved; lands after T7. Card Files gains spec/lain/sensitivity/policy_spec.rb.
+- 20:03 7 landed 838d6968
+- 20:03 T7 landed 838d6968
+- 20:03 T8 started. T18 landing attempt 1. T9 waits on T18 (shares escalation_spec.rb).
+- 20:11 18 landed 788f7d7b
+- 20:11 T18 landed 788f7d7b
+- 20:11 T9 started. T19 cut at 788f7d7b, waiting for a slot.
+- 20:12 T4 round 4 done (states: list of resolved containers; 2 new examples kill D2/D4). Gap: linked lain folder with a container absent at start. Sent back to resolve deepest existing ancestor; re-review after.
