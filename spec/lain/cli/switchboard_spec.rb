@@ -672,6 +672,70 @@ RSpec.describe Lain::CLI::Switchboard do
       end
     end
 
+    describe "a human's secrets release of files" do
+      let(:whole) do
+        Lain::Approval::Disclosure.new(holdings: { "whisper.h" => 7 }, sinks: [], unnameable: false,
+                                       digests: { File.join(Dir.pwd, "whisper.h") => "blake3:#{"c" * 64}" })
+      end
+
+      def reading_whole
+        held = whole
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: {}))
+        SimpleDelegator.new(session).tap { |context| context.define_singleton_method(:disclosure) { held } }
+      end
+
+      def bash(command) = Lain::Effect::ToolCall.new(tool_use_id: "tu_w", name: "bash", input: { "command" => command })
+
+      def ruled(board, effect, &human)
+        Sync do |task|
+          ruling = task.async { board.policy_switch.rule(effect, reading_whole) }
+          human&.call(task.with_timeout(1) { board.approvals.dequeue })
+          task.with_timeout(1) { ruling.wait }
+        ensure
+          ruling&.stop
+        end
+      end
+
+      def board(asked = [])
+        switchboard(approval: :auto, judge: judge_answering(:defer, asked),
+                    containment: Lain::Confine::Sandbox::Containment::ABLE)
+      end
+
+      it "replays for another call reading only those files, contained with the masks standing" do
+        asked = []
+        released = board(asked)
+        ruled(released, bash("grep -n x whisper.h")) do |pending|
+          pending.decide(Lain::Approval::Verdict::Approve.new(secrets: true), surface: "spec", authority: :human)
+        end
+
+        replayed = ruled(released, bash("sed -n '1,50p' whisper.h"))
+
+        expect(replayed).to have_attributes(verdict: :allow, authority: :human, contained?: true, unmasked?: false)
+        expect(asked).to eq(["bash"])
+      end
+
+      it "is read off the board's one ledger, the object the guard's inputs hold" do
+        released = board
+        released.ledger.release_files(whole.whole_files, authority: :human, requester: "agent")
+
+        expect(ruled(released, bash("cat whisper.h"))).to have_attributes(verdict: :allow, authority: :human)
+      end
+
+      it "sends a call that does more than read the released files to the judge, and parks what it defers" do
+        asked = []
+        released = board(asked)
+        released.ledger.release_files(whole.whole_files, authority: :human, requester: "agent")
+        parked = []
+
+        ruled(released, bash("cat whisper.h > other.h")) do |pending|
+          parked << pending
+          pending.deny(surface: "spec")
+        end
+
+        expect([asked, parked.map { _1.input["command"] }]).to eq([["bash"], ["cat whisper.h > other.h"]])
+      end
+    end
+
     # A board nobody handed a judge must not approve on a model's behalf.
     it "defers when no judge was given, so the call parks" do
       expect(parked_under(switchboard(approval: :auto))).to be_a(Lain::Approval::Parked::Queue::Pending)

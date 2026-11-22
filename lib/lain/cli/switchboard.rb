@@ -291,7 +291,7 @@ module Lain
         @model_switch = Context::ModelSwitch.new(model, journal:)
         seed(Mode.new(approval:, layers:))
         # After the seed, which is what makes the policy switch it carries.
-        @guard_inputs = ToolGuard::Inputs.new(ledger: Sensitivity::Ledger.new, approvals: @approvals, sensitivity:,
+        @guard_inputs = ToolGuard::Inputs.new(ledger: @ledger, approvals: @approvals, sensitivity:,
                                               test_layout:, policy: @policy_switch, policy_for: method(:policy_for),
                                               denial:, bar: Middleware::WithholdAutomaticOutput::Bar.new,
                                               scope: @scoping, middleware:, secrets:, denied_tools:,
@@ -475,6 +475,8 @@ module Lain
         @judge = judge
         @memo = memo
         @sensitivity = sensitivity
+        # The run's one, held before the seed, since a ladder replays a human's file releases from it.
+        @ledger = Sensitivity::Ledger.new
       end
 
       # The starting mode's resolution seeds the policy slot DIRECTLY rather
@@ -614,7 +616,7 @@ module Lain
 
       # With no queue no human answered, so nothing stands to be replayed.
       def remembered_allows
-        @approvals ? Approval::RememberedAllow.new(queue: @approvals) : Approval::RememberedAllow::None
+        @approvals ? Approval::RememberedAllow.new(queue: @approvals, ledger: @ledger) : Approval::RememberedAllow::None
       end
 
       # Over the ladder's own factory, so a leased worker's stages resolve

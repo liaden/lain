@@ -1225,6 +1225,47 @@ RSpec.describe Lain::Approval::Parked::Queue do
       expect(allowed("cargo test", within: able)).to be_nil
     end
 
+    describe "the files a human's secrets answer released" do
+      let(:shown) { [["/srv/p/whisper.h", "blake3:#{"a" * 64}"]] }
+
+      def reading_whole(cwd, files)
+        held = Lain::Approval::Disclosure.new(holdings: { "whisper.h" => 7 }, sinks: [], unnameable: false,
+                                              digests: files.to_h)
+        SimpleDelegator.new(in_dir(cwd)).tap { |context| context.define_singleton_method(:disclosure) { held } }
+      end
+
+      def secrets = Lain::Approval::Verdict::Approve.new(secrets: true)
+
+      it "are handed over as the call's whole files, by path and the digest it was shown" do
+        answered(runs("grep -n x whisper.h"), reading_whole("/srv/p", shown), within: able) do |pending|
+          pending.decide(secrets, surface: "spec", authority: :human)
+        end
+
+        expect([able.released_files(requester: "agent"), able.released_files(requester: "researcher")])
+          .to eq([[shown], []])
+      end
+
+      it "are not handed over for a plain yes, a machine's secrets answer, or a no" do
+        answers = [->(pending) { pending.approve(surface: "spec", authority: :human) },
+                   ->(pending) { pending.decide(secrets, surface: "oracle") },
+                   ->(pending) { pending.deny(surface: "spec", authority: :human) }]
+        answers.each do |answer|
+          answered(runs("grep -n x whisper.h"), reading_whole("/srv/p", shown), within: able, &answer)
+        end
+
+        expect(able.released_files(requester: "agent")).to eq([])
+      end
+
+      it "are not handed over when a file the call read had no digest" do
+        answered(runs("cat whisper.h big.log"),
+                 reading_whole("/srv/p", [*shown, ["/srv/p/big.log", nil]]), within: able) do |pending|
+          pending.decide(secrets, surface: "spec", authority: :human)
+        end
+
+        expect(able.released_files(requester: "agent")).to eq([])
+      end
+    end
+
     it "remembers no approval that released detected regions" do
       regions = Lain::Sensitivity::Regions.detect("API_KEY=sk-ant-api03-QZ9vK2mR7xT4wL8nB3jH6yD1sA5fG0pE\n")
       outstanding = described_class::Outstanding.new(path: "/srv/creds.txt", regions:)
@@ -1946,7 +1987,7 @@ RSpec.describe Lain::Approval::Parked::Queue do
         .to eq([%i[keyreq effect], %i[keyreq identity], %i[keyreq clock], %i[key timeout],
                 %i[key outstanding], %i[key humans_only], %i[key cwd], %i[key within], %i[key wall],
                 %i[key notes], %i[key file_facts], %i[key silence], %i[key spawn], %i[key named],
-                %i[key containment], %i[key mask], %i[key secrets]])
+                %i[key containment], %i[key mask], %i[key secrets], %i[key files]])
     end
 
     # The other half of the same ruling, one level up: a queue that constructed

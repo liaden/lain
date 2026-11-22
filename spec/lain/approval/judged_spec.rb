@@ -1848,7 +1848,7 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   describe "a human's allow of the exact call, remembered" do
-    let(:replay) { Lain::Approval::RememberedAllow.new(queue:) }
+    let(:replay) { Lain::Approval::RememberedAllow.new(queue:, ledger: Lain::Sensitivity::Ledger.new) }
     let(:asked_human) { [] }
 
     def remembering(scripted, **) = rung(scripted, allows: replay, **)
@@ -1936,7 +1936,8 @@ RSpec.describe Lain::Approval::Judged do
       end
 
       def remembering(scripted = answering("approve"), **)
-        rung(scripted, allows: Lain::Approval::RememberedAllow.new(queue:), **)
+        allows = Lain::Approval::RememberedAllow.new(queue:, ledger: Lain::Sensitivity::Ledger.new)
+        rung(scripted, allows:, **)
       end
 
       def answered(command, approve: true, **)
@@ -2509,7 +2510,8 @@ RSpec.describe Lain::Approval::Judged do
 
     it "never replays a human's allow of an opaque call, which can mean another call on each run" do
       scripted = answering("defer")
-      remembering = routed(scripted, allows: Lain::Approval::RememberedAllow.new(queue:))
+      allows = Lain::Approval::RememberedAllow.new(queue:, ledger: Lain::Sensitivity::Ledger.new)
+      remembering = routed(scripted, allows:)
       2.times do
         ruled(remembering, bash(inline)) { |pending| pending.approve(surface: "human_spec", authority: :human) }
       end

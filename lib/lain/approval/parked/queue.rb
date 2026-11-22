@@ -228,12 +228,14 @@ module Lain
           # reads none is handed the unstated one, and is offered no network answer.
           # `mask` takes the face's text alone and returns it with known secrets masked. `secrets` is what of the
           # call's reads bore secrets when it parked, which a human's yes was shown, as {Queue.secrets_of} names it.
+          # `files` is every file it read, by absolute path and digest, as {Disclosure#whole_files} names them.
           def initialize(effect:, identity:, clock:, timeout: DEFAULT_TIMEOUT,
                          outstanding: Outstanding::NONE, humans_only: false, cwd: ::Lain::Session.cwd_of(nil),
                          within: cwd, wall: -> { Time.now }, notes: [], file_facts: ::Lain::FileFacts::LIVE,
                          silence: Silence::DENY, spawn: nil, named: nil,
-                         containment: ::Lain::Confine::Sandbox::Containment::NONE, mask: UNMASKED, secrets: [])
-            @secrets = secrets.dup.freeze
+                         containment: ::Lain::Confine::Sandbox::Containment::NONE, mask: UNMASKED, secrets: [],
+                         files: [])
+            held(secrets, files)
             @mask = mask
             @spawn = spawn
             @containment = containment
@@ -249,6 +251,12 @@ module Lain
             @identity = identity
             begin_asking(clock)
           end
+
+          def held(secrets, files)
+            @secrets = secrets.dup.freeze
+            @files = files.dup.freeze
+          end
+          private :held
 
           def begin_asking(clock)
             @clock = clock
@@ -344,6 +352,9 @@ module Lain
 
           # @return [Array<String>] what of the call's reads bore secrets when it parked
           attr_reader :secrets
+
+          # @return [Array<Array(String, String)>] each file the call read when it parked, absolute, with its digest
+          attr_reader :files
 
           # @return [Boolean] whether a surface offers the network answer: the call reads secrets and the
           #   session confines such a call
@@ -762,6 +773,13 @@ module Lain
         # @return [Remembered, nil] nil when no such allow was given
         def allowed_call(requester:, tool:, input:, cwd:) = @allows.fetch(requester, {})[[tool, input, cwd]]
 
+        # Each human secrets answer to this requester's calls whose every file was read whole, as the files it
+        # was shown. The queue holds no ledger, so the one rung that replays a release records these into the run's.
+        #
+        # @param requester [String] as {.identity_for} names it
+        # @return [Array<Array<Array(String, String)>>] in the order answered
+        def released_files(requester:) = @releases.fetch(requester, []).dup.freeze
+
         # A human's line is the answer the silence rule's denials lacked, so
         # each of them parks again when resent. A human's own denial stays.
         #
@@ -796,6 +814,7 @@ module Lain
           @denials = {}
           @calls = {}
           @allows = {}
+          @releases = {}
         end
 
         # Journaled BEFORE the pending is parked, never between the two mutations
@@ -814,7 +833,7 @@ module Lain
                                 within: ::Lain::Sensitivity::Policy.base_of(context),
                                 file_facts: @file_facts, silence: @silence,
                                 spawn: context.respond_to?(:spawn) ? context.spawn : nil, containment:,
-                                secrets: Queue.secrets_of(disclosure),
+                                secrets: Queue.secrets_of(disclosure), files: disclosure.whole_files,
                                 mask: ->(text) { @mask.call(text, context) })
           park(pending)
         end
@@ -882,6 +901,8 @@ module Lain
 
           if human_allow?(pending)
             remember_allow(pending)
+          elsif human_release?(pending)
+            remember_release(pending)
           elsif human_denial?(pending)
             reason = pending.reason.to_s
             denied_paths(pending).each { (@denials[pending.requester] ||= {})[_1] = reason }
@@ -899,6 +920,10 @@ module Lain
         def remember_allow(pending)
           (@allows[pending.requester] ||= {})[call_key(pending)] =
             Remembered.new(authority: :human, contained: pending.contained?, secrets: pending.secrets)
+        end
+
+        def remember_release(pending)
+          (@releases[pending.requester] ||= []) << pending.files unless pending.files.empty?
         end
 
         def call_key(pending) = [pending.tool, pending.input, pending.cwd]
@@ -945,10 +970,13 @@ module Lain
         # these is held against a later call's paths.
         def human_denial?(pending) = pending.tool_call? && pending.human? && pending.decision == :deny
 
-        # A network or secrets answer is consent for that run only, so it is asked again.
+        # A network or secrets answer is consent for that run only, so neither is replayed as given; a secrets
+        # answer's files are kept instead, for a later read of them with the masks standing.
         def human_allow?(pending)
           pending.tool_call? && pending.human? && pending.approved? && !pending.network? && !pending.unmasked?
         end
+
+        def human_release?(pending) = pending.tool_call? && pending.human? && pending.approved? && pending.unmasked?
 
         def silence_denial?(pending) = pending.tool_call? && pending.timed_out? && pending.decision == :deny
 

@@ -5,7 +5,7 @@ require "concurrent/map"
 
 module Lain
   module Approval
-    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned, :identifying, :binaries)
+    Disclosure = Data.define(:holdings, :sinks, :unnameable, :unscanned, :identifying, :binaries, :digests)
 
     # What a bash call would reach before it runs: how many sensitive regions
     # each file it reads holds, where it would send, whether lain could name
@@ -32,6 +32,9 @@ module Lain
     # @!attribute [r] binaries
     #   @return [Array<String>] each executable the call reads whose printable text held no region, named as in
     #     holdings; it counts as scanned and clean, so it is never in unscanned
+    # @!attribute [r] digests
+    #   @return [Hash{String => String, nil}] each file the call reads, by its absolute path, and the digest of the
+    #     bytes the scan read; nil for one too large or too binary to scan whole
     class Disclosure
       HOLDS = "%<path>s holds %<count>s sensitive %<noun>s"
       SENDS = "it names %<sinks>s as %<noun>s"
@@ -59,8 +62,10 @@ module Lain
         # @!attribute [r] binary
         #   @return [Boolean] whether the file is an executable whose printable text held no secret; a count
         #     built without it says text
-        Count = Data.define(:regions, :whole, :binary) do
-          def initialize(regions:, whole:, binary: false) = super
+        # @!attribute [r] digest
+        #   @return [String, nil] the digest of the bytes scanned, nil unless they were the whole file as text
+        Count = Data.define(:regions, :whole, :binary, :digest) do
+          def initialize(regions:, whole:, binary: false, digest: nil) = super
         end
 
         UNREAD = Count.new(regions: nil, whole: false)
@@ -129,9 +134,14 @@ module Lain
           return UNREAD unless stat.file?
 
           bytes = file.read(CAP + 1).to_s
-          whole = bytes.bytesize <= CAP
-          return Count.new(regions: regions(path, bytes.byteslice(0, CAP)), whole:) unless whole && Binary.of?(bytes)
+          return Count.new(regions: regions(path, bytes.byteslice(0, CAP)), whole: false) if bytes.bytesize > CAP
+          return executable(path, bytes) if Binary.of?(bytes)
 
+          Count.new(regions: regions(path, bytes), whole: true, digest: Canonical.digest_bytes(bytes))
+        end
+
+        # No digest, since what was scanned is the printable runs and not the file.
+        def executable(path, bytes)
           found = regions(path, Binary.strings(bytes))
           Count.new(regions: found, whole: true, binary: found.zero?)
         end
@@ -282,10 +292,10 @@ module Lain
       def self.of(named, stages, cwd:, scan:, identity: Sensitivity::Secrets::Identity.session)
         read = named.paths.reject { _1.written || _1.guess || _1.directory }
         files, bulk = read.partition { _1.pattern.nil? }
-        counts = files.map(&:resolved).uniq.filter_map { |path| scan.call(path)&.then { [path, _1] } }
+        counts = counted(files, scan)
         new(holdings: held(counts, cwd), sinks: Sinks.of(stages), unnameable: named.opaque?,
             unscanned: unscanned(bulk, counts, cwd), identifying: Sinks.identifying?(stages, identity),
-            binaries: binaries(counts, cwd))
+            binaries: binaries(counts, cwd), digests: digests(counts))
       end
 
       # @param context [Object, nil]
@@ -295,6 +305,12 @@ module Lain
       def self.held(counts, cwd)
         counts.reject { |_, count| count.regions.nil? }.to_h { |path, count| [shown(path, cwd), count.regions] }
       end
+
+      def self.counted(files, scan)
+        files.map(&:resolved).uniq.filter_map { |path| scan.call(path)&.then { [path, _1] } }
+      end
+
+      def self.digests(counts) = counts.to_h { |path, count| [path, count.digest] }
 
       def self.binaries(counts, cwd) = counts.select { |_, count| count.binary }.map { |path, _| shown(path, cwd) }
 
@@ -313,13 +329,17 @@ module Lain
         below = cwd.end_with?(File::SEPARATOR) ? cwd : "#{cwd}#{File::SEPARATOR}"
         path.start_with?(below) ? path.delete_prefix(below) : path
       end
-      private_class_method :held, :binaries, :unscanned, :root, :shown
+      private_class_method :held, :counted, :digests, :binaries, :unscanned, :root, :shown
 
-      def initialize(holdings:, sinks:, unnameable:, unscanned: [], identifying: false, binaries: [])
+      # Above {NONE}, which is built through it.
+      def names(list) = Ractor.make_shareable(list.map { -_1.to_s }.uniq)
+      private :names
+
+      def initialize(holdings:, sinks:, unnameable:, unscanned: [], identifying: false, binaries: [], digests: {})
         super(holdings: Ractor.make_shareable(holdings.to_h { |path, count| [-path.to_s, Integer(count)] }),
-              sinks: Ractor.make_shareable(sinks.map { -_1.to_s }.uniq), unnameable: unnameable == true,
-              unscanned: Ractor.make_shareable(unscanned.map { -_1.to_s }.uniq), identifying: identifying == true,
-              binaries: Ractor.make_shareable(binaries.map { -_1.to_s }.uniq))
+              sinks: names(sinks), unnameable: unnameable == true, unscanned: names(unscanned),
+              identifying: identifying == true, binaries: names(binaries),
+              digests: Ractor.make_shareable(digests.to_h { |path, digest| [-path.to_s, digest&.then { -_1.to_s }] }))
       end
 
       NONE = new(holdings: {}, sinks: [], unnameable: false)
@@ -333,6 +353,16 @@ module Lain
 
       # @return [Boolean] whether a stage that sends names one of the account's identity values
       def identifying? = identifying
+
+      # All or nothing, so a release built from it never covers a call that read anything lain did not see whole.
+      #
+      # @return [Array<Array(String, String)>] each file it reads, absolute, with its digest; empty unless every
+      #   file was named and scanned whole
+      def whole_files
+        return [] if unnameable || unscanned.any? || digests.empty? || digests.value?(nil)
+
+        digests.to_a.freeze
+      end
 
       # @return [Array<Parked::Queue::Reason>] lain's own words, each path and host inspected
       def notes

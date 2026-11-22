@@ -206,7 +206,7 @@ RSpec.describe Lain::Approval::Disclosure do
       policy = Lain::Sensitivity::Policy.new(sensitivity:, home: File.join(@dir, "home"), root: @dir)
 
       expect(described_class::Scanner.over(policy).call(File.join(@dir, "yarn.lock")))
-        .to eq(described_class::Scanner::Count.new(regions: 1, whole: true))
+        .to have_attributes(regions: 1, whole: true, binary: false)
     end
 
     it "asks the disk nothing over recorded file facts, so a replay counts no region" do
@@ -346,6 +346,55 @@ RSpec.describe Lain::Approval::Disclosure do
       write("huge", "\x7fELF".b + ("\x00\xff".b * cap))
 
       expect(disclosed("cat huge")).to have_attributes(binaries: [], unscanned: ["huge"], secret_bearing?: true)
+    end
+  end
+
+  describe "the whole files a call reads, by their contents" do
+    def digest_of(name) = Lain::Canonical.digest_bytes(File.binread(File.join(@dir, name)))
+
+    it "names each by its absolute path with the digest of the bytes the scan read" do
+      write("whisper.h", "#define K \"#{token}\"\n")
+      write("plain.c", "int main(void) { return 0; }\n")
+
+      disclosure = disclosed("cat whisper.h plain.c")
+
+      expect(disclosure.whole_files).to contain_exactly([File.join(@dir, "whisper.h"), digest_of("whisper.h")],
+                                                        [File.join(@dir, "plain.c"), digest_of("plain.c")])
+      expect(disclosure.holdings).to eq("whisper.h" => 1, "plain.c" => 0)
+    end
+
+    it "takes the digest from the bytes it scanned, not from a later read of the file" do
+      write("whisper.h", "#define K \"#{token}\"\n")
+      scanned = digest_of("whisper.h")
+      disclosure = disclosed("cat whisper.h")
+      write("whisper.h", "#define K 0\n")
+
+      expect(disclosure.whole_files).to eq([[File.join(@dir, "whisper.h"), scanned]])
+    end
+
+    it "names none for a file too large to scan whole, which has no digest" do
+      write("whisper.h", "#define K \"#{token}\"\n")
+      write("big.log", "x" * (described_class::Scanner::CAP + 1))
+
+      expect(disclosed("cat whisper.h big.log").whole_files).to eq([])
+    end
+
+    it "names none for a binary, which has no digest" do
+      write("whisper.h", "#define K \"#{token}\"\n")
+      write("m0-spike", "\x7fELF\x02\x01\x01".b + ("\x00\xff\x80\x01".b * 4096))
+
+      expect(disclosed("cat whisper.h m0-spike").whole_files).to eq([])
+    end
+
+    it "names none where lain cannot name the files, or reads a glob it did not scan" do
+      write("whisper.h", "#define K \"#{token}\"\n")
+
+      expect([disclosed('cat whisper.h "$HOME/.netrc"').whole_files, disclosed("cat whisper.h *.c").whole_files])
+        .to eq([[], []])
+    end
+
+    it "names none for a call that reads no file" do
+      expect([disclosed("true").whole_files, described_class::NONE.whole_files]).to eq([[], []])
     end
   end
 

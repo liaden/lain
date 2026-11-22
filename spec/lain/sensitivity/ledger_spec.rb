@@ -216,7 +216,7 @@ RSpec.describe Lain::Sensitivity::Ledger do
 
     # The falsy-guard sweep, pinned: `complete:` is the only boolean keyword in
     # the public surface, so the `complete: nil` blind spot that hid a
-    # mutate-then-check cannot reappear somewhere else unnoticed. The one other
+    # mutate-then-check cannot reappear somewhere else unnoticed. The other
     # keyword, `authority:`, is a Symbol checked against a closed set.
     it "has exactly one boolean keyword in the public surface" do
       kinds = %i[key keyreq]
@@ -224,7 +224,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
         described_class.instance_method(name).parameters.select { kinds.include?(_1.first) }
       end
 
-      expect(keywords).to contain_exactly(%i[key complete], %i[key authority])
+      expect(keywords).to contain_exactly(%i[key complete], %i[key authority], %i[keyreq authority],
+                                          %i[keyreq requester], %i[keyreq requester])
     end
   end
 
@@ -418,6 +419,78 @@ RSpec.describe Lain::Sensitivity::Ledger do
     end
   end
 
+  describe "a human's release of whole files" do
+    let(:header) { "/repo/whisper.h" }
+    let(:sha) { "sha256:#{"a" * 64}" }
+    let(:changed) { "sha256:#{"b" * 64}" }
+
+    it "answers true for the same files with the same contents" do
+      ledger.release_files([[header, sha], [path, changed]], authority: :human, requester: "agent")
+
+      expect([ledger.released_files?([[header, sha]], requester: "agent"),
+              ledger.released_files?([[path, changed], [header, sha]], requester: "agent")])
+        .to eq([true, true])
+    end
+
+    it "answers false for the same path once its content changed" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect(ledger.released_files?([[header, changed]], requester: "agent")).to be(false)
+    end
+
+    it "answers false for the same content at another path" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect(ledger.released_files?([["/repo/other.h", sha]], requester: "agent")).to be(false)
+    end
+
+    it "answers false for a call that also reads a file nobody released" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect(ledger.released_files?([[header, sha], [path, changed]], requester: "agent")).to be(false)
+    end
+
+    it "answers false for a call that reads no file, so nothing is replayed for an empty list" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect(ledger.released_files?([], requester: "agent")).to be(false)
+    end
+
+    it "remembers nothing of a release holding a file with no digest, which was too large or binary to scan" do
+      ledger.release_files([[header, sha], [path, nil]], authority: :human, requester: "agent")
+
+      expect([ledger.released_files?([[header, sha]], requester: "agent"),
+              ledger.released_files?([[path, nil]], requester: "agent")]).to eq([false, false])
+    end
+
+    it "answers false for another requester, so a child never reads its parent's release" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect(ledger.released_files?([[header, sha]], requester: "researcher")).to be(false)
+    end
+
+    it "remembers nothing of a machine's release, which no person chose" do
+      ledger.release_files([[header, sha]], authority: :automatic, requester: "agent")
+
+      expect(ledger.released_files?([[header, sha]], requester: "agent")).to be(false)
+    end
+
+    it "releases no region, so the egress guard and the masks are told nothing" do
+      ledger.release_files([[header, sha]], authority: :human, requester: "agent")
+
+      expect([ledger.released_digests, ledger.released(header), ledger.empty?]).to eq([Set.new, [], true])
+    end
+
+    it "refuses a relative path, an unknown authority, and answers itself" do
+      expect { ledger.release_files([["whisper.h", sha]], authority: :human, requester: "agent") }
+        .to raise_error(ArgumentError)
+      expect { ledger.released_files?([["whisper.h", sha]], requester: "agent") }.to raise_error(ArgumentError)
+      expect { ledger.release_files([[header, sha]], authority: :judge, requester: "agent") }
+        .to raise_error(ArgumentError)
+      expect(ledger.release_files([[header, sha]], authority: :human, requester: "agent")).to be(ledger)
+    end
+  end
+
   describe "#released?" do
     it "answers false for a digest never released" do
       expect(ledger.released?(path, two.first.digest)).to be(false)
@@ -559,8 +632,8 @@ RSpec.describe Lain::Sensitivity::Ledger do
     # persistence path is what its absence has to be spec'd as.
     it "offers no way to persist or reload itself" do
       expect(described_class.public_instance_methods(false).sort)
-        .to eq(%i[decline declined? empty? forget lapse lapsed? outstanding release released released?
-                  released_digests])
+        .to eq(%i[decline declined? empty? forget lapse lapsed? outstanding release release_files released
+                  released? released_digests released_files?])
     end
 
     # The instance surface alone is not the guard: a `def self.load` would walk

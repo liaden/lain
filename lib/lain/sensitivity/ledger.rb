@@ -58,6 +58,7 @@ module Lain
         @human = {}
         @declined = {}
         @lapsed = {}
+        @files = Set.new
         @monitor = Monitor.new
       end
 
@@ -122,6 +123,36 @@ module Lain
 
       # @return [Boolean]
       def released?(path, digest) = locked { held(key!(path)).include?(digest) }
+
+      # A whole-file release, kept apart from the regions so it lifts no mask and no egress refusal, and kept per
+      # requester, since a person released the files to the agent that asked. Only a person's counts, and a list
+      # holding a file with no digest is not remembered at all, since what that file held was never seen.
+      #
+      # @param files [Array<Array(String, String, nil)>] each file, ABSOLUTE, with the digest of what it held
+      # @param authority [Symbol] one of {Approval::Parked::Queue::AUTHORITIES}
+      # @param requester [String] who the files were released to, as the parked call named it
+      # @return [self]
+      # @raise [ArgumentError] on a relative path or an unknown authority
+      def release_files(files, authority:, requester:)
+        raise ArgumentError, "unknown authority #{authority.inspect}" \
+          unless Approval::Parked::Queue::AUTHORITIES.include?(authority)
+
+        held = keyed(files, requester)
+        locked { @files.merge(held) } if authority == :human && held.none? { |*, digest| digest.nil? }
+        self
+      end
+
+      # The caller passes the call's whole disclosure, so an empty list, which is a call that read nothing
+      # whole, is never released.
+      #
+      # @param files [Array<Array(String, String, nil)>] each file the call reads, ABSOLUTE, with its digest
+      # @param requester [String] who is asking
+      # @return [Boolean] whether a person released every one of these files holding these exact bytes to them
+      # @raise [ArgumentError] on a relative path
+      def released_files?(files, requester:)
+        held = keyed(files, requester)
+        held.any? && locked { held.all? { @files.include?(_1) } }
+      end
 
       # Sorted for {Session#reads}' reason: a consumer must not vary with the
       # order releases arrived.
@@ -198,6 +229,10 @@ module Lain
       end
 
       def held(key, table = @released) = table.fetch(key) { Set.new }
+
+      # The key is the path as written, never where it lands: a symlink swapped in for a released file replays
+      # when its target holds the same bytes, since the digest is of the bytes opened through the link.
+      def keyed(files, requester) = files.to_a.map { |path, digest| [-requester.to_s, key!(path), digest].freeze }
 
       def add(table, key, digests)
         table[key] = held(key, table) | digests unless digests.empty?
