@@ -39,9 +39,11 @@ RSpec.describe Lain::Bench::ApprovalReplay do
   # Every class-level question File and Dir answer about the disk raises from here on.
   # lain's own shipped prompt templates are read once per process, not from the
   # project, so building a Slots reads them before the disk closes; otherwise this
-  # passes only when an earlier example in the worker happened to read them.
+  # passes only when an earlier example in the worker happened to read them. I18n
+  # likewise loads its locale files on the first validation message in a process.
   def forbid_the_disk
     Lain::Prompt::Slots.new(fills: {})
+    I18n.t(:"errors.messages.blank")
     %i[realpath symlink? exist? file? directory? readlink lstat stat read binread write foreach].each do |name|
       allow(File).to receive(name).and_raise("live File.#{name}")
     end
