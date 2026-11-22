@@ -597,6 +597,10 @@ RSpec.describe Lain::Shell::Named do
         end
       end
 
+      it "names its directory for merge-base, a read-only subcommand" do
+        expect(directories("git --no-pager -C sibling merge-base main HEAD")).to eq(%w[/p/sibling])
+      end
+
       it "names a directory outside the working one as the directory it runs in" do
         expect(directories("git -C /outside log")).to eq(%w[/outside])
         expect(directories("git -C ../other log")).to eq(%w[/other])

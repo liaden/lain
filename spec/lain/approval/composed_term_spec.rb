@@ -1981,6 +1981,12 @@ RSpec.describe Lain::Approval::ComposedTerm do
       end
     end
 
+    it "has a read-only table entry behind every git form it holds, a branch listing apart" do
+      forms = described_class.const_get(:Printed)::FORMS.keys - ["branch"]
+
+      expect(forms.reject { Lain::Shell::GitReads.facet?(_1, :read_only) }).to be_empty
+    end
+
     it "refuses a status or ls-files that would print a name the classifier withholds" do
       in_tree do |root, home|
         committed(root, "lib/a.rb" => "1\n", "config/.env" => "API_TOKEN=x\n")

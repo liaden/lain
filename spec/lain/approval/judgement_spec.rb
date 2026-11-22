@@ -166,6 +166,15 @@ RSpec.describe Lain::Approval::Judgement, :seam do
       expect(reasons(commands, masks: masking).values).to all(be_a(Symbol))
     end
 
+    it "weighs merge-base and rev-list as history reads, and walks whatchanged, which is no read-only subcommand" do
+      history = ["git merge-base --is-ancestor main HEAD; git rev-list --count main..HEAD"]
+
+      expect(reasons(history, masks: masking).values).to eq([false])
+      expect(reasons(["git whatchanged"], masks: masking).values).to all(be_a(Symbol))
+      expect(reasons(["git rev-list --alternate-refs HEAD", "git rev-list --indexed-objects"], masks: masking).values)
+        .to all(be_a(Symbol))
+    end
+
     it "walks a git write, which the history mask was never about" do
       commands = ["git add -A", "git stash", "git checkout -- ."]
 

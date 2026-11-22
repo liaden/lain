@@ -88,7 +88,6 @@ module Lain
       # outside `refs/`, a read past the object database, an environment that
       # could point git elsewhere, or any form it cannot classify keeps the walk.
       class OwnHistory
-        OBJECT_READS = %w[log show shortlog whatchanged describe rev-parse ls-tree range-diff ls-files].freeze
         STASH_READS = %w[show list].freeze
         # Only the listing forms: every other branch, tag or reflog form writes a ref, or runs an editor.
         LISTS = { "branch" => %w[-a --all -r --remotes -l --list -v -vv --verbose --show-current --color --no-color
@@ -108,7 +107,8 @@ module Lain
         GIT_ENV = /\AGIT_/
         # A bare hex run of 4 or more is what git takes as an abbreviated object id.
         OBJECT = /(?<![[:alnum:]])\h{4,}(?![[:alnum:]])|\w_HEAD\b/
-        PAST_REFS = /\A(--(no-index|stdin|untracked|no-exclude-standard|git-dir|work-tree)\b|GIT_)/
+        PAST_REFS = /\A(--(no-index|stdin|untracked|no-exclude-standard|git-dir|work-tree|
+                           indexed-objects|alternate-refs)\b|GIT_)/x
         WORDS = /[;&|()<>]+|[^\s;&|()<>]+/
         BETWEEN = /\A[;&|()<>]+\z/
         # A diff driver runs a program over each blob a history read prints, and that program can print any
@@ -166,7 +166,7 @@ module Lain
 
         def history_only?(command, args)
           case command
-          when *OBJECT_READS then true
+          when ->(subcommand) { Shell::GitReads.facet?(subcommand, :history_only) } then true
           when *LISTS.keys then args.all? { LISTS.fetch(command).include?(_1.split("=", 2).first) }
           when "reflog" then REFLOG_READS.include?(args.find { !_1.start_with?("-") })
           when "status" then args.none? { _1.match?(VERBOSE) }

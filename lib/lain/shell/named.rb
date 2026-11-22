@@ -696,12 +696,6 @@ module Lain
           "sort" => ["", %w[--compress-program]]
         }.freeze
 
-        # The git subcommands that print no file contents. An allowlist, because
-        # nearly every other one can print a blob, a patch or a commit body (a
-        # body can quote any file); `log` joins them only when it prints neither.
-        # Last, those that take a `<rev>:<path>` whose path is relative to the
-        # tree, not to the cwd.
-        GIT_TREE_FREE = %w[status ls-files ls-tree rev-parse shortlog].freeze
         GIT_PATCH = ["puSGLUc", %w[
           --patch --unified --patch-with-stat --patch-with-raw --word-diff --color-words --cc --remerge-diff
         ]].freeze
@@ -710,11 +704,9 @@ module Lain
         GIT_FORMAT_OPTION = /\A--(oneline\z|format(=|\z)|pretty(=|\z))/
         GIT_BODY_FORMATS = %w[medium full fuller raw email mboxrd].freeze
         GIT_BODY = /%[-+ ]?[bB]/
+        # The git subcommands that take a `<rev>:<path>` whose path is relative to the tree, not to the cwd.
         GIT_REV_PATHS = %w[show cat-file diff grep ls-tree archive blame log].freeze
         REV_PATH = /\A[^:]*:(?:[0-3]:)?(.*)\z/m
-        GIT_READ_ONLY = %w[
-          log show diff status grep blame cat-file ls-files ls-tree rev-parse describe shortlog rev-list for-each-ref
-        ].freeze
         UNZIP_ABSOLUTE = /\A-[^-]*:/
 
         FIND_ACTIONS = %w[-exec -execdir -ok -okdir -delete -fprint -fprint0 -fprintf -fls].freeze
@@ -868,7 +860,7 @@ module Lain
 
           found = @argv.values("C", [])
           entered = found.first if found.one? && found.first < subcommand && directory_option?(found.first)
-          entered if entered && (GIT_READ_ONLY.include?(word(subcommand)) || leads_subcommand?(entered))
+          entered if entered && (GitReads.facet?(word(subcommand), :read_only) || leads_subcommand?(entered))
         end
 
         private
@@ -1011,13 +1003,16 @@ module Lain
           end
         end
 
-        def git_dir = GIT_READ_ONLY.include?(word(operands.first)) ? [] : @argv.values("", %w[--git-dir])
+        def git_dir = GitReads.facet?(word(operands.first), :read_only) ? [] : @argv.values("", %w[--git-dir])
 
+        # Only a subcommand `GitReads` calls tree-free prints no file contents, because nearly every other one
+        # can print a blob, a patch or a commit body (a body can quote any file); `log` joins them
+        # when it prints neither.
         def git_tree?
           return false unless @command == "git"
 
           subcommand = word(operands.first)
-          return false if GIT_TREE_FREE.include?(subcommand)
+          return false if GitReads.facet?(subcommand, :tree_free)
 
           subcommand != "log" || @argv.flag?(*GIT_PATCH) || git_body?
         end

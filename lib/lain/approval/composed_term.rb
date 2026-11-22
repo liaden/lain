@@ -653,7 +653,7 @@ module Lain
         LS_FILES = %w[--cached --deleted --modified --stage --unmerged --full-name --deduplicate
                       --error-unmatch].freeze
         BRANCH = %w[--all --remotes --verbose --list --show-current --no-color --no-column].freeze
-        GIT = Reads.new(
+        FORMS = {
           "log" => Both.new(Flags.new(short: PATCHED_SHORT, long: PATCHED_LONG + NAMES), Bodiless.new),
           "diff" => Flags.new(short: PATCHED_SHORT, long: PATCHED_LONG),
           "rev-parse" => Flags.new,
@@ -661,7 +661,8 @@ module Lain
           "status" => Valueless.new(short: "sbz", long: STATUS),
           "ls-files" => Valueless.new(short: "cdmstuz", long: LS_FILES),
           "branch" => Both.new(Valueless.new(short: "alrv", long: BRANCH), Unnamed.new)
-        )
+        }.freeze
+        GIT = Reads.new(FORMS)
 
         # @param arguments [Array<String>] the stage's argv after `git`
         # @param directory [String] where the stage runs, resolved
