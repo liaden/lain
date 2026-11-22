@@ -6,6 +6,13 @@ RSpec.describe Lain::Confine::Profile do
   describe "#network and #tier_line" do
     let(:reader) { described_class.reader(root: "/p", home: "/h") }
 
+    it "writes an unread directory's reason legibly, whatever bytes it holds, so the line stays UTF-8" do
+      line = described_class.new(name: :reader, trace: false, unread: { "/r" => "failed: a\xFFb".b }).tier_line
+
+      expect([line.encoding, line.valid_encoding?]).to eq([Encoding::UTF_8, true])
+      expect(line).to eq("[ran: reader; no network; no /dev/dri; home masked; not read: /r (failed: a\uFFFDb)]")
+    end
+
     it "reports no network for a confined profile with no ports" do
       expect([reader.network, reader.tier_line]).to eq([false, "[ran: reader; no network; no /dev/dri; home masked]"])
     end

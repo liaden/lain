@@ -472,6 +472,76 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
       end
     end
 
+    describe "a Rust project's package caches" do
+      def caches(home) = [File.join(home, ".cargo/registry/src"), File.join(home, ".cargo/git/checkouts")]
+
+      def cargo_project(root) = File.write(File.join(root, "Cargo.toml"), "[package]\nname = \"x\"\n")
+
+      def crate_source(home)
+        File.join(home, ".cargo/registry/src/index.crates.io-1949cf8c6b5b557f/whisper-rs-0.16.0/src/lib.rs").tap do |rs|
+          FileUtils.mkdir_p(File.dirname(rs))
+          File.write(rs, "pub fn run() {}\n")
+        end
+      end
+
+      it "reads the cargo registry sources and git checkouts as read roots, between the answers dir and epics" do
+        in_tree do |root, home|
+          cargo_project(root)
+          paths = paths_at(home)
+          container = Lain::Epic::Home.container(config: Lain::Config.load(root:, paths: Lain::Paths.new), paths:,
+                                                 root:)
+
+          expect(board_for(root, home).sensitivity.read_roots)
+            .to eq([Lain::Tool::Spill.home(paths, root), *caches(home), container])
+        end
+      end
+
+      it "lends the caches under CARGO_HOME where it names one, and none where it is not absolute" do
+        in_tree do |root, home|
+          cargo_project(root)
+          project = project_at(root)
+          caches_at = lambda do |env|
+            described_class.read_roots(project:, paths: paths_at(home), epics: nil, env:).drop(1)
+          end
+
+          expect([caches_at.call({ "CARGO_HOME" => "/opt/cargo" }), caches_at.call({ "CARGO_HOME" => "cargo" })])
+            .to eq([%w[/opt/cargo/registry/src /opt/cargo/git/checkouts], []])
+        end
+      end
+
+      it "lends no other cache, leaving one the project relates to its own related entry" do
+        in_tree(config: "sensitivity related: %w[~/.cache/huggingface]\n") do |root, home|
+          cargo_project(root)
+          policy = board_for(root, home).sensitivity
+
+          expect(policy.read_roots & [*caches(home), File.join(home, ".cache/huggingface")]).to eq(caches(home))
+          expect(policy.related_directories).to eq([File.join(home, ".cache/huggingface")])
+        end
+      end
+
+      it "asks nothing of a read_file of a crate's source, nor of a bash listing of the registry" do
+        in_tree do |root, home|
+          cargo_project(root)
+          source = crate_source(home)
+          board = board_over(root, home)
+
+          ruling = board.ladder.rule(bash_of("ls #{caches(home).first}", "cwd" => root), nil)
+
+          expect(board.sensitivity.gates?(read_of(source), cwd: root)).to be(false)
+          expect([ruling.allow?, ruling.rule]).to eq([true, "composed_term"])
+        end
+      end
+
+      it "still gates a secret-shaped name inside a cache, as anywhere else" do
+        in_tree do |root, home|
+          cargo_project(root)
+          key = File.join(File.dirname(crate_source(home), 2), "tests/key.pem")
+
+          expect(board_for(root, home).sensitivity.gates?(read_of(key), cwd: root)).to be(true)
+        end
+      end
+    end
+
     it "hands the board's guard stack the child env it is given" do
       in_tree do |root, home|
         child_env = Lain::Exec::ChildEnv.new(env: { "API_TOKEN" => "tok-abc123lowentropy" })

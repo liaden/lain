@@ -230,7 +230,7 @@ module Lain
         masks = mask_paths(root, request)
         related = @classifier.related
         profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
-                                 related: [*related.roots, *related.reads],
+                                 related: [*related.roots, *related.reads], unread: related.refused,
                                  exec_files: [*exec_files(programs(request, masks, fresh_gates: true)),
                                               *linters(root, [*masks, *related.masks.map(&:path)])].uniq,
                                  trace: traceable?)
@@ -241,8 +241,9 @@ module Lain
       # behind, and never beneath the private /tmp, which is the call's own already.
       def workspace(request, making:)
         root = root_of(request)
+        programmed = programmed(networked(ported(request)), request, root)
         related = @classifier.related
-        lent = granted(lent(programmed(networked(ported(request)), request, root), related))
+        lent = granted(lent(programmed, related))
         built_by_cargo(lent.read_dirs.first) if making
         profile = granted(lent.running(related.execs | ExecRules.project(root)))
         return profile if !making || Profile::SYSTEM_WRITE.include?(@tmpdir)
@@ -275,7 +276,7 @@ module Lain
       def lent(profile, related)
         reads = [*related.roots, *related.reads].map { Profile.landing(_1) }
         profile.with(masks: [*profile.masks, *related.masks.map(&:path)].uniq,
-                     read_dirs: [*profile.read_dirs, *reads].uniq)
+                     read_dirs: [*profile.read_dirs, *reads].uniq, unread: related.refused)
       end
 
       # A grant fetches from the host's network; a plain workspace call gets

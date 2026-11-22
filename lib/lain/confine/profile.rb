@@ -8,7 +8,7 @@ module Lain
   module Confine
     Profile = Data.define(:name, :exec_dirs, :exec_files, :read_dirs, :write_dirs, :masks, :tmpfs_bytes, :trace,
                           :connect_ports, :unix_dirs, :sealed, :call_tmpdir, :homes, :hidden, :private_net, :unmasked,
-                          :ignored_configs, :mise_data)
+                          :ignored_configs, :mise_data, :unread)
 
     # What one call may do: run beneath `exec_dirs` and exactly `exec_files`,
     # read beneath `read_dirs`, write beneath `write_dirs`, and never see
@@ -25,7 +25,8 @@ module Lain
     # of the call has a network namespace of its own, holding only loopback,
     # so the stages of one pipeline cannot reach each other over it. `unmasked` says a human let the call
     # read the project's secrets, so what it wrote is scanned for them after. `ignored_configs` are the roots
-    # whose mise config a granted mise install reads none of, and `mise_data` the dir it installs to. Both unconfined
+    # whose mise config a granted mise install reads none of, and `mise_data` the dir it installs to. `unread` names
+    # each related directory the call cannot read, with why, which its result's last line says. Both unconfined
     # profiles still run under lain-fence as a reaper, so a stopped call
     # leaves no descendant behind; that covers a call made through a sandbox,
     # and `--confine off` or a box lacking bwrap or Landlock builds none.
@@ -171,7 +172,7 @@ module Lain
       def initialize(name:, trace:, exec_dirs: [], exec_files: [], read_dirs: [], write_dirs: [], masks: [],
                      connect_ports: [], unix_dirs: [], sealed: [], tmpfs_bytes: TMPFS_BYTES, call_tmpdir: nil,
                      homes: [], hidden: [], private_net: false, unmasked: false, ignored_configs: [],
-                     mise_data: nil)
+                     mise_data: nil, unread: {})
         grants = { exec_dirs:, exec_files:, read_dirs:, write_dirs:, masks:, unix_dirs:, hidden:, ignored_configs: }
         absolute([*grants.values.flatten, *sealed.map(&:path), *homes.map(&:path), *mise_data])
         raise ArgumentError, "a private network has no host port to connect to" if private_net && connect_ports.any?
@@ -179,8 +180,13 @@ module Lain
         super(name:, trace:, tmpfs_bytes:, connect_ports: valid_ports(connect_ports).freeze, sealed: sealed.dup.freeze,
               call_tmpdir: call_tmpdir&.then(&:-@), homes: homes.dup.freeze, private_net: private_net == true,
               unmasked: unmasked == true, mise_data: mise_data&.then(&:-@),
+              unread: Profile.settled_unread(unread),
               **grants.transform_values { |paths| paths.map(&:-@).freeze })
       end
+
+      # @param unread [Hash{String => String}]
+      # @return [Hash{String => String}] frozen, its strings interned
+      def self.settled_unread(unread) = unread.to_h { |dir, why| [-dir, -why] }.freeze
 
       # The fence and bwrap resolve a relative path against wherever they
       # happen to run, which is not a grant anyone wrote.
@@ -204,6 +210,10 @@ module Lain
         network ? "network only on ports #{network.join(", ")}" : "no network"
       end
       private :network_phrase
+
+      def unread_phrase = unread.map { |dir, why| "; not read: #{Utf8.escaped(dir)} (#{Utf8.escaped(why)})" }.join
+
+      private :unread_phrase
 
       def home_phrase
         mounted = homes.map { "private ~/#{File.basename(_1.path)}" }
@@ -264,7 +274,7 @@ module Lain
       def tier_line(net_enforced: true)
         return "[ran: unconfined, with network]" unless confined?
 
-        "[ran: #{name}; #{network_phrase(network(net_enforced:))}; no /dev/dri; #{home_phrase}]"
+        "[ran: #{name}; #{network_phrase(network(net_enforced:))}; no /dev/dri; #{home_phrase}#{unread_phrase}]"
       end
 
       # A TMPDIR other processes share holds their scratch too, so a call
@@ -328,11 +338,12 @@ module Lain
       # @param exec_files [Array<String>] programs outside /usr the call may run
       # @param trace [Boolean] false where this kernel cannot trace
       # @param related [Array<String>] absolute; directories outside the project read whole, their masks among `masks`
+      # @param unread [Hash{String => String}] each related directory left unread, with why
       # @return [Profile]
       # @raise [Tampered] when the root is a clone lain cut whose git dir was tampered with
-      def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [])
+      def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [], unread: {})
         refuse_tampered(landing(root), :reader)
-        new(name: :reader, trace:, exec_files:, masks:, write_dirs: SYSTEM_WRITE,
+        new(name: :reader, trace:, exec_files:, masks:, write_dirs: SYSTEM_WRITE, unread:,
             exec_dirs: [*SYSTEM_EXEC, *HOME_EXEC.map { File.join(home, _1) }],
             read_dirs: [landing(root), *git_reads(root), *related.map { landing(_1) }, *SYSTEM_READ,
                         *HOME_READ.map { File.join(home, _1) }])

@@ -1333,6 +1333,12 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(profiles.instance_variable_get(:@home)).to eq(Lain::Paths.new.home)
     end
 
+    it "hands the mask list the seam's journal, so a related directory it refuses is journaled" do
+      masks = bash_exec(built(reader)).instance_variable_get(:@profiles).instance_variable_get(:@masks)
+
+      expect(masks.instance_variable_get(:@journal)).to be(journal)
+    end
+
     it "hands the sandbox and its mask list the board's taint and known values, read through the board" do
       board = switchboard
       exec = bash_exec(built(reader, switchboard: -> { board }))

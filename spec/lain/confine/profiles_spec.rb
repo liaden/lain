@@ -90,6 +90,16 @@ RSpec.describe Lain::Confine::Profiles do
       expect(profile.masks).to eq([File.join(root, ".env"), hidden])
     end
 
+    it "names each related directory a listing refused in the line the call's result ends with", :seam do
+      refused = File.join(@base, "cache")
+      answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [], refused: { refused => "its walk failed" })
+      classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+
+      profile = described_class.new(masks:, probe:, home:, root:, classifier:).for(composed)
+
+      expect(profile.tier_line).to end_with("; not read: #{refused} (its walk failed)]")
+    end
+
     it "reads each read root the classifier names, read-only and with no listing behind it", :seam do
       epics = File.join(@base, "state", "epics").tap { FileUtils.mkdir_p(_1) }
       answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [], reads: [epics])
@@ -350,6 +360,38 @@ RSpec.describe Lain::Confine::Profiles do
 
         expect([profile.read_dirs, profile.masks]).to match([include(related, epics), include(hidden)])
         expect(profile.write_dirs).not_to include(related, epics)
+      end
+
+      # A related listing is refreshed by the call's own ask for masks, so it is read after that ask.
+      it "binds the related masks its own call's refresh listed, not the previous call's", :seam do
+        listing = Class.new do
+          def initialize(base)
+            @base = base
+            @asks = 0
+          end
+
+          def masks = (@asks += 1) && []
+          def classify(_) = Lain::Sensitivity::ORDINARY.verdict
+
+          def related
+            Lain::Confine::MaskList::Related.new(roots: [], masks: [Lain::Sensitivity::Policy::Mask.new(
+              path: File.join(@base, "ask#{@asks}"), reason: "secret"
+            )])
+          end
+        end.new(@base)
+        bounded = described_class.new(masks: listing, probe:, home:, root:, workspace: true, tmpdir: scratch,
+                                      classifier: listing)
+
+        expect(bounded.for(request(ruling("auto"))).masks).to include(File.join(@base, "ask1"))
+      end
+
+      it "names each related directory a listing refused in a workspace call's last line", :seam do
+        refused = File.join(@base, "cache")
+        answer = Lain::Confine::MaskList::Related.new(roots: [], masks: [], refused: { refused => "its walk failed" })
+        classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(answer)
+        bounded = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, classifier:)
+
+        expect(bounded.for(request(ruling("auto"))).tier_line).to end_with("; not read: #{refused} (its walk failed)]")
       end
 
       it "lists a read root lent to the session, as a judged ls of the epic home does", :seam do

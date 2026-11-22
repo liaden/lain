@@ -141,9 +141,9 @@ RSpec.describe "A related directory inside the reader sandbox", :seam do
                                   home: @home, root: @repo)
   end
 
-  def sandboxed(related)
+  def sandboxed(related, **listing)
     judging = policy(related)
-    masks = Lain::Confine::MaskList.new(root: @repo, policy: -> { judging })
+    masks = Lain::Confine::MaskList.new(root: @repo, policy: -> { judging }, **listing)
     Lain::Confine::Sandbox.new(root: @repo, home: @home, masks:, fence:, journal:,
                                probe: Lain::Confine::Probe.new(fence:, journal:))
                           .wrap(Lain::Exec::Local.new, requirer: "Spec")
@@ -176,25 +176,24 @@ RSpec.describe "A related directory inside the reader sandbox", :seam do
     expect(capture.stdout + capture.stderr).not_to include("value")
   end
 
-  it "refuses a read under a related directory that is not a repository, whose secrets no listing finds" do
-    FileUtils.rm_rf(File.join(@sibling, ".git"))
-
-    capture = run_confined("cat #{@sibling}/src/m1.rs")
-
-    expect(capture.exit_status).not_to eq(0)
-    expect(capture.stdout).not_to include("fn m1")
-  end
-
-  it "stops reading a related directory once it can no longer be listed, whatever its old masks were" do
-    sandbox = sandboxed([@sibling])
-    first = call(sandbox, "cat #{@sibling}/src/m1.rs")
+  it "reads a related directory that is not a repository through a walk, its secrets masked" do
     FileUtils.rm_rf(File.join(@sibling, ".git"))
     File.write(File.join(@sibling, ".env"), "KEY=value\n")
 
-    capture = call(sandbox, "cat #{@sibling}/.env #{@sibling}/src/m1.rs")
+    capture = run_confined("cat #{@sibling}/.env #{@sibling}/src/m1.rs")
 
-    expect(first.stdout).to eq("fn m1() {}\n"), first.stderr
+    expect(capture.stdout).to eq("fn m1() {}\n"), capture.stderr
     expect(capture.stdout + capture.stderr).not_to include("value")
+  end
+
+  it "reads none of a related directory that is not a repository once its walk runs past the bound" do
+    FileUtils.rm_rf(File.join(@sibling, ".git"))
+    ticks = 0
+    clock = -> { ticks += 1 }
+
+    capture = call(sandboxed([@sibling], walk_bound: 1, clock:), "cat #{@sibling}/src/m1.rs")
+
+    expect(capture.exit_status).not_to eq(0)
     expect(capture.stdout).not_to include("fn m1")
   end
 

@@ -120,16 +120,34 @@ module Lain
 
         # What every agent of the session reads outside the project without
         # asking and never writes: where a spawner spills an oversized answer,
-        # and the epic home when it lives outside the repository. A config
-        # `related` directory masks a flagged region silently, and a read root
-        # does not, so a secret here still parks.
+        # a Rust project's fetched crate sources, and the epic home when it
+        # lives outside the repository. A config `related` directory masks a
+        # flagged region silently, and a read root does not, so a secret here
+        # still parks.
         #
         # @param project [Lain::Project]
         # @param paths [Paths]
         # @param epics [String, nil] see {.epic_home}
+        # @param env [#[]] where CARGO_HOME is read, as cargo reads it
         # @return [Array<String>] absolute
-        def read_roots(project:, paths:, epics:)
-          [Lain::Tool::Spill.home(paths, project.root), *epics]
+        def read_roots(project:, paths:, epics:, env: ENV)
+          [Lain::Tool::Spill.home(paths, project.root), *package_caches(project:, paths:, env:), *epics]
+        end
+
+        # Published sources, too many to list for masks, so they are read roots rather than related directories.
+        CARGO_CACHES = ["registry/src", Lain::Confine::MaskList::CARGO_CHECKOUTS].freeze
+
+        # A relative CARGO_HOME resolves against whatever directory cargo runs in, so it lends nothing.
+        #
+        # @param project [Lain::Project]
+        # @param paths [Paths]
+        # @param env [#[]]
+        # @return [Array<String>] absolute; cargo's caches when the project has a Cargo.toml, else none
+        def package_caches(project:, paths:, env: ENV)
+          return [] unless File.file?(File.join(project.root, "Cargo.toml"))
+
+          cargo_home = env["CARGO_HOME"].to_s.empty? ? File.join(paths.home, ".cargo") : env["CARGO_HOME"]
+          cargo_home.start_with?(File::SEPARATOR) ? CARGO_CACHES.map { File.join(cargo_home, _1) } : []
         end
 
         # @param project [Lain::Project]

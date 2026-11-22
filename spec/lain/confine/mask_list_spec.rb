@@ -327,6 +327,8 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
     def secret(dir) = File.join(dir, ".env").tap { File.write(_1, "KEY=value\n") }
 
+    def config_of(dir) = File.join(dir, ".git", "config")
+
     def related_after_masks(listing = list)
       listing.masks
       listing.related
@@ -340,7 +342,7 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
       related = related_after_masks
 
-      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden]])
+      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden, config_of(sibling)]])
       expect(paths).to eq([File.join(root, ".env")])
     end
 
@@ -350,10 +352,33 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       expect(list.related).to eq(described_class::Related::NONE)
     end
 
-    it "names a related directory that is not a repository unreadable, since no listing finds its secrets" do
-      secret(sibling)
+    it "walks a related directory that is not a repository, and names it readable with the masks the walk found" do
+      hidden = secret(sibling)
+      nested = secret(File.join(sibling, "hub").tap { FileUtils.mkdir_p(_1) })
+      File.write(File.join(sibling, "hub", "config.json"), "{}\n")
 
-      expect(related_after_masks.roots).to eq([])
+      related = related_after_masks
+
+      expect(related.roots).to eq([sibling])
+      expect(related.masks.map(&:path)).to contain_exactly(hidden, nested)
+    end
+
+    it "masks each directory below a pruned one whole in a walked related directory" do
+      FileUtils.mkdir_p(File.join(sibling, "tmp", "x"))
+      File.write(File.join(sibling, "tmp", "x", "creds.txt"), "x\n")
+
+      expect(related_after_masks.masks.map(&:path)).to eq([File.join(sibling, "tmp", "x")])
+    end
+
+    it "refuses a related directory whose walk runs past the bound, naming why, and never reads it unmasked" do
+      secret(File.join(sibling, "hub").tap { FileUtils.mkdir_p(_1) })
+      ticks = 0
+      bounded = described_class.new(root:, policy: -> { policy }, walk_bound: 0, clock: -> { ticks += 1 })
+
+      answers = Array.new(2) { related_after_masks(bounded) }
+
+      expect(answers.map { [_1.roots, _1.masks] }).to eq([[[], []]] * 2)
+      expect(answers.last.refused).to match(sibling => /walk .* longer than 0s/)
     end
 
     # Each answer is 1 value, so a refresh between 2 asks cannot grant a root without its masks.
@@ -365,16 +390,173 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
       related = list.related
 
-      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden]])
+      expect([related.roots, related.masks.map(&:path)]).to eq([[sibling], [hidden, config_of(sibling)]])
     end
 
-    it "unlists a related directory whose listing fails, whatever an earlier listing found" do
+    it "masks a tooling directory at the top of a walked related directory whole, which the walk skips" do
+      %w[.venv/.env __pycache__/id_rsa].each do |name|
+        File.join(sibling, name).tap { FileUtils.mkdir_p(File.dirname(_1)) }.then { File.write(_1, "x\n") }
+      end
+
+      expect(related_after_masks.masks.map(&:path))
+        .to include(File.join(sibling, ".venv"), File.join(sibling, "__pycache__"))
+    end
+
+    it "masks each .git/config under a related root whole, its own and a nested repository's" do
+      SeedRepo.git(sibling, "init", "-q")
+      nested = File.join(sibling, "nested").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(nested, "init", "-q")
+      File.write(File.join(nested, "a.txt"), "x\n")
+
+      expect(related_after_masks.masks.map(&:path))
+        .to include(File.join(sibling, ".git", "config"), File.join(nested, ".git", "config"))
+    end
+
+    it "masks a nested repository's .git/config in a walked related directory" do
+      nested = File.join(sibling, "nested").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(nested, "init", "-q")
+
+      expect(related_after_masks.masks.map(&:path)).to include(File.join(nested, ".git", "config"))
+    end
+
+    it "refuses a related directory whose walk raises, rather than reading it with no masks" do
+      secret(sibling)
+      raised = 0
+      flaky = Class.new(SimpleDelegator) do
+        define_method(:mask_paths) do |files, cwd:, **opts|
+          raise Errno::ENOENT, "vanished" if cwd.to_s == sibling && (raised += 1) == 1
+
+          __getobj__.mask_paths(files, cwd:, **opts)
+        end
+      end.new(policy)
+      listing = described_class.new(root:, policy: -> { flaky })
+
+      answers = Array.new(2) { related_after_masks(listing) }
+
+      expect(answers.map(&:roots)).to eq([[], []])
+      expect(answers.last.refused).to match(sibling => /walk failed/)
+    end
+
+    it "journals a refusal once, naming the directory and why" do
+      secret(File.join(sibling, "hub").tap { FileUtils.mkdir_p(_1) })
+      ticks = 0
+      journal = []
+      bounded = described_class.new(root:, policy: -> { policy }, walk_bound: 0, clock: -> { ticks += 1 }, journal:)
+
+      2.times { related_after_masks(bounded) }
+
+      expect(journal).to match([having_attributes(capability: :related_directory,
+                                                  provider: /#{Regexp.escape(sibling)}: its walk took longer/o)])
+    end
+
+    def raising(error, at: sibling)
+      Class.new(SimpleDelegator) do
+        define_method(:mask_paths) do |files, cwd:, **opts|
+          raise error if cwd.to_s == at
+
+          __getobj__.mask_paths(files, cwd:, **opts)
+        end
+      end.new(policy)
+    end
+
+    it "names only the error's class in a refusal, so a message that is not UTF-8 breaks no record" do
+      secret(sibling)
+      journal = []
+      listing = described_class.new(root:, policy: -> { raising(Errno::ENOENT.new("a\xFFb".b)) }, journal:)
+
+      refused = related_after_masks(listing).refused
+      line = Lain::Confine::Profile.reader(root:, home:, unread: refused).tier_line
+
+      expect(refused).to eq(sibling => "its walk failed: Errno::ENOENT")
+      expect([line.encoding, line.valid_encoding?]).to eq([Encoding::UTF_8, true])
+      expect { [JSON.generate(journal.map(&:to_journal)), Lain::Canonical.dump({ "content" => line })] }
+        .not_to raise_error
+    end
+
+    it "lets a task's timeout through rather than refusing the directory for it" do
+      secret(sibling)
+      listing = described_class.new(root:, policy: -> { raising(Async::TimeoutError.new("deadline")) })
+
+      expect { listing.masks }.to raise_error(Async::TimeoutError)
+    end
+
+    it "keeps a nested repository's .git/config masked once an unrelated file joins the walked directory" do
+      nested = File.join(sibling, "nested").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(nested, "init", "-q")
+      aging = described_class.new(root:, policy: -> { policy }, stat: method(:aged))
+      related_after_masks(aging)
+      File.write(File.join(sibling, "new.txt"), "n\n")
+
+      expect(related_after_masks(aging).masks.map(&:path)).to include(config_of(nested))
+    end
+
+    it "keeps refusing a directory on a later ask, though that walk would have kept to the bound" do
+      secret(File.join(sibling, "hub").tap { FileUtils.mkdir_p(_1) })
+      now = 0
+      first = true
+      clock = lambda do
+        now += first ? 100 : 0
+        now
+      end
+      bounded = described_class.new(root:, policy: -> { policy }, walk_bound: 10, clock:)
+      related_after_masks(bounded)
+      first = false
+
+      expect(related_after_masks(bounded)).to have_attributes(roots: [], refused: { sibling => /longer than 10s/ })
+    end
+
+    it "stops a walk at the bound before it classifies anything, reading few of its directories" do
+      dirs = Array.new(40) { File.join(sibling, "d#{_1}").tap { |d| FileUtils.mkdir_p(d) } }
+      dirs.each { File.write(File.join(_1, "f.txt"), "x\n") }
+      read = []
+      stat = lambda do |path|
+        read << path
+        described_class.const_get(:DIRECTORY_STAT).call(path)
+      end
+      ticks = 0
+      bounded = described_class.new(root:, policy: -> { recording }, walk_bound: 5, clock: -> { ticks += 1 }, stat:)
+
+      related = related_after_masks(bounded)
+
+      expect(related.refused).to have_key(sibling)
+      expect(asked.flatten.grep(/\Ad\d+/)).to be_empty
+      expect(read.grep(%r{\A#{Regexp.escape(sibling)}/d}o).size).to be < 40
+    end
+
+    it "refuses a walk whose last slice of classifying runs past the bound" do
+      File.write(File.join(sibling, "a.txt"), "x\n")
+      now = 0
+      slow = Class.new(SimpleDelegator) do
+        define_method(:mask_paths) { |files, **opts| (now += 20) && __getobj__.mask_paths(files, **opts) }
+      end.new(policy)
+      bounded = described_class.new(root:, policy: -> { slow }, walk_bound: 10, clock: -> { now })
+
+      expect(related_after_masks(bounded)).to have_attributes(roots: [], refused: { sibling => /longer than 10s/ })
+    end
+
+    # Classifying is the slow part of a walk, so the bound is asked between slices of it, not only after.
+    it "refuses at the bound while it classifies, leaving the rest of the walk's names unclassified" do
+      names = Array.new((described_class::CLASSIFY_SLICE * 2) + 1) { "f#{_1}.txt" }
+      names.each { File.write(File.join(sibling, _1), "x\n") }
+      now = 0
+      slow = Class.new(SimpleDelegator) do
+        define_method(:mask_paths) { |files, **opts| (now += 20) && __getobj__.mask_paths(files, **opts) }
+      end.new(policy)
+      bounded = described_class.new(root:, policy: -> { slow }, walk_bound: 10, clock: -> { now })
+
+      related = related_after_masks(bounded)
+
+      expect(related.refused).to match(sibling => /longer than 10s/)
+      expect(now).to be < 60
+    end
+
+    it "walks a related directory once it stops being a repository, masking what it now holds" do
       SeedRepo.git(sibling, "init", "-q")
       expect(related_after_masks.roots).to eq([sibling])
       FileUtils.rm_rf(File.join(sibling, ".git"))
-      secret(sibling)
+      hidden = secret(sibling)
 
-      expect(related_after_masks).to have_attributes(roots: [], masks: [])
+      expect(related_after_masks).to have_attributes(roots: [sibling], masks: [having_attributes(path: hidden)])
     end
 
     it "unlists a related directory whose listing times out, and keeps the project's masks" do
@@ -407,7 +589,8 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
       failing = true
 
-      expect(related_after_masks(flaky)).to have_attributes(roots: [sibling], masks: [having_attributes(path: hidden)])
+      expect(related_after_masks(flaky).masks.map(&:path)).to eq([hidden, config_of(sibling)])
+      expect(related_after_masks(flaky).roots).to eq([sibling])
       expect(flaky.masks.map(&:path)).to eq([File.join(root, ".env")])
     end
 
@@ -421,7 +604,7 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       masks = related_after_masks.masks
 
       expect(masks.map(&:path)).to contain_exactly(File.join(sibling, "tmp", "x"),
-                                                   File.join(sibling, "a", "node_modules", "p"))
+                                                   File.join(sibling, "a", "node_modules", "p"), config_of(sibling))
     end
 
     it "masks each directory below a pruned one inside a nested repository whole" do
@@ -431,7 +614,8 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       SeedRepo.git(nested, "init", "-q")
       File.write(File.join(nested, "target", "x", "creds.txt"), "x\n")
 
-      expect(related_after_masks.masks.map(&:path)).to eq([File.join(nested, "target", "x")])
+      expect(related_after_masks.masks.map(&:path))
+        .to contain_exactly(File.join(nested, "target", "x"), config_of(sibling), config_of(nested))
     end
 
     it "keeps a nested repository's pruned directory masked whole on a later ask" do
@@ -442,8 +626,8 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       File.write(File.join(nested, "target", "x", "creds.txt"), "x\n")
       aging = described_class.new(root:, policy: -> { policy }, stat: method(:aged))
 
-      expect(Array.new(2) { related_after_masks(aging).masks.map(&:path) })
-        .to eq([[File.join(nested, "target", "x")]] * 2)
+      expect(Array.new(2) { related_after_masks(aging).masks.map(&:path).sort })
+        .to eq([[File.join(nested, "target", "x"), config_of(sibling), config_of(nested)].sort] * 2)
     end
 
     it "masks no pruned directory of the project whole, whose gap is documented" do
@@ -1253,6 +1437,205 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
       expect([confined("cat", ".env"), confined("cat", "README.md")])
         .to eq([["", "", true], ["the readme\n", "", true]])
+    end
+  end
+
+  describe "a Rust project's package caches, on the session's own policy" do
+    let(:home) { File.join(@base, "home") }
+    let(:paths) { Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => File.join(@base, "state") }) }
+    let(:registry_src) { File.join(home, ".cargo/registry/src") }
+    let(:session) do
+      project = Lain::Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+      Lain::CLI::Wiring::BoardBuild.session_policy(
+        project:, paths:, table: Lain::CLI::Wiring::BoardBuild.rules(project:, paths:),
+        config: Lain::Config.load(root:, paths:)
+      )
+    end
+    let(:cached) { described_class.new(root:, policy: -> { session }) }
+    let(:journal) { [] }
+    let(:probe) do
+      fence = "#{JSON.generate({ abi: 6, rights: {}, skipped: [], private_net: false })}\n"
+      answers = { "bwrap" => ["", true], "lain-fence" => [fence, true], "strace" => ["strace 6.1", true] }
+      Lain::Confine::Probe.new(fence: "/x/lain-fence", journal:, ptrace_scope: -> { "1\n" },
+                               runner: ->(argv) { answers.fetch(File.basename(argv.first)) })
+    end
+    let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+
+    before do
+      write("Cargo.toml", "[package]\nname = \"x\"\n")
+      crate = File.join(registry_src, "index.crates.io-1949cf8c6b5b557f/whisper-rs-0.16.0")
+      FileUtils.mkdir_p([File.join(crate, "src"), File.join(crate, "tests"), File.join(home, ".cargo/git/checkouts/x")])
+      File.write(File.join(crate, "src/lib.rs"), "pub fn run() {}\n")
+      File.write(File.join(crate, "tests/key.pem"), "x\n")
+      File.write(File.join(home, ".cargo/git/checkouts/x/.env"), "KEY=value\n")
+    end
+
+    def ruling(rung, rule: nil)
+      Lain::Approval::Escalation::Ruling.allow(rung:, because: "approved", rule:, authority: :automatic)
+    end
+
+    def composed = request(ruling("rules", rule: "composed_term"))
+
+    def request(ruling, executables: [], argv: nil)
+      Lain::Confine::Request.new(ruling:, executables:, cwd: root, root:, tool_use_id: "toolu_1",
+                                 **(argv ? { argv: } : {}))
+    end
+
+    def elf(file)
+      FileUtils.mkdir_p(File.dirname(file))
+      fields = [2, 62, 1, 0, 64, 0, 0, 64, 56, 1, 0, 0, 0].pack("S<S<L<Q<Q<Q<L<S<S<S<S<S<S<")
+      File.binwrite(file, ["\x7FELF".b, [2, 1, 1].pack("C3"), "\0" * 9, fields, [1].pack("L<"), "\0" * 52].join)
+      File.chmod(0o755, file)
+      file
+    end
+
+    # A lineage that wrote nothing under the project, where each file reads as fresh or not.
+    def lineage(fresh:)
+      Struct.new(:all) do
+        def any_under?(_root) = false
+        def fresh?(_path) = all
+        def making(path) = yield(path)
+      end.new(fresh)
+    end
+
+    def profiles(**rest) = Lain::Confine::Profiles.new(masks: cached, probe:, home:, root:, classifier: cached, **rest)
+
+    it "lists neither cache, and lends both as reads with no mask" do
+      started = []
+      shell_out = lambda do |*argv, **opts|
+        started << argv
+        Lain::Shell::Out.new(*argv, **opts)
+      end
+      listing = described_class.new(root:, policy: -> { session }, shell_out:)
+
+      related = related_after(listing)
+
+      expect([related.roots, related.masks]).to eq([[], []])
+      expect(related.reads).to include(registry_src, File.join(home, ".cargo/git/checkouts"))
+      expect(started.flatten.grep(%r{\.cargo/})).to eq([])
+    end
+
+    it "globs for a git checkout's .git/config under cargo's checkouts only, not under every read root" do
+      clone = File.join(session.read_roots.first, "a", "b").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(clone, "init", "-q")
+
+      expect(related_after(cached).masks).to eq([])
+    end
+
+    it "masks each git checkout's .git/config under a read root whole, 2 levels down, as cargo lays them out" do
+      checkout = File.join(home, ".cargo/git/checkouts/dep-abc/1234567").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(checkout, "init", "-q")
+
+      expect(related_after(cached).masks.map(&:path)).to eq([File.join(checkout, ".git", "config")])
+    end
+
+    it "keeps a granted linter granted" do
+      shellcheck = elf(File.join(home, ".local/bin/shellcheck"))
+      related_after(cached)
+
+      linting = profiles(env: { "PATH" => File.dirname(shellcheck) }, fresh: lineage(fresh: false))
+
+      expect(linting.for(composed).runs?(shellcheck)).to be(true)
+    end
+
+    it "keeps the hidden toolchain files hidden from a workspace call" do
+      config = File.join(home, ".bundle/config").tap { FileUtils.mkdir_p(File.dirname(_1)) }
+      File.write(config, "---\n")
+      related_after(cached)
+
+      profile = profiles(workspace: true, tmpdir: scratch).for(request(ruling("auto")))
+
+      expect(profile.hidden).to include(config)
+      expect(profile.masks).not_to include(config)
+    end
+
+    it "keeps a pinned mise install's write to mise's data dir" do
+      data = File.join(home, ".local/share/mise").tap { FileUtils.mkdir_p(_1) }
+      mise = File.join(home, ".local/bin/mise").tap { FileUtils.mkdir_p(File.dirname(_1)) }
+      File.write(mise, "#!/bin/sh\n")
+      File.chmod(0o755, mise)
+      write("mise.toml", %([tools]\njq = "1.8.1"\n))
+      registry = Struct.new(:answer) { def backend(**) = answer }.new("aqua:jqlang/jq")
+      fresh = lineage(fresh: true)
+      executable = Lain::Shell::Executable.new(name: "mise", resolved: mise, realpath: mise, chain: [], shadowed: [],
+                                               anomalies: [], klass: :user, fresh: false, run_files: [], wrappers: [])
+      related_after(cached)
+
+      profile = profiles(workspace: true, tmpdir: scratch, fresh:, env: {}, registry:)
+                .for(request(ruling("auto"), executables: [executable], argv: [%w[mise install jq@1.8.1]]))
+
+      expect(profile).to have_attributes(name: :grant, mise_data: data)
+      expect(profile.write_dirs).to include(data)
+    end
+
+    def related_after(listing)
+      listing.masks
+      listing.related
+    end
+  end
+
+  describe "a contained reader call into a cache outside the project", :seam do
+    let(:fence) { Lain::Confine::Bwrap.fence_binary }
+    let(:home) { File.join(@base, "home") }
+    let(:token) { %w[hf ZqX7mN2vB9kL4pR8sT1wY6].join("_") }
+
+    before do
+      skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+      skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+      skip("bwrap cannot make a user namespace on this host") unless
+        system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+    end
+
+    # The reader profile as `Profiles` builds it over the list: the project's masks and each related one.
+    def reader_over(policy)
+      listing = described_class.new(root:, policy: -> { policy })
+      related = listing.tap(&:masks).related
+      Lain::Confine::Profile.reader(root:, home:, masks: [*listing.masks, *related.masks].map(&:path),
+                                    related: [*related.roots, *related.reads])
+    end
+
+    def confined(command, policy)
+      profile = reader_over(policy)
+      launcher = Lain::Confine::Bwrap.new(fence:)
+      bound = launcher.masked(profile).bind(stages: 1, first_fd: 4)
+      argv = launcher.wrap(Lain::Shell::Term.of(["/bin/sh", "-c", command]), profile, trace_fd: 3, bound:)
+                     .stages.first.argv
+      out, = Open3.capture3({ "LC_ALL" => "C" }, *argv, chdir: root, 3 => File::NULL, **bound.fds)
+      out
+    ensure
+      bound&.close
+    end
+
+    it "reads a project-related cache that is not a repository with its token masked" do
+      cache = File.join(home, ".cache/huggingface").tap { FileUtils.mkdir_p(File.join(_1, "hub")) }
+      File.write(File.join(cache, "token"), token)
+      File.write(File.join(cache, "hub/version.txt"), "1\n")
+      rules = Lain::Sensitivity::Rules.new(related: ["~/.cache/huggingface"])
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:), home:,
+                                             root:)
+
+      read = confined("cat #{cache}/hub/version.txt; cat #{cache}/token", policy)
+
+      expect(read).to start_with("1\n")
+      expect(read).not_to include(token)
+    end
+
+    it "shows a cargo checkout's .git/config empty or as a decoy, whatever its remote URL carries" do
+      checkout = File.join(home, ".cargo/git/checkouts/dep-abc/1234567").tap { FileUtils.mkdir_p(_1) }
+      SeedRepo.git(checkout, "init", "-q")
+      SeedRepo.git(checkout, "remote", "add", "origin", "https://x:#{token}@example.com/r.git")
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root), home:, root:,
+                                             read_roots: [File.join(home, ".cargo/git/checkouts")])
+
+      expect(confined("cat #{checkout}/.git/config", policy)).not_to include(token)
+    end
+
+    it "lists the cargo registry a Rust project reads" do
+      FileUtils.mkdir_p(File.join(home, ".cargo/registry/src/index/whisper-rs-0.16.0"))
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root), home:, root:,
+                                             read_roots: [File.join(home, ".cargo/registry/src")])
+
+      expect(confined("ls #{home}/.cargo/registry/src/index", policy)).to eq("whisper-rs-0.16.0\n")
     end
   end
 end

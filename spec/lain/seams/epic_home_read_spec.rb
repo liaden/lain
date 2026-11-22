@@ -134,6 +134,21 @@ RSpec.describe "A spawned child in the XDG epic home", :seam do
     expect(untouched?).to be(true)
   end
 
+  # The cargo caches are read roots of a Rust project's session, as the epic home is of every session.
+  it "reads a crate's source with read_file and lists the registry with bash, asking no approval" do
+    File.write(File.join(@root, "Cargo.toml"), "[package]\nname = \"x\"\n")
+    registry = File.join(@home, ".cargo/registry/src")
+    source = File.join(registry, "index.crates.io-1949cf8c6b5b557f/whisper-rs-0.16.0/src/lib.rs")
+    FileUtils.mkdir_p(File.dirname(source))
+    File.write(source, "zq_crate_mark\n")
+
+    seen = by_the_agent([["read_file", { "path" => source }], ["bash", { "command" => "ls #{registry}" }]])
+
+    expect(seen.map(&:tool)).to be_empty
+    expect([result_of("tu_agent0"), result_of("tu_agent1")])
+      .to match([include("zq_crate_mark"), include("index.crates.io-1949cf8c6b5b557f")])
+  end
+
   it "parks a read of a credential in the epic home, as in the project" do
     File.write(at("research.md"), "API_KEY=#{api_key}\n")
 
