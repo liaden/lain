@@ -209,6 +209,46 @@ RSpec.describe Lain::CLI::Wiring::Observers do
       end
     end
 
+    it "windows the score over the times it receives the records at, read from its clock" do
+      times = [0.0, 0.0, Lain::Tripwire::Ledger::WINDOW + 1.0, Lain::Tripwire::Ledger::WINDOW + 1.0].each
+      described_class.register(chronicle:, paths:, project:, resumed: nil, clock: -> { times.next },
+                               arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+      %w[tu_1 tu_2].each do |id|
+        chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => id,
+                                       "requester" => "agent", "verdict" => "allow", "rung" => "rules",
+                                       "reason" => "", "final" => false }
+        chronicle.durable_journal << {
+          "type" => "exec_record", "tool_use_id" => id, "profile" => "reader",
+          "execs" => [{ "path" => "/elsewhere/lain-fence", "argv0" => "lain-fence", "rc" => 0 }],
+          "refusals" => [{ "path" => "/work/planted", "errno" => "EACCES" }], "fd_execs" => [],
+          "truncated" => false, "incomplete" => false, "connects" => []
+        }
+      end
+
+      expect(journal_records(io).select { _1["type"] == "tripwire" }.map { _1["score"] }).to eq([10, 10])
+    end
+
+    it "counts nothing for a refused exec of the mise a workspace hides, and still counts a planted one" do
+      mise = File.join(@state, Lain::Confine::Profile::HOME_MISE).tap { FileUtils.mkdir_p(File.dirname(_1)) }
+      File.write(mise, "")
+      described_class.register(chronicle:, paths:, project:, resumed: nil,
+                               arms: Lain::CLI::Arms::OFF.with(tripwire: :observe))
+      [[mise, "tu_1"], ["/work/planted", "tu_2"]].each do |path, id|
+        chronicle.durable_journal << { "type" => "escalation", "tool" => "bash", "tool_use_id" => id,
+                                       "requester" => "agent", "verdict" => "allow", "rung" => "rules",
+                                       "reason" => "", "final" => false }
+        chronicle.durable_journal << {
+          "type" => "exec_record", "tool_use_id" => id, "profile" => "workspace",
+          "execs" => [{ "path" => "/elsewhere/lain-fence", "argv0" => "lain-fence", "rc" => 0 }],
+          "refusals" => [{ "path" => path, "errno" => "EACCES" }], "fd_execs" => [],
+          "truncated" => false, "incomplete" => false, "connects" => []
+        }
+      end
+
+      expect(journal_records(io).select { _1["type"] == "tripwire" }.map { _1["evidence"].last["detail"] })
+        .to eq([["/work/planted"]])
+    end
+
     it "registers no ledger when the arm is off" do
       expect(tripwires_after_a_remembered_deny(Lain::CLI::Arms::OFF)).to be_empty
     end

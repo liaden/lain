@@ -445,12 +445,13 @@ module Lain
       end
       private_class_method :landing_file
 
+      # @param home [String] absolute; the home whose toolchain files are looked for
+      # @return [Array<String>] the landing of each toolchain file a workspace mounts empty
       def self.hidden(home)
         [*landing_file(File.join(home, BUNDLE_CONFIG)),
          *[*MISE, File.join(home, HOME_MISE), *shim_target(File.join(home, MISE_SHIMS))].flat_map { landing_file(_1) }]
           .uniq
       end
-      private_class_method :hidden
 
       def self.shim_target(shims)
         Dir.each_child(shims).lazy.map { File.join(shims, _1) }.select { File.symlink?(_1) }.first(1)

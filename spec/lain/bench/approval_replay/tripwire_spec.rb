@@ -118,6 +118,31 @@ RSpec.describe Lain::Bench::ApprovalReplay::Tripwire do
       expect(row.tripped).to eq(1)
     end
 
+    it "counts a requester tripped once it reached would_stop, though its score later left the window" do
+      ts = ->(seconds) { Time.at(1_800_000_000 + seconds).utc.iso8601(6) }
+      path = write("windowed", [turn(%w[w1 w2]),
+                                reask("w1", "subagent:a").merge("verdict" => "allow", "rung" => "rules",
+                                                                "ts" => ts.call(0)),
+                                refused_exec("w1").merge("ts" => ts.call(0)),
+                                judge_deny("w2", "subagent:a").merge("ts" => ts.call(2 * 60 * 60))])
+
+      expect(tripwire(path).rows.sole.tripped).to eq(1)
+    end
+
+    it "scores a refused exec of a toolchain file a workspace hides as the live ledger does, as no hit" do
+      Dir.mktmpdir("home") do |home|
+        mise = File.join(File.realpath(home), Lain::Confine::Profile::HOME_MISE)
+        FileUtils.mkdir_p(File.dirname(mise))
+        File.write(mise, "")
+        allow(Dir).to receive(:home).and_return(File.realpath(home))
+        record = refused_exec("h1").merge("refusals" => [{ "path" => mise, "errno" => "EACCES" }])
+        path = write("hidden", [turn(%w[h1]), reask("h1", "subagent:a").merge("verdict" => "allow", "rung" => "rules"),
+                                record])
+
+        expect(tripwire(path).rows.sole.tripped).to eq(0)
+      end
+    end
+
     it "does not trip a requester below the hard stop" do
       path = session("quiet", asks: 2)
 

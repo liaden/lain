@@ -94,11 +94,50 @@ RSpec.describe Lain::Tripwire::Ledger do
       expect(tripwires.sole).to include("signal" => "loader_exec")
     end
 
-    it "counts a program a reader call ran that it never resolved" do
+    it "counts a program outside the system's exec dirs that a reader call ran and never resolved" do
       approved
-      write(exec_record(execs: [ran(fence), ran("/usr/bin/cat"), ran("/usr/bin/curl")]))
+      write(exec_record(execs: [ran(fence), ran("/usr/bin/cat"), ran("/opt/tools/bin/curl")]))
 
       expect(tripwires.sole).to include("signal" => "unresolved_exec", "weight" => "strong")
+    end
+
+    it "counts nothing for a system program a script ran, which no resolution names" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(execs: [ran(fence), ran("/usr/bin/sh"), ran("/usr/bin/git"), ran("/usr/bin/ls")]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "counts nothing for a system program a script spelled through a usrmerge link" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(execs: [ran(fence), ran("/usr/bin/sh"), ran("/bin/ls"), ran("/sbin/ip")]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "still counts a program under a dir whose name only starts like a system one" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(execs: [ran(fence), ran("/usr/bin/sh"), ran("/binx/evil"), ran("/usr2/bin/evil")]))
+
+      expect(tripwires.sole["evidence"].sole["detail"]).to eq(%w[/binx/evil /usr2/bin/evil])
+    end
+
+    it "still counts a program the call ran and then swapped for a link into the system's exec dirs" do
+      Dir.mktmpdir("l") do |dir|
+        swapped = File.join(File.realpath(dir), "x")
+        File.symlink("/usr/bin/true", swapped)
+        approved(program("sh", "/usr/bin/sh"))
+        write(exec_record(execs: [ran(fence), ran("/usr/bin/sh"), ran(swapped)]))
+
+        expect(signals).to eq(["unresolved_exec"])
+      end
+    end
+
+    it "still counts a program spelled through the system's exec dirs that lands outside them" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(execs: [ran(fence), ran("/usr/bin/sh"), ran("/usr/../work/repo/bin/x")]))
+
+      expect(signals).to eq(["unresolved_exec"])
     end
 
     it "counts a refused connect in a confined call" do
@@ -298,9 +337,9 @@ RSpec.describe Lain::Tripwire::Ledger do
     end
 
     it "forgets the oldest call past its bound, so a call that is never traced costs nothing to keep" do
-      approved(id: "tu_old")
+      approved(program("cat", "/opt/tools/bin/cat"), id: "tu_old")
       (1..described_class::CALLS).each { approved(id: "tu_#{_1}") }
-      write(exec_record(id: "tu_old", execs: [ran(fence), ran("/usr/bin/cat")]))
+      write(exec_record(id: "tu_old", execs: [ran(fence), ran("/opt/tools/bin/cat")]))
 
       expect(tripwires.sole).to include("requester" => "unknown", "signal" => "unresolved_exec")
     end
@@ -542,6 +581,108 @@ RSpec.describe Lain::Tripwire::Ledger do
     end
   end
 
+  describe "the toolchain files a workspace hides" do
+    let(:mise) { "/opt/hidden/bin/mise" }
+    let(:ledger) { described_class.new(journal:, hidden: [mise]).tap { journal.observe(_1) } }
+
+    before { ledger }
+
+    it "counts nothing for a refused exec of one" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(refusals: [refused(mise)]))
+
+      expect(tripwires).to be_empty
+    end
+
+    it "still counts a refused exec of a masked secret beside it" do
+      approved(program("sh", "/usr/bin/sh"))
+      write(exec_record(refusals: [refused(mise), refused("/work/repo/.env")]))
+
+      expect(tripwires.sole["evidence"].sole).to include("signal" => "refused_exec", "detail" => ["/work/repo/.env"])
+    end
+
+    context "when the call swapped its refused plant for a link to one after the refusal" do
+      around do |example|
+        Dir.mktmpdir("l") do |dir|
+          @dir = File.realpath(dir)
+          example.run
+        end
+      end
+
+      let(:mise) { File.join(@dir, "mise").tap { File.write(_1, "") } }
+
+      it "still counts the refusal, as the path the call spelled" do
+        planted = File.join(@dir, "planted").tap { File.symlink(mise, _1) }
+        approved(program("sh", "/usr/bin/sh"))
+        write(exec_record(refusals: [refused(planted)]))
+
+        expect(tripwires.sole["evidence"].sole).to include("signal" => "refused_exec", "detail" => [planted])
+      end
+    end
+  end
+
+  describe "the score's window" do
+    let(:window) { described_class::WINDOW }
+
+    before { ledger }
+
+    def stamped(record, seconds) = JSON.parse(JSON.generate(Lain::Journal.hash_of(record))).merge("ts" => at(seconds))
+
+    def at(seconds) = Time.at(1_800_000_000 + seconds).utc.iso8601(6)
+
+    def refused_at(seconds, id:)
+      write(stamped(escalation(rung: "rules", verdict: "allow", id:), seconds), stamped(resolution(cat, id:), seconds),
+            stamped(exec_record(id:, refusals: [refused(planted)]), seconds))
+    end
+
+    it "drops a hit whose record is older than the window from the score, as a session file replays" do
+      refused_at(0, id: "tu_1")
+      refused_at(window + 1, id: "tu_2")
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 10])
+    end
+
+    it "drops a hit exactly the window old" do
+      refused_at(0, id: "tu_1")
+      refused_at(window, id: "tu_2")
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 10])
+    end
+
+    it "keeps a hit inside the window in the score" do
+      refused_at(0, id: "tu_1")
+      refused_at(window - 1, id: "tu_2")
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 20])
+    end
+
+    it "keeps every hit in the evidence a human reads before lifting a stop" do
+      refused_at(0, id: "tu_1")
+      refused_at(window + 1, id: "tu_2")
+
+      expect(tripwires.last["evidence"].map { _1["tool_use_id"] }).to eq(%w[tu_1 tu_2])
+    end
+
+    it "takes the time a live record was received at from its caller" do
+      [escalation(rung: "rules", verdict: "allow"), resolution(cat)].each { ledger.fold(_1, at: 0.0) }
+      ledger.fold(exec_record(refusals: [refused(planted)]), at: 0.0)
+      [escalation(rung: "rules", verdict: "allow", id: "tu_2"), resolution(cat, id: "tu_2")]
+        .each { ledger.fold(_1, at: window + 1.0) }
+      ledger.fold(exec_record(id: "tu_2", refusals: [refused(planted)]), at: window + 1.0)
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 10])
+      expect(ledger.standing("agent")).to have_attributes(score: 10, evidence: have_attributes(size: 2))
+    end
+
+    it "keeps a hit with no time in the score, so a record missing its stamp errs toward the alarm" do
+      approved
+      write(exec_record(refusals: [refused(planted)]))
+      refused_at(window * 10, id: "tu_2")
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 20])
+    end
+  end
+
   describe "observe-only" do
     before { ledger }
 
@@ -653,6 +794,31 @@ RSpec.describe Lain::Tripwire::Ledger do
       expect(stop_records.map { _1.values_at("requester", "outcome") })
         .to eq([%w[researcher stopped], %w[writer all_stopped]])
       expect(%w[agent researcher writer anyone].map { stops.standing(_1) }).to all(eq(:stopped))
+    end
+
+    it "keeps a child's hits on its lineage when the orchestrator spawns a fresh child, and stops every agent " \
+       "at the fresh child's trip" do
+      refused_exec_by("researcher")
+      refused_exec_by("researcher", id: "tu_2")
+      refused_exec_by("writer", id: "tu_3")
+
+      expect(ledger.standing("researcher")).to have_attributes(score: 20, evidence: have_attributes(size: 2))
+      expect(stop_records.map { _1.values_at("requester", "outcome") })
+        .to eq([%w[researcher stopped], %w[writer all_stopped]])
+      expect(%w[agent researcher writer].map { stops.standing(_1) }).to all(eq(:stopped))
+    end
+
+    it "holds a stop, and trips no second one, once the hit that crossed it leaves the window" do
+      [[0, "tu_1"], [described_class::WINDOW + 1, "tu_2"]].each do |seconds, id|
+        ts = Time.at(1_800_000_000 + seconds).utc.iso8601(6)
+        write(*[escalation(rung: "rules", verdict: "allow", id:, requester: "researcher"),
+                exec_record(id:, refusals: [refused(planted)])]
+          .map { JSON.parse(JSON.generate(Lain::Journal.hash_of(_1))).merge("ts" => ts) })
+      end
+
+      expect(tripwires.map { _1["score"] }).to eq([10, 10])
+      expect(stop_records.size).to eq(1)
+      expect(stops.standing("researcher")).to eq(:stopped)
     end
 
     it "stops every requester when main trips first" do

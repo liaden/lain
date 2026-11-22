@@ -117,6 +117,48 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
   end
 
+  def resolved(program)
+    Lain::Tripwire::Resolution.new([{ "name" => File.basename(program), "resolved" => program,
+                                      "realpath" => program, "chain" => [], "klass" => "system", "fresh" => false }])
+  end
+
+  it "scores nothing for the system programs a script runs, which the call's resolution never names" do
+    record = sandboxed(["sh", "-c", "/usr/bin/git --version >/dev/null; /usr/bin/ls >/dev/null"])
+
+    expect(record["execs"].map { _1["path"] }).to include("/usr/bin/git", "/usr/bin/ls")
+    expect(described_class.of_exec_record(record, resolved("/usr/bin/sh"), hidden: profile.hidden)).to be_empty
+  end
+
+  describe "a refusal under the masks a workspace mounts" do
+    let(:secret) { File.join(project, ".env").tap { executable(_1) } }
+    let(:profile) { Lain::Confine::Profile.workspace(root: project, home:, tmpdir: mkdir("tmp"), masks: [secret]) }
+
+    def scored(command)
+      described_class.of_exec_record(sandboxed(["sh", "-c", command]), resolved("/usr/bin/sh"), hidden: profile.hidden)
+                     .map { [_1.name, _1.detail] }
+    end
+
+    it "scores nothing for a hidden toolchain file the sandbox refused" do
+      mise = Lain::Confine::Profile::MISE.find { File.executable?(_1) }
+      skip("no system mise to hide on this box") unless mise
+
+      expect(scored("#{mise} --version")).to be_empty
+    end
+
+    it "still scores a masked secret the sandbox refused" do
+      expect(scored(secret)).to eq([["refused_exec", [secret]]])
+    end
+
+    it "still scores a refused plant the call then swapped for a link to a hidden toolchain file" do
+      mise = executable(File.join(home, Lain::Confine::Profile::HOME_MISE))
+      planted = executable(File.join(project, "planted"))
+
+      expect(profile.hidden).to include(mise)
+      expect(scored("#{planted}; rm -f #{planted}; ln -s #{mise} #{planted}")).to eq([["refused_exec", [planted]]])
+      expect(File.symlink?(planted)).to be(true)
+    end
+  end
+
   describe "a granted launcher's exec into its own toolchain root" do
     let(:launcher) { executable(File.join(home, ".cargo/bin/rustc")) }
     let(:toolchains) { File.join(home, ".rustup/toolchains") }

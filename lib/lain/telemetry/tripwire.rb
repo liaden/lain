@@ -15,8 +15,8 @@ module Lain
     end
 
     # One signal the tripwire counted against a requester: its `weight`, the
-    # requester's running `score`, and `stop`, which is `would_stop` once the
-    # score passes the hard stop and `none` before. Observe-only, so a
+    # requester's `score` over the ledger's window, and `stop`, which is
+    # `would_stop` once that score passes the hard stop and `none` before. Observe-only, so a
     # `would_stop` stopped nothing. `evidence` is every signal counted against
     # the requester so far, oldest first, which is what a human reads before
     # lifting a stop.

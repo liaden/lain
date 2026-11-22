@@ -7,8 +7,27 @@ module Lain
       # each sees every record the chat writes, durable or teed.
       class Observers
         UNSAID = ->(_line) {}
+        # Wall time, so a live hit and a replayed record's `ts` sit on the same line.
+        WALL_CLOCK = -> { Process.clock_gettime(Process::CLOCK_REALTIME) }
         DEGRADED_NOTICE = "write records could not be read, so every user or project binary counts as changed this " \
                           "session and goes to the judge or to you; resume from an intact session to restore it"
+
+        # Hands the ledger the time each record arrives at, so the ledger itself reads no clock.
+        class Clocked
+          # @param ledger [Tripwire::Ledger]
+          # @param clock [#call] answers epoch seconds
+          def initialize(ledger, clock)
+            @ledger = ledger
+            @clock = clock
+          end
+
+          # @param event [Hash, #to_journal]
+          # @return [self]
+          def <<(event)
+            @ledger.fold(event, at: @clock.call)
+            self
+          end
+        end
 
         # Remembers why the bash sandbox could not be built, or that docker holds bash instead: the header
         # still names the confine arm, so the human must hear what bash really runs in.
@@ -107,16 +126,18 @@ module Lain
         # @param arms [Arms] under `tripwire: :observe` or `:stop` a {Tripwire::Ledger} folds the journal too,
         #   and under `:stop` it trips the {Tripwire::Stops} the observers hold
         # @param say [#call] shows a line in the chat while it runs
+        # @param clock [#call] answers the epoch seconds each record reaches the ledger at
         # @return [Observers]
-        def self.register(chronicle:, paths:, project:, resumed:, arms:, say: UNSAID)
+        def self.register(chronicle:, paths:, project:, resumed:, arms:, say: UNSAID, clock: WALL_CLOCK)
           stops = arms.tripwire_stops? ? Tripwire::Stops.new : Tripwire::Stops::None
           new(fresh: lineage_fresh(paths, project, resumed, chronicle.durable_journal),
               unsealed: Unsealed.for(arms:, project:), stops:, phone: PhoneSurface.new(say)).tap do |observers|
             observers.register(chronicle)
             unless arms.tripwire_off?
-              chronicle.observe(Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:,
-                                                     fresh: observers.fresh, home: paths.home,
-                                                     execs: Confine::ExecRules.project(project.root)))
+              ledger = Tripwire::Ledger.new(journal: chronicle.durable_journal, stops:, fresh: observers.fresh,
+                                            home: paths.home, execs: Confine::ExecRules.project(project.root),
+                                            hidden: Confine::Profile.hidden(paths.home))
+              chronicle.observe(Clocked.new(ledger, clock))
             end
           end
         end

@@ -2,7 +2,7 @@
 
 module Lain
   module Tripwire
-    Hit = Data.define(:name, :weight, :tool_use_id, :count, :detail)
+    Hit = Data.define(:name, :weight, :tool_use_id, :count, :detail, :at)
 
     # One thing a requester did that an honest call does not, read off a journal
     # record. Each reader takes a string-keyed record, the shape a session file
@@ -18,15 +18,18 @@ module Lain
       REFUSED_ERRNOS = %w[EACCES EPERM].freeze
       INET = %w[AF_INET AF_INET6].freeze
       DNS_PORT = 53
+      # The usrmerge links are root's, so a call cannot rewrite what a path through them reaches.
+      SYSTEM = [*Confine::Profile::SYSTEM_EXEC, "/bin", "/sbin", "/lib", "/lib64"].freeze
 
       # @param name [String]
       # @param weight [Symbol] one of {Rules::WEIGHTS}
       # @param tool_use_id [String, nil]
       # @param detail [Array<String>] the paths or reason behind it, each once
       # @param count [Integer] how many there were, though only the first {NAMED} are kept
-      def initialize(name:, weight:, tool_use_id:, detail:, count: detail.size)
+      # @param at [Float, nil] epoch seconds the record behind it was received or stamped at, nil when unknown
+      def initialize(name:, weight:, tool_use_id:, detail:, count: detail.size, at: nil)
         super(name: -name, weight:, tool_use_id: tool_use_id&.then(&:-@), count:,
-              detail: Ractor.make_shareable(detail.first(NAMED)))
+              detail: Ractor.make_shareable(detail.first(NAMED)), at:)
       end
 
       # @return [Hash{String=>Object}] what a tripwire record's evidence holds
@@ -99,8 +102,9 @@ module Lain
       #
       # @param record [Hash{String=>Object}] an `exec_record` record
       # @param resolution [Resolution] what the same call resolved before it ran
+      # @param hidden [Array<String>] the toolchain files a workspace mounts empty, which no call can run
       # @return [Array<Hit>]
-      def self.of_exec_record(record, resolution)
+      def self.of_exec_record(record, resolution, hidden: [])
         return [] if record["truncated"]
 
         id = record["tool_use_id"]
@@ -110,19 +114,21 @@ module Lain
                   hit("loader_exec", id, loaders, confined)]
         return bypass.compact unless confined
 
-        [*bypass, *confined_hits(record, resolution, loaders)].compact
+        [*bypass, *confined_hits(record, resolution, loaders, hidden)].compact
       end
 
       # A refusal of a file the call's own unchanged toolchain resolves to is a
-      # missing grant, and one its PATH search saw as not executable is the
-      # shell trying a stray file; neither is probing.
+      # missing grant, one its PATH search saw as not executable is the shell
+      # trying a stray file, and one of a file lain hid is lain's own mask;
+      # none is probing. A system program is one the profile grants and the
+      # call cannot have planted, so a script running it is not a bypass.
       #
       # Only a confined trace is one the command cannot write into, so only
       # here can every stage's first exec be trusted as the launcher's own, the
       # same program in each, named by the record's first. A string command
       # also runs under the exec's own shell.
-      def self.confined_hits(record, resolution, loaders)
-        refused = refused(record).reject { resolution.toolchain?(_1) || resolution.skipped?(_1) }
+      def self.confined_hits(record, resolution, loaders, hidden)
+        refused = refused(record).reject { refusal_excused?(resolution, hidden, _1) }
         execs = record["execs"]
         expected = [execs.first&.fetch("path"), Exec::Local::SHELL, *loaders]
         ran = execs.select { _1["rc"].zero? }.map { _1["path"] } - expected
@@ -131,9 +137,24 @@ module Lain
          *network_hits(record)]
       end
 
-      def self.unresolved_excused?(resolution, path)
-        resolution.ran?(path) || resolution.launched_from_toolchain?(path)
+      # The record is read after the call, which may since have swapped any
+      # file it named, so a path is matched as the call spelled it and never
+      # read off the disk.
+      def self.refusal_excused?(resolution, hidden, path)
+        resolution.toolchain?(path) || resolution.skipped?(path) || hidden.include?(lexical(path))
       end
+
+      def self.unresolved_excused?(resolution, path)
+        resolution.ran?(path) || resolution.launched_from_toolchain?(path) || system?(path)
+      end
+
+      def self.system?(path)
+        spelled = lexical(path)
+        !spelled.nil? && SYSTEM.any? { spelled.start_with?("#{_1}/") }
+      end
+
+      # A relative path was spelled against a cwd the record does not hold.
+      def self.lexical(path) = (File.expand_path(path) if path.start_with?("/"))
 
       # A confined call holds no network grant it did not name, so a refused
       # connect is a probe, while a datagram send that got through is only
@@ -176,7 +197,7 @@ module Lain
       end
 
       private_class_method :escalation_hit, :escalated_deny, :protected?, :confined_hits, :network_hits,
-                           :unresolved_excused?,
+                           :refusal_excused?, :unresolved_excused?, :system?, :lexical,
                            :refused_connects, :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
     end
   end

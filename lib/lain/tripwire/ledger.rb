@@ -1,12 +1,13 @@
 # frozen_string_literal: true
 
 require "json"
+require "time"
 
 module Lain
   module Tripwire
     # Folds a session's journal into a standing per requester and journals a
     # `tripwire` record for every signal it counts. Past the hard stop the
-    # record says `would_stop`; only with {Stops} does a seeded signal stop
+    # record says `would_stop`; only with `Stops` does a seeded signal stop
     # anyone, and the score and records are the same either way.
     #
     # A bash call's own records name no requester, so the escalation that ruled
@@ -18,23 +19,36 @@ module Lain
     #
     # A call that runs untraced journals a resolution no exec record follows,
     # so what is kept per call is bounded: past {CALLS} the oldest is dropped.
+    #
+    # The score counts only the hits of the last {WINDOW}, so a long session's
+    # friction does not add up to `would_stop`. The ledger reads no clock: a
+    # hit's time is what its caller hands {#fold}, or a replayed record's `ts`.
     class Ledger
       UNKNOWN = "unknown"
       FOLDED = %w[escalation exec_resolution exec_record sandbox].freeze
       CALLS = 256
+      # Seconds a hit counts toward the score: long enough that a burst of probing within one task still adds up, short
+      # enough that a day of ordinary friction does not.
+      WINDOW = 60 * 60
 
-      Standing = Data.define(:score, :evidence, :stop, :seeded)
+      Standing = Data.define(:score, :evidence, :stop, :seeded, :recent)
 
-      # What a requester has earned so far. `seeded` is the part of the score
-      # the signals in {Stops::STOPPING} earned, the only part a stop reads.
+      # What a requester has earned. `score` and `stop` read the hits of the
+      # last {WINDOW}, and `recent` holds each one's time and points; `evidence`
+      # names every hit, and `seeded`, the part the signals in
+      # `Stops::STOPPING` earned and the only part a stop reads, never decays,
+      # so a stop already tripped is not crossed again.
       class Standing
+        # A hit with no time stays in the window, so a record missing its stamp errs toward the alarm.
+        #
         # @param hit [Hit]
         # @param rules [Rules]
         # @return [Standing] this one with the hit counted
         def add(hit, rules)
           points = rules.points_for(hit.weight)
-          score = self.score + points
-          Standing.new(score:, stop: rules.stop_for(score),
+          recent = Ractor.make_shareable([*self.recent, [hit.at, points]].select { within?(_1.first, hit.at) })
+          score = recent.sum(&:last)
+          Standing.new(score:, stop: rules.stop_for(score), recent:,
                        seeded: seeded + (Stops::STOPPING.include?(hit.name) ? points : 0),
                        evidence: Ractor.make_shareable([*evidence, hit.to_evidence]))
         end
@@ -42,7 +56,11 @@ module Lain
         # @return [Array<String>] each signal counted so far that can never trip a stop
         def unseeded = evidence.map { _1["signal"] }.uniq - Stops::STOPPING
 
-        EMPTY = new(score: 0, evidence: [].freeze, stop: Rules::NONE, seeded: 0)
+        EMPTY = new(score: 0, evidence: [].freeze, stop: Rules::NONE, seeded: 0, recent: [].freeze)
+
+        private
+
+        def within?(at, now) = at.nil? || now.nil? || at > now - WINDOW
       end
 
       # Whether a hit carried a requester past the hard stop, and if it did,
@@ -86,15 +104,17 @@ module Lain
 
       # @param journal [#<<] where each `tripwire` record is written
       # @param rules [Rules]
-      # @param stops [Stops, Stops::None] with {Stops::None} a hard stop crossed stops no one
+      # @param stops [Stops, Stops::None] with `Stops::None` a hard stop crossed stops no one
       # @param fresh [#fresh?] which files changed this lineage
       # @param home [String] the home whose toolchain roots a launcher may exec into
       # @param execs [Confine::ExecRules] named build output, whose fresh run files are expected
+      # @param hidden [Array<String>] the toolchain files a workspace mounts empty, whose refusal is lain's own
       def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None, fresh: Resolution::AllFresh, home: Dir.home,
-                     execs: Confine::ExecRules::NONE)
+                     execs: Confine::ExecRules::NONE, hidden: [])
         @fresh = fresh
         @home = home
         @execs = execs
+        @hidden = hidden
         @journal = journal
         @rules = rules
         @stopping = stops.stopping(rules:)
@@ -104,13 +124,18 @@ module Lain
         @standings = {}
       end
 
-      # A Journal observer.
+      # A Journal observer, for a record replayed from a session file, whose `ts` is its time.
       #
       # @param event [Hash, #to_journal] a record as written or as replayed
       # @return [self]
-      def <<(event)
+      def <<(event) = fold(event)
+
+      # @param event [Hash, #to_journal] a record as written or as replayed
+      # @param at [Float, nil] epoch seconds it was received at; nil reads a replayed record's `ts`
+      # @return [self]
+      def fold(event, at: nil)
         record = folded(event)
-        tallied = record ? @lock.synchronize { tallied(record) } : []
+        tallied = record ? @lock.synchronize { tallied(record, at || stamped(record)) } : []
         tallied.each { |tripwire, crossings| journal(tripwire, crossings) }
         self
       end
@@ -127,8 +152,8 @@ module Lain
       end
 
       # A crossing names what its requester had earned once the whole record is counted.
-      def tallied(record)
-        hits(record).map { tally(*_1) }.map do |tripwire, crossings|
+      def tallied(record, at)
+        hits(record).map { |requester, hit| tally(requester, hit.with(at:)) }.map do |tripwire, crossings|
           [tripwire, crossings.map { _1.with(unseeded: @standings.fetch(_1.requester).unseeded) }]
         end
       end
@@ -140,6 +165,12 @@ module Lain
         JSON.parse(JSON.generate(hash)) if hash && FOLDED.include?(hash["type"])
       end
 
+      def stamped(record)
+        Time.iso8601(record["ts"].to_s).to_f
+      rescue ArgumentError
+        nil
+      end
+
       def hits(record)
         id = record["tool_use_id"]
         case record["type"]
@@ -148,7 +179,8 @@ module Lain
         when "sandbox" then attributed(id, Hit.of_sandbox(record))
         else attributed(id,
                         Hit.of_exec_record(record,
-                                           @resolutions.delete(id) || Resolution.new(nil, fresh: @fresh, home: @home)))
+                                           @resolutions.delete(id) || Resolution.new(nil, fresh: @fresh, home: @home),
+                                           hidden: @hidden))
         end
       end
 

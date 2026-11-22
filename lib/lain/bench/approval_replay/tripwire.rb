@@ -15,8 +15,9 @@ module Lain
         #   @return [Hash{String=>Array<String>}] each falsely tripped requester's signal names
         Row = Data.define(:rules, :sessions, :tripped, :false_trips, :low, :high, :signals)
 
-        # One session file folded under one rule set.
-        Fold = Data.define(:standings, :unattributed, :calls)
+        # One session file folded under one rule set. `tripped` names each requester a record put at
+        # would_stop, since the final standing's score is windowed and may since have fallen back.
+        Fold = Data.define(:standings, :unattributed, :calls, :tripped)
 
         KEYS = %w[hard_stop strong medium weak].freeze
         ROUTINE = "routine"
@@ -68,13 +69,15 @@ module Lain
 
         # @param journals [Array<String>] session files
         # @param labels [Labels] without them ({Labels::NONE}) there is no false-trip rate
-        # @param rules [Array<::Lain::Tripwire::Rules>] one row each
+        # @param rules [Array<::Lain::Tripwire::Rules>] one row each, each scored with the toolchain files a workspace
+        #   on this box hides, as a live ledger is
         def initialize(journals:, labels: Labels::NONE, rules: [::Lain::Tripwire::Rules::DEFAULT])
           @journals = journals
           @labels = labels
           @rules = rules
           @records = journals.to_h { [_1, Journal.records(File.foreach(_1)).to_a] }
           @folds = {}
+          @hidden = ::Lain::Confine::Profile.hidden(Dir.home)
         end
 
         # @return [Array<Row>] one per rule set, in the order given
@@ -107,16 +110,21 @@ module Lain
 
         def folded(rules, path)
           captured = Stack::Capture.new
-          ledger = ::Lain::Tripwire::Ledger.new(journal: captured, rules:)
+          ledger = ::Lain::Tripwire::Ledger.new(journal: captured, rules:, hidden: @hidden)
           records = @records.fetch(path)
           records.each { ledger << _1 }
           requesters = captured.records.map { _1["requester"] }.uniq
           Fold.new(standings: requesters.to_h { [_1, ledger.standing(_1)] },
                    unattributed: captured.records.count { _1["requester"] == ::Lain::Tripwire::Ledger::UNKNOWN },
-                   calls: Call.joined(records, session: path).group_by(&:requester))
+                   calls: Call.joined(records, session: path).group_by(&:requester),
+                   tripped: would_stop(captured.records))
         end
 
-        def tripped(fold) = fold.standings.select { |_, standing| standing.stop == ::Lain::Tripwire::Rules::WOULD_STOP }
+        def would_stop(records)
+          records.select { _1["stop"] == ::Lain::Tripwire::Rules::WOULD_STOP }.map { _1["requester"] }.uniq
+        end
+
+        def tripped(fold) = fold.standings.slice(*fold.tripped)
 
         def false_requesters(fold)
           return {} unless @labels.labelled?
