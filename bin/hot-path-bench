@@ -52,7 +52,7 @@ module HotPathBench
     "bash_true_traced" => 7.92,
     "bash_true_reader" => 12.2,
     "bash_true_workspace" => 17.8,
-    "bash_true_workspace_masked" => nil,
+    "bash_true_workspace_masked" => 27.1,
     "request_100000" => 1.17,
     "request_1000000" => 2.98,
     "request_guarded_1000000" => 5.49,
