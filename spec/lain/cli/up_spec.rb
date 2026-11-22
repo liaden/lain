@@ -2988,13 +2988,14 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       spy = ->(*args) { calls << args and FakeShellOut.new(0, "") }
 
-      report = described_class.new(state_path:, shell_out_factory: spy).call
+      jq_named_path = "/tmp/state-home-a8tnjq/state.json"
+      report = described_class.new(state_path: jq_named_path, shell_out_factory: spy).call
 
       expect(report.warnings).to be_empty
       expect(calls).not_to include(%w[jq --version])
       status_right_value = calls.find { |args| args.include?("status-right") }.last
-      expect(status_right_value).not_to include("jq")
-      expect(status_right_value).to include(state_path)
+      expect(status_right_value).to include(jq_named_path)
+      expect(status_right_value.gsub(jq_named_path, "")).not_to match(/\bjq\b/)
     end
   end
 end
