@@ -1563,7 +1563,7 @@ Repeat flake family: Errno::ENOTEMPTY on the tmpdir cleanup in `keeps vi's mode 
 **Depends on:** T23, F6
 **Files:** `lib/lain/shell/named.rb`, `spec/lain/shell/named_spec.rb`, `bin/hot-path-bench`, the parse cap's file
 
-`Shell::Named::Compounds#trailing?` rescans every stage and separator per compound per redirect, which is about cubic: `(cd a && cat b) >o; ` repeated is 0.43 s at 4 KB and 2.7 s at 8 KB. Bisect sorted begins, as Owners does. Add hot-path-bench rows for dense and nested shell shapes, re-measure HOLD_BELOW, and only then raise the parse cap to 32 KiB - 1 (the deferred half of T20).
+`Shell::Named::Compounds#trailing?` rescans every stage and separator per compound per redirect, which is about cubic: `(cd a && cat b) >o; ` repeated is 0.43 s at 4 KB and 2.7 s at 8 KB. Bisect sorted begins, as Owners does. Add hot-path-bench rows for dense and nested shell shapes, re-measure HOLD_BELOW, and only then raise the parse cap to 32 KiB - 1 (the deferred half of T20). Raise `Tools::Bash::ShellRuns::READ_BYTES` (from F6, 16384, the one budget every parse in a command draws from) with it, or any command over 16 KiB parks unread.
 
 ### F8: Tell a drain's own expiry from an actor's timeout          [risk: medium]
 
@@ -1959,3 +1959,27 @@ After the last card lands:
 - 05:09 T16 high review APPROVE-WITH-FIXES (Bash line unpinned, lent unit examples, @journaled lock, cache key, comment). Fix round sent. T17 card gains subagent.rb and the full-bounds note. Sibling stat under home is pre-existing (follow-up).
 - 05:16 T16 fix round done (Bash bounds pinned, 4 lent examples, journaling lock, cache by dir; 4 red re-proved; 7251/0). Verified by main; fold, then landing attempt 1.
 - 05:17 T23 round 10 done (sed clusters read as sed does, git O clusters, inline code parks and scan deleted, -- ends options, sed -i allowed, make eval/file/shell park; 4 red; 7332/0; drives agree, arm off = HEAD but /proc row). Seventh review waits for the T16 landing.
+- 05:20 16 landed 0db06d55f
+- 05:20 T16 landed 0db06d55f
+- 05:20 T17 started (cut 0db06d55f). T23 seventh review started.
+- 05:21 T17 stop: MaskList#lent refuses a file lend (T16 lends dirs only). Ruled: mask_list.rb and spec join T17; a file lend binds that file alone read-only, a non-ordinary file is refused, never widened to its parent. Continued.
+- 05:22 T23 seventh review REQUEST-CHANGES (make/jq read past --, git -3O cluster; -- rule by word shape). sed reader held, inline parks held, arm off = HEAD but /proc. Round 11 sent.
+- 05:30 T23 round 11 done (make/jq/find park after --, git O with digits, sort/rg/sed end options by their own walks; 2 red; 7332/0; drives agree). Eighth review started.
+- 05:32 T23 eighth review APPROVE-WITH-FIXES (no bypass found; git shape rule and stepped walks hold against real git, rg, sort; sed -- change unpinned). Last nit sent.
+- 05:34 T23 last nit done (sed -i -- row pinned, red shown). Verified by main; landing attempt 1 (bash.rb, board_build.rb, cli_spec.rb patched over main).
+- 05:37 23 landed bed28d1fc
+- 05:37 T23 landed bed28d1fc
+- 05:37 T26, T45 and F6 started (cut bed28d1fc).
+- 05:39 T26 stop: Disclosure#holdings has counts only, no per-file digest. Ruled: disclosure.rb and spec join T26; Scanner::Count digests the scanned bytes; an unscanned file's release is not remembered. Continued.
+- 05:39 T17 done (file lends bound alone, IssueView#lends, IssueActor lends the approved view, Subagent#lend_reads with full cut bounds; 35 red; 6468/0). High review started.
+- 05:41 T26 stop 2: the ledger is built in switchboard.rb, not BoardBuild (card premise wrong); the queue has 106 build sites. Ruled: switchboard builds 1 ledger and hands it to Inputs and RememberedAllow (required ledger:); the queue stays ledger-free. Continued.
+- 05:46 F6 done (total substitution bytes capped at MAX_BYTES, NESTED past it; 2 red; 2235/0; 4 KB nested 3.1 s to 0.058 s; parity 3582/0 under cap). High review started.
+- 05:49 T17 high review REQUEST-CHANGES (a lone / or ~/ in References lent to in-process tools, reads ungated; file refusal not journaled; 3 unpinned edits; docs). Fix round sent; profiles.rb and bounds.rb join T17; 1 shared refusal rule.
+- 05:51 T45 stop: replay passed 0/9 unsafe approved, but only 1 safe row reached the judge (8 unsafe rows are named, all stop earlier); default flip breaks 26 examples. Ruled: replay too thin to gate; default back off; add 30-60 routeable unsafe rows checked to reach the judge, under 200 local calls; flip only on 0 approved, then fix the 26 (drift notice accepted, bench --confine off fixed).
+- 05:52 F6 high review REQUEST-CHANGES (budget per substituted call, sh -c fanout stays superlinear: 33x at 32 KB; argvs shape unpinned; NESTED text wrong). Ruled: 1 budget per read, own 16384-byte constant, own Unread reason. Fix round sent.
+- 06:01 F6 round 2 done (1 READ_BYTES budget per read, UNBUDGETED reason, argvs shape pinned; 4 red; 2238/0; fanout 69 KB to 16 KB). Second high review started. F7 card notes READ_BYTES.
+- 06:03 T26 done (release remembered by path and content digest, replayed contained; 50 red; 7925/0). High review started. T17 fix round done (1 refusal rule in Bounds::Lending, lends need a path segment; 14 red; 7280/0); HTML-comment lends ruled out, last item sent.
+- 06:04 T17 HTML-comment strip done (1 red; 73/0). Second high review started.
+- 06:07 F6 second review APPROVE-WITH-FIXES (no fresh budget found; realistic commands read in full; fanout 4x; 2 rules unpinned, READ_BYTES not tied to MAX_BYTES). Last round sent.
+- 06:08 T45 stopped on its condition: the judge approved 1 of 44 routeable unsafe rows (R32 mv $(ls) to a Trash dir outside the root). judge_opaque stays off. Result file copied untracked into the user's planning/binary-identity-research-2026-10/ (that dir is untracked; not committed). Worktree removed, nothing landed.
+- 06:10 F6 last round done (3 pins red against mutants; 2241/0). Verified by main; fold, then landing attempt 1.
