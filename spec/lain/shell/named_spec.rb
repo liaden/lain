@@ -1269,6 +1269,62 @@ RSpec.describe Lain::Shell::Named do
     end
   end
 
+  describe "redirects that follow compounds" do
+    let(:compounds) { described_class::Compounds }
+
+    counted = Class.new(SimpleDelegator) do
+      def initialize(item, reads)
+        super(item)
+        @reads = reads
+      end
+
+      def byte_range
+        @reads << 1
+        __getobj__.byte_range
+      end
+    end
+
+    # The method this replaced, kept so a corpus can pin the bisection to it.
+    def rescanned?(result)
+      marks = [*result.stages, *result.separators]
+      (result.redirects - result.stages.flat_map(&:redirects)).all? do |redirect|
+        at = redirect.byte_range.begin
+        result.compounds.any? do |compound|
+          from = compound.byte_range.end
+          from <= at && marks.none? { _1.byte_range.begin.between?(from, at) }
+        end
+      end
+    end
+
+    it "reads each stage and separator a bounded number of times, however many compounds and redirects" do
+      result = Lain::Shell::Parse.new.call("(cd a && cat b) >o; " * 50)
+      reads = []
+      wrapped = result.with(stages: result.stages.map { counted.new(_1, reads) },
+                            separators: result.separators.map { counted.new(_1, reads) })
+      marks = result.stages.size + result.separators.size
+
+      expect(compounds.new(wrapped)).to be_readable
+      expect(reads.size).to be <= 2 * marks
+    end
+
+    it "answers as the rescan did over a generated corpus", :aggregate_failures do
+      pieces = ["(cd a && cat b)", "{ cat a; }", "(echo x)", "while true; do cat x; done", "if true; then echo y; fi",
+                "cat c", "> o", ">> p", "2> e", "&&", "|", ";", "\n", "&& > o", "(a)>o", "(a);>o b", "{ a; }>o",
+                ">o", "(a)", ";"]
+      random = Random.new(7)
+      # Some commands join with no space, so a redirect or separator touches the compound's last byte.
+      results = Array.new(600) do
+        words = Array.new(random.rand(1..8)) { pieces.sample(random:) }
+        Lain::Shell::Parse.new.call(words.join([" ", ""].sample(random:)))
+      end
+      answers = results.map { compounds.new(_1).readable? }
+
+      expect(answers).to eq(results.map { rescanned?(_1) })
+      expect(answers.uniq).to contain_exactly(true, false)
+      expect(results.count { (_1.redirects - _1.stages.flat_map(&:redirects)).any? }).to be > 100
+    end
+  end
+
   describe "an operand fed by a command substitution" do
     it "is opaque whatever runs inside it, quoted or not" do
       ["cat $(echo .env)", 'cat "$(printf %s .env)"', "cat x$(git ls-files)", "cat $(git ls-files > out)",

@@ -65,6 +65,11 @@ module HotPathBench
     "credential_scan_assignment" => 37.7,
     "credential_scan_gated" => 63.7,
     "mask_list_warm" => 4.45,
+    "shell_read_redirects" => 90,
+    "shell_read_braces" => 115,
+    "shell_read_arrays" => 51,
+    "shell_read_substitutions" => 96,
+    "shell_read_sh_c" => 79,
     "spawn_exec" => 879,
     "spawn_fork" => 52.0,
     "spawn_fork_private_mb" => 11.5
@@ -126,7 +131,7 @@ module HotPathBench
   def measure
     hot_paths = HotPaths.new
     puts JSON.generate([*hot_paths.rows, *masked_bash_rows(hot_paths), *credential_scan_rows(hot_paths),
-                        *spawn_rows(hot_paths)].map(&:to_h))
+                        *shell_read_rows(hot_paths), *spawn_rows(hot_paths)].map(&:to_h))
   end
 
   MASKED_REPS = 50
@@ -188,6 +193,33 @@ module HotPathBench
                                      Lain::CredentialPatterns.for(:content).fetch("credential literal assignment")],
       assignment_lines], ["credential_scan_gated", write.values_at("github token", *gated), gated_lines]]
       .map { |name, shapes, lines| scan_row(hot_paths, name, shapes, lines) }
+  end
+
+  SHELL_REPS = 5
+  # Each fills the parse cap with a shape whose reading once grew faster than its length: compounds that each
+  # take a redirect, nested groups, arrays and substitutions, and `sh -c` scripts each parsed again.
+  SHELL_SHAPES = {
+    "shell_read_redirects" => ->(bytes) { "(cd a && cat b) >o; " * (bytes / 20) },
+    "shell_read_braces" => ->(bytes) { "#{"{ " * ((bytes - 4) / 5)}true#{"; }" * ((bytes - 4) / 5)}" },
+    "shell_read_arrays" => ->(bytes) { "a=( $(b=( c )) ); " * (bytes / 18) },
+    "shell_read_substitutions" => ->(bytes) { "#{"echo $(" * ((bytes - 4) / 8)}true#{")" * ((bytes - 4) / 8)}" },
+    "shell_read_sh_c" => lambda do |bytes|
+      script = "sh -c '#{"echo $(" * 16}true#{")" * 16}'"
+      Array.new(bytes / (script.bytesize + 2), script).join("; ")
+    end
+  }.freeze
+
+  # What a bash call's approval reads of its command: the paths it names and the programs it runs.
+  def shell_read_rows(hot_paths)
+    runs = Lain::Tools::Bash::ShellRuns.new(home: "/home/bench")
+    resolve = ->(argv) { Lain::Shell::Executable.unresolved(argv.first).with(resolved: "/usr/bin/#{argv.first}") }
+    SHELL_SHAPES.map do |name, shape|
+      command = shape.call(Lain::Shell::Parse::MAX_BYTES - 1)
+      hot_paths.measure(SHELL_REPS, name:) do
+        Lain::Shell::Named.of(command, cwd: "/p", home: "/home/bench")
+        runs.executables(command, env: -> { {} }, &resolve)
+      end
+    end
   end
 
   def scan_row(hot_paths, name, shapes, lines)

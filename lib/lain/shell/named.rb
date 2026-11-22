@@ -1252,11 +1252,16 @@ module Lain
           @result.compounds.select { _1.kind == kind && _1.byte_range.cover?(at) }.map(&:byte_range)
         end
 
+        # A later-ending compound leaves less room for a mark before the redirect, so only the
+        # last to end before it need be checked, and both lookups bisect lists sorted once.
         def trailing?(at)
-          @result.compounds.any? do |compound|
-            from = compound.byte_range.end
-            from <= at && [*@result.stages, *@result.separators].none? { _1.byte_range.begin.between?(from, at) }
-          end
+          @ends ||= @result.compounds.map { _1.byte_range.end }.sort
+          @marks ||= [*@result.stages, *@result.separators].map { _1.byte_range.begin }.sort
+          last = (@ends.bsearch_index { _1 > at } || @ends.size) - 1
+          return false if last.negative?
+
+          mark = @marks.bsearch { _1 >= @ends.fetch(last) }
+          mark.nil? || mark > at
         end
       end
 
