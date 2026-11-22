@@ -68,6 +68,25 @@ module Lain
       # "refused" stays for records written before a raised error was told apart.
       OUTCOMES = %w[answered refused failed empty].freeze
 
+      # The merged findings, still a String so a chat reply and a skill's
+      # response take it as they always did, with the outcome each critic of
+      # each chunk recorded, in the order the chunks were read. A caller that
+      # decides on how a critique went reads these, never the merged words.
+      class Findings < String
+        # @return [Array<String>] one of {OUTCOMES} per critic reading, frozen
+        attr_reader :outcomes
+
+        # @param value [String, Findings] what a critique answered
+        # @return [Findings] the value itself, or a plain String with no outcomes recorded
+        def self.of(value) = value.is_a?(self) ? value : new(value, [])
+
+        def initialize(text, outcomes)
+          super(text)
+          @outcomes = outcomes.map(&:-@).freeze
+          freeze
+        end
+      end
+
       NO_REVISION = "the open review has no reviewed revision to critique from -- it was opened over a " \
                     "tree rather than over commits, so /critique would read the working tree it is meant to " \
                     "avoid. Open a /review of a branch or pull request to critique one."
@@ -186,7 +205,7 @@ module Lain
         @model = Tools::Subagent::ModelChoice.of(model, declared_by: "/critique")
       end
 
-      # @return [String] the merged findings
+      # @return [Findings] the merged findings, and each critic's outcome
       # @raise [Refused] before any checkout or spawn
       def call
         @subject.refuse_unreadable!
@@ -230,7 +249,7 @@ module Lain
       def read(lent, brief, critic)
         outcome, text = answer(lent, brief)
         @journal << record(brief, outcome, text, critic)
-        text
+        [text, outcome]
       end
 
       # A child that fails costs its own chunk and never the others, for
@@ -268,7 +287,8 @@ module Lain
 
       def rendered(answers)
         headline = @subject.headline(count: answers.size, role: @role) + on_model
-        [headline, *answers.map { |brief, readings| "#{brief.heading}\n\n#{findings(readings)}" }].join("\n\n")
+        merged = [headline, *answers.map { |brief, readings| "#{brief.heading}\n\n#{findings(readings.map(&:first))}" }]
+        Findings.new(merged.join("\n\n"), answers.flat_map { |_brief, readings| readings.map(&:last) })
       end
 
       def recorded_model = @model.model.empty? ? nil : @model.model

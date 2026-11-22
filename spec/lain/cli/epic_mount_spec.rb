@@ -140,7 +140,8 @@ RSpec.describe Lain::CLI::EpicMount do
       after { journal.close }
 
       def handed(mount, minor)
-        critique = ->(**) { "## cluster 1 of 1 -- epic\n\nMUST-FIX:\n- none\nMINOR:\n- #{minor}\nVERDICT: approve\n" }
+        text = "## cluster 1 of 1 -- epic\n\nMUST-FIX:\n- none\nMINOR:\n- #{minor}\nVERDICT: approve\n"
+        critique = ->(**) { Lain::Review::Critique::Findings.new(text, %w[answered]) }
         tools = mount.tools(submitter: reviewing, critique:).to_h { [_1.name, _1] }
         said = Sync { tools.fetch("epic_review").call({ "stage" => "epic_plan", "slug" => "alpha" }, invocation) }
         id = said.text[/review-\h+/]
@@ -148,6 +149,15 @@ RSpec.describe Lain::CLI::EpicMount do
           tools.fetch("epic_submit").call({ "stage" => "epic_plan", "slug" => "alpha", "review" => id }, invocation)
         end
         [id, reviewing.reviews.last]
+      end
+
+      it "reads the human's gate verdicts beside the reviews, so a count can restart at one" do
+        create_epic("alpha")
+        journal << Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "alpha",
+                                                stage: "epic_plan", verdict: Lain::Approval::Verdict::Deny.new,
+                                                answered_by: "human", policy: "interactive", latency: 1.0)
+
+        expect(mount_for.homes.review_results.map { _1["type"] }).to eq(["gate_decision"])
       end
 
       it "journals the review in the chat's record and resolves its id, mounted or not" do

@@ -2,7 +2,7 @@
 
 module Lain
   module Epic
-    ReviewPack = Data.define(:layout, :scope_ids, :answers, :prior, :diff)
+    ReviewPack = Data.define(:layout, :scope_ids, :answers, :prior, :since, :diff)
 
     # What an epic_review reviewer is told beside the documents: where its
     # wave sits among the epic's, what the human has already answered, and
@@ -13,6 +13,9 @@ module Lain
     # no wave, and `epic_plan` for epic.md. `prior` holds, oldest first, every
     # earlier round of the epic that read any of them, and rounds are counted
     # per id, so neither a wider review nor a grown wave starts a count afresh.
+    # `since` is the part of `prior` after the human's last verdict on any of
+    # them: the human read what was found, so what they asked for is reviewed
+    # afresh, and every count and cap runs on `since` alone.
     # No stage filter is needed: an issue id cannot contain the underscore in
     # `epic_plan` ({Home::NAME}), so the two stages never share a key.
     class ReviewPack
@@ -53,10 +56,15 @@ module Lain
         scope = scope(layout, stage, wave)
         records = journal.to_a
         prior = rounds(records, home.slug, scope)
-        shown = prior.last&.then { _1.parsed? ? _1.documents : nil } || {}
         new(layout:, scope_ids: scope, answers: answers(records, home.slug), prior:,
-            diff: Diff.new(now: gated(graph, home, stage, scope), shown:,
-                           deleted: shown.keys.reject { File.file?(File.join(home.path, _1)) }))
+            since: rounds(after_verdict(records, partitions(home.slug, stage, scope)), home.slug, scope),
+            diff: diff(graph, home, stage, scope, prior))
+      end
+
+      def self.diff(graph, home, stage, scope, prior)
+        shown = prior.last&.then { _1.parsed? ? _1.documents : nil } || {}
+        Diff.new(now: gated(graph, home, stage, scope), shown:,
+                 deleted: shown.keys.reject { File.file?(File.join(home.path, _1)) })
       end
 
       def self.layout(graph, home)
@@ -77,6 +85,27 @@ module Lain
                .select { _1.epic_slug == slug && _1.read.keys.intersect?(scope) }
       end
 
+      def self.partitions(slug, stage, scope)
+        scope.map { SignoffQueue::Partition.new(epic_slug: slug, stage:, issue_id: (_1 unless stage == EPIC_PLAN)) }
+      end
+
+      # What a human's verdict is, and that a park or a hold is not one, is
+      # {Signoff}'s to say. Its standing cannot show a repeat of the same
+      # verdict, so the record is detected by the Settle move it adds to a
+      # partition, the only move that carries a verdict.
+      def self.after_verdict(records, partitions)
+        *, last = records.each_with_index.inject([Signoff.unit, -1]) do |(signoff, at), (record, index)|
+          stepped = signoff.step(Telemetry::Untyped.new(fields: Journal.payload_of(record)))
+          [stepped, partitions.any? { settled?(signoff, stepped, _1) } ? index : at]
+        end
+        records.drop(last + 1)
+      end
+
+      def self.settled?(before, after, partition)
+        moves = ->(signoff) { signoff.state[partition]&.moves.to_a }
+        moves.call(after).size > moves.call(before).size && moves.call(after).last.respond_to?(:verdict)
+      end
+
       def self.answers(records, slug)
         records.select { _1["type"] == ANSWERED && _1["epic_slug"] == slug }
                .map { Answer.new(question: _1.fetch("question"), answer: _1.fetch("answer")) }
@@ -93,31 +122,38 @@ module Lain
         end
       end
 
-      private_class_method :layout, :scope, :rounds, :answers, :gated
+      private_class_method :layout, :scope, :diff, :rounds, :partitions, :after_verdict, :settled?, :answers, :gated
 
-      def initialize(layout:, scope_ids:, answers:, prior:, diff:)
+      def initialize(layout:, scope_ids:, answers:, prior:, since:, diff:)
         super(layout: layout.freeze, scope_ids: scope_ids.map { -_1.to_s }.freeze, answers: answers.freeze,
-              prior: prior.freeze, diff:)
+              prior: prior.freeze, since: since.freeze, diff:)
       end
 
       # A round whose closing blocks did not parse is a refused or broken
       # reviewer, which reviewed nothing, so it spends no round.
       #
       # @return [Hash{String=>Integer}] each scope id to how many earlier parsed rounds read it
-      def rounds = scope_ids.to_h { |id| [id, settled.count { _1.read.key?(id) }] }
+      def rounds = scope_ids.to_h { |id| [id, since.count { _1.parsed? && _1.read.key?(id) }] }
 
       # @return [Hash{String=>Integer}] each scope id to how many earlier rounds read it, parsed or not
-      def attempts = scope_ids.to_h { |id| [id, prior.count { _1.read.key?(id) }] }
+      def attempts = scope_ids.to_h { |id| [id, since.count { _1.read.key?(id) }] }
+
+      # @return [Hash{String=>Integer}] each scope id to how many earlier rounds read it in which every critic failed
+      def failed = scope_ids.to_h { |id| [id, since.count { _1.failed? && _1.read.key?(id) }] }
+
+      # @param limit [Integer] the failed rounds an id may have had
+      # @return [Array<String>] the scope ids already read in that many failed rounds
+      def failing(limit) = failed.select { |_id, count| count >= limit }.keys
 
       # @param limit [Integer] the rounds of any outcome an id may have had
       # @return [Array<String>] the scope ids already read in that many rounds
       def exhausted(limit) = attempts.select { |_id, count| count >= limit }.keys
 
-      # @return [Array<ReviewResult>] the earlier rounds that parsed, oldest first
-      def settled = prior.select(&:parsed?)
+      # @return [Array<ReviewResult>] the earlier rounds since the last verdict that parsed, oldest first
+      def settled = since.select(&:parsed?)
 
-      # @return [Array<String>] the scope ids no earlier parsed round read
-      def unreviewed = rounds.select { |_id, count| count.zero? }.keys
+      # @return [Array<String>] the scope ids no earlier parsed round read, before the verdict or after
+      def unreviewed = scope_ids.reject { |id| prior.any? { _1.parsed? && _1.read.key?(id) } }
 
       # @param limit [Integer] the rounds an id may have had
       # @return [Array<String>] the scope ids already read in that many rounds

@@ -9,9 +9,9 @@ module Lain
     #
     # == The invariant, which is the whole reason this is an object
     #
-    # ONE {Epic::Review} per slug, and the SAME instance is the journaled home's
+    # ONE `Epic::Review` per slug, and the SAME instance is the journaled home's
     # `reviews:` and the tool's `review:`. Two Reviews sharing a journal both
-    # hand out generation 1, and {Epic::Review::Replay#park} calls that a wiring
+    # hand out generation 1, and `Epic::Review::Replay#park` calls that a wiring
     # error and CARRIES the damage rather than refusing -- so a second Review
     # never announces itself, it just quietly stops guarding. Built once in
     # {#initialize} rather than memoized, so there is no second path to one.
@@ -69,7 +69,7 @@ module Lain
 
       # The journaled home for any slug, guarded by the reviews every session
       # recorded for it. The mounted epic answers with the mount's own home, so
-      # its one {Epic::Review} stays the only guard over its journal.
+      # its one `Epic::Review` stays the only guard over its journal.
       class Homes
         # @param journal [#<<] where a write's {Lain::Epic::DocWritten} lands
         # @param root [String] the project root the home resolves under
@@ -110,11 +110,12 @@ module Lain
         # moment ago is found by its id, and an answer the human gave in any
         # chat reaches the next review.
         #
-        # @return [SessionJournals] the journaled {Lain::Epic::ReviewResult} and
-        #   {Lain::Telemetry::QuestionAnswered} records, oldest first
+        # @return [SessionJournals] the journaled {Lain::Epic::ReviewResult},
+        #   {Lain::Telemetry::QuestionAnswered} and {Lain::Epic::GateDecision} records, oldest first
         def review_results
           SessionJournals.of(@paths, @root, types: [Lain::Epic::ReviewResult::JOURNAL_TYPE,
-                                                    Lain::Epic::ReviewPack::ANSWERED])
+                                                    Lain::Epic::ReviewPack::ANSWERED,
+                                                    Lain::Epic::SignoffQueue::JOURNAL_TYPE])
         end
 
         # The epic verbs, journaling into the chat's own session record.
@@ -178,7 +179,7 @@ module Lain
       # @param view [#open, #marks, #call, nil] the rendering a review gesture's
       #   row number resolves through, or a thunk reading one
       # @param policy [Lain::Review::Verdict::Policy, nil] verdict admissibility
-      # @option options [String] :epic the slug {Epic#resolve_slug} refuses by
+      # @option options [String] :epic the slug `Epic#resolve_slug` refuses by
       #   name when it is ambiguous or unknown
       # @return [EpicMount]
       def self.mount(chronicle:, options:, told:, root:, config:, paths:,
@@ -220,7 +221,7 @@ module Lain
       #
       # A generation is a per-Review counter from 1, so two dead sessions can
       # both have handed out 1 for this slug, and one's close then releases the
-      # other's held claim. Folding everything MITIGATES that: {Review::Replay}
+      # other's held claim. Folding everything MITIGATES that: `Review::Replay`
       # takes its high-water across every record it is given, so each session
       # starts above every claim it can see, where a narrower fold would put
       # every session back at 1. What is left is the genuinely concurrent case,
@@ -263,7 +264,7 @@ module Lain
       # raise later out of the toolset build.
       #
       # @param slug [String] the epic this chat is mounted into, already resolved
-      #   by {Epic#resolve_slug}
+      #   by `Epic#resolve_slug`
       # @param journal [#<<] where the epic records land -- the chat's own
       #   session journal, which is what {CLI::Epic::Journals} reads back
       # @param root [String] the project root the epic's home is resolved under
@@ -379,7 +380,7 @@ module Lain
 
       def epic_show = Lain::Tools::EpicShow.new(homes:)
 
-      # {Epic::Review.from_journal} and not {Review.new}, so a chat restarted
+      # `Epic::Review.from_journal` and not `Review.new`, so a chat restarted
       # while a human still holds a file goes on refusing to overwrite it.
       #
       # It fails OPEN on its own records: {SessionJournals} counts and skips a

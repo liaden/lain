@@ -162,6 +162,116 @@ RSpec.describe Lain::Epic::ReviewPack do
     end
   end
 
+  describe "rounds since the last human verdict" do
+    def failed_round(ids = %w[c1 c2], outcomes: ["failed"])
+      Lain::Epic::ReviewResult.parse("provider down\n", epic_slug: "nyotes", stage: "issue_plan",
+                                                        read: ids.to_h { [_1, gated(_1)] }, clusters: 1, critics: 1,
+                                                        outcomes:).to_journal
+    end
+
+    def verdict(issue_id: nil, stage: "issue_plan", slug: "nyotes",
+                answer: Lain::Approval::Verdict::Deny.new(note: "fix"))
+      Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: slug, stage:, verdict: answer,
+                                   answered_by: "human", policy: "interactive", latency: 1.0, issue_id:).to_journal
+    end
+
+    let(:records) { [reviewed(%w[c1 c2].to_h { [_1, gated(_1)] }), reviewed(%w[c1 c2].to_h { [_1, gated(_1)] })] }
+
+    it "spends the rounds before the verdict no more" do
+      expect(pack.spent(2)).to eq(%w[c1 c2])
+
+      records << verdict(issue_id: "c1") << verdict(issue_id: "c2")
+
+      expect(pack.spent(2)).to be_empty
+      expect(pack.rounds).to eq("c1" => 0, "c2" => 0)
+    end
+
+    it "restarts the count at a repeat of the same verdict over the same digest" do
+      records.replace([verdict(issue_id: "c1"), reviewed({ "c1" => gated("c1") }), reviewed({ "c1" => gated("c1") })])
+      expect(pack.rounds["c1"]).to eq(2)
+
+      records << verdict(issue_id: "c1")
+
+      expect(pack.rounds["c1"]).to eq(0)
+    end
+
+    it "counts attempts from the rounds since the verdict, not from every earlier one" do
+      records.replace(Array.new(4) { reviewed({ "c1" => gated("c1") }) })
+      expect(pack.exhausted(4)).to eq(["c1"])
+
+      records << verdict(issue_id: "c1")
+
+      expect(pack.exhausted(4)).to be_empty
+    end
+
+    it "counts the rounds reviewed after the verdict" do
+      records << verdict(issue_id: "c1") << verdict(issue_id: "c2") << reviewed({ "c1" => gated("c1") })
+
+      expect(pack.rounds).to eq("c1" => 1, "c2" => 0)
+    end
+
+    it "still carries the earlier rounds as prior and lists a never-reviewed id by them" do
+      records << verdict(issue_id: "c1")
+
+      expect(pack.prior.size).to eq(2)
+      expect(pack.unreviewed).to be_empty
+    end
+
+    it "is not reset by a verdict on another epic, another id or a parked one" do
+      records << verdict(slug: "other", issue_id: "c1") << verdict(issue_id: "a1") << verdict(stage: "epic_plan")
+      records << verdict(issue_id: "c1", answer: Lain::Epic::GateDecision::Deferred.new(note: "parked"))
+
+      expect(pack.spent(2)).to eq(%w[c1 c2])
+    end
+
+    it "is reset for the epic plan by a verdict with no issue id" do
+      records.replace([reviewed({ "epic_plan" => "z" }, stage: "epic_plan")] * 2)
+      epic = described_class.for(@home.read_epic, @home, records, stage: "epic_plan", wave: nil)
+      records << verdict(stage: "epic_plan")
+
+      expect(epic.spent(2)).to eq(["epic_plan"])
+      expect(described_class.for(@home.read_epic, @home, records, stage: "epic_plan", wave: nil).spent(2)).to be_empty
+    end
+
+    describe "failed rounds" do
+      it "counts a round whose every critic failed, and spends no round on it" do
+        records.replace([failed_round])
+
+        expect(pack.rounds).to eq("c1" => 0, "c2" => 0)
+        expect(pack.failed).to eq("c1" => 1, "c2" => 1)
+      end
+
+      it "does not count a round whose critics were refused, empty or answered" do
+        records.replace([failed_round(outcomes: ["refused"]), failed_round(outcomes: ["empty"]),
+                         failed_round(outcomes: %w[failed answered]), failed_round(outcomes: %w[failed refused])])
+
+        expect(pack.failed).to eq("c1" => 0, "c2" => 0)
+      end
+
+      it "counts a round every one of 2 critics failed" do
+        records.replace([failed_round(outcomes: %w[failed failed])])
+
+        expect(pack.failed).to eq("c1" => 1, "c2" => 1)
+      end
+
+      it "counts no failed round for a record written before outcomes were kept" do
+        records.replace([failed_round.except("outcomes")])
+
+        expect(pack.failed).to eq("c1" => 0, "c2" => 0)
+      end
+
+      it "names the ids that reached the limit and starts afresh after a verdict" do
+        records.replace([failed_round, failed_round])
+
+        expect(pack.failing(2)).to eq(%w[c1 c2])
+
+        records << verdict(issue_id: "c1") << verdict(issue_id: "c2")
+
+        expect(pack.failing(2)).to be_empty
+      end
+    end
+  end
+
   describe "documents the previous round read" do
     before do
       File.write(File.join(@home.path, "research.md"), "RESEARCH\n")

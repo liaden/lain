@@ -51,6 +51,8 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
 
   def critique = real_critique
 
+  def found(text) = Lain::Review::Critique::Findings.new(text, [])
+
   def real_critique
     lambda do |subject:, instructions:|
       Lain::Review::Critique.new(subject:, spawn:, window:, journal: [], slots: @slots, instructions:, critics:,
@@ -165,7 +167,7 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
     let(:long) { Array.new(40) { |index| "finding #{index}: #{"x" * 1024}" }.join("\n\n") }
     let(:reply) { long }
 
-    def critique = ->(**) { reply }
+    def critique = ->(**) { found(reply) }
 
     it "keeps whole paragraphs from the front and says what it withheld" do
       text = invoke(stage: "issue_plan", slug: "nyotes").text
@@ -243,7 +245,7 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
         "MUST-FIX:\n- epic.md: a gap\nMINOR:\n- none\nVERDICT: revise\n"
     end
 
-    def critique = ->(**) { findings }
+    def critique = ->(**) { found(findings) }
 
     def gated_plan(id)
       Lain::Epic::Submission.issue_plan(view: Lain::Epic::IssueView.read(@home, id), slug: "nyotes", issue_id: id)
@@ -472,6 +474,73 @@ RSpec.describe Lain::Tools::EpicReview, :seam do
         expect(results.map(&:error?)).to eq(([false] * 4) + [true])
         expect(results.last.text).to include("failed to return a verdict", "b2, b3", "epic_submit")
         expect(spawn.prompts.size).to eq(4)
+      end
+    end
+
+    def human_verdict(issue_id)
+      Lain::Epic::GateDecision.new(artifact_digest: "blake3:#{"a" * 64}", epic_slug: "nyotes", stage: "issue_plan",
+                                   verdict: Lain::Approval::Verdict::Deny.new(note: "fix b2"), answered_by: "human",
+                                   policy: "interactive", latency: 1.0, issue_id:).to_journal
+    end
+
+    context "when every reviewer's turn raises" do
+      let(:spawn) { EpicReviewSpecSpawn.new(reply: ->(*) { raise IOError, "connection reset" }) }
+
+      it "records each critic's outcome as failed" do
+        invoke(stage: "issue_plan", slug: "nyotes", wave: 2)
+
+        expect(journal.last.outcomes).to eq(["failed"])
+      end
+
+      it "refuses the third call after 2 failed rounds, naming the provider failure" do
+        results = Array.new(3) { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(results.map(&:error?)).to eq([false, false, true])
+        expect(results.last.text).to include("provider", "2 rounds", "b2, b3", "epic_submit", "human verdict")
+        expect(spawn.prompts.size).to eq(2)
+      end
+
+      it "runs again once a human has given a verdict on the ids" do
+        2.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+        answers << human_verdict("b2") << human_verdict("b3")
+
+        expect(invoke(stage: "issue_plan", slug: "nyotes", wave: 2)).not_to be_error
+        expect(spawn.prompts.size).to eq(3)
+      end
+    end
+
+    context "when a human's note follows 2 reviewed rounds" do
+      let(:spawn) { EpicReviewSpecSpawn.new(reply: ->(*) { "MUST-FIX:\n- none\nMINOR:\n- none\nVERDICT: approve" }) }
+
+      it "refuses before the verdict and reviews after it" do
+        2.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(invoke(stage: "issue_plan", slug: "nyotes", wave: 2)).to be_error
+
+        answers << human_verdict("b2") << human_verdict("b3")
+
+        expect(invoke(stage: "issue_plan", slug: "nyotes", wave: 2)).not_to be_error
+      end
+    end
+
+    context "when an injected critique returns a plain String" do
+      def critique = ->(**) { "no block here" }
+
+      it "counts as no failed round" do
+        3.times { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(journal.map(&:outcomes)).to eq([[]] * 3)
+      end
+    end
+
+    context "when the reviewers are refused rather than failed" do
+      let(:spawn) { EpicReviewSpecSpawn.new(reply: ->(*) { Lain::Tool::Result.error("provider refused") }) }
+
+      it "counts no failed round, so only the outer attempt ceiling stops it" do
+        results = Array.new(5) { invoke(stage: "issue_plan", slug: "nyotes", wave: 2) }
+
+        expect(journal.map(&:outcomes).uniq).to eq([["refused"]])
+        expect(results.map(&:error?)).to eq(([false] * 4) + [true])
       end
     end
 

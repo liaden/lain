@@ -3,7 +3,7 @@
 module Lain
   module Epic
     ReviewResult = Data.define(:id, :epic_slug, :stage, :read, :documents, :verdict, :must_fix, :minor,
-                               :verdict_lines)
+                               :verdict_lines, :outcomes)
 
     # What one epic_review round found, bound to the digests its reviewers
     # read, journaled as `epic_reviewed` and named by {#id}. epic_submit takes
@@ -19,6 +19,10 @@ module Lain
     # keeps its raw verdict lines, or a note of how many critics did not
     # answer, plus the findings of the critics who did. It keeps no verdict or
     # count, because one read off a block that did not parse would be a guess.
+    #
+    # `outcomes` is what each critic's own chunk recorded ({Review::Critique::OUTCOMES}),
+    # and is what says a round {#failed?}: the critics' words are merged into text
+    # that cannot tell a provider failure from a reviewer with nothing to say.
     class ReviewResult
       include Telemetry::Journalable
 
@@ -31,7 +35,7 @@ module Lain
       # Session files outlive the record's shape, and a fold that raised on an
       # older line would cost a chat its review and submit tools; anything not
       # named here still raises, so a torn record stays loud.
-      UNRECORDED = { "documents" => {} }.freeze
+      UNRECORDED = { "documents" => {}, "outcomes" => [] }.freeze
 
       UNKNOWN = "no review was journaled under %<id>s; pass the id epic_review returned"
 
@@ -42,11 +46,12 @@ module Lain
       # @param documents [Hash{String=>String}] each file the reviewers were shown to the digest of its shown text
       # @param clusters [Integer] how many clusters were critiqued, each critic of each owing 1 block
       # @param critics [Integer] how many critics read each cluster
+      # @param outcomes [Array<String>] each critic's recorded outcome, as {Review::Critique::Findings} carries them
       # @return [ReviewResult]
-      def self.parse(findings, epic_slug:, stage:, read:, clusters:, critics:, documents: {})
+      def self.parse(findings, epic_slug:, stage:, read:, clusters:, critics:, documents: {}, outcomes: [])
         # A child's reply is bytes nobody vouched for, and the id digests what is kept of it.
         findings = Utf8.legible(findings)
-        identified(epic_slug:, stage:, read:, documents:, **shape(findings, clusters, critics))
+        identified(epic_slug:, stage:, read:, documents:, outcomes:, **shape(findings, clusters, critics))
       end
 
       def self.shape(findings, clusters, critics)
@@ -95,15 +100,23 @@ module Lain
         found ? from_journal(found) : raise(Unknown, format(UNKNOWN, id:))
       end
 
-      def initialize(id:, epic_slug:, stage:, read:, verdict:, must_fix:, minor:, verdict_lines:, documents: {})
+      def initialize(id:, epic_slug:, stage:, read:, verdict:, must_fix:, minor:, verdict_lines:, documents: {},
+                     outcomes: [])
         super(id: -id.to_s, epic_slug: -epic_slug.to_s, stage: -stage.to_s, read: digests(read),
               documents: digests(documents), verdict: -verdict.to_s,
-              must_fix: interned(must_fix), minor: interned(minor), verdict_lines: interned(verdict_lines))
+              must_fix: interned(must_fix), minor: interned(minor), verdict_lines: interned(verdict_lines),
+              outcomes: interned(outcomes))
       end
 
       def journal_type = JOURNAL_TYPE
 
       def parsed? = verdict != UNPARSED
+
+      # Only a provider or transport failure on every critic, never a refusal or an empty chunk, and never a
+      # round recorded before outcomes were kept.
+      #
+      # @return [Boolean]
+      def failed? = !outcomes.empty? && outcomes.all?("failed")
 
       # @param submissions [Array<Submission>] what the gate asks about now
       # @return [Array<String>] the review's lines for the gate question, each finding whole on its own line

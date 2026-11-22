@@ -164,6 +164,23 @@ RSpec.describe Lain::Review::Critique do
       expect(second).not_to include("lib/a.rb")
     end
 
+    it "carries each critic's outcome, in the order the chunks were read, beside the findings" do
+      failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("the provider fell over") })
+      findings = described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768),
+                                     checkouts:, journal:, slots: @slots, instructions: "# critique").call
+
+      expect(findings.outcomes).to eq(%w[failed answered])
+      expect(findings.outcomes).to be_frozen
+      expect(findings).to include("the provider fell over")
+    end
+
+    it "wraps a plain String as findings with no outcomes, and passes findings through" do
+      found = described_class::Findings.new("words", %w[failed])
+
+      expect(described_class::Findings.of("plain")).to have_attributes(to_s: "plain", outcomes: [])
+      expect(described_class::Findings.of(found)).to equal(found)
+    end
+
     it "merges the findings in chunk order, naming every chunk" do
       findings = critique(changeset).call
 

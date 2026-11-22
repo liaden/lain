@@ -298,6 +298,32 @@ RSpec.describe Lain::Epic::ReviewResult do
       expect(described_class.from_journal(line).documents).to eq({})
     end
 
+    it "records each critic's outcome and reads it back" do
+      result = described_class.parse(merged(block), epic_slug: "demo", stage: "epic_plan", read: {}, clusters: 1,
+                                                    critics: 1, outcomes: %w[failed])
+      line = JSON.parse(JSON.generate(result.to_journal))
+
+      expect(line["outcomes"]).to eq(%w[failed])
+      expect(described_class.from_journal(line).outcomes).to eq(%w[failed])
+    end
+
+    it "reads a record written before outcomes were kept as having none, so no failed round" do
+      line = JSON.parse(JSON.generate(reviewed(merged(block)).to_journal)).except("outcomes")
+
+      expect(described_class.from_journal(line)).to have_attributes(outcomes: [], failed?: false)
+    end
+
+    it "is failed only when it has outcomes and every one is failed" do
+      failed = lambda do |*outcomes|
+        described_class.parse("x", epic_slug: "d", stage: "epic_plan", read: {}, clusters: 1, critics: 1,
+                                   outcomes:).failed?
+      end
+
+      expect([failed.call("failed"), failed.call("failed", "failed")]).to eq([true, true])
+      expect([failed.call, failed.call("refused"), failed.call("empty"), failed.call("failed", "answered")])
+        .to eq([false] * 4)
+    end
+
     it "is deeply frozen" do
       expect(Ractor.shareable?(reviewed(merged(block(must:, minor:, verdict: "revise"))))).to be(true)
     end

@@ -18,6 +18,11 @@ module Lain
       # block, or a provider that keeps refusing, would otherwise run forever.
       ATTEMPTS = 2 * ROUNDS
 
+      # A provider that is down answers no critic at all, and asking again
+      # inside the hour rarely changes that, so it is bounded apart from the
+      # rounds a reviewer can waste. Both counts restart at a human's verdict.
+      FAILED_ROUNDS = 2
+
       # Beside the documents under review, every reviewer reads whichever of
       # these the home holds.
       CONTEXT = { "epic_plan" => %w[research.md SPEC.md], "issue_plan" => %w[epic.md research.md SPEC.md] }.freeze
@@ -61,6 +66,11 @@ module Lain
       FAILING_SINCE = "epic_review's reviewers have failed to return a verdict in the %<later>d rounds after " \
                       "review %<id>s over %<ids>s of %<slug>s; run no more -- call epic_submit with review %<id>s, " \
                       "quote its open findings to the human and tell them the later reviewers kept failing:\n%<open>s"
+
+      PROVIDER_FAILED = "epic_review's reviewers could not be reached: the provider or transport failed every " \
+                        "critic in %<rounds>d rounds over %<ids>s of %<slug>s; run no more until the provider " \
+                        "failure is fixed or waited out, and a human verdict on these restarts the count -- call " \
+                        "epic_submit and tell the human the review could not run"
 
       UNREVIEWED = "\nnever reviewed: %<ids>s -- tell the human at the gate that no reviewer read these"
 
@@ -122,12 +132,13 @@ module Lain
         clusters = clusters(home, input)
         pack = pack(home, input)
         refuse_spent!(pack, input)
+        refuse_failing!(pack, input)
         refuse_exhausted!(pack, input)
         subject = subject(home, input, clusters, pack)
         findings = findings(input, subject)
         result = Epic::ReviewResult.parse(findings, epic_slug: input.slug, stage: input.stage, read: pack.diff.now,
                                                     documents: subject.shown, clusters: clusters.size,
-                                                    critics: @critics)
+                                                    critics: @critics, outcomes: Review::Critique::Findings.of(findings).outcomes)
         @homes.journal << result
         bounded(findings, input, format(HANDLE, id: result.id))
       end
@@ -139,6 +150,14 @@ module Lain
       def findings(input, subject)
         @critique.call(subject:, instructions: INSTRUCTIONS) ||
           raise(Review::Critique::Refused, format(NO_FINDINGS, stage: input.stage, slug: input.slug))
+      end
+
+      def refuse_failing!(pack, input)
+        failing = pack.failing(FAILED_ROUNDS)
+        return if failing.empty?
+
+        raise Review::Critique::Refused, format(PROVIDER_FAILED, rounds: FAILED_ROUNDS, ids: failing.join(", "),
+                                                                 slug: input.slug)
       end
 
       def refuse_spent!(pack, input)
@@ -163,7 +182,7 @@ module Lain
         latest = pack.settled.last
         return format(FAILING, attempts: ATTEMPTS, ids:, slug:) if latest.nil?
 
-        format(FAILING_SINCE, later: pack.prior.size - pack.prior.index(latest) - 1, id: latest.id, ids:, slug:,
+        format(FAILING_SINCE, later: pack.since.size - pack.since.index(latest) - 1, id: latest.id, ids:, slug:,
                               open: open_findings(latest))
       end
 

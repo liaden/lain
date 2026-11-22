@@ -66,6 +66,7 @@ module GateDecisionFoldDiscipline
     "lain/remote/agenda.rb" => "dates a parked item by its first decision's timestamp",
     "lain/bench/epic_metrics.rb" => "counts decisions per partition",
     "lain/journal/projection/waits.rb" => "closes a waiting item on a decision event, live or read back",
+    "lain/cli/epic_mount.rb" => "collects records for the review pack's count of rounds since a verdict",
     "lain/cli/epic_queue.rb" => "reads a deferral as the evidence a parked item has a record behind it",
     "lain/cli/session_journals.rb" => "names gate_decision among the records a torn or misfiled line refuses"
   }.freeze
