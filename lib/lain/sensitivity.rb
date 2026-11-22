@@ -74,7 +74,8 @@ module Lain
         system: "a system account or privilege file",
         account_database: "the system account database, which a confined agent may not read",
         checksums: "a lockfile of package checksums",
-        tainted: "a file a run that could read the project's secrets left holding one"
+        tainted: "a file a run that could read the project's secrets left holding one",
+        lain_records: "lain's own configuration or records"
       }.freeze
       REASONS = EXPLANATIONS.keys.freeze
       # Ordinary, or gated only by where a path is, never by what it is. A name, a shape or
@@ -91,7 +92,7 @@ module Lain
       # loses the entropy exemption its name would grant.
       REASON_RANK = Ractor.make_shareable(
         { denied: %i[account_database protected system configured],
-          gated: %i[named credential tainted configured protected malformed out_of_scope outside_project],
+          gated: %i[named credential tainted configured protected lain_records malformed out_of_scope outside_project],
           ordinary: %i[exempt none checksums] }
       )
       # Nested by level so a comparison builds no key.
@@ -936,6 +937,38 @@ module Lain
     PROJECT_RUBY = Rule.rooted(ProjectDir.join.freeze, level: :gated, reason: :protected, exact: false, name: "*.rb",
                                                        specimens: PROJECT_RUBY_FILES).freeze
 
+    # What lain keeps of every session and every human decision; a trust mark
+    # written by the model would grant it trust. The rest of the state home
+    # stays readable: the spill home, the epic home and a child's checkout are
+    # where an agent is sent to read.
+    OWN_RECORDS = %w[sessions queue trust improvements.ndjson].freeze
+
+    Records = Data.define(:state, :config)
+
+    # Lain's own records and the user's config, as gated rules, compiled once
+    # per {Paths} so a classifier built per call does not rebuild them.
+    class Records
+      # An empty key names the kind's own directory rather than one project's.
+      EVERY_KEY = ""
+
+      # @param paths [Paths] whose state and config homes hold them
+      # @param states [Array<String>] further spellings of the records, where
+      #   a link lands; this class makes no syscall, so a caller that may
+      #   resolves them
+      # @param files [Array<String>] further spellings of the user's config
+      # @return [Records]
+      def self.of(paths, states: [], files: [])
+        containers = OWN_RECORDS.map { |kind| paths.container(kind, key: EVERY_KEY) }
+        new(state: gated([*containers, *states]), config: gated([paths.user_config, *files]))
+      end
+
+      def self.gated(paths)
+        paths.map { Landing.lexical(_1) }.uniq.map { Rule.absolute(_1, level: :gated, reason: :lain_records) }.freeze
+      end
+
+      private_class_method :gated
+    end
+
     # The Null Object at the end of the chain, so no caller and no branch here
     # asks whether a rule was found.
     ORDINARY = Rule.new(level: :ordinary, reason: :none, under: nil, inside: nil, name: nil, except: nil)
@@ -1009,15 +1042,16 @@ module Lain
     # @param root [String, Pathname, nil] the project root a `/`-anchored
     #   pattern is read from. Optional only while `rules` anchors nothing
     #   there: a denial anchored on no root would match nothing, in silence.
-    def initialize(home:, cwd:, rules: Rules.empty, root: nil)
+    # @param records [Records, nil] lain's own config and records; nil reads
+    #   the XDG defaults under `home`
+    def initialize(home:, cwd:, rules: Rules.empty, root: nil, records: nil)
       @home = anchor(:home, home)
       @cwd = anchor(:cwd, cwd)
       self.class.check!(home: @home)
       anchored_root = project_root(root, rules)
       @anchors = Anchors.new(home: @home, root: anchored_root, base: anchored_root || @cwd)
 
-      @rules = [*DENIED, *project_ruby(@anchors), *rules.denied, *rules.exempt.map(&:exactly), *CREDENTIALS,
-                *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, *CHECKSUMS, ORDINARY].freeze
+      @rules = ordered(rules, records || Records.of(Paths.new(env: { "HOME" => @home })))
       @related = rules.related.map { |entry| lexical(entry).freeze }.freeze
       freeze
     end
@@ -1148,6 +1182,13 @@ module Lain
       return nil if "#{cwd.chomp(ROOT)}#{ROOT}".start_with?(prefix) || prefix.start_with?("#{cwd.chomp(ROOT)}#{ROOT}")
 
       @anchors.with(base: cwd)
+    end
+
+    # Lain's records and the user's config come before every exemption: the
+    # only exempt list is a project's, and a checkout must not open either.
+    def ordered(rules, records)
+      [*DENIED, *project_ruby(@anchors), *rules.denied, *records.state, *records.config, *rules.exempt.map(&:exactly),
+       *CREDENTIALS, *rules.exempt.select(&:homed?), *PERSONAL, *rules.gated, *CHECKSUMS, ORDINARY].freeze
     end
 
     def project_ruby(anchors) = anchors.root.nil? ? [] : [PROJECT_RUBY]

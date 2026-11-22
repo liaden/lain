@@ -12,6 +12,9 @@ module LandingCalls
   OWN_FILE = "lib/lain/landing.rb"
 
   LIVE_BY_DESIGN = {
+    "lib/lain/cli/wiring/board_build.rb" => [1, "the records gate resolves the session's real state and config " \
+                                                "homes once at launch; the disk it reads is the one the session " \
+                                                "writes, and the approval replay injects its own classifiers"],
     "lib/lain/confine/profile.rb" => [2, "bounded? sizes a live sandbox build, and the seal walks the disk " \
                                          "the sandbox mounts; the disk each reads is the one it confines"],
     "lib/lain/session.rb" => [1, "the checkout scope is built from the live project; the replay bench runs UNSCOPED"]

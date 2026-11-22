@@ -557,6 +557,127 @@ RSpec.describe Lain::Sensitivity do
     end
   end
 
+  describe "gated, lain's own configuration and records" do
+    let(:state) { "#{home}/.local/state/lain" }
+    let(:records) do
+      ["#{home}/.config/lain/config.rb", "#{state}/sessions", "#{state}/sessions/0a1b2c3d4e5f/20261121T1-1.ndjson",
+       "#{state}/queue/log.ndjson", "#{state}/queue/pending/x.json", "#{state}/trust/0a1b2c3d4e5f",
+       "#{state}/improvements.ndjson"]
+    end
+
+    it "gates the user config and each private state container" do
+      records.each do |path|
+        expect(classify(path)).to have_attributes(level: :gated, reason: :lain_records), path
+        expect(classify(path).explanation).to eq("lain's own configuration or records")
+      end
+    end
+
+    it "leaves the rest of the state and config homes readable, a container's look-alike name included" do
+      %W[#{state}/answers/0a1b2c3d4e5f/answer.md #{state}/epics/0a1b2c3d4e5f/epic.md
+         #{state}/worktrees/0a1b2c3d4e5f/child/lib/a.rb #{state}/sessions-old/x #{home}/.config/lain/notes.md]
+        .each { |path| expect(classify(path)).to be_ordinary, path }
+    end
+
+    it "is never approvable by an oracle" do
+      expect(classify("#{state}/sessions")).not_to be_oracle_approvable
+    end
+
+    # The only exempt list is a project's, so lifting either would let a
+    # checkout open the user's config or another session's records.
+    it "keeps the user config and a record gated when a project exemption names them" do
+      rules = Lain::Sensitivity::Rules.from({ "exempt" => %w[~/.config/lain/config.rb
+                                                             ~/.local/state/lain/sessions/x.ndjson] })
+      exempting = described_class.new(home:, cwd:, rules:)
+
+      expect(exempting.classify("#{home}/.config/lain/config.rb")).to have_attributes(reason: :lain_records)
+      expect(exempting.classify("#{state}/sessions/x.ndjson")).to have_attributes(reason: :lain_records)
+    end
+
+    it "still refuses an exemption of the project's own .lain config" do
+      expect { Lain::Sensitivity::Rules.from({ "exempt" => ["/.lain/config.rb"] }) }
+        .to raise_error(Lain::Config::Refusal, /exempt/)
+    end
+
+    context "with a state and config home reached through a symlink" do
+      def paths_at(state, conf)
+        Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => state, "XDG_CONFIG_HOME" => conf })
+      end
+
+      let(:resolved) do
+        Lain::Sensitivity::Records.of(paths_at("/srv/state-link", "/srv/conf-link"),
+                                      states: %w[/srv/state-real/lain/sessions],
+                                      files: %w[/srv/conf-real/lain/config.rb])
+      end
+      let(:sensitivity) { described_class.new(home:, cwd:, records: resolved) }
+
+      it "gates both spellings, as written and as resolved" do
+        %w[/srv/state-link/lain/sessions/x /srv/state-real/lain/sessions/x /srv/conf-link/lain/config.rb
+           /srv/conf-real/lain/config.rb].each do |path|
+          expect(classify(path)).to have_attributes(reason: :lain_records), path
+        end
+      end
+    end
+
+    context "with a non-default XDG state and config home" do
+      let(:paths) do
+        Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => "/srv/state", "XDG_CONFIG_HOME" => "/srv/conf" })
+      end
+      let(:sensitivity) { described_class.new(home:, cwd:, records: Lain::Sensitivity::Records.of(paths)) }
+
+      it "gates them where they really are" do
+        %w[/srv/state/lain/sessions /srv/state/lain/queue /srv/conf/lain/config.rb].each do |path|
+          expect(classify(path)).to have_attributes(level: :gated, reason: :lain_records), path
+        end
+      end
+
+      it "no longer gates the default spellings, which hold nothing of lain's" do
+        expect(classify("#{state}/sessions/x.ndjson")).to be_ordinary
+      end
+    end
+  end
+
+  describe "lain's own records through the policy, beside a read root", :seam do
+    around do |example|
+      Dir.mktmpdir do |dir|
+        @base = File.realpath(dir)
+        example.run
+      end
+    end
+
+    let(:root) { "#{@base}/proj" }
+    let(:home) { "#{@base}/home" }
+    let(:state) { "#{home}/.local/state/lain" }
+    let(:spill) { "#{state}/answers/0a1b2c3d4e5f" }
+    let(:policy) do
+      Lain::Sensitivity::Policy.new(sensitivity: described_class.new(home:, cwd: root, root:), home:, root:,
+                                    read_roots: [spill])
+    end
+
+    def gates?(path, name: "read_file", input: {})
+      call = Lain::Effect::ToolCall.new(tool_use_id: "t", name:, input: { "path" => path, **input })
+      policy.gates?(call, cwd: root)
+    end
+
+    before do
+      FileUtils.mkdir_p([root, spill, "#{state}/sessions/0a1b2c3d4e5f"])
+      File.write("#{spill}/answer.md", "x")
+      File.write("#{state}/sessions/0a1b2c3d4e5f/s.ndjson", "{}")
+    end
+
+    it "reads inside the read root, and a read root wins only for its own subtree" do
+      expect(gates?("#{spill}/answer.md")).to be(false)
+      expect(gates?("#{state}/sessions/0a1b2c3d4e5f/s.ndjson")).to be(true)
+    end
+
+    it "gates a read and a write of a trust mark for lain's records, never for its location alone" do
+      mark = "#{state}/trust/0a1b2c3d4e5f"
+
+      expect(gates?(mark)).to be(true)
+      expect(gates?(mark, name: "write_file", input: { "content" => "x" })).to be(true)
+      expect(policy.classify(mark).reason).to eq(:lain_records)
+    end
+  end
+
   describe "gated by a name or a directory that names a secret" do
     ["password.txt", "Password.TXT", "secrets/prod", ".secrets/x", "my-secrets/x", "credentials/x", "private/x",
      "auth/x", "api_key.txt", "secrets.toml", "passwords.txt", "secrets.yml", "secrets.yaml", "credentials.json",
@@ -1899,7 +2020,7 @@ end
 RSpec.describe Lain::Sensitivity::Verdict, "ordered by strictness" do
   emitted = [%i[denied account_database], %i[denied protected], %i[denied system], %i[denied configured],
              %i[gated named], %i[gated credential], %i[gated configured], %i[gated protected],
-             %i[gated malformed], %i[gated out_of_scope], %i[gated outside_project],
+             %i[gated lain_records], %i[gated malformed], %i[gated out_of_scope], %i[gated outside_project],
              %i[ordinary exempt], %i[ordinary none], %i[ordinary checksums]]
             .map { |level, reason| described_class.new(level:, reason:) }
 

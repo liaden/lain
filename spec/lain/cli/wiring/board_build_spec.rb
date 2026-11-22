@@ -232,6 +232,205 @@ RSpec.describe Lain::CLI::Wiring::BoardBuild do
     end
   end
 
+  describe "lain's own records under a non-default XDG home, on the production path" do
+    def xdg_paths(home, base)
+      Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => File.join(base, "state"),
+                             "XDG_CONFIG_HOME" => File.join(base, "conf") })
+    end
+
+    def in_xdg_tree
+      in_tree do |root, home|
+        base = File.dirname(root)
+        yield(root, xdg_paths(home, base), File.join(base, "state", "lain"), File.join(base, "conf", "lain"))
+      end
+    end
+
+    it "gates a read of them where the session's Paths really puts them" do
+      in_xdg_tree do |root, paths, state, conf|
+        board = described_class.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, model: "m",
+                                    toolset:, project: project_at(root), paths:,
+                                    judge: Lain::CLI::Switchboard::DEFERRING)
+
+        ["#{state}/sessions/0a1b2c3d4e5f/s.ndjson", "#{conf}/config.rb"].each do |path|
+          expect(board.sensitivity.classify(path).reason).to eq(:lain_records), path
+        end
+      end
+    end
+
+    it "gates a bash word naming them, at the session's cwd and in a leased checkout" do
+      in_xdg_tree do |root, paths, state, _conf|
+        project = project_at(root)
+        factory = described_class.classifiers(project:, paths:, table: described_class.rules(project:, paths:))
+        checkout = File.join(File.dirname(root), "checkout")
+        FileUtils.mkdir_p(checkout)
+        leased = factory.for(Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:))
+
+        [factory.call(root), leased.call(checkout)].each do |classifier|
+          expect(classifier.classify("#{state}/queue/log.ndjson").reason).to eq(:lain_records)
+        end
+      end
+    end
+
+    it "compiles the record rules once for the factory, not once per bash call or per lease" do
+      in_xdg_tree do |root, paths, _state, _conf|
+        allow(Lain::Sensitivity::Records).to receive(:of).and_call_original
+        project = project_at(root)
+        factory = described_class.classifiers(project:, paths:, table: described_class.rules(project:, paths:))
+        3.times { factory.call(root).classify("x") }
+        checkout = File.join(File.dirname(root), "checkout")
+        FileUtils.mkdir_p(checkout)
+        factory.for(Lain::WorkerEnv.new(cwd: checkout, env: {}, checkout:)).call(checkout).classify("x")
+
+        expect(Lain::Sensitivity::Records).to have_received(:of).once
+      end
+    end
+
+    context "with the state and config homes reached through a symlink" do
+      def in_linked_tree
+        in_tree do |root, home|
+          base = File.dirname(root)
+          FileUtils.mkdir_p(["#{base}/state-real/lain/sessions/0a1b2c3d4e5f", "#{base}/conf-real/lain"])
+          File.write("#{base}/state-real/lain/sessions/0a1b2c3d4e5f/s.ndjson", "{}")
+          File.write("#{base}/conf-real/lain/config.rb", "")
+          File.symlink("#{base}/state-real", "#{base}/state-link")
+          File.symlink("#{base}/conf-real", "#{base}/conf-link")
+          File.symlink("#{base}/state-real/lain/sessions", "#{root}/notes")
+          paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => "#{base}/state-link",
+                                         "XDG_CONFIG_HOME" => "#{base}/conf-link" })
+          yield(root, paths, base)
+        end
+      end
+
+      def board_at(root, paths)
+        described_class.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, model: "m",
+                            toolset:, project: project_at(root), paths:, judge: Lain::CLI::Switchboard::DEFERRING)
+      end
+
+      it "gates the real spelling for a read, and a project link into the sessions" do
+        in_linked_tree do |root, paths, base|
+          board = board_at(root, paths)
+
+          %W[#{base}/state-real/lain/sessions/0a1b2c3d4e5f/s.ndjson #{base}/conf-real/lain/config.rb].each do |path|
+            expect(board.sensitivity.classify(path).reason).to eq(:lain_records), path
+          end
+          expect(board.sensitivity.gates?(read_of("notes/0a1b2c3d4e5f/s.ndjson"), cwd: root)).to be(true)
+        end
+      end
+
+      it "gates the real spelling for a bash word" do
+        in_linked_tree do |root, paths, base|
+          project = project_at(root)
+          factory = described_class.classifiers(project:, paths:, table: described_class.rules(project:, paths:))
+
+          expect(factory.call(root).classify("#{base}/state-real/lain/sessions/x").reason).to eq(:lain_records)
+        end
+      end
+    end
+
+    context "with a link inside the state or config home" do
+      def board_in(env)
+        in_tree do |root, home|
+          base = File.dirname(root)
+          paths = Lain::Paths.new(env: { "HOME" => home }.merge(env.call(base)))
+          yield(base, described_class.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {},
+                                          model: "m", toolset:, project: project_at(root), paths:,
+                                          judge: Lain::CLI::Switchboard::DEFERRING))
+        end
+      end
+
+      def lain_record?(board, path) = board.sensitivity.classify(path).reason == :lain_records
+
+      it "gates each record under its real path when the lain folder itself is a link" do
+        linked = lambda do |base|
+          FileUtils.mkdir_p(%W[#{base}/state #{base}/data-lain/sessions/0a1b2c3d4e5f #{base}/data-lain/queue
+                               #{base}/data-lain/trust])
+          File.write("#{base}/data-lain/improvements.ndjson", "")
+          File.symlink("#{base}/data-lain", "#{base}/state/lain")
+          { "XDG_STATE_HOME" => "#{base}/state" }
+        end
+
+        board_in(linked) do |base, board|
+          %W[#{base}/data-lain/sessions/0a1b2c3d4e5f/s.ndjson #{base}/data-lain/queue/log.ndjson
+             #{base}/data-lain/trust/0a1b2c3d4e5f #{base}/data-lain/improvements.ndjson].each do |path|
+            expect(lain_record?(board, path)).to be(true), path
+          end
+        end
+      end
+
+      it "gates a container created after the session starts, under the linked lain folder's real path" do
+        linked = lambda do |base|
+          FileUtils.mkdir_p(%W[#{base}/state #{base}/data-lain])
+          File.symlink("#{base}/data-lain", "#{base}/state/lain")
+          { "XDG_STATE_HOME" => "#{base}/state" }
+        end
+
+        board_in(linked) do |base, board|
+          FileUtils.mkdir_p("#{base}/data-lain/queue")
+          File.write("#{base}/data-lain/queue/x", "")
+
+          expect(lain_record?(board, "#{base}/data-lain/queue/x")).to be(true)
+          expect(board.sensitivity.gates?(read_of("#{base}/data-lain/queue/x"), cwd: base)).to be(true)
+        end
+      end
+
+      it "gates config.rb under a linked lain config folder's real path before it exists" do
+        linked = lambda do |base|
+          FileUtils.mkdir_p(%W[#{base}/conf #{base}/dot-lain])
+          File.symlink("#{base}/dot-lain", "#{base}/conf/lain")
+          { "XDG_CONFIG_HOME" => "#{base}/conf" }
+        end
+
+        board_in(linked) { |base, board| expect(lain_record?(board, "#{base}/dot-lain/config.rb")).to be(true) }
+      end
+
+      it "refuses to build, naming the path, when a linked lain state folder cannot be read" do
+        in_tree do |root, home|
+          base = File.dirname(root)
+          FileUtils.mkdir_p(%W[#{base}/state #{base}/data-lain])
+          File.symlink("#{base}/data-lain", "#{base}/state/lain")
+          File.chmod(0o000, "#{base}/data-lain")
+          paths = Lain::Paths.new(env: { "HOME" => home, "XDG_STATE_HOME" => "#{base}/state" })
+
+          expect do
+            described_class.for(human: Lain::CLI::Human.new(kind: :terminal), chronicle:, options: {}, model: "m",
+                                toolset:, project: project_at(root), paths:, judge: Lain::CLI::Switchboard::DEFERRING)
+          end.to raise_error(described_class::UnreadableRecords, /#{Regexp.escape("#{base}/state/lain/")}/o)
+        ensure
+          File.chmod(0o755, "#{base}/data-lain")
+        end
+      end
+
+      it "gates the file a linked config.rb lands on" do
+        linked = lambda do |base|
+          FileUtils.mkdir_p(%W[#{base}/conf/lain #{base}/dotfiles])
+          File.write("#{base}/dotfiles/config.rb", "")
+          File.symlink("#{base}/dotfiles/config.rb", "#{base}/conf/lain/config.rb")
+          { "XDG_CONFIG_HOME" => "#{base}/conf" }
+        end
+
+        board_in(linked) { |base, board| expect(lain_record?(board, "#{base}/dotfiles/config.rb")).to be(true) }
+      end
+
+      it "gates a read or a write of config.rb under a linked config home's real path before it exists" do
+        linked = lambda do |base|
+          FileUtils.mkdir_p("#{base}/conf-real")
+          File.symlink("#{base}/conf-real", "#{base}/conf-link")
+          { "XDG_CONFIG_HOME" => "#{base}/conf-link" }
+        end
+
+        board_in(linked) do |base, board|
+          real = "#{base}/conf-real/lain/config.rb"
+          write = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "write_file",
+                                             input: { "path" => real, "content" => "x" })
+
+          expect(lain_record?(board, real)).to be(true)
+          expect(board.sensitivity.gates?(read_of(real), cwd: base)).to be(true)
+          expect(board.sensitivity.gates?(write, cwd: base)).to be(true)
+        end
+      end
+    end
+  end
+
   describe ".for" do
     it "hands the board a live policy rather than the Null" do
       in_tree do |root, home|

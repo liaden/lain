@@ -166,6 +166,14 @@ RSpec.describe Lain::CLI::Survey, :seam do
       expect(rendered).not_to include("[ ] vault/keys.md")
     end
 
+    # The survey's XDG state home is not the default under HOME, so only the
+    # session's own Paths can say where lain's records are.
+    it "classifies lain's records where the session's Paths puts them" do
+      classifier = command.instance_variable_get(:@sensitivity)
+
+      expect(classifier.classify(File.join(@state, "lain", "sessions", "x.ndjson")).reason).to eq(:lain_records)
+    end
+
     it "names a binary file and says that is why" do
       write("logo.png", "\x89PNG\r\n\x1A\n\x00\x00\x00\rIHDR")
 

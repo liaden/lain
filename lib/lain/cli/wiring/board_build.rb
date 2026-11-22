@@ -336,8 +336,45 @@ module Lain
         # @param table [Lain::Sensitivity::Rules] as on {.policy}
         # @return [Lain::Sensitivity]
         def classifier(project:, paths:, table:)
-          Lain::Sensitivity.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root)
+          Lain::Sensitivity.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
+                                records: records(paths))
         end
+
+        # A record or the user's config that lain cannot resolve, so its real
+        # path cannot be gated. Refused at launch rather than left ungated.
+        class UnreadableRecords < Lain::Error
+          def initialize(path, reason)
+            super("cannot resolve #{path}, so lain cannot gate where it really is: #{reason}")
+          end
+        end
+
+        # Resolved here, where IO is allowed, since the classifier makes no
+        # syscall: a symlinked state or config home is gated under its real path too.
+        #
+        # @param paths [Paths]
+        # @return [Lain::Sensitivity::Records]
+        # @raise [UnreadableRecords] when a record's real path cannot be resolved
+        def records(paths)
+          Lain::Sensitivity::Records.of(paths, states: real_containers(paths), files: [landing(paths.user_config)])
+        end
+
+        # Where each record lands, for a lain folder or a container that is itself a link.
+        def real_containers(paths)
+          Lain::Sensitivity::OWN_RECORDS.map do |kind|
+            landing(paths.container(kind, key: Lain::Sensitivity::Records::EVERY_KEY))
+          end
+        end
+
+        # Its deepest existing ancestor resolved, with the missing tail kept, so a
+        # container lain creates later is gated where it will land.
+        def landing(path)
+          Lain::Landing.eventual(path, cwd: File::SEPARATOR).first
+        rescue SystemCallError => e
+          raise UnreadableRecords.new(path, Lain::Error.reason_of(e))
+        rescue Lain::Landing::Dangling => e
+          raise UnreadableRecords.new(path, e.message)
+        end
+        private_class_method :real_containers, :landing
 
         # A THIRD reader of the same table, and the one the approval ladder
         # gets: a factory rather than a classifier, because a bash call names
@@ -356,7 +393,7 @@ module Lain
         # @param identity [Hash] as on {.for}
         # @return [Classifiers]
         def classifiers(project:, paths:, table:, facts: Lain::FileFacts::LIVE, reads: [], **identity)
-          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root,
+          Classifiers.new(home: paths.home, cwd: project.cwd, rules: table, root: project.root, paths:,
                           confinement: confinement(project:, paths:), facts:, reads:, **identity)
         end
 
@@ -625,13 +662,20 @@ module Lain
           # @param reads [Array<String>] absolute; the session's read roots, which
           #   an approved word may name as it names the root, though the call's
           #   cwd must still lie under the root
+          # @param paths [Lain::Paths, nil] where lain keeps its own config and
+          #   records, gated wherever the session's XDG homes put them; nil
+          #   reads the defaults under `home`
+          # @param records [Lain::Sensitivity::Records, nil] those rules already
+          #   compiled, which a leased factory reuses rather than rebuilds
           # @raise [ArgumentError] from {Lain::Sensitivity}, when `home`, `cwd`
           #   or a root is not something a classifier can be anchored on
           def initialize(home:, cwd:, rules: Lain::Sensitivity::Rules.empty, root: nil, also_rooted: [],
                          confinement: Lain::Approval::Root::NOWHERE,
                          resolver: Lain::Shell::Executable::Resolver::NULL,
-                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}), facts: Lain::FileFacts::LIVE, reads: [])
+                         worker_env: Lain::WorkerEnv.new(cwd:, env: {}), facts: Lain::FileFacts::LIVE, reads: [],
+                         paths: nil, records: paths && BoardBuild.records(paths))
             @home = home
+            @records = records
             @facts = facts
             @reads = reads.map { Lain::Approval::Root.new(_1) }.freeze
             @rules = rules
@@ -734,7 +778,7 @@ module Lain
             checkout = worker_env.checkout
             return self if checkout.nil?
 
-            Classifiers.new(home: @home, cwd: worker_env.cwd, rules: @rules, root: checkout,
+            Classifiers.new(home: @home, cwd: worker_env.cwd, rules: @rules, root: checkout, records: @records,
                             also_rooted: @roots.compact, confinement: leased_confinement(checkout),
                             resolver: @resolver, worker_env:, reads: @reads.map(&:to_path))
           end
@@ -751,7 +795,9 @@ module Lain
           end
 
           def classifier(cwd)
-            Strictest.of(@roots.map { |root| Lain::Sensitivity.new(home: @home, cwd:, rules: @rules, root:) })
+            Strictest.of(@roots.map do |root|
+              Lain::Sensitivity.new(home: @home, cwd:, rules: @rules, root:, records: @records)
+            end)
           end
 
           # A factory confining nothing -- a home root, a root nothing detected --
