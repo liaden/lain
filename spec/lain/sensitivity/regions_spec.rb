@@ -820,6 +820,53 @@ RSpec.describe Lain::Sensitivity::Regions do
       end
     end
 
+    # grep and rg put a path, a line number and a column before every line they print.
+    context "when an assignment sits on a grep or rg output line" do
+      let(:password) { %w[correct horse battery staple].join }
+
+      prefixes = ["5:", "5-", ".env:", "config/.env:5:", "config/app-prod.env-5-", ".env:5:1:", "HEAD:config/.env:5:",
+                  "HEAD:.env:", "a:b/.env:1:", "C:\\app\\.env:5:", ".env\0", ".env\x005:"]
+      ["DB_PASSWORD=%s", "export DB_SECRET=%s", "db_password: %s", "  db_password: %s"]
+        .product(prefixes).each do |shape, prefix|
+        it "finds the same region in #{"#{prefix}#{shape}".inspect} as without the prefix" do
+          line = format(shape, password)
+          plain = detect("#{line}\n").map { [_1.bytes, _1.reason] }
+
+          expect(plain).not_to be_empty
+          expect(detect("#{prefix}#{line}\n").map { [_1.bytes, _1.reason] }).to eq(plain)
+        end
+      end
+
+      it "leaves a line of code whose value holds a colon alone" do
+        expect(detect("x = 5:foo\n")).to be_empty
+      end
+
+      it "leaves a timestamped line naming a host alone" do
+        expect(detect("12:30:45 DB_HOST=localhost\n")).to be_empty
+      end
+
+      it "leaves a grepped line of code alone" do
+        expect(detect("lib/app.rb:12:    count = items.size\n")).to be_empty
+      end
+
+      # A `grep -rn =` over code would otherwise park ordinary code for a human; an indented
+      # `.env` line in grep output is the accepted miss, as it is in a diff.
+      it "leaves an indented assignment in grepped code alone" do
+        expect(detect("lib/app.rb:12:    session = build(x)\nlib/app.rb:13:  label = \"session_label_v2\"\n"))
+          .to be_empty
+      end
+
+      it "masks the value and not a copy of it in the path" do
+        line = "config/app/#{password}.env:5:DB_PASSWORD=#{password}\n"
+
+        expect(detect(line).map { [_1.start, _1.bytes] }).to eq([[line.rindex(password), password]])
+      end
+
+      it "masks the wider span when the line reads as an assignment both plain and grepped" do
+        expect(detect("password:DB_PASSWORD=#{password}\n").map(&:bytes)).to eq(["DB_PASSWORD=#{password}"])
+      end
+    end
+
     # Each prefix is joined to its value here, so no vendor-shaped literal sits in the tree.
     context "when a Stripe key has a short value" do
       %w[sk_live_ sk_test_ rk_live_ rk_test_ whsec_].each do |prefix|

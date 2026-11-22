@@ -215,6 +215,32 @@ RSpec.describe Lain::CLI::ToolGuard do
       end
     end
 
+    # grep prints the line number before the name, so only a shape that reads past it finds the value.
+    it "masks a dull password in a bash grep's numbered line", :seam do
+      password = %w[correct horse battery staple].join
+      Dir.mktmpdir do |made|
+        project = File.realpath(made)
+        File.write(File.join(project, ".env"), "APP=demo\nDB_PASSWORD=#{password}\n")
+        human = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "y", authority: :human)
+        board = ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(ruling: human))
+        bash = Lain::Tools::Bash.new
+        worker_env = Lain::WorkerEnv.new(cwd: project, env: { "PATH" => ENV.fetch("PATH") })
+        session = Lain::Session.new(worker_env:, root: project)
+        input = { "command" => "grep -n DB .env" }
+        effect = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input:)
+
+        content = Sync do
+          described_class.stack(chronicle, board).call({ effect:, tool: bash, context: session }) do |env|
+            invocation = Lain::Tool::Invocation.new(tool_use_id: "tu_1", context: env.fetch(:context))
+            env.merge(result: bash.call(env.fetch(:effect).input, invocation))
+          end.fetch(:result).content
+        end
+
+        expect(content).to include("2:DB_PASSWORD=<redacted:1>")
+        expect(content).not_to include(password)
+      end
+    end
+
     describe "a grep through the main agent's stack" do
       let(:token) { "ghp_aB3dE5gH7jK9mN1pQ3sT5vX7zA9cE1gI3kM5" }
 
@@ -227,10 +253,10 @@ RSpec.describe Lain::CLI::ToolGuard do
         end
       end
 
-      def grep_through(path, before: -> {}, after: -> {})
+      def grep_through(path, pattern: "ghp_", before: -> {}, after: -> {})
         stack = described_class.stack(chronicle, ToolGuardSpecBoard.new(policy: ToolGuardSpecPolicy.new(verdict: true)))
         call = Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "grep",
-                                          input: { "pattern" => "ghp_", "path" => path })
+                                          input: { "pattern" => pattern, "path" => path })
         session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: @project, env: {}))
         Sync do
           stack.call({ effect: call, tool: Lain::Tools::Grep.new, context: session }) do |passed|
@@ -266,6 +292,17 @@ RSpec.describe Lain::CLI::ToolGuard do
 
         expect(content.lines.first.chomp).to eq("config/settings.yml:2:  token: <redacted:1>")
         expect(content).not_to include(token, "withheld")
+      end
+
+      # The grep tool scans a row's text apart from its path and line number.
+      it "masks a dull password value behind the row's path and line number" do
+        password = %w[correct horse battery staple].join
+        File.write(File.join(@project, "config", "app.conf"), "name=app\nDB_PASSWORD=#{password}\n")
+
+        content = grep_through("config/app.conf", pattern: "DB_")
+
+        expect(content.lines.first.chomp).to eq("config/app.conf:2:DB_PASSWORD=<redacted:1>")
+        expect(content).not_to include(password)
       end
 
       # The file is a link to a credential file only while grep reads it, so

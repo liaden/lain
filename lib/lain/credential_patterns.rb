@@ -164,7 +164,17 @@ module Lain
     # with the name right after it, because an indented line in a diff is code,
     # whose `session = build(x)` would be masked on every changed line; an
     # indented `.env` line inside a diff is the accepted miss.
-    LINE_LEAD = '(?:[+-]{1,2}|[ \t]*)'
+    MARGIN = '(?:[+-]{1,2}|[ \t]*)'
+    # What grep, git grep and rg print before a line: `N:`, a context line's `N-`, `FILE:`,
+    # `FILE:N:`, `FILE-N-`, `FILE:N:COL:`, `REV:FILE:N:`, a drive's `C:\`, and `grep -Z`'s NUL
+    # after the file. It reads `key: value` as a file name too, which only over-masks.
+    PATH_SEGMENT = '[^\s:\x00]+'
+    GREP_LEAD = "(?:(?:[A-Za-z]:\\\\)?(?:#{PATH_SEGMENT}[:\\x00]){1,2}(?:\\d+:){0,2}|" \
+                "(?:#{PATH_SEGMENT}[:\\x00])?(?:#{PATH_SEGMENT}[-\\x00])?\\d+-)".freeze
+    # An indented `=` line in grep output is code far more often than a `.env`, and parking every
+    # `grep -rn =` for a human costs more than that miss; a `key: value` line keeps its indent.
+    LINE_LEAD = "(?:#{GREP_LEAD}|#{MARGIN})".freeze
+    INDENTED_LINE_LEAD = "(?:#{GREP_LEAD})?#{MARGIN}".freeze
 
     # Name-agnostic on purpose, and the reason these stay off the write side:
     # WRITE's assignment shape sees only a credential word holding a literal, and
@@ -186,7 +196,7 @@ module Lain
     ASSIGNMENTS = unreserved(
       "dotenv assignment" => /^#{LINE_LEAD}(?:export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*\S+/,
       "toml assignment" => /^#{LINE_LEAD}[A-Za-z_][A-Za-z0-9_-]*[ \t]*=[ \t]*(?:"[^"]*"|'[^']*')/,
-      "yaml assignment" => /^#{LINE_LEAD}[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/
+      "yaml assignment" => /^#{INDENTED_LINE_LEAD}[A-Za-z_][A-Za-z0-9_-]*:[ \t]+\S+/
     )
 
     # Credential files whose lines carry no `=` or `: ` for the assignment shapes

@@ -97,8 +97,11 @@ module Lain
       # one run swallow `API_KEY=` along with the secret, which then merged the
       # name back into the region the value-only rule exists to exclude.
       TOKEN = %r{[A-Za-z0-9+/_-]{20,}={0,2}}
-      ASSIGNMENT = /\A#{CredentialPatterns::LINE_LEAD}(?:export[ \t]+)?(?<key>[A-Za-z_][A-Za-z0-9_-]*)
-                    (?<separator>[ \t]*[:=][ \t]*)(?<value>\S.*)\z/mx
+      # A line read both as plain and as grep output, since `env:DB_PASSWORD=x` and
+      # `DB_PASSWORD=a:b:c` each split right only one way; either reading that qualifies is masked.
+      ASSIGNMENTS = [CredentialPatterns::MARGIN, CredentialPatterns::INDENTED_LINE_LEAD].map do |lead|
+        /\A#{lead}(?:export[ \t]+)?(?<key>[A-Za-z_][A-Za-z0-9_-]*)(?<separator>[ \t]*[:=][ \t]*)(?<value>\S.*)\z/m
+      end.freeze
       # Public-key material is public by definition, and its base64 blob is
       # exactly the run the entropy detector exists to find -- so every `.pub`,
       # known_hosts and authorized_keys file reported a region, `read_file`
@@ -179,7 +182,8 @@ module Lain
       # release decision rather than a refused write.
       PASSWORD_SHAPES = {
         "suffixed password key" =>
-          /^#{CredentialPatterns::LINE_LEAD}[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+["']?(?<value>[^\s"']+)/i,
+          /^#{CredentialPatterns::INDENTED_LINE_LEAD}[\w-]*[_-](?:password|passwd)[ \t]*:[ \t]+
+           ["']?(?<value>[^\s"']+)/ix,
         "mysql password flag" => /\b(?:mysql|mysqldump|mysqladmin|mariadb)\b[^\n]*?[ \t]-p(?<value>[^\s-]\S*)/
       }.freeze
 
@@ -406,15 +410,20 @@ module Lain
 
         def pattern_candidates(matches_by_shape, fields)
           CONTENT_SHAPES.each_key.flat_map do |name|
-            matches_by_shape[name].filter_map { |match| pattern_candidate(name, match, fields) }
+            matches_by_shape[name].flat_map { |match| pattern_candidate(name, match, fields) }
           end
         end
 
         def pattern_candidate(name, match, fields)
-          return value_group_span(match, name) if VALUED.include?(name)
+          return [value_group_span(match, name)].compact if VALUED.include?(name)
 
-          assignment = ASSIGNMENT.match(match[0])
-          return span(match.begin(0), match[0], name, :pattern) unless assignment
+          readings = ASSIGNMENTS.filter_map { _1.match(match[0]) }
+          return [span(match.begin(0), match[0], name, :pattern)] if readings.empty?
+
+          readings.filter_map { assignment_candidate(name, match, _1, fields) }
+        end
+
+        def assignment_candidate(name, match, assignment, fields)
           return nil if reference?(assignment[:value])
 
           candidate = value_span(match, assignment, name)
@@ -438,7 +447,7 @@ module Lain
         def value_span(match, assignment, name)
           value = assignment[:value]
           emitted = unquote(value)
-          within = match[0].byteindex(value, assignment[:key].bytesize) + value.byteindex(emitted)
+          within = assignment.byteoffset(:value).first + value.byteindex(emitted)
 
           span(match.begin(0) + within, emitted, name, :pattern)
         end
