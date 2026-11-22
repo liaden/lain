@@ -169,16 +169,37 @@ module Lain
       # @raise [NoTmpdir] when the TMPDIR cannot hold the workspace call's own dir
       # @raise [Profile::HomeTmpdir] when the TMPDIR a workspace call would write is home or holds it
       # @raise [Uncontainable] when a contained call needs a private network this box cannot make
-      def for(request)
-        ruling = request.ruling
-        return contained(request) if ruling.allow? && ruling.contained?
-        return workspace(request) if workspace?(ruling)
-        return reader(request) if composed?(ruling)
+      def for(request) = chosen(request, making: true) || (traceable? ? Profile::TRACED : Profile::NONE)
 
-        traceable? ? Profile::TRACED : Profile::NONE
+      # @param ruling [Approval::Escalation::Ruling]
+      # @return [Boolean] whether {#for} would choose a confined profile for it, so a caller asks {#unrunnable} only
+      #   of a request worth resolving
+      def confines?(ruling) = (ruling.allow? && ruling.contained?) || workspace?(ruling) || composed?(ruling)
+
+      # The same choice {#for} makes, without building the sandbox: no call dir is made, nor a build's target dir.
+      #
+      # @param request [Request] the request the run will carry, its grants included
+      # @param executables [Enumerable<Shell::Executable>] every program the call is read to exec; the request's own
+      #   by default
+      # @return [Array<String>] the resolved programs that profile would not run; none for a ruling it does not confine
+      # @raise [Overmasked, Uncontainable, Profile::Unsealable, Profile::HomeTmpdir, Profile::HoldsState,
+      #   Profile::Tampered] as {#for} does
+      def unrunnable(request, executables = request.executables)
+        profile = chosen(request, making: false)
+        return [] unless profile
+
+        executables.flat_map(&:programs).filter_map(&:realpath).uniq.reject { profile.runs?(_1) }
       end
 
       private
+
+      def chosen(request, making:)
+        ruling = request.ruling
+        return contained(request, making:) if ruling.allow? && ruling.contained?
+        return workspace(request, making:) if workspace?(ruling)
+
+        reader(request) if composed?(ruling)
+      end
 
       def composed?(ruling) = ruling.allow? && ruling.rule == Approval::ComposedTerm.rule_name
 
@@ -189,10 +210,10 @@ module Lain
 
       # Refused before a workspace call's dir is made. A build grant keeps its own ports, as {#networked} says,
       # except under a secrets answer, which reads the project's secrets only where the network is closed.
-      def contained(request)
+      def contained(request, making:)
         raise Uncontainable.new(profile: @workspace ? :workspace : :reader) unless @probe.supports?(:private_net)
 
-        profile = @workspace ? workspace(request) : reader(request).with(private_net: true)
+        profile = @workspace ? workspace(request, making:) : reader(request).with(private_net: true)
         request.ruling.unmasked? ? profile.with(unmasked: true) : profile
       end
 
@@ -211,13 +232,15 @@ module Lain
 
       # The call's dirs are made last, so a call refused on the way leaves none
       # behind, and never beneath the private /tmp, which is the call's own already.
-      def workspace(request)
+      def workspace(request, making:)
         root = root_of(request)
         related = @classifier.related
         lent = granted(lent(programmed(networked(ported(request)), request, root), related))
-        built_by_cargo(lent.read_dirs.first)
+        built_by_cargo(lent.read_dirs.first) if making
         profile = granted(lent.running(related.execs | ExecRules.project(root)))
-        Profile::SYSTEM_WRITE.include?(@tmpdir) ? profile : housed(profile.for_call(call_dir, granted: @tmpdir))
+        return profile if !making || Profile::SYSTEM_WRITE.include?(@tmpdir)
+
+        housed(profile.for_call(call_dir, granted: @tmpdir))
       end
 
       # lain-fence grants only a dir that exists when it starts, so a first `cargo test` could not run what it

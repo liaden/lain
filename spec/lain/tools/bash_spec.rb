@@ -1847,6 +1847,89 @@ RSpec.describe Lain::Tools::Bash do
         expect(confinement.grants.flat_map(&:programs).map(&:name)).to eq(%w[env ls])
       end
 
+      it "plans the request a run of the call hands its exec, its grants included" do
+        crate
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: ENV.to_h.merge("PATH" => path)))
+        planned = described_class.new(resolver:).planned_request({ "command" => "cd sub && cargo run" }, session,
+                                                                 tool_use_id: "tu_g")
+
+        ran = confinement_of("cd sub && cargo run", env: { "PATH" => path })
+        expect(planned.grants.map(&:realpath)).to eq(ran.grants.map(&:realpath))
+        expect(planned.executables.map(&:klass)).to eq(ran.executables.map(&:klass))
+      end
+
+      it "plans a run whose programs, on an allow, are the request's own, resolved once" do
+        bound = 0
+        counting = SimpleDelegator.new(resolver)
+        counting.define_singleton_method(:for) { |env| (bound += 1) && __getobj__.for(env) }
+        session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: {}))
+
+        request, programs = described_class.new(resolver: counting)
+                                           .planned_run({ "command" => "true && ls" }, session, tool_use_id: "tu_g")
+
+        expect(programs).to eq(request.executables)
+        expect(bound).to eq(1)
+      end
+
+      describe "the programs a shell given the string would exec" do
+        let(:tool) { plant(File.join(root, "home"), "tool") }
+
+        before { tool }
+
+        def planned(command, path: "/usr/bin:/bin")
+          home = File.join(root, "home")
+          env = ENV.to_h.merge("PATH" => path, "HOME" => home)
+          session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env:))
+          described_class.new(resolver:, verdict: Lain::Shell::Verdict.new(home:))
+                         .planned_run({ "command" => command }, session, tool_use_id: "tu_p").last
+                         .flat_map(&:programs).map(&:realpath)
+        end
+
+        it "names the program of a stage whose words expand", :aggregate_failures do
+          expect(planned("#{tool} --version \"$NOPE\"")).to include(tool)
+          expect(planned("~/bin/tool --version \"$NOPE\"")).to include(tool)
+        end
+
+        it "names a program run inside a substitution or a shell's -c script" do
+          expect(planned("echo $(#{tool})")).to include(tool)
+          expect(planned("bash -c '#{tool} --version'")).to include(tool)
+        end
+
+        it "names what the term arm resolves, which is what the run checks" do
+          expect(planned("true && ~/bin/tool --version")).to include(tool)
+        end
+
+        it "names a program a substitution runs wherever bash expands one", :aggregate_failures do
+          ["echo \"$(#{tool})\"", "cat <(#{tool})", "echo $( (#{tool}) )", "cat <<EOF\n$(#{tool})\nEOF"]
+            .each { expect(planned(_1)).to include(tool) }
+        end
+
+        it "names a shell's -c script whatever flags are clustered with the c", :aggregate_failures do
+          ["bash -e -c '#{tool}'", "bash -lc '#{tool}'", "sh -ec '#{tool}'", "bash -o pipefail -c '#{tool}'",
+           "sh +o errexit -c '#{tool}'"].each { expect(planned(_1)).to include(tool) }
+        end
+
+        it "names a program inside a subshell, a brace group and an if body", :aggregate_failures do
+          ["(#{tool} \"$NOPE\")", "{ #{tool} \"$NOPE\"; }", "if true; then #{tool} \"$NOPE\"; fi"]
+            .each { expect(planned(_1)).to include(tool) }
+        end
+
+        it "reads the home a ~ names from the worker env, never from this process's" do
+          session = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: root, env: { "PATH" => "/usr/bin:/bin" }))
+          planned = with_env("HOME" => File.join(root, "home")) do
+            described_class.new(resolver:).planned_run({ "command" => "~/bin/tool \"$NOPE\"" }, session,
+                                                       tool_use_id: "tu_h").last
+          end
+
+          expect(planned.flat_map(&:programs).map(&:realpath)).not_to include(tool)
+        end
+
+        it "names nothing from single-quoted text, which bash never runs", :aggregate_failures do
+          expect(planned("touch '$(#{tool})'")).not_to include(tool)
+          expect(planned("touch 'run `tool` first'", path: "#{File.dirname(tool)}:/usr/bin:/bin")).not_to include(tool)
+        end
+      end
+
       describe "a user program the session's PATH finds another program for", :seam do
         let(:outside) { File.realpath(Dir.mktmpdir) }
         let(:planted) { plant(File.join(outside, "home"), "ruby") }

@@ -1234,7 +1234,7 @@ RSpec.describe Lain::Exec::Sandboxed do
         store = "/nix/store/9w2l1vc5kq8x3m4p0z7r6y5t4s3a2b1c-app-1.0/config"
         capture = refused_by(Lain::Confine::Profiles::Overmasked.new(path: store, names: ["link"], profile: :workspace))
 
-        expect(capture.stderr).to include("lands on [path withheld]", "Stop and ask the human")
+        expect(capture.stderr).to include("lands on [path withheld]", "Stop and tell the human")
         expect(capture.stderr).not_to include(store)
         expect(recorded("sandbox").sole).to have_attributes(refused: [store])
       end
@@ -1245,7 +1245,7 @@ RSpec.describe Lain::Exec::Sandboxed do
                                                                      profile: :workspace))
 
         expect(capture.stderr).to include("the listed link [name withheld] lands on /srv/app/config",
-                                          "Stop and ask the human")
+                                          "Stop and tell the human")
         expect(capture.stderr).not_to include(name)
       end
 
@@ -1287,8 +1287,8 @@ RSpec.describe Lain::Exec::Sandboxed do
 
         expect(inner.calls).to be_empty
         expect(capture.exit_status).to eq(Lain::Shell::Pipeline::NOT_PERMITTED)
-        expect(capture.stderr).to start_with("lain: REFUSED").and include(" .envrc is a link", "Stop and ask the human",
-                                                                          "--confine reader")
+        expect(capture.stderr).to start_with("lain: REFUSED")
+          .and include(" .envrc is a link", "Stop and tell the human", "--confine reader")
         expect(capture.stderr).not_to include(root)
         expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: [link])
       end
@@ -1297,7 +1297,7 @@ RSpec.describe Lain::Exec::Sandboxed do
         capture = refused_by(Lain::Confine::Profile::HomeTmpdir.new(path: "/home/alice"))
 
         expect(inner.calls).to be_empty
-        expect(capture.stderr).to start_with("lain: REFUSED").and include("/home/alice", "Stop and ask the human")
+        expect(capture.stderr).to start_with("lain: REFUSED").and include("/home/alice", "Stop and tell the human")
         expect(recorded("sandbox").sole).to have_attributes(profile: :workspace, refused: ["/home/alice"])
       end
     end

@@ -519,7 +519,8 @@ module Lain
       def confined_ladder(label, triage:, rules:, asking:, otherwise:, root:)
         bottom = Unconfinable.new(asking:, otherwise:, root:)
         Approval::Escalation.new([triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), bottom],
-                                 journal: @journal, label:, containment: @containment, asking: uncontained_asking)
+                                 journal: @journal, label:, containment: @containment, asking: uncontained_asking,
+                                 tools: @toolset)
       end
 
       def faults = Approval::Escalation::Faults.new(@journal)
@@ -578,7 +579,8 @@ module Lain
       # everything is already stricter than any table could be.
       def build_ladder(triage:, rules:)
         unless @approvals
-          return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask", containment: @containment)
+          return Approval::Escalation.new([Unattended.new], journal: @journal, label: "ask",
+                                                            containment: @containment, tools: @toolset)
         end
 
         Approval::Escalation.for(queue: @approvals, tools: @toolset, journal: @journal, rules:, triage:,
@@ -592,7 +594,7 @@ module Lain
       def judged_ladder(triage:, rules:, classifiers:)
         Approval::Escalation.new(
           [triage, Approval::Escalation::Rules.new(rules:, tools: @toolset, faults:), judged(classifiers)],
-          journal: @journal, label: "auto", containment: @containment, asking: uncontained_asking
+          journal: @journal, label: "auto", containment: @containment, asking: uncontained_asking, tools: @toolset
         )
       end
 

@@ -42,20 +42,22 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
 
   after { listener.close }
 
-  def sandbox(workspace:, lineage: fresh, probe: self.probe)
+  def sandbox(workspace:, lineage: fresh, probe: self.probe, home: Dir.home)
     masks = Lain::Confine::MaskList.new(root: @root, policy: -> { policy }, taint: -> { taint })
-    Lain::Confine::Sandbox.new(root: @root, home: Dir.home, masks:, probe:, fence:, journal:, workspace:,
+    Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe:, fence:, journal:, workspace:,
                                tmpdir: File.join(@root, "tmp"), fresh: lineage, taint: -> { taint },
                                secrets: -> { known })
   end
 
-  def bash_over(exec)
-    Lain::Tools::Bash.new(exec:, journal:, resolver: Lain::Shell::Executable::Resolver.new(root: @root, fresh:))
+  # Over a verdict that reads a leading ~ as the session's home, as the session's own does.
+  def bash_over(exec, home: Dir.home)
+    Lain::Tools::Bash.new(exec:, journal:, resolver: Lain::Shell::Executable::Resolver.new(root: @root, fresh:),
+                          verdict: Lain::Shell::Verdict.new(home:))
   end
 
-  def worker_env
+  def worker_env(over = {})
     scrubbed = %w[BUNDLE_GEMFILE RUBYOPT BUNDLER_SETUP BUNDLE_BIN_PATH RUBYLIB].to_h { [_1, nil] }
-    Lain::WorkerEnv.new(cwd: @root, env: ENV.to_h.merge(scrubbed), checkout: @root)
+    Lain::WorkerEnv.new(cwd: @root, env: ENV.to_h.merge(scrubbed, over), checkout: @root)
   end
 
   # What the listener is sent, read until the planted value or the end arrives; it then answers, so curl
@@ -76,8 +78,8 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
   # The members a chat's guard stack puts around a gated bash call: the parse, the withhold layer, the gate.
   def layers_over(queue) = layers_ruled_by(Lain::Approval::Escalation::Surfaces.new(queue))
 
-  def layers_ruled_by(rung, **ladder)
-    ladder = Lain::Approval::Escalation.new([rung], journal:, **ladder)
+  def layers_ruled_by(rung, tools: Lain::Toolset.new([]), **ladder)
+    ladder = Lain::Approval::Escalation.new([rung], journal:, tools:, **ladder)
     [Lain::Middleware::ParsedCommand.new(home: Dir.home, scan: Lain::Approval::Disclosure::Scanner.over(policy)),
      Lain::Middleware::WithholdAutomaticOutput.new(bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new),
      Lain::Middleware::Gate.new(policy: ladder)]
@@ -600,6 +602,119 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
       expect(sandbox_records).to be_empty
       listener.close
       expect(sent.value).to eq("")
+    end
+
+    # Scenario: a program the sandbox hides parks with a reason instead of a dead-end refusal
+    describe "of a call whose sandbox cannot run its programs" do
+      around do |example|
+        Dir.mktmpdir("h") do |dir|
+          @home = File.realpath(dir)
+          program(File.join(@home, ".local/bin"), "uv 0.1")
+          program(File.join(@home, "shadow"), "another uv")
+          example.run
+        end
+      end
+
+      def program(dir, says)
+        FileUtils.mkdir_p(dir)
+        File.join(dir, "spec-uv").tap do |path|
+          File.write(path, "#!/bin/sh\necho #{says}\n")
+          File.chmod(0o755, path)
+        end
+      end
+
+      def tool = File.join(@home, ".local/bin/spec-uv")
+
+      # Named apart from any uv the box has, so only the planted shadow dir can shadow it.
+      def home_env(path = "/usr/bin:/bin") = worker_env("HOME" => @home, "PATH" => path)
+
+      def layers_parking_on(rung, queue, containment, toolset)
+        layers_ruled_by(rung, containment:, tools: toolset, asking: Lain::Approval::Escalation::Surfaces.new(queue))
+      end
+
+      # A read of the secret first, so the allow is contained.
+      def after_secret(command) = "cat deploy.conf > /dev/null && #{command}"
+
+      def human_answering(answer, seen)
+        Lain::Frontend::ApprovalPolicy.new(output: StringIO.new, reader: ->(asked) { (seen << asked) && answer })
+      end
+
+      def parked_and_answered(answer, command:, rung: judged, path: "/usr/bin:/bin", workspace: false)
+        box, exec = contained_where_possible(workspace:, home: @home)
+        queue = Lain::Approval::Parked::Queue.new(journal: Lain::Journal.new(io: decisions), timeout: 30,
+                                                  containment: box.containment)
+        seen = []
+        human = human_answering(answer, seen)
+        toolset = Lain::Toolset.new([bash_over(exec, home: @home)])
+        layers = layers_parking_on(rung, queue, box.containment, toolset)
+        context = Lain::Session.new(worker_env: home_env(path))
+        result = Sync do |task|
+          watching = task.async { human.watch(queue) }
+          dispatch_call("bash", { "command" => command }, toolset:, layers:, context:)
+        ensure
+          watching&.stop
+        end
+        [seen, result]
+      end
+
+      it "parks a judge's allow for a human, naming the program, and runs it unconfined on network" do
+        command = after_secret("~/.local/bin/spec-uv --version")
+        seen, result = parked_and_answered("network\n", command:, path: "#{@home}/shadow:/usr/bin:/bin")
+
+        expect(seen.sole.to_s).to include("this call's sandbox cannot run ~/.local/bin/spec-uv")
+        expect(result.content).to start_with("exit status: 0").and include("uv 0.1")
+        expect(sandbox_records.first).to have_attributes(profile: :traced, network: true)
+      end
+
+      it "parks nothing when the request grants the program, and runs it contained", :aggregate_failures do
+        [after_secret("~/.local/bin/spec-uv --version"), after_secret("true && #{tool} --version")].each do |command|
+          seen, result = parked_and_answered("n\n", command:)
+
+          expect(seen).to be_empty
+          expect(result.content).to start_with("exit status: 0").and include("uv 0.1", Lain::Exec::Sandboxed::CONTAINED)
+        end
+        expect(sandbox_records.map(&:profile)).to eq(%i[reader reader])
+      end
+
+      # Under the workspace profile bypass's allow is confined whatever the call reads, which a shell's opaque
+      # string leaves unsaid.
+      it "parks what a shell would run that the request earns no grant for", :aggregate_failures do
+        ["~/.local/bin/spec-uv --version \"$NOPE\"", "echo $(#{tool})", "bash -c '#{tool}'"].each do |command|
+          seen, = parked_and_answered("n\n", command:, rung: Lain::Approval::Escalation::Bypass.new, workspace: true)
+
+          expect(seen.sole.to_s).to include("this call's sandbox cannot run ~/.local/bin/spec-uv")
+        end
+        expect(sandbox_records).to be_empty
+      end
+
+      it "asks nothing of a box with no lain-fence, where nothing confines the call it would refuse" do
+        lame = Lain::Confine::Probe.new(fence: File.join(@home, "no-lain-fence"), journal:)
+        box = sandbox(workspace: true, probe: lame, home: @home)
+        exec = box.wrap(Lain::Exec::Local.new, requirer: "spec")
+        toolset = Lain::Toolset.new([bash_over(exec, home: @home)])
+        layers = layers_ruled_by(Lain::Approval::Escalation::Bypass.new, containment: box.containment, tools: toolset)
+
+        context = Lain::Session.new(worker_env: home_env)
+        command = "~/.local/bin/spec-uv --version \"$NOPE\""
+        result = Sync { dispatch_call("bash", { "command" => command }, toolset:, layers:, context:) }
+
+        expect(Lain::Confine::Sandbox.lacking(lame)).not_to be_empty
+        expect(result.content).to start_with("exit status: 0").and include("uv 0.1")
+      end
+
+      it "leaves a call its sandbox refuses to build for to the run, which says why, and journals no fault" do
+        File.write(File.join(@root, "shared-envrc"), "export X=1\n")
+        File.symlink("shared-envrc", File.join(@root, ".envrc"))
+        box, exec = contained_where_possible(workspace: true, home: @home)
+        toolset = Lain::Toolset.new([bash_over(exec, home: @home)])
+        layers = layers_ruled_by(Lain::Approval::Escalation::Bypass.new, containment: box.containment, tools: toolset)
+
+        context = Lain::Session.new(worker_env: home_env)
+        result = Sync { dispatch_call("bash", { "command" => "true" }, toolset:, layers:, context:) }
+
+        expect(result.content).to include(".envrc is a link inside the project", "Stop and tell the human")
+        expect(escalations.map { _1["faulted"] }).to all(be(false))
+      end
     end
   end
 end

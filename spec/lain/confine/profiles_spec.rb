@@ -1673,4 +1673,42 @@ RSpec.describe Lain::Confine::Profiles do
       end
     end
   end
+
+  describe "#unrunnable" do
+    let(:uv) { executable("uv", File.join(home, ".local/bin/uv"), :user) }
+    let(:judge) { Lain::Approval::Judged::NAME }
+
+    before do
+      answers["lain-fence"] = ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], private_net: false })}\n", true]
+    end
+
+    def contained = Lain::Approval::Escalation::Ruling.allow(rung: judge, because: "approved", contained: true)
+
+    it "names a program the call runs that its request earns no grant for", :seam do
+      expect(profiles.unrunnable(request(contained), [uv])).to eq([uv.realpath])
+    end
+
+    it "names nothing when the request grants every program the call runs", :seam do
+      expect(profiles.unrunnable(request(contained, executables: [uv]))).to eq([])
+      expect(profiles.unrunnable(request(contained, grants: [uv]), [uv])).to eq([])
+    end
+
+    it "names a program the contained profile refuses whatever the request carries, such as a fresh one", :seam do
+      written = uv.with(fresh: true)
+
+      expect(profiles.unrunnable(request(contained, executables: [written]))).to eq([written.realpath])
+    end
+
+    it "says whether a ruling earns a confined profile at all, which only then is worth a request" do
+      expect([profiles.confines?(contained), profiles.confines?(ruling(judge))]).to eq([true, false])
+    end
+
+    it "makes no call dir for a workspace call, since it builds no sandbox", :seam do
+      scratch = File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) }
+      workspace = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch)
+
+      expect(workspace.unrunnable(request(ruling(judge)), [uv])).to eq([uv.realpath])
+      expect(Dir.children(scratch)).to eq([])
+    end
+  end
 end

@@ -97,6 +97,37 @@ RSpec.describe Lain::CLI::Switchboard do
     end
   end
 
+  describe "an automatic allow whose sandbox cannot run its programs" do
+    # Answers only once the ladder has planned the call through its tools, so a ladder built without them is
+    # told nothing.
+    let(:hiding) do
+      Lain::Confine::Sandbox::Containment::Deferred.new(
+        unrunnable: ->(_ruling, &plan) { "cannot run ~/.local/bin/spec-uv" if plan.call }
+      ) { Lain::Confine::Sandbox::Containment::ABLE }
+    end
+    let(:call) do
+      Lain::Effect::ToolCall.new(tool_use_id: "tu_7", name: "bash", input: { "command" => "spec-uv --version" })
+    end
+
+    it "parks a judge's allow under auto, naming the program, as the auto ladder plans the call through its tools" do
+      board = switchboard(containment: hiding, judge: judge_answering(:approve))
+      board.mode_switch.switch(mode(:auto), surface: "tty")
+      context = Lain::Session.new(worker_env: Lain::WorkerEnv.new(cwd: Dir.pwd, env: {}))
+
+      parked = Sync do |task|
+        ruled = task.async { board.policy_switch.current.rule(call, context) }
+        task.with_timeout(1) { board.approvals.dequeue }.tap do |pending|
+          pending.deny(surface: "spec", authority: :human)
+          ruled.wait
+        end
+      end
+
+      expect(parked.reasons.map(&:to_s))
+        .to include(format(Lain::Approval::Escalation::UNRUNNABLE, who: "the judge",
+                                                                   why: "cannot run ~/.local/bin/spec-uv"))
+    end
+  end
+
   describe "a git read under auto approval" do
     def asked_under(**masking)
       Dir.mktmpdir("lain-switchboard-masked") do |dir|

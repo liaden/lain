@@ -314,10 +314,24 @@ module Lain
       # @raise [Tool::InvalidInput] when the input does not validate
       def planned_request(input, context, tool_use_id:)
         checked, decision = planned(input, context)
-        session = context || Session::Null.instance
-        cwd = session.worker_env.resolve(checked.cwd)
-        stages = resolve(checked.command, decision, session.worker_env.with(cwd:))
-        request_for(stages, session, cwd, argv_on(arm_for(decision), decision), tool_use_id:)
+        request_planned(checked, decision, planned_env(checked, context), context, tool_use_id:)
+      end
+
+      # The request a run of this call would hand its exec, as {#planned_request} builds it, and every program the
+      # run is read to exec: on an allow the request's own stages, which the run checks, and otherwise each program
+      # word a shell given the string would find, read into its substitutions and `sh -c` scripts, since a shell
+      # runs those too.
+      #
+      # @param input [Hash] the call's input, as the model sent it
+      # @param context [#worker_env, nil] the session the call runs in
+      # @param tool_use_id [String]
+      # @return [Array(Confine::Request, Array<Shell::Executable>)]
+      # @raise [Tool::InvalidInput] when the input does not validate
+      def planned_run(input, context, tool_use_id:)
+        checked, decision = planned(input, context)
+        worker_env = planned_env(checked, context)
+        request = request_planned(checked, decision, worker_env, context, tool_use_id:)
+        [request, decision.allow? ? request.executables : shell_runs(decision, worker_env)]
       end
 
       protected
@@ -416,10 +430,27 @@ module Lain
       end
 
       def journalled_confinement(parse, decision, invocation, cwd, arm)
-        parsed = parsed_stages(parse, decision, invocation, cwd)
+        parsed = parsed_stages(decision, session_of(invocation).worker_env.with(cwd:))
         stages = journal_resolution(parse.source, decision, invocation, cwd, arm, parsed:)
         request_for(stages, session_of(invocation), cwd, argv_on(arm, decision),
                     tool_use_id: invocation.tool_use_id, grants: parsed&.map(&:executable) || [])
+      end
+
+      def planned_env(checked, context)
+        worker_env = (context || Session::Null.instance).worker_env
+        worker_env.with(cwd: worker_env.resolve(checked.cwd))
+      end
+
+      def request_planned(checked, decision, worker_env, context, tool_use_id:)
+        stages = resolve(checked.command, decision, worker_env)
+        request_for(stages, context || Session::Null.instance, worker_env.cwd, argv_on(arm_for(decision), decision),
+                    tool_use_id:, grants: grants_of(decision, worker_env))
+      end
+
+      def shell_runs(decision, worker_env)
+        bound = @resolver.for(worker_env)
+        ShellRuns.new(home: worker_env.env["HOME"]).argvs(decision.parse.source)
+                 .map { bound.call(Shell::Term.of(_1)).first }
       end
 
       def planned(input, context)
@@ -443,11 +474,13 @@ module Lain
       end
 
       # Only a command the verdict did not allow reaches a shell that reads it, so only its stages are read.
-      def parsed_stages(parse, decision, invocation, cwd)
+      def parsed_stages(decision, worker_env)
         return if decision.allow?
 
-        Parsed.new(resolver: @resolver, worker_env: session_of(invocation).worker_env.with(cwd:)).of(parse)
+        Parsed.new(resolver: @resolver, worker_env:).of(decision.parse)
       end
+
+      def grants_of(decision, worker_env) = parsed_stages(decision, worker_env)&.map(&:executable) || []
 
       def recorded(parsed, stages, arm)
         entries = parsed&.map { Parsed.entry(_1) } || stages.map(&:to_journal)
@@ -628,6 +661,80 @@ module Lain
         def self.entry(stage) = stage.executable.to_journal.merge("basis" => BASIS, "cwd" => stage.directory)
       end
       private_constant :Parsed
+
+      # The argv of each program a shell given the string would exec: every stage's, each stage of every command
+      # and process substitution the grammar finds, which is how quoting and heredoc bodies are read as bash reads
+      # them, and each stage of a shell's `-c` script, to a depth of {DEPTH}. Leading assignments are dropped; a
+      # builtin, and a program word that still expands, name nothing a resolver could find.
+      class ShellRuns
+        DEPTH = 3
+        SHELLS = %w[sh bash dash zsh].freeze
+        SCRIPT_FLAG = /\A-[A-Za-z]*c[A-Za-z]*\z/
+        OPTION = /\A[-+]/
+        VALUED = /\A[-+][oO]\z/
+        ASSIGNMENT = /\A[A-Za-z_][A-Za-z0-9_]*=/
+        EXPANDS = /[$`*?\[{]/
+        QUOTED = /\A(['"])(.*)\1\z/m
+        SUBSTITUTIONS = "(command_substitution) @substitution\n(process_substitution) @substitution"
+        DELIMITERS = /\A(?:\$\(|[<>]\(|`)|(?:\)|`)\z/
+
+        # @param home [String, nil] what a leading `~/` names, as the shell's HOME
+        # @param parse [Shell::Parse]
+        def initialize(home:, parse: Shell::Parse.new)
+          @home = home
+          @parse = parse
+        end
+
+        # @param source [String] the command as bash reads it
+        # @param depth [Integer] how many nested scripts deep to read
+        # @return [Array<Array<String>>]
+        def argvs(source, depth = DEPTH)
+          stages = @parse.call(source).stages.flat_map { stage(_1.argv, depth) }
+          depth.zero? ? stages : [*stages, *substituted(source, depth - 1)]
+        end
+
+        private
+
+        # Every substitution, nested ones too, so each is read for its own stages only.
+        def substituted(source, depth)
+          return [] if source.bytesize > Shell::Parse::MAX_BYTES
+
+          Ext::TreeSitter.query(source, Shell::Parse::LANGUAGE, SUBSTITUTIONS)
+                         .flat_map { @parse.call(_1.fetch("text").gsub(DELIMITERS, "")).stages }
+                         .flat_map { stage(_1.argv, depth) }
+        end
+
+        def stage(argv, depth)
+          words = argv.drop_while { _1.match?(ASSIGNMENT) }.map { unquoted(_1) }
+          script = script_of(words) unless depth.zero?
+          [*own(words), *(script ? argvs(script, depth - 1) : [])]
+        end
+
+        def own(words)
+          program = words.first
+          return [] if program.nil? || program.match?(EXPANDS) || Shell::Verdict.builtin?(program)
+
+          [[homed(program), *words.drop(1)]]
+        end
+
+        # The word after the first option that clusters a `c`, as in `bash -e -c`, `bash -lc` and `sh -ec`, reading
+        # past an option such as `-o pipefail` or `+O extglob` that takes the next word as its value.
+        def script_of(words)
+          return unless SHELLS.include?(words.first.to_s.rpartition("/").last)
+
+          index = 1
+          while (option = words[index])&.match?(OPTION)
+            return words[index + 1] if option.match?(SCRIPT_FLAG)
+
+            index += option.match?(VALUED) ? 2 : 1
+          end
+        end
+
+        def homed(word) = @home && word.start_with?("~/") ? File.join(@home, word.delete_prefix("~/")) : word
+
+        def unquoted(word) = word.match(QUOTED)&.[](2) || word
+      end
+      private_constant :ShellRuns
 
       # A program reached by its path or under a PATH the command set shadows
       # nothing on the search that found it, so each user program is also

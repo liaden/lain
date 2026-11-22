@@ -231,7 +231,7 @@ RSpec.describe Lain::Approval::Escalation do
   let(:tools) { Lain::Toolset.new([bash, Lain::Tools::ReadFile.new]) }
   let(:effect) { Lain::Effect::ToolCall.new(tool_use_id: "tu_1", name: "bash", input: { "command" => "ls" }) }
 
-  def ladder(*rungs) = described_class.new(rungs, journal:)
+  def ladder(*rungs) = described_class.new(rungs, journal:, tools:)
 
   def rulings = journal_records(journal_io, "escalation")
 
@@ -242,6 +242,10 @@ RSpec.describe Lain::Approval::Escalation do
   end
 
   describe "the seam it presents" do
+    it "is built over the tools that plan its calls, so a ladder wired without them fails at once" do
+      expect { described_class.new([], journal:) }.to raise_error(ArgumentError, /tools/)
+    end
+
     it "answers a Boolean, so Middleware::Gate's two-valued policy duck is unchanged" do
       expect(ladder(EscalationSpecSupport::Fixed.new("rule", :allow)).call(effect, nil)).to be(true)
       expect(ladder(EscalationSpecSupport::Fixed.new("rule", :deny)).call(effect, nil)).to be(false)
@@ -613,7 +617,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     context "when confinement is off" do
       it "runs as before, and the record says nothing of containment" do
-        off = described_class.new([described_class::Bypass.new], journal:,
+        off = described_class.new([described_class::Bypass.new], journal:, tools:,
                                                                  containment: Lain::Confine::Sandbox::Containment::OFF)
 
         expect(off.rule(effect, context)).to have_attributes(verdict: :allow, contained?: false)
@@ -624,7 +628,7 @@ RSpec.describe Lain::Approval::Escalation do
         read = 0
         counting = Struct.new(:disclosure).new(secret)
         counting.define_singleton_method(:disclosure) { (read += 1) && super() }
-        off = described_class.new([described_class::Bypass.new], journal:,
+        off = described_class.new([described_class::Bypass.new], journal:, tools:,
                                                                  containment: Lain::Confine::Sandbox::Containment::OFF)
 
         off.rule(effect, counting)
@@ -639,7 +643,7 @@ RSpec.describe Lain::Approval::Escalation do
       it "parks it for the human where one is attended, who may answer network" do
         queue = Lain::Approval::Parked::Queue.new(journal:, timeout: 1, containment: unable)
         judge = EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow)
-        attended = described_class.new([judge], journal:, containment: unable,
+        attended = described_class.new([judge], journal:, tools:, containment: unable,
                                                 asking: described_class::Surfaces.new(queue))
         parked = nil
         ruling = Sync do |task|
@@ -662,7 +666,7 @@ RSpec.describe Lain::Approval::Escalation do
         replay = Struct.new(:name) do
           def call(*) = Lain::Approval::Escalation::Ruling.allow(rung: name, because: "replayed", authority: :human)
         end.new(Lain::Approval::Judged::NAME)
-        attended = described_class.new([replay], journal:, containment: unable,
+        attended = described_class.new([replay], journal:, tools:, containment: unable,
                                                  asking: described_class::Surfaces.new(queue))
         parked = Sync do |task|
           ruled = task.async { attended.rule(effect, context) }
@@ -677,7 +681,7 @@ RSpec.describe Lain::Approval::Escalation do
       end
 
       it "refuses it where nobody is attended, for good, and never tells the model a human could answer" do
-        unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)
+        unattended = described_class.new([described_class::Bypass.new], journal:, tools:, containment: unable)
 
         ruling = unattended.rule(effect, context)
 
@@ -690,7 +694,7 @@ RSpec.describe Lain::Approval::Escalation do
       it "reads nothing of a containment the box has yet to answer until a call needs it" do
         read = 0
         deferred = Lain::Confine::Sandbox::Containment::Deferred.new { (read += 1) && unable }
-        ladders = [described_class.new([described_class::Bypass.new], journal:, containment: deferred),
+        ladders = [described_class.new([described_class::Bypass.new], journal:, tools:, containment: deferred),
                    described_class.bypass(tools: Lain::Toolset.new([]), journal:, containment: deferred)]
 
         expect(read).to eq(0)
@@ -703,17 +707,147 @@ RSpec.describe Lain::Approval::Escalation do
         deferred = Lain::Confine::Sandbox::Containment::Deferred.new { (read += 1) && unable }
         plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
 
-        ruling = described_class.new([described_class::Bypass.new], journal:, containment: deferred).rule(effect, plain)
+        ruling = described_class.new([described_class::Bypass.new], journal:, tools:, containment: deferred)
+                                .rule(effect, plain)
 
         expect([ruling.verdict, read]).to eq([:allow, 0])
       end
 
       it "still runs a call that reads no secret" do
         plain = Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE)
-        unattended = described_class.new([described_class::Bypass.new], journal:, containment: unable)
+        unattended = described_class.new([described_class::Bypass.new], journal:, tools:, containment: unable)
 
         expect(unattended.rule(effect, plain)).to have_attributes(verdict: :allow, contained?: false)
       end
+    end
+  end
+
+  describe "an automatic allow whose sandbox cannot run its programs" do
+    let(:secret) { Lain::Approval::Disclosure.new(holdings: { ".env" => 1 }, sinks: [], unnameable: false) }
+    let(:context) { Struct.new(:disclosure).new(secret) }
+    let(:plain) { Struct.new(:disclosure).new(Lain::Approval::Disclosure::NONE) }
+    let(:asked) { [] }
+    let(:containment) do
+      asked = self.asked
+      Lain::Confine::Sandbox::Containment::Deferred.new(
+        unrunnable: ->(ruling, &plan) { (asked << [ruling, plan.call]) && "cannot run ~/.local/bin/uv" }
+      ) { Lain::Confine::Sandbox::Containment::ABLE }
+    end
+    # The bash tool's own plan of the call, which the sandbox is asked about.
+    let(:planner) do
+      Class.new do
+        def planned_run(input, _context, tool_use_id:)
+          [Lain::Confine::Request.new(ruling: Lain::Confine::Request::UNRULED, executables: [], cwd: input["command"],
+                                      root: nil, tool_use_id:), [:planned]]
+        end
+      end.new
+    end
+    let(:planning) { Struct.new(:tool) { def fetch(_name) = tool }.new(planner) }
+    let(:queue) { Lain::Approval::Parked::Queue.new(journal:, timeout: 1, containment:) }
+    let(:judge) { EscalationSpecSupport::Fixed.new(Lain::Approval::Judged::NAME, :allow) }
+    let(:held) { format(described_class::UNRUNNABLE, who: "the judge", why: "cannot run ~/.local/bin/uv") }
+
+    def attended(*rungs)
+      described_class.new(rungs, journal:, containment:, asking: described_class::Surfaces.new(queue),
+                                 tools: planning)
+    end
+
+    def parked_and_answered(ladder, verdict, context: self.context)
+      parked = nil
+      ruling = Sync do |task|
+        ruled = task.async { ladder.rule(effect, context) }
+        parked = task.with_timeout(1) { queue.dequeue }
+        parked.decide(verdict, surface: "tty", authority: :human)
+        task.with_timeout(1) { ruled.wait }
+      end
+      [parked, ruling]
+    end
+
+    # Scenario: a program the sandbox hides parks with a reason instead of a dead-end refusal
+    it "parks a contained call for a human, naming the program, and the human may answer network" do
+      parked, ruling = parked_and_answered(attended(judge), Lain::Approval::Verdict::Approve.new(network: true))
+
+      expect(held).to include("this call's sandbox cannot run ~/.local/bin/uv")
+      expect(parked.reasons.map(&:to_s)).to include(held)
+      expect(ruling).to have_attributes(verdict: :allow, authority: :human, network?: true, contained?: false)
+      expect(rulings.first).to include("rung" => Lain::Approval::Judged::NAME, "verdict" => "abstain",
+                                       "reason" => held)
+    end
+
+    it "asks the sandbox about the ruling it would run, contained when the call reads secrets" do
+      parked_and_answered(attended(judge), Lain::Approval::Verdict::Approve.new(network: true))
+
+      expect(asked.sole.first).to have_attributes(verdict: :allow, contained?: true)
+    end
+
+    it "plans the call through the tool that runs it, the request carrying the ruling it would run under" do
+      parked_and_answered(attended(judge), Lain::Approval::Verdict::Approve.new(network: true))
+
+      request, programs = asked.sole.last
+      expect(request).to have_attributes(tool_use_id: effect.tool_use_id, cwd: "ls")
+      expect(request.ruling).to have_attributes(verdict: :allow, contained?: true)
+      expect(programs).to eq([:planned])
+    end
+
+    it "plans nothing for a tool that does not plan its calls" do
+      unplanned = Struct.new(:nothing) { def fetch(_name) = Object.new }.new
+      ladder = described_class.new([judge], journal:, containment:, tools: unplanned,
+                                            asking: described_class::Surfaces.new(queue))
+
+      parked_and_answered(ladder, Lain::Approval::Verdict::Approve.new)
+
+      expect(asked.sole.last).to be_nil
+    end
+
+    it "parks a call that reads no secret too, since its sandbox would refuse it all the same" do
+      parked, ruling = parked_and_answered(attended(judge), Lain::Approval::Verdict::Approve.new, context: plain)
+
+      expect(parked.reasons.map(&:to_s)).to include(held)
+      expect(asked.sole.first).to have_attributes(contained?: false)
+      expect(ruling).to have_attributes(verdict: :allow, authority: :human)
+    end
+
+    it "lets a call its sandbox can run through, unparked" do
+      runs = Lain::Confine::Sandbox::Containment::Deferred.new(unrunnable: ->(*, &) {}) do
+        Lain::Confine::Sandbox::Containment::ABLE
+      end
+
+      ruling = described_class.new([judge], journal:, tools:, containment: runs).rule(effect, context)
+
+      expect(ruling).to have_attributes(verdict: :allow, contained?: true)
+    end
+
+    it "never asks again of a human's own allow, which a park already answered" do
+      replay = Struct.new(:name) do
+        def call(*) = Lain::Approval::Escalation::Ruling.allow(rung: name, because: "replayed", authority: :human)
+      end.new(Lain::Approval::Judged::NAME)
+
+      expect(attended(replay).rule(effect, plain)).to have_attributes(verdict: :allow, authority: :human)
+      expect(asked).to be_empty
+    end
+
+    it "asks nothing of a session that is not sandboxed" do
+      expect(ladder(judge).rule(effect, plain)).to have_attributes(verdict: :allow)
+    end
+
+    it "refuses it for good where nobody is attended, naming the program and never a human" do
+      ruling = described_class.new([described_class::Bypass.new], journal:, tools: planning, containment:)
+                              .rule(effect, plain)
+
+      expect(ruling).to have_attributes(verdict: :deny, final?: true, liftable?: false)
+      expect(ruling.told).to include("this call's sandbox cannot run ~/.local/bin/uv")
+      expect(ruling.told).not_to include("human", "network")
+    end
+  end
+
+  # Scenario: no refusal text tells the agent to ask a human who was never asked
+  describe "a refusal the sandbox returns to the agent" do
+    it "never tells the agent to ask a human from a refusal no park came before" do
+      unparked = %i[REFUSED UNCONTAINABLE UNCONFINED OVERMASKED UNSEALABLE HOLDS_STATE TAMPERED HOME_TMPDIR]
+                 .map { Lain::Exec::Sandboxed.const_get(_1) }
+
+      expect(unparked).to all(include("tell the human"))
+      expect(unparked.join).not_to include("ask the human")
     end
   end
 
@@ -910,7 +1044,7 @@ RSpec.describe Lain::Approval::Escalation do
 
     it "does not cost the turn when the journal itself is gone" do
       built = described_class.new([EscalationSpecSupport::Fixed.new("rules", :deny)],
-                                  journal: EscalationSpecSupport::DeadJournal.new)
+                                  journal: EscalationSpecSupport::DeadJournal.new, tools:)
 
       expect(built.call(effect, nil)).to be(false)
     end

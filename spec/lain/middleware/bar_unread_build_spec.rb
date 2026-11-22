@@ -211,7 +211,7 @@ RSpec.describe Lain::Middleware::BarUnreadBuild do
     end
 
     def stack(lineage: fresh)
-      ladder = Lain::Approval::Escalation.new([judge, human], journal:, label: "auto")
+      ladder = Lain::Approval::Escalation.new([judge, human], journal:, label: "auto", tools: Lain::Toolset.new([]))
       gate = Lain::Middleware::Gate.new(policy: ladder, journal:)
       over = Lain::Confine::Profiles::Granting.over(fresh: lineage, home:, root: project)
       Lain::Middleware::Stack.new([layer(:auto, lineage:, over:), gate])

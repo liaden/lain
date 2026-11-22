@@ -792,7 +792,7 @@ module Lain
       # @return [Inputs]
       def refusing(chronicle, inputs)
         ladder = Approval::Escalation.new([Unasked.new], journal: chronicle.instrumentation.journal,
-                                                         label: Unasked::NAME)
+                                                         label: Unasked::NAME, tools: Lain::Toolset.new([]))
         inputs.with(approvals: Unreleased, policy: ladder, policy_for: ->(_worker_env) { ladder }, denial: UNPARKED)
       end
 

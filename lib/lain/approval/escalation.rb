@@ -88,6 +88,7 @@ module Lain
       UNCONTAINED = "an automatic allow of a call that reads secrets was refused, as lain cannot contain it here"
       HELD = "%<who>s allowed this call, but it reads secrets and lain cannot run it contained here, so it is " \
              "not run automatically"
+      UNRUNNABLE = "%<who>s allowed this call, but this call's sandbox %<why>s, so it is not run automatically"
       UNSTATED = ::Lain::Confine::Sandbox::Containment::NONE
       EARLIER = "your earlier answer"
 
@@ -227,6 +228,17 @@ module Lain
         end
       end
 
+      # A call parked because its sandbox would refuse to run it, carrying the clause that says why, so a rung
+      # nobody attends can refuse it in those words.
+      class Unrunnable < Noted
+        attr_reader :unrunnable
+
+        def initialize(context, note, why)
+          super(context, note)
+          @unrunnable = why
+        end
+      end
+
       # The deterministic rungs first, the asking rung last.
       #
       # BOTH deterministic rungs are inert as this repo wires them TODAY -- a
@@ -258,7 +270,7 @@ module Lain
 
       def self.over(bottom, label:, tools:, journal:, rules:, triage:, containment:, asking:)
         new([triage, Rules.new(rules:, tools:, faults: Faults.new(journal)), bottom], journal:, label:, containment:,
-                                                                                      asking:)
+                                                                                      asking:, tools:)
       end
       private_class_method :over
 
@@ -277,10 +289,14 @@ module Lain
       #   contained; unstated leaves the sandbox to refuse one it cannot
       # @param asking [#call] where an automatic allow the session cannot contain goes: the human's queue
       #   where one is attended, else {Uncontained}, which refuses it
-      def initialize(rungs = [], journal:, label: TYPE, containment: UNSTATED, asking: Uncontained.new(containment))
+      # @param tools [#fetch] the live capability set, whose tool plans the request a run of the call will carry, so
+      #   the sandbox is asked about that request before an automatic allow settles
+      def initialize(rungs = [], journal:, tools:, label: TYPE, containment: UNSTATED,
+                     asking: Uncontained.new(containment))
         @label = -label.to_s
         @containment = containment
         @asking = asking
+        @tools = tools
         @rungs = rungs.to_a.freeze
         # Every rung names itself HERE, while the ladder is BUILT, and the
         # answer is KEPT: asking a rung for its name inside the rescue clause,
@@ -380,17 +396,44 @@ module Lain
       # predicates check every name they print, and it already runs on the reader profile with the masks,
       # so asking would scan on the hot path for nothing.
       def contained(ruling, effect, context)
-        return ruling unless containable?(ruling) && Disclosure.in(context).holds_secrets?
+        return ruling unless containable?(ruling)
+        return runnable(ruling, effect, context) unless Disclosure.in(context).holds_secrets?
         return uncontainable(ruling, effect, context) if @containment.state == :unable
 
-        ruling.with(contained: true)
+        runnable(ruling.with(contained: true), effect, context)
+      end
+
+      def uncontainable(ruling, effect, context)
+        held = format(HELD, who: allower(ruling))
+        parked(ruling, held, effect, Noted.new(context, Parked::Queue::Reason.own(held)))
+      end
+
+      # Asked before the allow settles, since the sandbox chooses its profile only once the call runs, where a
+      # refusal could send the model to a human nobody asked. A human's own allow is not asked: a park preceded it.
+      def runnable(ruling, effect, context)
+        why = @containment.unrunnable(ruling) { planned(ruling, effect, context) } unless ruling.human?
+        return ruling unless why
+
+        held = format(UNRUNNABLE, who: allower(ruling), why:)
+        parked(ruling, held, effect, Unrunnable.new(context, Parked::Queue::Reason.own(held), why))
+      end
+
+      # The request is the tool's own plan of its run, the ruling laid in, so the sandbox reads the grants the run
+      # will carry. A tool that plans nothing, an unknown one, and an input it refuses leave the sandbox nothing.
+      def planned(ruling, effect, context)
+        tool = @tools.fetch(effect.name)
+        return unless tool.respond_to?(:planned_run)
+
+        request, programs = tool.planned_run(effect.input, context, tool_use_id: effect.tool_use_id)
+        [request.with(ruling:), programs]
+      rescue Toolset::UnknownTool, Tool::InvalidInput
+        nil
       end
 
       # The rung's allow is journaled before the park, so the stream still says which rung would have run it.
-      def uncontainable(ruling, effect, context)
-        held = format(HELD, who: allower(ruling))
-        record(Ruling.abstain(rung: ruling.rung, because: held, rule: ruling.rule), effect, context)
-        @asking.call(effect, Noted.new(context, Parked::Queue::Reason.own(held)))
+      def parked(ruling, held, effect, noted)
+        record(Ruling.abstain(rung: ruling.rung, because: held, rule: ruling.rule), effect, noted)
+        @asking.call(effect, noted)
       end
 
       # A human's allow here is their earlier yes replayed, which the judge never gave.
@@ -956,6 +999,8 @@ module Lain
       class Uncontained
         NAME = "uncontained"
         TOLD = "not run: it reads secrets and lain cannot run it contained on this box (%<because>s)"
+        UNRUNNABLE = "an automatic allow was refused, as this call's sandbox %<why>s"
+        UNRUNNABLE_TOLD = "not run: this call's sandbox %<why>s, so retrying it will be refused again"
 
         # @param containment [Confine::Sandbox::Containment, Confine::Sandbox::Containment::Deferred]
         #   the session's, which says why it cannot contain
@@ -966,9 +1011,17 @@ module Lain
 
         def name = NAME
 
-        def call(_effect, _context)
+        def call(_effect, context)
+          return unrunnable(context.unrunnable) if context.respond_to?(:unrunnable)
+
           because = @containment.because
           Ruling.deny(rung: NAME, because: "#{UNCONTAINED}: #{because}", final: true, told: format(TOLD, because:))
+        end
+
+        private
+
+        def unrunnable(why)
+          Ruling.deny(rung: NAME, because: format(UNRUNNABLE, why:), final: true, told: format(UNRUNNABLE_TOLD, why:))
         end
       end
 

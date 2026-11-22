@@ -62,7 +62,7 @@ RSpec.describe "deny order" do
     let(:ladder) do
       rules = Lain::Approval::Escalation::Rules.new(rules: [remembered], tools: Lain::Toolset.new([Lain::Tools::Bash.new]),
                                                     faults: Lain::Approval::Escalation::Faults.new(journal))
-      Lain::Approval::Escalation.new([rules], journal:, label: "ask")
+      Lain::Approval::Escalation.new([rules], journal:, label: "ask", tools: Lain::Toolset.new([]))
     end
 
     it "rules a final deny from the rules rung" do

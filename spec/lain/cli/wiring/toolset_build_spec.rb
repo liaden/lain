@@ -1675,7 +1675,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       it "refuses the call in words that send the model to the human, and records the refusal" do
         chat
 
-        expect(told).to include("REFUSED", ".envrc is a link", "Stop and ask the human", "--confine reader")
+        expect(told).to include("REFUSED", ".envrc is a link", "Stop and tell the human", "--confine reader")
         expect(ran).to eq(["workspace", [{ "tool_use_id" => "tu_touch", "profile" => "workspace" }], false])
         expect(journal_records(io, "sandbox").sole).to include("refused" => [envrc])
       end

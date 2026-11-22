@@ -38,15 +38,15 @@ module Lain
       TRACE_FD = 3
       TRACE_GRACE = 0.5
       REFUSED = "REFUSED by the sandbox, not a transient error: this call may not run %<path>s. Retrying, or " \
-                "running the same effect another way, will be refused again. Stop and ask the human to approve " \
-                "it, then wait for the answer."
+                "running the same effect another way, will be refused again. Stop and tell the human which " \
+                "program the call needs, then wait for the answer."
       REFUSED_CONTAINED = "REFUSED by the sandbox, not a transient error: a human approved it contained, " \
                           "so this call may not run %<path>s there. Retrying, or running the same effect " \
                           "another way, will be refused again. Stop and tell the human they can answer network to " \
                           "run it unconfined, then wait for the answer."
       OVERMASKED = "REFUSED by the sandbox, not a transient error: the listed link %<names>s lands on %<path>s, " \
                    "which this call needs to run, so hiding it would leave the call nothing to run on. Retrying " \
-                   "will be refused again. Stop and ask the human to remove or rename the link, then wait for the " \
+                   "will be refused again. Stop and tell the human to remove or rename the link, then wait for the " \
                    "answer."
       NO_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s cannot hold this call's own " \
                   "dir, most often because it is gone. Retrying will be refused again. Stop and tell the human, " \
@@ -58,22 +58,22 @@ module Lain
       WITHHELD = { path: PATH_WITHHELD, names: "[name withheld]", files: "[names withheld]" }.freeze
       UNSEALABLE = "REFUSED by the sandbox, not a transient error: %<link>s is a link inside the project, so the " \
                    "file it leads to could be repointed and run later. Retrying, or running the same effect another " \
-                   "way, will be refused again. Stop and ask the human to replace the link with the file, or to " \
+                   "way, will be refused again. Stop and tell the human to replace the link with the file, or to " \
                    "restart with --confine reader, then wait for the answer."
       HOLDS_STATE = "REFUSED by the sandbox, not a transient error: the project root %<path>s holds lain's own " \
                     "state, where the lease records lain trusts live, so a write there could forge one. Retrying " \
-                    "will be refused again. Stop and ask the human to run lain from the project itself, then wait " \
+                    "will be refused again. Stop and tell the human to run lain from the project itself, then wait " \
                     "for the answer."
       TAMPERED = "REFUSED by the sandbox, not a transient error: the git dir of the checkout %<path>s holds a name " \
                  "that redirects git, so lain runs nothing there. Retrying will be refused again. Stop and tell the " \
                  "human, then wait for the answer."
       HOME_TMPDIR = "REFUSED by the sandbox, not a transient error: the TMPDIR %<path>s is home or holds it, so a " \
-                    "write there would reach home. Retrying will be refused again. Stop and ask the human to set " \
+                    "write there would reach home. Retrying will be refused again. Stop and tell the human to set " \
                     "TMPDIR elsewhere and restart, then wait for the answer."
       UNCONTAINABLE = "REFUSED by the sandbox, not a transient error: this call was approved, but it reads " \
                       "secrets and this box cannot give it a private network, so it cannot run contained. Retrying " \
-                      "will be refused again. Stop and ask the human to approve it with network, which runs it " \
-                      "unconfined, then wait for the answer."
+                      "will be refused again. Stop and tell the human that only an approval with network, which runs " \
+                      "it unconfined, can run it, then wait for the answer."
       UNCONFINED = "REFUSED by the sandbox, not a transient error: this chat runs under --human remote, where a " \
                    "phone answers its calls, so a bash call runs outside the sandbox only when a human approved it " \
                    "and lain can trace it, and this call would run outside it otherwise. Retrying will be refused " \

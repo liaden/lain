@@ -4,8 +4,8 @@ require "stringio"
 
 RSpec.describe Lain::Mode::Resolution do
   let(:journal) { Lain::Journal.new(io: StringIO.new) }
-  let(:asking) { Lain::Approval::Escalation.new([], journal:, label: "ask") }
-  let(:bypassing) { Lain::Approval::Escalation.new([], journal:, label: "bypass") }
+  let(:asking) { Lain::Approval::Escalation.new([], journal:, label: "ask", tools: Lain::Toolset.new([])) }
+  let(:bypassing) { Lain::Approval::Escalation.new([], journal:, label: "bypass", tools: Lain::Toolset.new([])) }
   let(:ladders) { { ask: asking, bypass: bypassing } }
 
   def resolve(**mode) = described_class.for(mode: Lain::Mode.new(**mode), ladders:)

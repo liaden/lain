@@ -392,7 +392,7 @@ RSpec.describe Lain::Approval::Judged do
   end
 
   it "does not let an automatic surface's allow stand over a judge fault" do
-    ladder = Lain::Approval::Escalation.new([rung(answering { raise IOError, "down" })], journal:)
+    ladder = Lain::Approval::Escalation.new([rung(answering { raise IOError, "down" })], journal:, tools: Lain::Toolset.new([]))
 
     ruling = Sync do |task|
       settled = task.async { ladder.rule(bash, context) }
@@ -1467,7 +1467,7 @@ RSpec.describe Lain::Approval::Judged do
     def laddered(scripted, **rest)
       ladder_journal = Lain::Journal.new(io: ladder_io)
       Lain::Approval::Escalation.new([rung(scripted, journal: ladder_journal, **rest)], journal: ladder_journal,
-                                                                                        label: "auto")
+                                                                                        label: "auto", tools: Lain::Toolset.new([]))
     end
 
     def refusing = ->(*) { Lain::Approval::Escalation::Ruling.deny(rung: "x", because: "y") }
@@ -1535,7 +1535,7 @@ RSpec.describe Lain::Approval::Judged do
       scripted = answering("deny")
       ladder_journal = Lain::Journal.new(io: ladder_io)
       ladder = Lain::Approval::Escalation.new([faulty, rung(scripted, journal: ladder_journal)],
-                                              journal: ladder_journal, label: "auto")
+                                              journal: ladder_journal, label: "auto", tools: Lain::Toolset.new([]))
 
       ruling = Sync { ladder.call(bash, context) }
 
@@ -1590,7 +1590,8 @@ RSpec.describe Lain::Approval::Judged do
       judge = ->(**) { :approve }
       judged = described_class.new(judge:, policy:, asking: Lain::Approval::Judged::Unattended.new,
                                    journal: Lain::Journal.new(io: ladder_io))
-      ladder = Lain::Approval::Escalation.new([judged], journal: Lain::Journal.new(io: ladder_io), label: "auto")
+      ladder = Lain::Approval::Escalation.new([judged], journal: Lain::Journal.new(io: ladder_io), label: "auto",
+                                                        tools: Lain::Toolset.new([]))
 
       Sync { ladder.call(bash, context) }
 

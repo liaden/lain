@@ -122,6 +122,10 @@ module Lain
         # @return [Containment] this one, with the ports that call could be granted where the session grants any
         def over(argvs, **) = able? && grants ? with(ports: Profiles.grantable_ports(argvs)) : self
 
+        # @param _ruling [Approval::Escalation::Ruling]
+        # @return [nil] a value knows no sandbox, so it says nothing of what one would refuse to run, and plans nothing
+        def unrunnable(_ruling) = nil
+
         # @return [Boolean] whether a plain approval of a secret-bearing call is meant to run contained
         def confines? = %i[able unable].include?(state)
 
@@ -167,9 +171,12 @@ module Lain
 
           # @param unmasks [#call] `(root)` to the files a secrets answer would lift the masks from under that root,
           #   relative and in order; read on each park, since the project's files change
+          # @param unrunnable [#call] `(ruling, &plan)` to why the call's sandbox would refuse to run it, or nil;
+          #   asked before an automatic allow settles, and never of the box's own answer
           # @yieldreturn [Containment] able or unable, asked for once
-          def initialize(unmasks: ->(_root) { [] }, &answer)
+          def initialize(unmasks: ->(_root) { [] }, unrunnable: ->(_ruling, &) {}, &answer)
             @unmasks = unmasks
+            @unrunnable = unrunnable
             @answer = answer
             @mutex = Mutex.new
           end
@@ -184,6 +191,12 @@ module Lain
             over = resolved.over(argvs)
             over.able? ? over.with(unmasks: @unmasks.call(root)) : over
           end
+
+          # @param ruling [Approval::Escalation::Ruling] the allow the call would run under
+          # @yieldreturn [Array(Request, Array<Shell::Executable>), nil] the request the run will carry, and every
+          #   program the call is read to exec; nil when the tool plans none
+          # @return [String, nil] the clause saying what the call's sandbox cannot do, such as "cannot run ~/bin/x"
+          def unrunnable(ruling, &plan) = @unrunnable.call(ruling, &plan)
 
           private
 
@@ -281,7 +294,10 @@ module Lain
 
       # @return [Containment::Deferred] whether this box can run a call contained, with no network beyond a build
       #   tool's ports
-      def containment = Containment::Deferred.new(unmasks: ->(root) { readable(root) }) { contained_here }
+      def containment
+        Containment::Deferred.new(unmasks: ->(root) { readable(root) },
+                                  unrunnable: ->(ruling, &plan) { unrunnable(ruling, &plan) }) { contained_here }
+      end
 
       # Starts the mask classification of a sandbox that was built.
       #
@@ -303,6 +319,30 @@ module Lain
       end
 
       def readable(root) = Profiles.readable(@masks.masks, root || @root)
+
+      # Planned only for a ruling that earns a confined profile, since a plan resolves every program. A sandbox that
+      # wrapped no exec, as on a box lacking a layer, runs the call bare, so nothing would refuse it; the probe's
+      # answer is read once, so a box cannot lose a layer after the wrap.
+      # A profile that cannot be built is refused by the run in its own words and journaled there, so it is left to
+      # the run rather than made a fault. Named in the clause, since naming them as this class loads loops
+      # back through the approval ladder, which reads this class's own constants.
+      def unrunnable(ruling)
+        return if !@built || !checking.confines?(ruling)
+
+        request, programs = yield
+        refused = request ? checking.unrunnable(request, programs) : []
+        "cannot run #{Containment.listed(refused.map { shown(_1) })}" unless refused.empty?
+      rescue Profiles::Overmasked, Profiles::Uncontainable, Profile::Unsealable, Profile::HomeTmpdir,
+             Profile::HoldsState, Profile::Tampered
+        nil
+      end
+
+      def shown(path) = path.start_with?("#{@home}/") ? File.join("~", path.delete_prefix("#{@home}/")) : path
+
+      def checking
+        @checking ||= Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks,
+                                   **@profiling)
+      end
 
       def profiles
         built = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks, **@profiling)
