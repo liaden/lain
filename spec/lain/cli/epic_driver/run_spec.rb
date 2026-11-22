@@ -1049,7 +1049,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
   # and released by its retirement, and nothing it did is put before a gate.
   describe "a stop by the human" do
     def mid_turn_run(ids, reports:, width: 1, gate: RunSpecGate.new, retiring: RunSpecMidTurnSupervisor,
-                     subjects: plans, landing: nil, on_fold: -> {})
+                     subjects: plans, landing: nil, on_fold: -> {}, keeping: described_class::Unkept)
       statuses = ids.to_h { |id| [id, "in_flight"] }
       live = { now: 0 }
       supervisor = retiring.new(reports, live)
@@ -1058,7 +1058,7 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       folds = progress_over(ids.map { |id| issue(id) }, statuses)
       progress = -> { on_fold.call.then { folds.call } }
       run = described_class.new(slug: "demo", progress:, plans: subjects, actors:, supervisor:, gate:, landing:,
-                                width:, red_only: described_class::Identical)
+                                width:, red_only: described_class::Identical, keeping:)
       [run, actors, landing, supervisor]
     end
 
@@ -1094,12 +1094,35 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
 
     # The next run's attempt is the first whose anchor is absent, so it cuts
     # afresh: the human has to be told where the stopped work is kept.
-    it "names the ref the stopped work is kept on, and that the next run starts a fresh attempt" do
+    it "names the ref the stopped work is kept on" do
       run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") })
 
       result, = stopped_when(run, -> { supervisor.retiring? })
 
-      expect(reason_for(result, "a")).to include("refs/lain/worker/sha-a").and include("fresh attempt")
+      expect(reason_for(result, "a")).to include("refs/lain/worker/sha-a")
+    end
+
+    it "says the next run continues from the branch tip, names the kept tree, not the conversation" do
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") },
+                                                               keeping: ->(_row) { ["/work/wt-abc123"] })
+
+      result, = stopped_when(run, -> { supervisor.retiring? })
+      reason = reason_for(result, "a")
+
+      expect(reason).to include("continues from the tip of lain/issue/demo/a")
+      expect(reason).to include("/work/wt-abc123").and include("read-only")
+      expect(reason).to include("conversation does not carry")
+      expect(reason).not_to include("fresh attempt")
+    end
+
+    it "names no tree when the stopped checkout kept none" do
+      run, _actors, _landing, supervisor = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") })
+
+      result, = stopped_when(run, -> { supervisor.retiring? })
+
+      expect(reason_for(result, "a")).to include("continues from the tip of lain/issue/demo/a")
+        .and include("conversation does not carry")
+      expect(reason_for(result, "a")).not_to include("uncommitted")
     end
 
     it "says the human stopped the run when the stop lands in a launch that is then refused" do
@@ -1178,6 +1201,22 @@ RSpec.describe Lain::CLI::EpicDriver::Run do
       expect(reason_for(result, "a")).to include("abandoned").and include("sha-a")
       expect(reason_for(result, "a")).not_to include("ungated")
       expect(result.landed).to be_empty
+    end
+
+    it "says an abandoned gate's branch carries forward, with its kept tree, and the conversation does not" do
+      run = nil
+      gate = lambda do |_issue_id, **|
+        run.stop
+        true
+      end
+      run, = mid_turn_run(%w[a], reports: { "a" => anchored("sha-a") }, gate:, retiring: RunSpecSupervisor,
+                                 keeping: ->(_row) { ["/work/wt-abc123"] })
+
+      reason = reason_for(run.call, "a")
+
+      expect(reason).to include("continues from the tip of lain/issue/demo/a").and include("/work/wt-abc123")
+      expect(reason).to include("conversation does not carry")
+      expect(reason).not_to include("fresh attempt")
     end
 
     # Stopped before its first commit, an actor anchors only the red step's:

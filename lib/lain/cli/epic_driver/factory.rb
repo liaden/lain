@@ -561,7 +561,13 @@ module Lain
                   actors: actors(fleet, layout), supervisor: fleet, gate:, landing: landing(checkout, layout), width:,
                   budget:, attempts:, red_only: RedOnly.new(git: parent, base: working_branch),
                   interrupt: @optional.fetch(:interrupt), grading: @optional.fetch(:grading) || Run::Ungraded,
-                  qa_gate: qa_gate(checkout), tip_tests: tip_tests(layout))
+                  qa_gate: qa_gate(checkout), tip_tests: tip_tests(layout), keeping: kept_trees)
+        end
+
+        # The path is the lease's own origin, the one `hold_earlier_work` names
+        # for the next lane, so the report and the next brief cannot disagree.
+        def kept_trees
+          ->(row) { [row.lease.origin.path].compact.select { isolation.retained?(_1) } }
         end
 
         def tip_tests(layout)
@@ -772,13 +778,32 @@ module Lain
 
         HALTED = "the run was stopped by the human, so the loop launched nothing further"
 
-        HUMAN_STOPPED = "stopped by the human mid-issue, so it was left unsettled and ungated: its work is kept " \
-                        "on %<ref>s at %<sha>s, its checkout released, and the next run starts a fresh attempt " \
-                        "rather than resuming it"
+        # What a human stopped mid-issue leaves for the next run, in words.
+        class Stopped
+          MID_ISSUE = "stopped by the human mid-issue, so it was left unsettled and ungated"
 
-        HUMAN_ABANDONED = "stopped by the human after its gate was asked at %<sha>s, so that gate was abandoned " \
-                          "and nothing landed: its work is kept on %<ref>s, its checkout released, and the next " \
-                          "run starts a fresh attempt rather than resuming it"
+          GATE_ASKED = "stopped by the human after its gate was asked at %<sha>s, so that gate was abandoned " \
+                       "and nothing landed"
+
+          KEPT = "its work is kept on %<ref>s at %<sha>s, its checkout released, and the next run continues " \
+                 "from the tip of %<branch>s%<tree>s; the conversation does not carry over"
+
+          KEPT_TREE = ", with its uncommitted changes kept at %<paths>s and lent to that run read-only"
+
+          def initialize(sha:, ref:, branch:, kept:, lead: MID_ISSUE)
+            @sha = sha
+            @ref = ref
+            @branch = branch
+            @kept = kept
+            @lead = lead
+          end
+
+          def to_s = format("#{@lead}: #{KEPT}", sha: @sha, ref: @ref, branch: @branch, tree:)
+
+          private
+
+          def tree = @kept.empty? ? "" : format(KEPT_TREE, paths: @kept.join(", "))
+        end
 
         HUMAN_STOPPED_BARE = "stopped by the human mid-issue, so it was left unsettled and ungated with nothing " \
                              "anchored"
@@ -1015,6 +1040,11 @@ module Lain
           def self.call(_issue_id, _sha) = nil
         end
 
+        # The kept-tree hook's Null: a loop with no checkout backend kept none.
+        module Unkept
+          def self.call(_registration) = []
+        end
+
         # What a human's stop did to a run: whether it halted one, and the
         # issues it ended. A run halted while it carried no issue names none,
         # yet it did stop, which an empty list alone could not say.
@@ -1136,10 +1166,14 @@ module Lain
         #   every checkpoint, because in an epic QA is not optional
         # @param tip_tests [#call] `call(issue_id, sha)`, the project's suite run
         #   on the anchored sha just before its gate is asked -- see {#gated}
+        # @param keeping [#call] `call(registration) -> Array<String>`, the
+        #   uncommitted trees a retired row's release kept, as the next attempt
+        #   will be lent them
         def initialize(slug:, progress:, plans:, actors:, supervisor:, gate:, landing:, red_only:, width:, budget: nil,
                        interrupt: -> { false }, attempts: nil, grading: Ungraded, qa_gate: QaGate::Unaudited,
-                       tip_tests: Untested)
+                       tip_tests: Untested, keeping: Unkept)
           @slug = slug
+          @keeping = keeping
           @qa_gate = qa_gate
           @tip_tests = tip_tests
           @progress = progress
@@ -1151,7 +1185,6 @@ module Lain
           @attempts = attempts || ->(_issue_id) { 1 }
           @grading = grading
           @red_only = red_only
-          @live = []
           @halted = false
           @asking = Asking.new(gate:, interrupt: -> { @halted || interrupt.call })
         end
@@ -1441,7 +1474,7 @@ module Lain
           @grading.call(entry.issue_id, row)
           report = @supervisor.retire(row)
           @causes[entry.issue_id] = row.cause
-          judge(entry, report)
+          judge(entry, report, @keeping.call(row))
         rescue StandardError => e
           reported(entry, "#{UNCARRIED}: #{e.class}: #{e.message}") if untouched?(entry.issue_id)
           raise if e.is_a?(JournalUnreadable)
@@ -1458,34 +1491,39 @@ module Lain
         # an address nobody can land in front of a human, and so would
         # submitting the red step's own commit: failing tests are not an
         # implementation.
-        def judge(entry, report)
-          return halted(entry, report) if @halted
+        def judge(entry, report, kept)
+          return halted(entry, report, kept) if @halted
           return reported(entry, unkept(entry, report)) if report.sha.nil?
           return reported(entry, format(NO_WORK, sha: report.sha)) if
             entry.launch.tests.unworked?(report.sha, judge: @red_only)
 
-          gated(entry, report)
+          gated(entry, report, kept)
         end
 
         # TESTED AFTER RETIREMENT, because retirement rebases: the tree the
         # actor held is not the sha the gate names, and only an issue that
         # reaches its gate has a sha worth testing.
-        def gated(entry, report)
+        def gated(entry, report, kept)
           tests = tested(entry, report)
-          return halted(entry, report) if @halted
+          return halted(entry, report, kept) if @halted
           return reported(entry, TESTS_STOPPED) if tests == Asking::STOPPED
 
           opened = @asking.call(entry.issue_id, sha: report.sha, tests:)
-          return reported(entry, format(HUMAN_ABANDONED, sha: report.sha, ref: report.ref)) if @halted
+          return reported(entry, abandoned(entry, report, kept)) if @halted
           return reported(entry, UNSETTLED) if opened == Asking::STOPPED
           return land(entry, report) if opened.phase == :approved
 
           reported(entry, Unopened.reason(opened, slug: @slug, issue_id: entry.issue_id, sha: report.sha))
         end
 
-        def halted(entry, report)
-          reason = report.sha.nil? ? HUMAN_STOPPED_BARE : format(HUMAN_STOPPED, sha: report.sha, ref: report.ref)
-          reported(entry, reason)
+        def halted(entry, report, kept)
+          reported(entry, report.sha.nil? ? HUMAN_STOPPED_BARE : stopped(entry, report, kept).to_s)
+        end
+
+        def abandoned(entry, report, kept) = stopped(entry, report, kept, lead: Stopped::GATE_ASKED).to_s
+
+        def stopped(entry, report, kept, **)
+          Stopped.new(sha: report.sha, ref: report.ref, branch: entry.launch.branch, kept:, **)
         end
 
         def tested(entry, report) = @asking.watching { @tip_tests.call(entry.issue_id, report.sha) }
