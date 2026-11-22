@@ -282,6 +282,7 @@ module Lain
             @settled = NOT_SETTLED
             @asked_at = clock.call
             @promise = Promise.new
+            @decided = false
             @park = nil
             @offered = nil
             @network = false
@@ -345,10 +346,15 @@ module Lain
           # Releasing an {Outstanding}'s regions to {Sensitivity::Ledger} is the
           # SETTLING CALLER's move, never this method's, and the invariant is this
           # method's own: single-shot resolution is safe WITHOUT A LOCK only
-          # because the `decided?` guard and the resolve below it are
+          # because the `decided?` guard and the flag below it are
           # straight-line with no yield point between them. A ledger write is
           # IO-shaped and would open exactly that gap. This queue holds no ledger
           # at all, which is how that stays true.
+          #
+          # The decision is journaled BEFORE the promise wakes the requester:
+          # under the io_uring selector a file write yields, and a requester
+          # woken first ran its call and returned while its decision was still
+          # unwritten.
           #
           # A deny's or a hold's note is the human's own words, which the model
           # reads as the last clause of its tool result; an approval's is kept
@@ -374,6 +380,7 @@ module Lain
           end
 
           def resolve(verdict, surface, authority)
+            @decided = true
             @surface = surface.to_s
             @authority = authority
             @decision = DECISIONS.fetch(verdict.class)
@@ -382,10 +389,17 @@ module Lain
             @reason = flattened(verdict.note) unless verdict.approved?
             @approval_note = flattened(verdict.note) if verdict.approved?
             @latency = @clock.call - @asked_at
-            @promise.resolve(@decision)
-            @settled.call(self)
+            record_then_wake
           end
           private :resolve
+
+          # A stop that lands mid-write must still wake the call, or it waits out its whole window.
+          def record_then_wake
+            @settled.call(self)
+          ensure
+            @promise.resolve(@decision)
+          end
+          private :record_then_wake
 
           def humans_only? = @humans_only
 
@@ -567,7 +581,7 @@ module Lain
           def offered_reason = @offered
 
           def human? = authority == :human
-          def decided? = @promise.resolved?
+          def decided? = @decided
           def approved? = @decision == :approve
 
           # A hold: the human will answer this call later, so it is refused now
@@ -1084,6 +1098,9 @@ module Lain
         def await_decision(pending, window = @timeout)
           Async::Task.current.with_timeout(window) { pending.await }
         rescue Async::TimeoutError
+          # Answered, but its record is still being written: the window has nothing left to decide.
+          return pending.await if pending.decided?
+
           left = pending.drawn_at ? pending.drawn_at + pending.timeout - @clock.call : 0
           left.positive? ? await_decision(pending, left) : pending.lapsed
         end

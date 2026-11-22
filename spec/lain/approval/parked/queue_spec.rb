@@ -25,6 +25,34 @@ module ApprovalSpecSupport
       @journal.record(entry)
     end
   end
+
+  # A Journal whose write lets other fibers run before its bytes land, as a file write does under the
+  # io_uring selector.
+  class YieldingJournal
+    def initialize(journal)
+      @journal = journal
+    end
+
+    def record(entry)
+      Async::Task.current.yield
+      @journal.record(entry)
+    end
+  end
+
+  # A Journal whose decision writes wait until the spec opens it, so a fiber can be caught mid-write.
+  class GatedJournal
+    def initialize(journal)
+      @journal = journal
+      @open = Lain::Promise.new
+    end
+
+    def open = @open.resolve(true)
+
+    def record(entry)
+      @open.await if entry.is_a?(Lain::Approval::Parked::Queue::Pending)
+      @journal.record(entry)
+    end
+  end
 end
 
 # The approval queue behind Middleware::Gate: a gated tool call enqueues a
@@ -379,6 +407,54 @@ RSpec.describe Lain::Approval::Parked::Queue do
                          "tool" => "dangerous", "surface" => "tty", "verdict" => "approve",
                          "latency" => 2.5, "timed_out" => false)
       )
+    end
+
+    it "has the decision written by the time the waiting call wakes, though the write yields" do
+      queue = described_class.new(journal: ApprovalSpecSupport::YieldingJournal.new(journal))
+
+      Sync do |task|
+        run = task.async do
+          queue.call(tool_call, nil)
+          decision_records.count
+        end
+        task.yield until queue.count == 1
+        queue.dequeue.approve(surface: "tty")
+        expect(run.wait).to eq(1)
+      end
+    end
+
+    it "wakes the waiting call when its answerer is stopped mid-write" do
+      queue = described_class.new(journal: ApprovalSpecSupport::GatedJournal.new(journal))
+
+      Sync do |task|
+        run = task.async { queue.call(tool_call, nil) }
+        task.yield until queue.count == 1
+        pending = queue.dequeue
+        answerer = task.async { pending.approve(surface: "tty") }
+        answerer.stop
+        3.times { task.yield }
+
+        expect(run.finished?).to be(true)
+        expect(run.wait).to be(true)
+      end
+    end
+
+    it "has the decision written before the call returns, when its window ends during the write" do
+      gated = ApprovalSpecSupport::GatedJournal.new(journal)
+      queue = described_class.new(journal: gated, timeout: 0.05)
+
+      Sync do |task|
+        run = task.async do
+          queue.call(tool_call, nil)
+          decision_records.count
+        end
+        task.yield until queue.count == 1
+        task.async { queue.dequeue.approve(surface: "tty") }
+        task.sleep(0.2) # past the window, so its timer fires while the write waits
+        gated.open
+
+        expect(run.wait).to eq(1)
+      end
     end
 
     it "journals a denial under the same record type" do
