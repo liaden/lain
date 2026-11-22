@@ -225,7 +225,6 @@ Both repeats that day are fixed too, so a red from either is no longer a known f
 
 Added 2026-10-31, from landing suites in one plan run. Each went red once in a pre-commit suite and passed alone and with its failing worker's seed on the base and on the card, on cards that do not reach it:
 
-- `a stalled stream under an Async reactor two concurrent streams, one of them stalling raises the stall in the fiber that owns the dead stream` (`Errno::ECONNRESET` in the streaming upstream, on a quiet box)
 - `Lain::Ext::Fuzzy#match on another thread behaves like a GVL-releasing binding raises the interrupt's error rather than returning a partial answer` (0.72s against a 0.32s bound, load about 16 with 3 agents running specs beside the suite)
 
 `two cockpits on one machine` went red twice more the same day. All 4 examples failed once (a `you>` line never held in the input pane within 15s), and once `keeps one status feed per project, each with its own run's tokens` was STUCK and STARVED at a load of 28.5 with a game running beside the suite. Each time the file passed 3 of 3 with the failing seed on the base and on the card. That is 4 recorded reds of one launch that outruns its waits under load, so it is a card, not a flake to budget a retry for.
@@ -367,6 +366,8 @@ A live demonstration of why this list is by NAME and not by line: `buffers_spec.
 ### Retired flakes, with the fix that ended each
 
 Keep a retired name here so a later red under it reads as a regression, not as a known flake.
+
+- 2026-11-22: `a stalled stream under an Async reactor two concurrent streams, one of them stalling raises the stall in the fiber that owns the dead stream` and `a stalled stream under an Async reactor two healthy streams interleaving lets both finish, each with its own content` (`Errno::ECONNRESET` in `StreamingUpstream::Chunk#emit`, green alone and with the failing seed on the base). A client that had left made the upstream's next write raise in its connection thread, and `stop` joins that thread, which re-raises it over the example's own verdict; `StreamingUpstream#serve` now treats EPIPE and ECONNRESET on a write as the client leaving.
 
 - 2026-11-22: `Lain::Frontend::TTY a note rendered while a prompt is drawn keeps vi's mode and cursor, so a command typed after the note does what it says` (red once in a landing hook, seed 64684, `Errno::ENOTEMPTY` from the `Dir.mktmpdir` cleanup, green 3 of 3 alone). `kill-server` only signals the tmux child, which could still be writing into the dir as mktmpdir removed it; the group's `around` now waits, bounded at 10s, for the server and the pane's process to exit, and a child made to outlive the HUP by 0.5s while writing failed it every time before and never after.
 

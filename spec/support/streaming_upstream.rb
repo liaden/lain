@@ -286,6 +286,11 @@ class StreamingUpstream
     write_headers(session)
     script.emissions.each { |emission| emission.emit(session) }
     script.ending.finish(session)
+  rescue Errno::EPIPE, Errno::ECONNRESET
+    # The client left first. `stop` joins this thread, and a join re-raises what
+    # killed it, so an unrescued write failure would replace the example's own
+    # verdict on what the client saw.
+    nil
   ensure
     session.close unless session.closed?
   end

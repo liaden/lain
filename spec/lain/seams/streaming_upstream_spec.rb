@@ -336,6 +336,28 @@ RSpec.describe StreamingUpstream, :seam do
     end
   end
 
+  # Bounded: a write that never fails would leave the thread in its pause, and
+  # that is a hang here rather than a verdict.
+  def connection_threads_finish
+    giving_up = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 5
+    Thread.pass until connection_threads.none?(&:alive?) || Process.clock_gettime(Process::CLOCK_MONOTONIC) > giving_up
+  end
+
+  def reset_before_next_chunk
+    described_class.ndjson(described_class.script.pause(0.2).chunks(alpha, done).close) do |upstream|
+      client = TCPSocket.new("127.0.0.1", upstream.port)
+      client.write("POST /api/chat HTTP/1.1\r\nContent-Length: 0\r\n\r\n")
+      client.readpartial(1024)
+      client.setsockopt(Socket::SOL_SOCKET, Socket::SO_LINGER, [1, 0].pack("ii"))
+      client.close
+      connection_threads_finish
+    end
+  end
+
+  def connection_threads
+    Thread.list.select { |thread| thread.name.to_s.start_with?(StreamingUpstream::THREAD_PREFIX) && thread.name.end_with?("connection") }
+  end
+
   describe "lifecycle" do
     it "yields a url on the loopback address it bound" do
       seen = nil
@@ -369,6 +391,13 @@ RSpec.describe StreamingUpstream, :seam do
         end
       end.to raise_error("the example blew up mid-stream")
       expect { TCPSocket.new("127.0.0.1", port).close }.to raise_error(Errno::ECONNREFUSED)
+    end
+
+    # A client that leaves is the client's choice, and a consumer asserts on what
+    # that client saw; the upstream's own write failing must not replace that
+    # assertion with an error from teardown.
+    it "tolerates a client that resets the connection before the next chunk is written" do
+      expect { reset_before_next_chunk }.not_to raise_error
     end
 
     # The permission is the harness's to take and the harness's to give back: it
