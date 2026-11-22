@@ -1219,11 +1219,13 @@ set you have not answered. See `:help lain-question`.
 Answer each pending tool approval `y/N`.
 
 **A `[y/N]` takes only a verdict.** At a plain-chat prompt (and the input pane's) the accepted answers are `y`, `yes`,
-`n`, `no`, `nope` and `nah`, in any case and with trailing punctuation (`yes!`), an empty line (a no), and `n <reason>`,
-`no, <reason>` or `n: <reason>`, which denies and hands the reason to the model. Anything else, including a `/command`
-and a pasted block of several lines whatever its first line says, leaves the approval open and is held as your next
-prompt, with one line saying `a y or n answers the approval`. A prompt that lapses on its clock tells the model so
-(`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n` gives the bare sentence.
+`n`, `no`, `nope`, `nah` and `hold`, in any case and with trailing punctuation (`yes!`), an empty line (a no), and
+`n <reason>`, `no, <reason>` or `n: <reason>`, which denies and hands the reason to the model. Anything else, including
+a pasted block of several lines whatever its first line says, leaves the approval open and is asked again in place: one
+line says `this prompt takes y or n`, nothing is held, and what you typed goes to history. A `/command` that runs now,
+such as `/held`, runs and leaves the prompt open; one nothing runs is held for the next `you>`. A prompt that lapses on
+its clock tells the model so (`approval denied for tool "bash": denied after 5:00 with no answer`), where a human's `n`
+gives the bare sentence.
 
 A call that reads secrets (a file holding a sensitive region, or files lain cannot name or scan
 whole) runs contained on a plain `y`, where files lain masks read as empty (a Rails key pair as a

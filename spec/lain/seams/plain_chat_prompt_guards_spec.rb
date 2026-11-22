@@ -784,23 +784,22 @@ RSpec.describe "a plain chat's inline prompts", :seam do
       end
     end
 
-    # Prose is no verdict either: it dies with the `[y/N]`, which asks again.
+    # Prose is no verdict either: the `[y/N]` says what it takes and asks again, and holds nothing.
     describe "prose typed at a [y/N] that preempted an empty you>" do
       let(:shape) { "actor" }
 
-      it "decides nothing, is held, and is dropped, undispatched, once the call is answered" do
+      it "decides nothing, is held nowhere, and is never dispatched" do
         terminal.await(/you> /)
         terminal.typed
         terminal.await(PlainChatPromptGuards::APPROVAL)
         terminal.type("please also fix the tests\r")
-        terminal.await(/held as your next prompt: please also fix the tests/)
-        terminal.await(/y, n or hold answers the approval/)
-        terminal.await_asked_again_after("y, n or hold answers the approval")
+        terminal.await(/this prompt takes y or n/)
+        terminal.await_asked_again_after("this prompt takes y or n")
 
         expect(terminal.verdicts).to be_empty
+        expect(terminal.text).not_to include("held as your next prompt")
 
         terminal.type("n\r")
-        terminal.await(/dropped 1 held line typed at the prompt just answered/)
         terminal.wait_for(what: "the denial") { terminal.verdicts == [%w[tty deny]] }
         terminal.await(/you> /)
 

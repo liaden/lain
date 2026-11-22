@@ -3,14 +3,10 @@
 module Lain
   module Frontend
     class Intake
-      # The lines kept for `you>`, in the order typed, and where each was typed: what `/held` lists, what a stop
-      # clears, and what an answer prompt's own words expire with it.
+      # The lines kept for `you>`, in the order typed, and where each was typed: what `/held` lists and what a stop
+      # clears.
       class HeldLines
-        # `read` names the reader of an answer prompt the line was typed at, nil for any other; a word typed there
-        # dies with that read, while a command outlives it.
-        Kept = Data.define(:text, :kind, :at, :read, :clock) do
-          def dies_with?(reader) = read == reader && !text.start_with?("/")
-
+        Kept = Data.define(:text, :kind, :at, :clock) do
           # @return [Float] seconds since it was kept
           def age = clock.call - at
         end
@@ -26,9 +22,8 @@ module Lain
 
         # @param text [String] the line
         # @param kind [Symbol, nil] the kind of prompt published when it was typed
-        # @param read [Integer, nil] the answer reader the line was typed at
-        def keep(text, kind: nil, read: nil)
-          entry = Kept.new(text:, kind:, at: @clock.call, read:, clock: @clock)
+        def keep(text, kind: nil)
+          entry = Kept.new(text:, kind:, at: @clock.call, clock: @clock)
           @lock.synchronize { @kept << entry }
         end
 
@@ -40,14 +35,6 @@ module Lain
 
         # @return [Array<String>] what was dropped
         def clear = @lock.synchronize { @kept.slice!(0..) }.map(&:text)
-
-        # @return [Array<Kept>] the entries that died with the reader
-        def expire(reader)
-          @lock.synchronize do
-            gone, @kept = @kept.partition { |entry| entry.dies_with?(reader) }
-            gone
-          end
-        end
       end
     end
   end

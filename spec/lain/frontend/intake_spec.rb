@@ -189,7 +189,7 @@ RSpec.describe Lain::Frontend::Intake do
       expect(rail.take_held).to eq("yes please")
     end
 
-    it "drops a word typed at an answer's prompt once that prompt is answered, and says so" do
+    it "asks again at once for a word typed at an answer's prompt, holding nothing to drop" do
       asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
       Sync do |task|
         task.async do
@@ -201,8 +201,7 @@ RSpec.describe Lain::Frontend::Intake do
         rail.read(:approval, asked)
       end
 
-      expect([rail.held_lines, rail.take_held, screen.said.last])
-        .to eq([[], nil, [:note, "dropped 1 held line typed at the prompt just answered"]])
+      expect([rail.held_lines, rail.take_held, screen.said]).to eq([[], nil, []])
     end
 
     it "keeps a command typed at the prompt for the next you>, which is not a word for that prompt" do
@@ -342,7 +341,7 @@ RSpec.describe Lain::Frontend::Intake do
   end
 
   describe "a line an approval prompt refuses, in a chat that takes notes" do
-    it "is held and never posted as a note" do
+    it "is asked again and never posted as a note" do
       taking = Struct.new(:taken) { def take?(line) = taken << line }.new([])
       noting = described_class.new(screen:, notes: taking)
       asked = Class.new(String) { def takes?(line) = line == "n" }.new("[y/N] ")
@@ -356,12 +355,12 @@ RSpec.describe Lain::Frontend::Intake do
         noting.read(:approval, asked)
       end
 
-      expect([taking.taken, screen.said.map(&:first)]).to eq([[], %i[held note]])
+      expect([taking.taken, screen.said.map(&:first)]).to eq([[], []])
     end
   end
 
   describe "a prompt that explains why it refused a line" do
-    it "has the explanation said right after the held line" do
+    it "has the explanation said in place of a held line" do
       asked = Class.new(String) do
         def takes?(line) = line == "n"
         def refused = yield "only n answers"
@@ -376,8 +375,7 @@ RSpec.describe Lain::Frontend::Intake do
         rail.read(:approval, asked)
       end
 
-      expect(screen.said).to eq([[:held, "chatter"], [:note, "only n answers"],
-                                 [:note, "dropped 1 held line typed at the prompt just answered"]])
+      expect(screen.said).to eq([[:note, "only n answers"]])
     end
   end
 
@@ -1129,7 +1127,7 @@ RSpec.describe Lain::Frontend::Intake do
       it "does not say what answers the prompt after a control command typed at it has run" do
         asked = Class.new(String) do
           def takes?(line) = %w[y n].include?(line)
-          def refused = yield("y, n or hold answers the approval")
+          def refused = yield("this prompt takes y or n")
         end.new("[y/N] ")
         Sync do |task|
           task.async do
@@ -1143,8 +1141,7 @@ RSpec.describe Lain::Frontend::Intake do
           rail.read(:approval, asked)
         end
 
-        expect(screen.said).to eq([[:held, "later"], [:note, "y, n or hold answers the approval"],
-                                   [:note, "dropped 1 held line typed at the prompt just answered"]])
+        expect(screen.said).to eq([[:note, "this prompt takes y or n"]])
       end
     end
 

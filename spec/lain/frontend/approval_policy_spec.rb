@@ -1012,7 +1012,7 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
         said = []
         described_class::Asked.new("approve? ", secret).refused { |note| said << note }
 
-        expect(said).to eq(["y, n, hold, network or secrets answers the approval"])
+        expect(said).to eq(["this prompt takes y, n, network or secrets"])
       end
 
       it "takes the secrets answer, and approves with secrets on it, never with network" do
@@ -1150,11 +1150,11 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
       expect(blocks.map { |block| asked.takes?(block) }).to all(be(false))
     end
 
-    it "says a y, n or hold answers the approval when it refuses a line" do
+    it "says this prompt takes y or n when it refuses a line" do
       said = []
       asked.refused { |note| said << note }
 
-      expect(said).to eq(["y, n or hold answers the approval"])
+      expect(said).to eq(["this prompt takes y or n"])
     end
 
     it "does not take a /command, leading blanks or not" do
@@ -1337,6 +1337,87 @@ RSpec.describe Lain::Frontend::ApprovalPolicy do
 
         expect(texts.uniq).to eq([texts.first])
       end
+    end
+  end
+
+  # Scenario: network at a [y/N] prompt is refused at the prompt
+  describe "a line the [y/N] prompt does not take, typed at an Intake" do
+    let(:screen) do
+      Class.new do
+        def initialize = @said = []
+        attr_reader :said
+
+        def render_held(text) = @said << [:held, text]
+        def render_note(text) = @said << [:note, text]
+        def render_human_note(text) = @said << [:human_note, text]
+        def close_prompt(_text); end
+        def queue_prompt(_text); end
+        def drop_prompt(_text); end
+      end.new
+    end
+    let(:history) do
+      Class.new do
+        def kept = (@kept ||= [])
+        def remember(line) = kept << line
+      end.new
+    end
+    let(:probe) do
+      Struct.new(:ran) do
+        def disposition(text)
+          kind = text == "/held" ? :control : :hold
+          Lain::Frontend::Intake::Disposition.new(kind, text)
+        end
+
+        def run_now(text) = ran << text
+      end.new([])
+    end
+    let(:rail) { Lain::Frontend::Intake.new(screen:, history:, commands: probe) }
+
+    def typed(text, generation) = Lain::Frontend::Intake::Line.new(text:, generation:)
+
+    def ask_with(*lines)
+      asked = described_class::Asked.new("approve? ", pending)
+      Sync do |task|
+        task.async do
+          lines.each_with_index do |text, index|
+            pumped_until(task) { rail.published.generation == index + 1 }
+            rail << typed(text, index + 1)
+          end
+        end
+        rail.read(:approval, asked)
+      end
+    end
+
+    it "asks again in place, says what the prompt takes, and holds nothing" do
+      answer = ask_with("network", "n")
+
+      expect([answer, rail.held_lines, screen.said])
+        .to eq(["n", [], [[:note, "this prompt takes y or n"]]])
+    end
+
+    # Scenario: a slash command still works
+    it "runs /held and leaves the prompt open" do
+      answer = ask_with("/held", "n")
+
+      expect([answer, probe.ran, rail.held_lines]).to eq(["n", ["/held"], []])
+    end
+
+    it "still holds a /command nothing runs, for the next you>" do
+      ask_with("/goal off", "n")
+
+      expect([rail.held_lines, history.kept]).to eq([["/goal off"], []])
+    end
+
+    it "keeps the refused line in history, so it is not lost" do
+      ask_with("network", "n")
+
+      expect(history.kept).to eq(["network"])
+    end
+
+    it "says nothing about a dropped line once the prompt is answered" do
+      ask_with("please also fix the tests", "also this\nand this", "n")
+
+      expect(screen.said.map(&:first)).to eq(%i[note note])
     end
   end
 end

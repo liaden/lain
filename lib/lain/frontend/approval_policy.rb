@@ -50,9 +50,9 @@ module Lain
       HOLD = /\A\s*hold(?![[:alnum:]])/i
       private_constant :HOLD
 
-      REFUSED = "y, n or hold answers the approval"
-      REFUSED_NETWORK = "y, n, hold or network answers the approval"
-      REFUSED_SECRETS = "y, n, hold, network or secrets answers the approval"
+      REFUSED = "this prompt takes y or n"
+      REFUSED_NETWORK = "this prompt takes y, n or network"
+      REFUSED_SECRETS = "this prompt takes y, n, network or secrets"
 
       ANSWERS = "[y/N] "
       NETWORK_ANSWERS = "[y/N/network] "
@@ -140,8 +140,8 @@ module Lain
                                           .is_a?(Approval::Reply::Unrecognised)
         end
 
-        # Yields what is said after a refused line is held, so the human learns
-        # the prompt is still waiting and what answers it.
+        # Yields what is said when a line is refused, so the human learns the
+        # prompt is still waiting and what answers it.
         def refused
           offered = ApprovalPolicy.offered(@pending)
           yield(if offered[:secrets] then REFUSED_SECRETS

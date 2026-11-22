@@ -231,12 +231,18 @@ Checks:
    has `"reason"`. In nvim, `:LainDeny stay inside the project` does the same, and the `n` key
    with no text sends a bare deny with no reason field.
    *Wrong looks like:* a bare `denied` that gives the model nothing, so it retries the same call.
-5. **Prose at a `[y/N]` is held, not answered (round 23 B23-11, fixed; plain chat).** Round 22's fix never landed, so check it
-   on a `--no-nvim` chat: at a parked `[y/N]` type `please also fix the tests`. The approval stays parked, the line is held as
-   the next prompt, and one line says `a y or n answers the approval`. A pasted block of several lines is held whole, even
-   when its first line is `y`. The accepted answers are `y`, `yes`, `n`, `no`, `nope`, `nah` in any case, each with trailing
-   punctuation (`yes!`), an empty line, and `n <reason>` (check 4). Nothing else decides it. Detail: `cockpit-surfaces.md` §5.
+5. **Prose at a `[y/N]` is asked again in place, not held and not answered (round 23 B23-11; plain chat).** On a
+   `--no-nvim` chat, at a parked `[y/N]` type `please also fix the tests`. The prompt is drawn again empty, one line says
+   `this prompt takes y or n`, and the approval stays parked with no `approval_decision`. Nothing is held: `/held`
+   lists nothing for it, and answering `n` afterwards prints no `dropped N held line` note. The text is in history, so
+   Up recalls it at the next `you>`. A pasted block of several lines is asked again whole, even when its first line is
+   `y`. At `[y/N/network]` the sentence reads `this prompt takes y, n or network`. The accepted answers are `y`, `yes`,
+   `n`, `no`, `nope`, `nah`, `hold` in any case, each with trailing punctuation (`yes!`), an empty line, and `n <reason>`
+   (check 4). Nothing else decides it. A `/command` is the exception: `/held` runs and the prompt stays open, and a
+   `/command` nothing runs is held for `you>` (`held as your next prompt: /goal off`). Detail: `cockpit-surfaces.md` §5.
    The cockpit's `[y/N]` is answered in nvim, so it needs this plain-chat leg.
+   *Wrong looks like:* the prose reported as `held as your next prompt`, a `dropped 1 held line typed at the prompt just
+   answered` note after the answer, a decision journaled for the prose, or the prompt not redrawn.
 6. **Prose at `command>` is held with a reason.** While an approval is parked, type a free line at
    the `command>` prompt. The held notice says why it was held and where to answer (`/approve`,
    `/inbox` or the nvim buffer). It does not answer the approval, and typed prose never answers a

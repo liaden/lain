@@ -459,20 +459,23 @@ module Lain
         end
       end
 
-      # A line acted on already answered the human, so only one kept is told what does answer the prompt.
+      # A word typed at an answer prompt is asked again in place, so it is recalled from history rather than
+      # held; a `/`-line is held, since it is meant for `you>`.
       def refused(text, line, answering: false)
-        text.respond_to?(:withhold) ? text.withhold(line) : keep(line, answering:)
+        text.respond_to?(:withhold) ? text.withhold(line) : retain(line, answering)
         text.refused { |note| @screen.render_note(note) } if text.respond_to?(:refused)
       end
 
-      def keep(text, answering: false)
-        @lock.synchronize { @held.keep(text, kind: @published.kind, read: (@turns.first.object_id if answering)) }
+      def retain(line, answering) = answering && !line.lstrip.start_with?("/") ? @history.remember(line) : keep(line)
+
+      def keep(text)
+        @lock.synchronize { @held.keep(text, kind: @published.kind) }
         @screen.render_held(text)
       end
 
-      def say_dropped(texts, tail = "")
+      def say_dropped(texts)
         texts.each { |text| @history.remember(text) }
-        @screen.render_note("#{HeldLines.dropped(texts.size)}#{tail}") unless texts.empty?
+        @screen.render_note(HeldLines.dropped(texts.size)) unless texts.empty?
       end
 
       def unread?(value) = value.is_a?(Line) && glimpse.kind.nil?
@@ -644,7 +647,6 @@ module Lain
           @turns.delete_if { |waiting| waiting.equal?(turn) }
           @turns.first&.gate&.push(true) if head
         end
-        say_dropped(@held.expire(turn.object_id).map(&:text), " typed at the prompt just answered")
       end
     end
 

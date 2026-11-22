@@ -32,17 +32,6 @@ RSpec.describe Lain::Frontend::Intake::HeldLines do
     expect([held.clear, held.texts]).to eq([%w[a b], []])
   end
 
-  describe "#expire" do
-    it "drops the words typed at the named read, and keeps its commands and every other read's lines" do
-      held.keep("network", read: 3)
-      held.keep("/goal off", read: 3)
-      held.keep("elsewhere", read: 4)
-      held.keep("typeahead")
-
-      expect([held.expire(3).map(&:text), held.texts]).to eq([["network"], ["/goal off", "elsewhere", "typeahead"]])
-    end
-  end
-
   it "says how many were dropped in the singular and the plural" do
     expect([described_class.dropped(1),
             described_class.dropped(2)]).to eq(["dropped 1 held line", "dropped 2 held lines"])

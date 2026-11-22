@@ -875,6 +875,7 @@ ran on. *Driven 2026-09-14* in a `--no-nvim` chat (the same prompt class `/appro
 
     agent asks: approve bash({"command" => "ls -la"})? [y/N] /status
     held as your next prompt: /status
+    this prompt takes y or n
     agent asks: approve bash({"command" => "ls -la"})? [y/N]
 
 no `approval_decision` until the window closed, and the held `/status` ran at the next `you>`. A
@@ -1089,13 +1090,17 @@ read is guarded three ways, and each guard is a check:
 4. **A `[y/N]` takes only a verdict** (round 22's F-5: a paste during a `[y/N]` was read as "no" and
    discarded; **round 22's fix never landed and round 23 B23-11 landed it**, so a round that ticked this box
    from the older scenario text ticked a behaviour that did not exist). The grammar: `y`, `yes`, `n`, `no`,
-   `nope`, `nah`, in any case and with trailing punctuation (`yes!`, `no.`), an empty line, or `n <reason>` (also
+   `nope`, `nah`, `hold`, in any case and with trailing punctuation (`yes!`, `no.`), an empty line, or `n <reason>` (also
    `no, ...`, `n: ...`). Anything else, including a pasted block of several lines whatever its first line says,
-   leaves the approval open and is held as the next prompt, and one line says `a y or n answers the approval`.
-   Paste `please also fix the tests` at a parked `[y/N]` and check the call is still parked, no `approval_decision`
-   is journaled, and the line comes back at `you>`. Then paste `y` newline `rm -rf x` as one block: still
-   parked, held whole. A `/command` is held as well (`/goal off` is meant for the chat). The input pane's reader
-   is stubbed in the spec, so this one needs a human in a live pane.
+   leaves the approval open and is asked again in place: one line says `this prompt takes y or n`, the prompt is drawn
+   again empty, and nothing is held. Paste `please also fix the tests` at a parked `[y/N]` and check the call is still
+   parked, no `approval_decision` is journaled, `/held` lists nothing, and the line is in history (Up at the next `you>`
+   recalls it). Then paste `y` newline `rm -rf x` as one block: still parked, asked again whole. Answer `n` and check no
+   `dropped N held line` note appears. A `/command` that runs now (`/held`) runs and the prompt stays open; one nothing
+   runs (`/goal off`) is held for `you>`. The input pane's reader is stubbed in the spec, so this one needs a human in a
+   live pane.
+   *Wrong looks like:* `held as your next prompt` for prose, a held line surviving the answer, or a `dropped ... held
+   line` note.
 5. **A question answered elsewhere retires.** A subagent question settled by another surface is
    retired rather than re-queued, so no `human>` is drawn on the next dispatched lines. *(Prediction,
    not yet driven: round 17's F101 ghost was three `human>` prompts drawn mid-dispatch after an nvim
