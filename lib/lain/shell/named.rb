@@ -17,9 +17,10 @@ module Lain
     # might not bind the stages after it, a directory option, a `..` a symlink
     # could redirect, a program that runs other programs. Opaque is the safe
     # direction, because every consumer parks on it, so nothing here guesses.
-    # A bare word is named as a path too (`grep password src` names
+    # A bare word is named as a path too (`frobnicate password src` names
     # `/p/password`): a word that is not a file costs a false positive, while
-    # skipping one that is would be a bypass.
+    # skipping one that is would be a bypass. Only an operand whose role
+    # {OperandRoles} is certain of, such as grep's pattern, goes unnamed.
     class Named
       # @!attribute word [String] as the model wrote it, quotes included
       # @!attribute resolved [String] absolute; for a glob, its fixed directory
@@ -300,7 +301,13 @@ module Lain
           "sort" => ["oTSkt", %w[--output --temporary-directory --buffer-size --key --field-separator]],
           "curl" => ["o#{CURL_DATA.first}#{CURL_FILES.first}", ["--output", *CURL_DATA.last, *CURL_FILES.last]],
           "wget" => ["OP", %w[--output-document --directory-prefix]],
-          "rg" => ["efgmABCtTjMr", %w[--regexp --file --glob --max-count --type --type-not --threads --replace]],
+          "rg" => ["efgmABCtTjMrEd", %w[
+            --regexp --file --glob --max-count --type --type-not --threads --replace --ignore-file --iglob
+            --max-depth --max-filesize --max-columns --encoding --engine --sort --sortr --type-add --type-clear
+            --pre --pre-glob --colors --color --colour --context-separator --field-context-separator
+            --field-match-separator --path-separator --hostname-bin --hyperlink-format --dfa-size-limit
+            --regex-size-limit --after-context --before-context --context
+          ]],
           "ag" => ["GgmABC", []], "ack" => ["mABC", []],
           **Programs::AWKS.to_h { [_1, AWK] },
           **%w[grep egrep fgrep zgrep].to_h { [_1, GREP] },
@@ -742,7 +749,8 @@ module Lain
           "diff" => ["r", %w[--recursive]], "rsync" => ["ra", %w[--recursive --archive]], "scp" => ["r", []]
         }.freeze
         ALWAYS_RECURSES = %w[rg ag ack].freeze
-        PATTERN_OPTION = ["ef", %w[--regexp --file --files]].freeze
+        # jq reads a module's file, from its library path, for each of these; a filter file may hold any of them.
+        JQ_LOADS = /\b(?:import|include|modulemeta)\b/
 
         # @param texts [Array<String>] the stage's unquoted words, program first
         # @param untrusted [Boolean] the name may not be the program that runs,
@@ -754,6 +762,7 @@ module Lain
           @command = TARS.include?(@name) ? "tar" : Programs.canonical(@name)
           @untrusted = untrusted
           @argv = Argv.new(texts.drop(1), @command)
+          @displaced = OperandRoles.displaced?(@command, @argv)
           @git_from = git? ? subcommand_at : 0
           @git_write = GitWrite.of(@argv.words.drop(@git_from)) if git?
         end
@@ -779,6 +788,14 @@ module Lain
 
         # @return [Hash{Integer=>Array<Range>, nil}] see {Argv#data_files}
         def data_files = @untrusted ? {} : @argv.data_files.merge(commit_messages)
+
+        # @return [Array<Integer>] the operands it reads as text rather than as files
+        def unnamed
+          return [] if @untrusted
+
+          roles = OperandRoles.of(@command, operands.size, displaced: @displaced)
+          operands.zip(roles).filter_map { |index, role| index unless role == :file }
+        end
 
         # `dd if=x` opens `x`; the whole word names no file.
         def assignments? = @command == "dd" && !@untrusted
@@ -864,7 +881,7 @@ module Lain
           ([@name, @command].intersect?(RUNS_OTHERS) && !bare_env?) || ALWAYS_OPAQUE.include?(@command) ||
             (@command == "find" && @argv.words.intersect?(FIND_ACTIONS)) ||
             (PROGRAM_OPTIONS.key?(@command) && @argv.flag?(*PROGRAM_OPTIONS[@command], before: global_end)) ||
-            (@command == "bundle" && @argv.words.first != "install") || runs_code? || sed_runs?
+            (@command == "bundle" && @argv.words.first != "install") || runs_code? || sed_runs? || jq_loads?
         end
 
         # git's own options come before its subcommand; `git log -c` is log's.
@@ -942,6 +959,10 @@ module Lain
           from_options.empty? ? operands.first(1).map { word(_1) } : from_options
         end
 
+        def jq_loads?
+          @command == "jq" && (@argv.flag?("f", %w[--from-file]) || operands.any? { JQ_LOADS.match?(word(_1)) })
+        end
+
         def changes_directory?
           entered = git_directory
           own = entered && (@argv.option?(entered) ? entered : entered - 1)
@@ -974,7 +995,7 @@ module Lain
         def in_place
           return [] unless @argv.flag?("i", %w[--in-place])
 
-          @argv.flag?("ef", %w[--expression --file]) ? operands : operands.drop(1)
+          @displaced ? operands : operands.drop(1)
         end
 
         def git_written
@@ -1036,7 +1057,7 @@ module Lain
         def recursive? = @argv.flag?(*RECURSES.fetch(@command))
 
         # A searcher's first operand is its pattern unless an option gave one.
-        def searched = @argv.flag?(*PATTERN_OPTION) ? operands : operands.drop(1)
+        def searched = @displaced ? operands : operands.drop(1)
 
         def recursive_roots
           return [] unless recursive?
@@ -1476,9 +1497,11 @@ module Lain
           written = program.written
           roots = program.roots
           data = program.data_files
+          unnamed = program.unnamed
           chosen(words, only, except).flat_map do |index|
             literal = words.literals[index + 1]
             if literal.nil? then [:opaque]
+            elsif unnamed.include?(index) then []
             elsif data.key?(index) then data_paths(words.raws[index + 1], literal, data[index])
             else argument_paths(words, index, program, written: written.include?(index), root: roots.include?(index))
             end

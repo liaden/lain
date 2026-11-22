@@ -15,7 +15,7 @@ RSpec.describe Lain::Shell::Named do
     end
 
     it "keeps the cd's directory across a later && or pipe" do
-      expect(resolved("cd x && cat a | grep b && cat c")).to eq(%w[/p/x /p/x/a /p/x/b /p/x/c])
+      expect(resolved("cd x && cat a | wc b && cat c")).to eq(%w[/p/x /p/x/a /p/x/b /p/x/c])
     end
 
     it "counts a stage's redirect as part of the stage, not of the join" do
@@ -378,6 +378,108 @@ RSpec.describe Lain::Shell::Named do
     end
   end
 
+  describe "an operand that names no file" do
+    it "reads echo's words as text" do
+      result = named('echo "exit=$?"')
+      expect(result.paths).to be_empty
+      expect(result).not_to be_opaque
+    end
+
+    it "still names where echo's output is written" do
+      result = named("echo x > out")
+      expect(result.paths.map(&:resolved)).to eq(%w[/p/out])
+      expect(result.written.map(&:resolved)).to eq(%w[/p/out])
+    end
+
+    it "reads a searcher's first operand as its pattern" do
+      expect(resolved("grep -E 'abc|def' notes.txt")).to eq(%w[/p/notes.txt])
+      expect(resolved("rg secret src")).to eq(%w[/p/src])
+    end
+
+    it "names every operand once an option gave the pattern" do
+      expect(resolved("grep -e abc notes.txt")).to include("/p/notes.txt")
+      expect(resolved("grep -f patterns.txt x")).to eq(%w[/p/patterns.txt /p/x])
+      expect(resolved("grep --file=patterns.txt x")).to eq(%w[/p/patterns.txt /p/x])
+      expect(resolved("grep -if patterns.txt x")).to eq(%w[/p/patterns.txt /p/x])
+      expect(resolved("rg -f patterns.txt x")).to eq(%w[/p/patterns.txt /p/x])
+    end
+
+    it "names every operand when an abbreviated long option gave the pattern" do
+      %w[--regex=x --reg=x --rege=x].each do |option|
+        expect(resolved("grep #{option} f")).to include("/p/f"), option
+      end
+      expect(resolved("egrep --reg=x f")).to include("/p/f")
+    end
+
+    it "searches under every operand when an abbreviated long option gave the pattern" do
+      expect(named("grep -r --reg=x dir").paths.map(&:pattern)).to include("/p/dir/**")
+    end
+
+    it "names a file an rg option reads before the pattern" do
+      expect(resolved("rg --ignore-file .secret pat .")).to include("/p/.secret", "/p")
+    end
+
+    it "reads rg's encoding and depth options as taking a value, so the pattern after them is not named" do
+      expect(resolved("rg -E utf8 secret f")).to eq(%w[/p/utf8 /p/f])
+      expect(resolved("rg -d 2 secret f")).to eq(%w[/p/2 /p/f])
+    end
+
+    it "searches under every ack operand when it lists files or an option gave the pattern" do
+      expect(named("ack -f dir").paths.map(&:pattern)).to include("/p/dir/**")
+      expect(named("ack --match x dir").paths.map(&:pattern)).to include("/p/dir/**")
+    end
+
+    it "names every operand of rg --files, which takes no pattern" do
+      expect(resolved("rg --files .env")).to eq(%w[/p/.env])
+    end
+
+    it "reads a sed script and a jq filter as program text" do
+      expect(resolved("sed -n '5,9p' a.c")).to eq(%w[/p/a.c])
+      expect(resolved("jq '.x' b.json")).to eq(%w[/p/b.json])
+      expect(resolved("sed -e 's/a/b/' a.c")).to include("/p/a.c")
+    end
+
+    it "names a sandboxed sed script read from a file" do
+      expect(resolved("sed --sandbox -f script.sed a.c")).to eq(%w[/p/script.sed /p/a.c])
+      expect(named("sed -f script.sed a.c")).to be_opaque
+    end
+
+    it "is opaque on a jq filter that loads a module, inline or from a file" do
+      expect(named(%(jq -n 'import "./creds" as $c; $c'))).to be_opaque
+      expect(named(%(jq 'include "x"; .' b.json))).to be_opaque
+      expect(named(%(jq '"x" | modulemeta' b.json))).to be_opaque
+      expect(named("jq --from-file f.jq b.json")).to be_opaque
+      expect(named("jq -rf f.jq b.json")).to be_opaque
+    end
+
+    it "names every jq operand when an option's value could sit before the filter" do
+      expect(resolved("jq -L lib '.x' b.json")).to include("/p/lib", "/p/b.json")
+      expect(resolved("jq --slurpfile n s.json '.x' b.json")).to include("/p/s.json", "/p/b.json")
+      expect(resolved("jq --rawfile n s.txt '.x' b.json")).to include("/p/s.txt", "/p/b.json")
+    end
+
+    it "reads an inline awk program as program text, and keeps a program file opaque" do
+      expect(resolved("awk '{print}' b")).to eq(%w[/p/b])
+      expect(named("awk -f prog.awk b")).to be_opaque
+    end
+
+    it "reads printf's format as text and names the words after it" do
+      expect(resolved("printf '%s' a")).to eq(%w[/p/a])
+    end
+
+    it "names every word of a program it does not list" do
+      expect(resolved("frobnicate alpha beta")).to eq(%w[/p/alpha /p/beta])
+    end
+
+    it "names the pattern of a program bundle exec may not run as named" do
+      expect(resolved("bundle exec grep pat f")).to include("/p/pat", "/p/f")
+    end
+
+    it "stays opaque on a pattern it cannot read" do
+      expect(named("grep $x f")).to be_opaque
+    end
+  end
+
   describe "sed" do
     it "is opaque when a script runs a command, reads a file in or writes one" do
       ["sed 's/a/b/e' f", "sed 's/a/b/w out' f", "sed -e 'w out' f", "sed '1r /etc/shadow' f", "sed 'R x' f",
@@ -660,10 +762,14 @@ RSpec.describe Lain::Shell::Named do
       expect(result.paths.map(&:resolved)).to include("/p/script")
     end
 
-    it "names sed -i's files as written, and its script as read" do
+    it "names sed -i's files as written, and not its script" do
       result = named("sed -i 's/a/b/' f g")
       expect(result.written.map(&:resolved)).to eq(%w[/p/f /p/g])
-      expect(result.paths.map(&:resolved)).to include("/p/s/a/b")
+      expect(result.paths.map(&:resolved)).not_to include("/p/s/a/b")
+    end
+
+    it "names every sed -i operand as written when an abbreviated long option gave the script" do
+      expect(written("sed -i --expr=s/a/b/ f")).to eq(%w[/p/f])
     end
 
     it "names nothing written for sed without -i" do
@@ -735,7 +841,7 @@ RSpec.describe Lain::Shell::Named do
     end
 
     it "does not name a descriptor duplication" do
-      expect(resolved("echo hi 2>&1")).to eq(%w[/p/hi])
+      expect(resolved("cat hi 2>&1")).to eq(%w[/p/hi])
     end
 
     it "names a word the grammar folds into a redirect, which bash passes to the program" do
@@ -925,13 +1031,13 @@ RSpec.describe Lain::Shell::Named do
       probes = {
         'ls src; echo "exit=$?"' => "/p/src",
         "git -C /p/n remote -v" => "/p/n",
-        "env | grep XDG" => "/p/XDG",
         "awk '/Blocked/ {print FILENAME}' issues/a.md" => "/p/issues/a.md",
         "for f in a.md b.md; do cat $f; done" => "/p/b.md"
       }
 
       expect(probes.keys.to_h { [_1, [named(_1).opaque?, resolved(_1).include?(probes[_1])]] })
         .to eq(probes.keys.to_h { [_1, [false, true]] })
+      expect(named("env | grep XDG")).to have_attributes(opaque: false, paths: [])
     end
 
     it "reads $?, $$ and $# inside double quotes as digits, so the word names its fixed directory and a pattern" do

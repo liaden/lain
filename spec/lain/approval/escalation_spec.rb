@@ -1479,11 +1479,11 @@ RSpec.describe Lain::Approval::Escalation do
 
     # The panel's ruling. A word with no separator and no tilde is not written
     # as a path, so it is not evidence about one -- and denying on it would
-    # make `grep -n Cookies lib/lain/sensitivity.rb` unrunnable from a checkout
+    # make `wc -l Cookies lib/lain/sensitivity.rb` unrunnable from a checkout
     # under `$HOME` with nothing anywhere able to lift it, `[sensitivity]
     # exempt` included (it subtracts from the gated half only).
     it "does not refuse a bare word that merely matches a protected name" do
-      expect(in_checkout("grep -n Cookies lib/lain/sensitivity.rb")).to be(false)
+      expect(in_checkout("wc -l Cookies lib/lain/sensitivity.rb")).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '"Cookies"')
@@ -1491,8 +1491,8 @@ RSpec.describe Lain::Approval::Escalation do
 
     # `.netrc`, `.gnupg`, `.password-store` and `*.kdbx` match from ANY cwd, so
     # the bare-word class is not confined to a session sitting in `$HOME`.
-    it "leaves the any-cwd names bare too, so a checkout stays greppable from anywhere" do
-      expect(in_checkout("grep -rn .netrc lib spec")).to be(false)
+    it "leaves the any-cwd names bare too, so a checkout stays readable from anywhere" do
+      expect(in_checkout("wc -l .netrc lib spec")).to be(false)
 
       expect(rulings.first).to include("verdict" => "abstain", "faulted" => false)
       expect(rulings.first["reason"]).to include(described_class::Triage::BARE, '".netrc"')
@@ -1519,7 +1519,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "still refuses the same name the moment it is written as a path" do
-      expect(triaged("grep -rn ./.netrc lib spec")).to be(false)
+      expect(triaged("wc -l ./.netrc lib spec")).to be(false)
 
       expect(rulings.first).to include("verdict" => "deny")
       expect(rulings.first["reason"]).to include(described_class::Triage::PROTECTED, '"./.netrc"')
@@ -1715,7 +1715,7 @@ RSpec.describe Lain::Approval::Escalation do
       FileUtils.mkdir_p(File.join(@project, "data", "proj", "lib"))
       File.symlink(File.join(@project, "data"), File.join(@project, "work"))
 
-      ruled("grep -rn .netrc lib", root: File.join(@project, "work", "proj"))
+      ruled("wc -l .netrc lib", root: File.join(@project, "work", "proj"))
 
       expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
     end
@@ -1752,7 +1752,7 @@ RSpec.describe Lain::Approval::Escalation do
       root = File.join(home, "dev", "proj").tap { FileUtils.mkdir_p(File.join(_1, "lib")) }
       lease = File.join(home, "worktrees", "proj-w1").tap { FileUtils.mkdir_p(File.join(_1, "lib")) }
 
-      ["grep -rn .netrc lib", "grep -rn Cookies lib"].each { ruled(_1, root:, home:, checkout: lease) }
+      ["wc -l .netrc lib", "wc -l Cookies lib"].each { ruled(_1, root:, home:, checkout: lease) }
 
       expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[abstain abstain])
     end
@@ -1765,8 +1765,8 @@ RSpec.describe Lain::Approval::Escalation do
       epics = File.join(home, "state", "epics").tap { FileUtils.mkdir_p(File.join(_1, "demo", "issues")) }
       other = File.join(home, "state", "other").tap { FileUtils.mkdir_p(File.join(_1, "issues")) }
 
-      ruled("grep -rn .netrc issues", cwd: File.join(epics, "demo"), root:, home:, read_roots: [epics])
-      ruled("grep -rn .netrc issues", cwd: other, root:, home:, read_roots: [epics])
+      ruled("wc -l .netrc issues", cwd: File.join(epics, "demo"), root:, home:, read_roots: [epics])
+      ruled("wc -l .netrc issues", cwd: other, root:, home:, read_roots: [epics])
 
       expect(rulings.select { _1["rung"] == "triage" }.map { _1["verdict"] }).to eq(%w[abstain deny])
     end
@@ -1808,7 +1808,7 @@ RSpec.describe Lain::Approval::Escalation do
     end
 
     it "leaves a bare word whose name alone is protected to a human" do
-      ruled("grep -rn .netrc lib")
+      ruled("wc -l .netrc lib")
 
       expect(rulings.first).to include("rung" => "triage", "verdict" => "abstain", "faulted" => false)
     end

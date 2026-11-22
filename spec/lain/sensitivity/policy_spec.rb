@@ -1551,6 +1551,14 @@ RSpec.describe Lain::Sensitivity::Policy do
         end
       end
 
+      it "refuses a key grep reads when an abbreviated long option gave the pattern" do
+        expected = confined.denial(read(File.join(home, ".ssh", "id_ed25519")), cwd: root)
+        actual = confined.denial(call("bash", { "command" => "grep --regex=x ~/.ssh/id_ed25519" }), cwd: root)
+
+        expect(expected).not_to be_nil
+        expect(actual).to have_attributes(tool: "bash", reason: expected.reason)
+      end
+
       it "leaves a path the project's own config denies to the shell rung" do
         rules = Lain::Sensitivity::Rules.from({ "denied" => ["*.secret"] })
         configured = confined_to(described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, rules:),
