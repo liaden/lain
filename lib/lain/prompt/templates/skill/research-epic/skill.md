@@ -37,6 +37,9 @@ answers named: the files, the utilities worth reusing, the specs that pin curren
 Your provider <%= provider_width %>.
 Each researcher has <%= researcher_limits %>.
 
+A researcher works in a scratch directory of its own, not in your checkout, so name a project
+file to it by absolute path.
+
 Researchers can run commands and write spikes, but only inside a working directory of their own: an
 empty scratch directory by default, or, when you pass `extends` naming a repository in the project or a
 related directory, a worktree of it on a branch of its own. A command outside the read-only set (a

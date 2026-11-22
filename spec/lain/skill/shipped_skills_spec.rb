@@ -421,6 +421,29 @@ RSpec.describe "shipped skills" do
     end
   end
 
+  describe "the skills that brief children state where a child works" do
+    it "has execute-plan brief implementers with relative paths and landing run the card's checks" do
+      with_empty_project do |renderer|
+        rendered = renderer.render("execute-plan")
+        scaffold = rendered.squish
+        landing = rendered[/^## Phase 4 .*?(?=^## Phase 4½)/m].to_s.squish
+
+        expect(scaffold).to match(/own checkout, cut from the committed tip/i)
+        expect(scaffold).to match(/relative to (its|the child's) working directory/i)
+        expect(landing).to match(/card's named checks/i)
+        expect(landing).not_to match(/full suite green/i)
+      end
+    end
+
+    it "has create-plan and research-epic say how a child's files are named" do
+      with_empty_project do |renderer|
+        expect(renderer.render("create-plan").squish).to match(/commit the plan draft before it can read it/i)
+        researching = renderer.render("research-epic").squish
+        expect(researching).to match(/researcher works in a scratch directory.{0,80}by absolute path/i)
+      end
+    end
+  end
+
   describe "implement-issue's scaffold is the epic driver's per-issue brief" do
     it "says the tests are committed, the issue is in the brief, and the actor rebases but never merges" do
       with_empty_project do |renderer|
@@ -433,6 +456,17 @@ RSpec.describe "shipped skills" do
         expect(scaffold).to match(/project's own test command/i)
         expect(scaffold).to match(/rebase/i).and match(/harness.{0,40}merg|merg.{0,60}harness/i)
         expect(scaffold).to include("dev", "reviewer_code")
+      end
+    end
+
+    it "names where the epic's sources live and says child briefs use paths relative to the child's checkout" do
+      with_empty_project do |renderer|
+        scaffold = renderer.render("implement-issue").squish
+
+        expect(scaffold).to include("/state/lain/epics/test/<slug>/sources")
+        expect(scaffold).to include("<slug>/sources` if the research cited any")
+        expect(scaffold).to match(/relative to (the child's|its) (checkout|working directory)/i)
+        expect(scaffold).to match(/commit .{0,60}before .{0,40}(child|it) can read/i)
       end
     end
 

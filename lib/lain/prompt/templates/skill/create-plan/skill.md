@@ -121,8 +121,10 @@ Lint the draft before anyone else sees it, and fix every failure:
 
 Then run the panel review.
 
-Spawn one review sub-agent embodying the full panel for the plan's language. It reviews the
-*plan*, not code: wrong seams, missing escalation triggers, cards too coupled to parallelize,
+Spawn one review sub-agent embodying the full panel for the plan's language. A leased review
+sub-agent works in its own checkout, cut from the committed tip, so commit the plan draft before
+it can read it and name it relative to the child's working directory, or put the plan's text in
+the brief. It reviews the *plan*, not code: wrong seams, missing escalation triggers, cards too coupled to parallelize,
 ACs that don't pin behaviour, reuse the grounding pass missed. Findings ranked BLOCKER /
 SHOULD-FIX / NIT. Fix BLOCKERs and substantive SHOULD-FIXes before presenting; list what the
 panel changed.

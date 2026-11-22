@@ -43,6 +43,10 @@ picking the skill that declares it.
 
 The implementer's brief, assembled from the card verbatim where possible:
 
+- A leased implementing or review sub-agent works in its own checkout, cut from the committed tip,
+  not in yours: name files relative to its working directory, never by your absolute path, and
+  commit a file before it can read it. A `researcher` works in a scratch directory of its own and
+  reads project files by absolute path.
 - Repo CLAUDE.md rules apply — toolchain, style, output discipline. Say where it lives.
 - **TDD, red first**: write the named spec files from the Gherkin ACs, run them, show they
   fail for the right reason, *then* implement to green. The red run is part of the hand-back.
@@ -77,10 +81,11 @@ single pass. Verdicts:
 
 ## Phase 4 — Land it
 
-Follow the plan's `commit-mode`. Non-negotiable either way: leaf-first commit order, the full
-suite green before anything lands, serialized landing of shared-file changes, and
-re-verification after any rebase (hooks do not fire on a ff-merge). A worktree forked before a
-sibling merged owns the integration touch-up at its own merge.
+Follow the plan's `commit-mode`. Non-negotiable either way: leaf-first commit order, the card's
+named checks and the project's test command (where it has one) passing before anything lands,
+serialized landing of shared-file changes, and re-verification after any rebase (hooks do not fire
+on a ff-merge). A worktree forked before a sibling merged owns the integration touch-up at its
+own merge.
 
 Land through the coordinator, never by hand. Once a card's implementer (bound with
 `@dev/implement`) has committed in its lease and the review approves, enqueue the lease's HEAD
