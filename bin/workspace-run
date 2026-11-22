@@ -26,6 +26,7 @@ module WorkspaceRun
   # The lineage a lease has is empty, so nothing is fresh.
   module Quiet
     def self.any_under?(_root) = false
+    def self.fresh?(_path) = false
   end
 
   Options = Data.define(:root, :grant, :argv)

@@ -258,7 +258,8 @@ module Lain
       # @param notes [#<<] receives the degraded record; the journal unless a run says otherwise
       # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
-      # @param fresh [#any_under?] the lineage's freshness; by default every root is fresh and no port is granted
+      # @param fresh [#any_under?, #fresh?] the lineage's freshness; by default every root and file is fresh, so no
+      #   port is granted, nor a linter by name
       # @param phone_answered [Boolean] whether a call that would run unconfined is refused rather than run,
       #   unless a human approved it and it runs traced
       # @param taint [#call] returns the {Sensitivity::Taint} an unmasked call's writes are scanned into

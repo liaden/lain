@@ -268,6 +268,7 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
     File.write(File.join(@root, "Cargo.toml"), "[package]\nname = \"c\"\nversion = \"0.1.0\"\n")
     quiet = Module.new do
       def self.any_under?(_root) = false
+      def self.fresh?(_path) = true
       def self.making(path) = yield(path)
     end
     box, exec = contained_where_possible(workspace: true, lineage: quiet)
@@ -280,7 +281,10 @@ RSpec.describe "An approval of a call that reads secrets", :seam do
   end
 
   it "says a git fetch runs without network, which it does: git never runs as argv, so it earns no grant" do
-    quiet = Module.new { def self.any_under?(_root) = false }
+    quiet = Module.new do
+      def self.any_under?(_root) = false
+      def self.fresh?(_path) = true
+    end
     box, exec = contained_where_possible(workspace: true, lineage: quiet)
 
     prompt, result = answered("y\n", exec:, containment: box.containment, command: "git fetch")

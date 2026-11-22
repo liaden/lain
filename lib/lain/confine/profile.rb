@@ -56,6 +56,10 @@ module Lain
       INSTALLS = ".local/share/mise/installs"
       HOME_READ = [".rustup", ".cargo/bin", ".config/git", ".gitconfig", INSTALLS].freeze
 
+      # Run by name wherever a call or its hooks name them. Static binaries only: an interpreter-run linter
+      # (yamllint, markdownlint) needs its interpreter chain granted, and a dynamic one its loader and libraries.
+      LINTERS = %w[shellcheck shfmt actionlint].freeze
+
       # A shim is a link to mise, which reads the project's config and goes online, so a workspace never runs it.
       MISE_SHIMS = ".local/share/mise/shims"
       MISE = %w[/usr/bin/mise /usr/local/bin/mise].freeze

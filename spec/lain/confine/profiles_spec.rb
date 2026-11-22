@@ -502,7 +502,10 @@ RSpec.describe Lain::Confine::Profiles do
         let(:fresh_paths) { [] }
         let(:fresh) do
           paths = fresh_paths
-          Module.new { define_singleton_method(:any_under?) { |dir| paths.any? { Lain::Landing.under?(_1, dir) } } }
+          Module.new do
+            define_singleton_method(:any_under?) { |dir| paths.any? { Lain::Landing.under?(_1, dir) } }
+            define_singleton_method(:fresh?) { |_path| true }
+          end
         end
         let(:profiles) { described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh:) }
 
@@ -651,7 +654,10 @@ RSpec.describe Lain::Confine::Profiles do
         bin = File.join(home, ".local/share/mise/installs/ruby/4.0.6/bin")
         planted = File.join(root, "bin/bundle")
         executables = [executable("bundle", File.join(bin, "bundle"), :user), executable("x", planted, :project)]
-        quiet = Module.new { def self.any_under?(_dir) = false }
+        quiet = Module.new do
+          def self.any_under?(_dir) = false
+          def self.fresh?(_path) = true
+        end
         read = described_class.new(masks:, probe:, home:, root:, workspace: true, tmpdir: scratch, fresh: quiet)
         profile = read.for(request(ruling("auto"), executables:))
 
@@ -733,6 +739,7 @@ RSpec.describe Lain::Confine::Profiles do
           paths = fresh_paths
           Struct.new(:paths) do
             def any_under?(root) = paths.any? { Lain::Landing.under?(_1, root) }
+            def fresh?(_path) = true
           end.new(paths)
         end
         let(:profiles) do
@@ -1027,6 +1034,7 @@ RSpec.describe Lain::Confine::Profiles do
           Module.new do
             def self.any_under?(_root) = true
             def self.changed_under?(_root) = false
+            def self.fresh?(_path) = true
           end
         end
 
@@ -1671,6 +1679,164 @@ RSpec.describe Lain::Confine::Profiles do
           expect(described_class.lifted(masked, root)).to eq([key, File.join(root, ".env")])
         end
       end
+    end
+  end
+
+  describe "a linter, granted by its file rather than by a stage the call names", :seam do
+    let(:bin) { File.join(home, ".local/bin").tap { FileUtils.mkdir_p(_1) } }
+    let(:shellcheck) { File.join(bin, "shellcheck") }
+    let(:fresh_paths) { [] }
+    let(:fresh) do
+      Struct.new(:paths) do
+        def any_under?(_root) = false
+        def fresh?(path) = paths.include?(path)
+      end.new(fresh_paths)
+    end
+    let(:path) { bin }
+    let(:scratch) { File.join(@base, "scratch").tap { FileUtils.mkdir_p(_1) } }
+    let(:linting) { described_class.new(masks:, probe:, home:, root:, fresh:, env: { "PATH" => path }) }
+    let(:workspace) do
+      described_class.new(masks:, probe:, home:, root:, fresh:, env: { "PATH" => path }, workspace: true,
+                          tmpdir: scratch)
+    end
+
+    def contained
+      Lain::Approval::Escalation::Ruling.allow(rung: Lain::Approval::Judged::NAME, because: "judged", contained: true)
+    end
+
+    def elf(file, segment: 1)
+      FileUtils.mkdir_p(File.dirname(file))
+      fields = [2, 62, 1, 0, 64, 0, 0, 64, 56, 1, 0, 0, 0].pack("S<S<L<Q<Q<Q<L<S<S<S<S<S<S<")
+      header = ["\x7FELF".b, [2, 1, 1].pack("C3"), "\0" * 9, fields, [segment].pack("L<"), "\0" * 52].join
+      File.binwrite(file, header)
+      File.chmod(0o755, file)
+      file
+    end
+
+    before do
+      answers["lain-fence"] = ["#{JSON.generate({ abi: 6, rights: {}, skipped: [], private_net: false })}\n", true]
+    end
+
+    it "runs a static user binary that shadows nothing, under the contained reader and workspace profiles alike" do
+      elf(shellcheck)
+
+      expect([linting, workspace].map { _1.for(request(contained)).runs?(shellcheck) }).to eq([true, true])
+      expect(linting.for(composed).runs?(shellcheck)).to be(true)
+    end
+
+    it "reads it as runnable where the planner asks, so a call naming it parks for nothing" do
+      elf(shellcheck)
+      named = executable("shellcheck", shellcheck, :user)
+
+      expect(linting.unrunnable(request(contained), [named])).to eq([])
+    end
+
+    it "grants nothing, and still builds the profile, for a linter whose headers claim an unreachable offset" do
+      elf(shellcheck)
+      File.binwrite(shellcheck, [2**63].pack("Q<"), 32)
+
+      expect(linting.for(request(contained)).runs?(shellcheck)).to be(false)
+    end
+
+    it "grants no binary that names a loader, whose libraries the sandbox would not show" do
+      elf(shellcheck, segment: 3)
+
+      expect(linting.for(request(contained)).runs?(shellcheck)).to be(false)
+    end
+
+    it "grants no linter the project holds, on PATH ahead of the user's through direnv" do
+      planted = elf(File.join(root, "bin/shellcheck"))
+      elf(shellcheck)
+      direnv = described_class.new(masks:, probe:, home:, root:, fresh:,
+                                   env: { "PATH" => "#{File.dirname(planted)}:#{path}" })
+
+      profile = direnv.for(request(contained))
+
+      expect([profile.runs?(planted), profile.exec_files]).to eq([false, []])
+    end
+
+    it "grants no link whose target was written this session" do
+      target = elf(File.join(@base, "downloads/shellcheck"))
+      File.symlink(target, shellcheck)
+      fresh_paths << target
+
+      expect(linting.for(request(contained)).runs?(target)).to be(false)
+    end
+
+    it "grants no user binary that shadows another of its name on PATH" do
+      elf(shellcheck)
+      other = elf(File.join(@base, "elsewhere/shellcheck"))
+      shadowing = described_class.new(masks:, probe:, home:, root:, fresh:,
+                                      env: { "PATH" => "#{path}:#{File.dirname(other)}" })
+
+      expect(shadowing.for(request(contained)).exec_files).to eq([])
+    end
+
+    it "grants no other program that rides in under a linter's name, as a link to it does" do
+      mise = elf(File.join(@base, "elsewhere/mise"))
+      File.symlink(mise, shellcheck)
+
+      expect(linting.for(request(contained)).exec_files).to eq([])
+    end
+
+    it "drops a linter a mask lands on, rather than refusing the call" do
+      elf(shellcheck)
+      masked << mask(bin)
+
+      expect(linting.for(request(contained)).exec_files).to eq([])
+    end
+
+    it "drops a linter a related directory's mask lands on, under either profile, rather than refusing the call" do
+      elf(shellcheck)
+      related = Lain::Confine::MaskList::Related.new(roots: [], masks: [mask(bin)])
+      classifier = Struct.new(:related) { def classify(_) = Lain::Sensitivity::ORDINARY.verdict }.new(related)
+      both = [false, true].map do |switch|
+        described_class.new(masks:, probe:, home:, root:, fresh:, env: { "PATH" => path }, classifier:,
+                            workspace: switch, tmpdir: scratch)
+      end
+
+      expect(both.map { _1.for(request(contained)).exec_files }).to eq([[], []])
+    end
+
+    it "runs a linter in a mise install's bin dir without granting the dir, so no neighbour there runs" do
+      install = File.join(home, ".local/share/mise/installs/shellcheck/0.10.0/bin")
+      linter = elf(File.join(install, "shellcheck"))
+      neighbour = elf(File.join(install, "neighbour"))
+      installed = described_class.new(masks:, probe:, home:, root:, fresh:, env: { "PATH" => install },
+                                      workspace: true, tmpdir: scratch)
+
+      profile = installed.for(request(contained))
+
+      expect([profile.runs?(linter), profile.runs?(neighbour), profile.exec_dirs.include?(install)])
+        .to eq([true, false, false])
+    end
+
+    it "grants nothing by name to a session that read no lineage, which counts every file as fresh" do
+      elf(shellcheck)
+      unread = described_class.new(masks:, probe:, home:, root:, env: { "PATH" => path })
+
+      expect(unread.for(request(contained)).runs?(shellcheck)).to be(false)
+    end
+
+    it "runs the box's own static shellcheck inside a compound command, offline and refusing no exec" do
+      host = ENV.fetch("PATH", "").split(":").map { File.join(_1, "shellcheck") }.find { File.executable?(_1) }
+      static = host && !host.start_with?("/usr/") && Lain::Confine::Elf.static?(host)
+      skip "no static shellcheck outside /usr on this box's PATH" unless static
+
+      FileUtils.cp(host, shellcheck)
+      File.write(File.join(root, "s.sh"), "#!/bin/sh\necho $1\n")
+      real = Lain::Confine::Probe.new(fence: Lain::Confine::Bwrap.fence_binary, journal:)
+      confined = described_class.new(masks:, probe: real, home:, root:, fresh:, env: { "PATH" => path })
+      exec = Lain::Exec::Sandboxed.new(inner: Lain::Exec::Local.new(child_env: Lain::Exec::ChildEnv.new(env: ENV.to_h)),
+                                       journal:, profiles: confined,
+                                       launcher: Lain::Confine::Bwrap.new(fence: Lain::Confine::Bwrap.fence_binary))
+
+      linted = exec.call(command: "bash -n s.sh && shellcheck s.sh", cwd: root, env: { "PATH" => "#{bin}:/usr/bin" },
+                         timeout: 30, confinement: request(contained))
+      record = journal.find { _1.is_a?(Lain::Telemetry::Sandbox) }
+
+      expect(linted).to have_attributes(exit_status: 1, stdout: a_string_including("SC2086"))
+      expect(record).to have_attributes(network: false)
     end
   end
 

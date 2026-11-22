@@ -88,8 +88,8 @@ module Lain
         def self.related = MaskList::Related::NONE
       end
 
-      # The freshness a caller that read no lineage hands over: every root
-      # counts as fresh, so nothing is granted its ports.
+      # The freshness a caller that read no lineage hands over: every root and
+      # file counts as fresh, so nothing is granted its ports, nor a linter by name.
       module Unread
         # @param _root [String]
         # @return [true]
@@ -98,6 +98,10 @@ module Lain
         # @param _root [String]
         # @return [true]
         def self.changed_under?(_root) = true
+
+        # @param _path [String]
+        # @return [true]
+        def self.fresh?(_path) = true
 
         # @param path [String]
         # @yieldparam path [String]
@@ -142,7 +146,8 @@ module Lain
       # @param root [String] absolute; the session's project, for a request that names no root of its own
       # @param workspace [Boolean] whether an automatic allow runs under the workspace profile
       # @param tmpdir [String] absolute; where each workspace call gets a dir of its own to write
-      # @param fresh [#any_under?] the lineage's freshness, which a build tool's grant needs to be quiet
+      # @param fresh [#any_under?, #fresh?] the lineage's freshness, which a build tool's grant needs to be quiet
+      #   and a linter's file must be
       # @param env [#[]] where a grant reads where bundler installs
       # @param classifier [#classify, #related] the session's policy on a path, asked before a git config file
       #   outside the project is granted, and the related directories a reader may read, each with its masks; by
@@ -225,7 +230,8 @@ module Lain
         related = @classifier.related
         profile = Profile.reader(root:, home: @home, masks: [*masks, *related.masks.map(&:path)].uniq,
                                  related: [*related.roots, *related.reads],
-                                 exec_files: exec_files(programs(request, masks, fresh_gates: true)),
+                                 exec_files: [*exec_files(programs(request, masks, fresh_gates: true)),
+                                              *linters(root, [*masks, *related.masks.map(&:path)])].uniq,
                                  trace: traceable?)
         granted(profile.with(read_dirs: [*profile.read_dirs, *git_configs(root)]))
       end
@@ -259,7 +265,8 @@ module Lain
       def programmed(ported, request, root)
         masks = mask_paths(root, request)
         programs = programs(request, masks, fresh_gates: false)
-        ported.with(masks:, exec_files: exec_files(programs),
+        linted = linters(root, [*masks, *@classifier.related.masks.map(&:path)])
+        ported.with(masks:, exec_files: [*exec_files(programs), *linted].uniq,
                     exec_dirs: [*ported.exec_dirs, *install_bins(programs)].uniq,
                     read_dirs: [*ported.read_dirs, *git_configs(root)].uniq)
       end
@@ -366,6 +373,26 @@ module Lain
       def programs(request, masks, fresh_gates:)
         unmasked = [*placed(request.grants, fresh_gates:), *vouched(request)].reject { masked?(_1.realpath, masks) }
         [*placed(request.executables, fresh_gates:), *unmasked]
+      end
+
+      # Granted by file rather than by stage, since a hook or a compound command runs one no stage names, and as
+      # the file alone, never its dir, so nothing beside a linter in a mise install runs with it. Read off the
+      # host's PATH; a call whose own PATH finds another copy runs that one ungranted. Freshness gates every
+      # profile here. A link that lands on a file of another name is refused, but a copy or hard link of any
+      # static program under a linter's name is granted: it is the user's own file, old and shadowing nothing,
+      # and it could run by its own name as a stage anyway. Every mask the profile will carry drops one, the
+      # related dirs' included, since a mask over a granted file refuses the whole call.
+      #
+      # @return [Array<String>] the resolved linters the call may exec
+      def linters(root, masks)
+        resolver = Shell::Executable::Resolver.new(root:, fresh: @fresh, host_env: @env)
+        found = resolver.for(WorkerEnv.new(cwd: root, env: {})).call(Shell::Term.of(*Profile::LINTERS.each_slice(1)))
+        found.select { linter?(_1) }.map(&:realpath).reject { masked?(_1, masks) }
+      end
+
+      def linter?(found)
+        BuildGrant.placed?(found, home: @home) && File.basename(found.realpath) == found.name &&
+          Elf.static?(found.realpath)
       end
 
       # A human's approval reaches a profile only contained, so it vouches for the call's own project scripts,
