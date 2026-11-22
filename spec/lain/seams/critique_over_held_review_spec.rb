@@ -287,7 +287,7 @@ RSpec.describe "a critique of a held review", :seam do
       expect(findings).to include("chunk 1 of 2", "32768-token context", "a finding")
       expect(findings.scan("chunk 1 of 2").size).to eq(1)
       expect(findings).not_to include(CritiqueSeamRefusal::BODY)
-      expect(journal.map(&:outcome)).to eq(%w[refused answered])
+      expect(journal.map(&:outcome)).to eq(%w[failed answered])
       expect(worktrees).to eq(1)
     end
 

@@ -65,7 +65,8 @@ module Lain
       # at {BYTES_PER_TOKEN}.
       SCHEMA_RESERVE_TOKENS = 1_536
 
-      OUTCOMES = %w[answered refused empty].freeze
+      # "refused" stays for records written before a raised error was told apart.
+      OUTCOMES = %w[answered refused failed empty].freeze
 
       NO_REVISION = "the open review has no reviewed revision to critique from -- it was opened over a " \
                     "tree rather than over commits, so /critique would read the working tree it is meant to " \
@@ -248,7 +249,7 @@ module Lain
         result = lent.call(@role, MODE, brief.to_s, model: @model)
         outcome(result.error? ? "refused" : "answered", result.text)
       rescue StandardError => e
-        outcome("refused", e.message)
+        ["failed", said?(e.message) ? Tools::Subagent::Actor.cause(e) : NOTHING_SAID]
       end
 
       def outcome(outcome, words) = said?(words) ? [outcome, words] : ["refused", NOTHING_SAID]

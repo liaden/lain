@@ -197,8 +197,33 @@ RSpec.describe Lain::Review::Critique do
 
       expect(failing.calls.size).to eq(2)
       expect(findings).to include("the provider fell over", "findings from child 2")
-      expect(journal.map(&:outcome)).to eq(%w[refused answered])
+      expect(journal.map(&:outcome)).to eq(%w[failed answered])
       expect(checkouts.ended).to eq(1)
+    end
+
+    it "records a quota error as a failed chunk, worded as an actor words it" do
+      quota = Lain::Provider::HTTP::QuotaError.new("limit hit")
+      failing = CritiqueSpecSpawn.new(fails: { 1 => quota })
+      described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768), checkouts:, journal:,
+                          slots: @slots, instructions: "# critique").call
+
+      expect(journal.first.outcome).to eq("failed")
+      expect(journal.first.text).to include(Lain::Tools::Subagent::Actor.cause(quota))
+    end
+
+    it "words another provider failure as its class and message" do
+      failing = CritiqueSpecSpawn.new(fails: { 1 => Lain::Error.new("the provider fell over") })
+      described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768), checkouts:, journal:,
+                          slots: @slots, instructions: "# critique").call
+
+      expect(journal.first.text).to end_with("Lain::Error: the provider fell over")
+    end
+
+    it "still loads an old record whose outcome is refused" do
+      old = described_class::CritiqueChunk.new(head_ref: "h" * 40, ordinal: 1, count: 1, critic: 1, model: nil,
+                                               label: "a", paths: ["a"], role: "diff_critic", brief_key: "k",
+                                               outcome: "refused", text: "chunk 1 of 1 (a) was not critiqued: x")
+      expect(old.outcome).to eq("refused")
     end
 
     # The failure's words ARE the finding, so the finding has to read as one.
@@ -223,6 +248,7 @@ RSpec.describe Lain::Review::Critique do
       described_class.new(subject: diffed(changeset), spawn: failing, window: window(32_768), checkouts:, journal:,
                           slots: @slots, instructions: "# critique").call
 
+      expect(journal.first.outcome).to eq("failed")
       expect(journal.first.text).to eq("chunk 1 of 2 (#{journal.first.label}) was not critiqued: " \
                                        "#{described_class::NOTHING_SAID}")
     end
