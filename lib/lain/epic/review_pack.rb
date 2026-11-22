@@ -158,7 +158,7 @@ module Lain
       end
 
       def findings(review)
-        return review.verdict_lines.join("\n") unless review.parsed?
+        return [*review.verdict_lines, *review.must_fix.map { "- #{_1}" }].join("\n") unless review.parsed?
 
         "MUST-FIX:\n#{listed(review.must_fix)}\nMINOR:\n#{listed(review.minor)}"
       end

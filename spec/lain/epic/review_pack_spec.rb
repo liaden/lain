@@ -190,6 +190,17 @@ RSpec.describe Lain::Epic::ReviewPack do
       expect(pack.to_s).to include("shown in full")
     end
 
+    it "lists the must-fix an unparsed round kept from the critics who answered" do
+      answer = "MUST-FIX:\n- issues/c1.md: no owner is named\nMINOR:\n- none\nVERDICT: revise"
+      text = "## cluster 1 of 1 -- wave 3\n\n2 critics read this chunk\n\n### critic 1\n\n#{answer}\n\n" \
+             "### critic 2\n\nno block"
+      partial = Lain::Epic::ReviewResult.parse(text, epic_slug: "nyotes", stage: "issue_plan",
+                                                     read: %w[c1 c2].to_h { [_1, gated(_1)] }, clusters: 1, critics: 2)
+      records << partial.to_journal
+
+      expect(pack.to_s).to include("- issues/c1.md: no owner is named", "1 critic did not answer")
+    end
+
     it "names a document the round read that is gone since" do
       FileUtils.rm(File.join(@home.path, "research.md"))
 

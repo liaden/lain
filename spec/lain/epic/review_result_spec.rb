@@ -190,6 +190,27 @@ RSpec.describe Lain::Epic::ReviewResult do
       expect([result.verdict, result.must_fix, result.minor]).to eq(["revise", ["epic.md: two"], ["epic.md: one"]])
     end
 
+    it "parses a block with blank lines around its lists" do
+      text = "MUST-FIX:\n\n- epic.md: a gap\n\nMINOR:\n\n- epic.md: one\n\nVERDICT: revise"
+
+      result = reviewed(merged(text))
+
+      expect([result.verdict, result.must_fix, result.minor]).to eq(["revise", ["epic.md: a gap"], ["epic.md: one"]])
+    end
+
+    it "keeps the answering critics' findings when one critic returned no block" do
+      critics = "3 critics read this chunk\n\n### critic 1\n\n#{block(minor: ["- epic.md: one"])}\n\n" \
+                "### critic 2\n\nI could not finish.\n\n" \
+                "### critic 3\n\n#{block(must: ["- epic.md: two"], verdict: "revise")}"
+
+      result = reviewed(merged(critics), critics: 3)
+
+      expect([result.verdict, result.must_fix, result.minor]).to eq(["unparsed", ["epic.md: two"], ["epic.md: one"]])
+      expect(result.verdict_lines).to eq(["1 critic did not answer"])
+      expect(result.gate_lines([plan(graph("a"))]).join("\n")).to include("1 critic did not answer",
+                                                                          "must-fix: epic.md: two")
+    end
+
     it "names itself by its content, as a review id" do
       first = reviewed(merged(block))
 

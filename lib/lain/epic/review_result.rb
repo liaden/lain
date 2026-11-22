@@ -16,8 +16,9 @@ module Lain
     # from the epic home, to the digest of the text they were shown (masked
     # where a secret was), so a later round shows an unchanged one by digest
     # alone. `verdict` is approve, revise or unparsed; an unparsed review
-    # keeps only its raw verdict lines, because a count read off a block that
-    # did not parse would be a guess.
+    # keeps its raw verdict lines, or a note of how many critics did not
+    # answer, plus the findings of the critics who did. It keeps no verdict or
+    # count, because one read off a block that did not parse would be a guess.
     class ReviewResult
       include Telemetry::Journalable
 
@@ -45,16 +46,31 @@ module Lain
       def self.parse(findings, epic_slug:, stage:, read:, clusters:, critics:, documents: {})
         # A child's reply is bytes nobody vouched for, and the id digests what is kept of it.
         findings = Utf8.legible(findings)
-        blocks = Closing.one_per_reader(findings, clusters, critics)
-        shape = if blocks
-                  { verdict: blocks.any? { _1.fetch(:verdict) == "revise" } ? "revise" : "approve",
-                    must_fix: blocks.flat_map { _1.fetch(:must_fix) }, minor: blocks.flat_map { _1.fetch(:minor) },
-                    verdict_lines: [] }
-                else
-                  { verdict: UNPARSED, must_fix: [], minor: [], verdict_lines: Closing.verdict_lines(findings) }
-                end
-        identified(epic_slug:, stage:, read:, documents:, **shape)
+        identified(epic_slug:, stage:, read:, documents:, **shape(findings, clusters, critics))
       end
+
+      def self.shape(findings, clusters, critics)
+        readers = Closing.each_reader(findings, clusters, critics).to_a
+        blocks = readers.compact
+        silent = readers.size - blocks.size
+        return unparsed(Closing.verdict_lines(findings)) if blocks.empty? || (silent.positive? && critics < 2)
+        return unparsed(silent_note(silent), blocks) if silent.positive?
+
+        { verdict: blocks.any? { _1.fetch(:verdict) == "revise" } ? "revise" : "approve",
+          must_fix: blocks.flat_map { _1.fetch(:must_fix) }, minor: blocks.flat_map { _1.fetch(:minor) },
+          verdict_lines: [] }
+      end
+      private_class_method :shape
+
+      # An unparsed round still keeps what the critics who did answer found.
+      def self.unparsed(verdict_lines, blocks = [])
+        { verdict: UNPARSED, must_fix: blocks.flat_map { _1.fetch(:must_fix) },
+          minor: blocks.flat_map { _1.fetch(:minor) }, verdict_lines: }
+      end
+      private_class_method :unparsed
+
+      def self.silent_note(count) = ["#{count} #{count == 1 ? "critic" : "critics"} did not answer"]
+      private_class_method :silent_note
 
       def self.identified(**fields)
         new(id: "review-#{Canonical.abbreviate(Canonical.digest(fields), scheme: false)}", **fields)
@@ -122,10 +138,14 @@ module Lain
       def short(digest) = Canonical.abbreviate(digest, scheme: false)
 
       def findings
-        return verdict_lines.map { "  #{legible(_1)}" } unless parsed?
+        return unparsed_lines unless parsed?
 
         [*must_fix.map { "  must-fix: #{legible(_1)}" }, ("  #{minor.size} minor, not shown" unless minor.empty?)]
           .compact
+      end
+
+      def unparsed_lines
+        [*verdict_lines.map { "  #{legible(_1)}" }, *must_fix.map { "  must-fix: #{legible(_1)}" }]
       end
 
       def legible(line) = Utf8.escaped(line)
@@ -153,7 +173,8 @@ module Lain
           #{VERDICT} approve
         TEXT
 
-        LIST = /(?:^[ \t]*- .*\n)+/
+        BLANK = /^[ \t]*\n/
+        LIST = /#{BLANK}*(?:^[ \t]*- .*\n#{BLANK}*)+/
         LISTS = /^[ \t]*#{MUST_FIX}[ \t]*\n(?<must>#{LIST})[ \t]*#{MINOR}[ \t]*\n(?<minor>#{LIST})/
         BLOCK = /#{LISTS}[ \t]*#{VERDICT}[ \t]*(?<verdict>approve|revise)[ \t]*$/
         VERDICT_LINE = /^[ \t]*#{VERDICT}.*$/
@@ -174,8 +195,9 @@ module Lain
         # @param text [String] the merged findings
         # @param clusters [Integer] how many clusters were critiqued
         # @param critics [Integer] how many critics read each cluster
-        # @return [Array<Hash>, nil] each reader's block, or nil unless every reader wrote exactly 1 that agrees
-        def self.one_per_reader(text, clusters, critics)
+        # @return [Array<Hash, nil>, nil] each reader's block, nil for a reader that wrote no single agreeing
+        #   one, and nil altogether when the layout is not the one the run produced
+        def self.each_reader(text, clusters, critics)
           return unless critics.positive?
 
           headings = text.scan(CLUSTER).map { |pair| pair.map(&:to_i) }
@@ -184,8 +206,7 @@ module Lain
           readers = text.split(CLUSTER).drop(1).each_slice(3).map(&:last).map { readers(_1, critics) }
           return if readers.any?(&:nil?)
 
-          blocks = readers.flatten.map { sole_block(_1) }
-          blocks if blocks.all?
+          readers.flatten.map { sole_block(_1) }
         end
 
         # @return [Array<String>, nil] each critic's text, nil unless the section is laid out for exactly `critics`
@@ -218,7 +239,7 @@ module Lain
         end
 
         def self.items(list)
-          lines = list.lines.map { _1.strip.delete_prefix("- ").strip }
+          lines = list.lines.map(&:strip).reject(&:empty?).map { _1.delete_prefix("- ").strip }
           return [] if lines == [NONE]
 
           lines.include?(NONE) ? nil : lines
