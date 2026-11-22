@@ -272,7 +272,81 @@ module Lain
           def contains?(other) = range.begin <= other.range.begin && other.range.end <= range.end
         end
 
-        private_constant :BLANK_BYTES, :NOT_WRITTEN, :Span
+        # Whether some span holds a range, answered from the spans' begins and
+        # ends alone so no span is rescanned.
+        class Holders
+          def initialize(spans)
+            @widest = spans.group_by { _1.range.begin }.transform_values { |group| group.map { _1.range.end }.max }
+            @begins = @widest.keys.sort
+            reach = -1
+            @before = @begins.map { |at| reach = [reach, @widest.fetch(at)].max }
+          end
+
+          def hold?(span)
+            held = (@begins.bsearch_index { _1 > span.range.begin } || @begins.size) - 1
+            held >= 0 && @before.fetch(held) >= span.range.end
+          end
+
+          # Strictly: a span of the very same range does not count.
+          def swallow?(command)
+            begin_at = command.range.begin
+            end_at = command.range.end
+            earlier = (@begins.bsearch_index { _1 >= begin_at } || @begins.size) - 1
+            (earlier >= 0 && @before.fetch(earlier) >= end_at) || @widest.fetch(begin_at, -1) > end_at
+          end
+        end
+
+        # The spans a range holds, in source order, from a list sorted once by begin.
+        class Within
+          def initialize(spans)
+            @sorted = spans.sort_by { _1.range.begin }
+            @begins = @sorted.map { _1.range.begin }
+            @arrival = {}.compare_by_identity
+            spans.each_with_index { |span, index| @arrival[span] = index }
+          end
+
+          def of(span)
+            from = @begins.bsearch_index { _1 >= span.range.begin } || @sorted.size
+            last = @begins.bsearch_index { _1 > span.range.end } || @sorted.size
+            @sorted[from...last].select { span.contains?(_1) }
+          end
+
+          # The held span the query returned first, which is not always the leftmost.
+          def first_of(span) = of(span).min_by { @arrival.fetch(_1) }
+        end
+
+        # The command a redirect belongs to. Top-level commands are disjoint, so
+        # both the holder and the nearest one before are found by bisection.
+        class Owners
+          def initialize(commands, break_begins)
+            @commands = commands
+            @begins = commands.map { _1.range.begin }
+            @ends = commands.map { _1.range.end }
+            @breaks = break_begins.sort
+          end
+
+          def of(span) = holder(span) || before(span)
+
+          private
+
+          def holder(span)
+            at = (@begins.bsearch_index { _1 > span.range.begin } || @begins.size) - 1
+            @commands.fetch(at) if at >= 0 && @commands.fetch(at).contains?(span)
+          end
+
+          def before(span)
+            at = (@ends.bsearch_index { _1 > span.range.begin } || @ends.size) - 1
+            @commands.fetch(at) if at >= 0 && !split?(@commands.fetch(at), span)
+          end
+
+          # A keyword or separator between them closes a compound, whose redirect bash applies to the whole of it.
+          def split?(command, span)
+            first = @breaks.bsearch { _1 >= command.range.end }
+            !first.nil? && first <= span.range.begin
+          end
+        end
+
+        private_constant :BLANK_BYTES, :NOT_WRITTEN, :Span, :Holders, :Within, :Owners
 
         # Consecutive byte indexes, merged into the spans a human reads.
         def self.runs(indexes)
@@ -287,6 +361,8 @@ module Lain
             group.map { |capture| Span.new(capture.fetch("start")...capture.fetch("end"), capture.fetch("text")) }
           end
           @keywords = free_standing_keywords
+          @inside = [DESCRIPTOR, TARGET, HEREDOC_START].to_h { [_1, Within.new(@spans.fetch(_1, []))] }
+          @words = Within.new(spans_for(TERMINAL_KINDS + GROUP_KINDS))
           freeze
         end
 
@@ -330,22 +406,24 @@ module Lain
         # STRICT: a one-word command shares its exact range with the `word` that
         # spells it, and `wc` is a stage, not a swallowed word.
         def top_level_commands
-          nested = covering
-          outermost(@spans.fetch(COMMAND, [])).reject do |command|
-            nested.any? { |span| span.range != command.range && span.contains?(command) }
-          end
+          swallowed = Holders.new(covering)
+          outermost(@spans.fetch(COMMAND, [])).reject { |command| swallowed.swallow?(command) }
         end
 
         def stages(redirects)
           words = terms
           commands = ordered(top_level_commands)
-          owned = redirects.group_by { |span, _redirect| owner(commands, span) }
+          owners = owners_of(commands)
+          owned = redirects.group_by { |span, _redirect| owners.of(span) }
+          within = Within.new(words)
           commands.map do |command|
-            argv = ordered(words.select { |word| command.contains?(word) })
+            argv = within.of(command)
             Stage.new(argv: argv.map(&:text).freeze, byte_range: command.range,
                       redirects: owned.fetch(command, []).map(&:last).freeze)
           end.freeze
         end
+
+        def owners_of(commands) = Owners.new(commands, (separator_spans + @keywords).map { _1.range.begin })
 
         # Keyed by span, in source order, so a stage can claim its own.
         def redirects
@@ -353,8 +431,8 @@ module Lain
         end
 
         def redirect(span)
-          descriptor = inside(span, DESCRIPTOR).first
-          target = inside(span, TARGET).first
+          descriptor = @inside.fetch(DESCRIPTOR).first_of(span)
+          target = @inside.fetch(TARGET).first_of(span)
           Redirect.new(text: span.text, descriptor: descriptor&.text || NOT_WRITTEN,
                        operator: operator(span, descriptor, target), target: target&.text || NOT_WRITTEN,
                        extra_words: extra_words(span, target), byte_range: span.range)
@@ -370,15 +448,13 @@ module Lain
         end
 
         def extra_words(span, target)
-          words = outermost(spans_for(TERMINAL_KINDS + GROUP_KINDS).select do |word|
-            word.range != span.range && span.contains?(word)
-          end)
+          words = outermost(@words.of(span).reject { |word| word.range == span.range })
           ordered(words.reject { |word| target&.contains?(word) }).map(&:text).freeze
         end
 
         def heredocs
           ordered(@spans.fetch(HEREDOC, [])).map do |span|
-            start = inside(span, HEREDOC_START).first
+            start = @inside.fetch(HEREDOC_START).first_of(span)
             from = start&.range&.end || span.range.end
             Heredoc.new(operator: span.text[HEREDOC_OPERATOR].freeze, delimiter: start&.text || NOT_WRITTEN,
                         rest_of_line: rest_of_line(from), lines: lines_after(from, span.range.end),
@@ -408,32 +484,26 @@ module Lain
         # A keyword inside a command is the grammar folding a compound into an
         # argument, as it does after `time`, so only a free-standing one counts.
         def free_standing_keywords
-          commands = @spans.fetch(COMMAND, [])
-          @spans.fetch(KEYWORD, []).reject { |keyword| commands.any? { _1.contains?(keyword) } }
-        end
-
-        def inside(span, name) = @spans.fetch(name, []).select { |part| span.contains?(part) }
-
-        # The command enclosing a redirect, or else the nearest one before it
-        # with no operator between them: `2>/dev/null` in `a 2>/dev/null | b`
-        # is `a`'s, and the grammar's own nesting of a pipeline's trailing
-        # redirect around the whole pipeline is not what bash applies it to.
-        def owner(commands, span)
-          commands.find { |command| command.contains?(span) } ||
-            commands.reverse.find { |command| command.range.end <= span.range.begin && !split?(command, span) }
-        end
-
-        # A keyword between them closes a compound, whose redirect bash applies to the whole of it.
-        def split?(command, span)
-          (separator_spans + @keywords).any? { _1.range.begin.between?(command.range.end, span.range.begin) }
+          holders = Holders.new(@spans.fetch(COMMAND, []))
+          @spans.fetch(KEYWORD, []).reject { |keyword| holders.hold?(keyword) }
         end
 
         def uncovered = self.class.runs(gaps(covered_bytes))
 
         def covered_bytes
           spans = covering + separator_spans + @keywords
-          spans.each_with_object(Array.new(@source.bytesize, false)) do |span, covered|
-            span.range.each { |byte| covered[byte] = true }
+          merged(spans.map(&:range).sort_by(&:begin)).each_with_object(Array.new(@source.bytesize,
+                                                                                 false)) do |range, covered|
+            range.each { |byte| covered[byte] = true }
+          end
+        end
+
+        # Nested terminals overlap, so marking each span's bytes would write the same byte once per level.
+        def merged(sorted)
+          sorted.each_with_object([]) do |range, runs|
+            last = runs.last
+            runs[-1] = last.begin...[last.end, range.end].max if last && range.begin <= last.end
+            runs << range unless last && range.begin <= last.end
           end
         end
 
@@ -447,9 +517,15 @@ module Lain
         # innards, not its siblings: `$(id)` is one term, not `$(id)` plus `id`.
         def outermost(spans)
           distinct = spans.uniq(&:range)
-          distinct.reject do |span|
-            distinct.any? { |other| other.range != span.range && other.contains?(span) }
-          end
+          keep = unnested(distinct).to_h { [_1, true] }.compare_by_identity
+          distinct.select { keep.key?(_1) }
+        end
+
+        # Widest first at each begin, so a span is nested exactly when an earlier one reaches as far.
+        def unnested(distinct)
+          reach = -1
+          distinct.sort { |one, two| (one.range.begin <=> two.range.begin).nonzero? || two.range.end <=> one.range.end }
+                  .select { |span| (span.range.end > reach).tap { reach = [reach, span.range.end].max } }
         end
 
         def ordered(spans) = spans.sort_by { |span| span.range.begin }

@@ -397,6 +397,40 @@ RSpec.describe Lain::Shell::Parse do
       end
     end
 
+    # Captures arrive flat and a query can report one node twice; the lookups
+    # keyed by capture must not trip on two spans that compare equal.
+    describe "a capture the query reports twice" do
+      it "still reads the redirect's descriptor and target" do
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_wrap_original do |original, *args|
+          captures = original.call(*args)
+          repeated = captures.select { |capture| capture.fetch("name").start_with?("redirect_") }
+          captures + repeated.map(&:dup)
+        end
+        result = result_for("echo hi 2>/dev/null")
+        expect(result.breakages).to be_empty
+        expect(result.redirects.map(&:descriptor)).to eq(["2"])
+      end
+    end
+
+    # A terminal that starts where a command starts and runs past it holds that
+    # command as its innards; one of the very same range does not.
+    describe "a terminal beginning where a command does" do
+      def stages_given(*captures)
+        allow(Lain::Ext::TreeSitter).to receive(:query).and_return(captures.map do |name, from, to|
+          { "name" => name, "start" => from, "end" => to, "text" => "ls -l".byteslice(from...to) }
+        end)
+        result_for("ls -l").stages.map(&:argv)
+      end
+
+      it "swallows the command when it runs longer" do
+        expect(stages_given(["command", 0, 2], ["word", 0, 5])).to be_empty
+      end
+
+      it "leaves a command it exactly matches a stage" do
+        expect(stages_given(["command", 0, 2], ["word", 0, 2])).to eq([["ls"]])
+      end
+    end
+
     it "never yields an empty argv, across a hostile corpus" do
       [
         "FOO=$(id)", "cat < $(id)", "FOO=1", "echo $(id)", "diff <(a) <(b)",
