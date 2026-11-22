@@ -8,8 +8,8 @@ RSpec.describe Lain::Sensitivity::Secrets::Identity do
 
   it "maps each identity value to its placeholder, longest first" do
     expect(identity.pairs).to eq(
-      [["Alice Liddell", "<git-author>"], ["a@example.org", "<git-email>"], ["/home/alice", "/home/<user>"],
-       ["wonder", "<host>"], ["alice", "<user>"]]
+      [["Alice Liddell", "<lain:git-author>"], ["a@example.org", "<lain:git-email>"],
+       ["/home/alice", "/home/<lain:user>"], ["wonder", "<lain:host>"], ["alice", "<lain:user>"]]
     )
   end
 
@@ -18,7 +18,7 @@ RSpec.describe Lain::Sensitivity::Secrets::Identity do
     aliased = identity.alias(text)
 
     expect([aliased, identity.restore(aliased)]).to eq(
-      ["<git-author> <<git-email>> <user> at /home/<user>/src on <host>", text]
+      ["<lain:git-author> <<lain:git-email>> <lain:user> at /home/<lain:user>/src on <lain:host>", text]
     )
   end
 
@@ -41,13 +41,14 @@ RSpec.describe Lain::Sensitivity::Secrets::Identity do
                                     hostname: "host")
     aliased = clash.alias("/home/user user host")
 
-    expect([aliased, clash.restore(aliased)]).to eq(["/home/<user> <user> <host>", "/home/user user host"])
+    expect([aliased, clash.restore(aliased)])
+      .to eq(["/home/<lain:user> <lain:user> <lain:host>", "/home/user user host"])
   end
 
   it "survives a git that is not installed" do
     missing = described_class.current(env:, git: ->(_) { raise Errno::ENOENT }, hostname: "wonder")
 
-    expect(missing.pairs.map(&:last)).to eq(["/home/<user>", "<host>", "<user>"])
+    expect(missing.pairs.map(&:last)).to eq(["/home/<lain:user>", "<lain:host>", "<lain:user>"])
   end
 
   it "keeps one entry per real value" do
@@ -56,7 +57,36 @@ RSpec.describe Lain::Sensitivity::Secrets::Identity do
     expect(same.pairs.count { _1.first == "alice" }).to eq(1)
   end
 
+  # Ordinary text holds bare `<host>` and `<user>`: in XML, docs and templates.
+  it "restores only its own namespaced placeholders, never a bare one ordinary text holds" do
+    text = "<host>docs</host> for <user> at /home/<user>"
+
+    expect(identity.restore(text)).to eq(text)
+  end
+
+  # A string leaf can hold JSON or source text whose escapes are literal, so
+  # `\n` before a value reads as a line break, not as a word.
+  it "aliases a value right after a literal escape sequence" do
+    escaped = described_class.current(env: { "HOME" => "/srv/me", "USER" => "alice" }, git: ->(_) {},
+                                      hostname: "wonder")
+
+    expect(escaped.alias('cd \\n/srv/me/dev \\talice \\"alice\\" \\/srv/me'))
+      .to eq('cd \\n/home/<lain:user>/dev \\t<lain:user> \\"<lain:user>\\" \\/home/<lain:user>')
+  end
+
+  it "still leaves a value alone after an ordinary letter that is no escape" do
+    expect(identity.alias("qalice nalice")).to eq("qalice nalice")
+  end
+
+  describe ".session" do
+    it "is one instance for the process, read once" do
+      expect(described_class.session).to equal(described_class.session)
+    end
+  end
+
   it "is deeply frozen" do
-    expect(Ractor.shareable?(identity)).to be(true)
+    bare = described_class.current(env: {}, git: ->(_) {}, hostname: "")
+
+    expect([identity, bare].map { Ractor.shareable?(_1) }).to eq([true, true])
   end
 end

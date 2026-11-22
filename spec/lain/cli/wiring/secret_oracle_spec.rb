@@ -134,6 +134,27 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
       .to raise_error(Lain::Oracle::SecretRead::NotAGateway, /--secret-oracle cloud/)
   end
 
+  it "sends the oracle's question with the home path and account as placeholders" do
+    sent = []
+    stub_request(:post, "http://localhost:11434/api/chat").to_return { |request| (sent << request.body) && { status: 500 } }
+    alice = Lain::Sensitivity::Secrets::Identity.current(env: { "HOME" => "/home/alice", "USER" => "alice" },
+                                                         git: ->(_) {}, hostname: "wonder")
+    allow(Lain::Sensitivity::Secrets::Identity).to receive(:session).and_return(alice)
+    backend.egress_literals.bind(lending("lent-secret-value-0123"), ledger: Lain::Sensitivity::Ledger.new)
+    backend.egress_hold.bind(nil)
+
+    begin
+      described_class.new({ secret_oracle: "local" }).tier(backend, journal)
+                     .ask(path: '"/home/alice/notes/alice.txt"', tool: "read_file", region_count: "0")
+    rescue Lain::Error, Faraday::Error
+      nil
+    end
+
+    expect(sent).not_to be_empty
+    expect(sent.join).to include("/home/<lain:user>/notes/<lain:user>.txt")
+    expect(sent.join).not_to include("/home/alice", "alice.txt")
+  end
+
   it "guards the local oracle's requests with the backend's own egress literals" do
     stub_request(:post, "http://localhost:11434/api/chat")
     backend.egress_literals.bind(lending("lent-secret-value-0123"), ledger: Lain::Sensitivity::Ledger.new)

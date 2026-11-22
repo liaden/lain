@@ -11,8 +11,10 @@ module Lain
         REBOUND = "the egress literals are already bound to another source and ledger (or sensitivity policy)"
 
         # @param configured [#http_entries] the run's configured middleware, which the guard follows
-        def initialize(configured = Config::Middleware.empty)
+        # @param identity [#alias] the home path, account and host every request body names as placeholders
+        def initialize(configured = Config::Middleware.empty, identity: Sensitivity::Secrets::Identity.session)
           @configured = configured
+          @identity = identity
         end
 
         # A chat binds its board's own source, so nothing walks the history twice,
@@ -62,7 +64,16 @@ module Lain
         # @param hold [#supervises?, #call] what the guard asks before a request leaves
         # @return [Array<Array>] a provider's http middleware entries
         def entries(journal, hold: Provider::HTTP::EgressGuard::Unsupervised)
-          [*@configured.http_entries, Provider::HTTP::EgressGuard.entry(literals: self, journal:, hold:)]
+          [*@configured.http_entries, guard(journal, hold:)]
+        end
+
+        # The guard alone, for a provider that runs no configured middleware.
+        #
+        # @param journal [#<<] where the guard's records land
+        # @param hold [#supervises?, #call] what the guard asks before a request leaves
+        # @return [Array] the guard's http middleware entry
+        def guard(journal, hold: Provider::HTTP::EgressGuard::Unsupervised)
+          Provider::HTTP::EgressGuard.entry(literals: self, journal:, hold:, identity: @identity)
         end
 
         private

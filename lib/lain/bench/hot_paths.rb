@@ -113,7 +113,8 @@ module Lain
         source = Sensitivity::Secrets::Source.new(child_env: Exec::ChildEnv::DEFAULT,
                                                   history: Sensitivity::HistoryLiterals::Null)
         config = Provider::HTTP::Configuration.new
-        config.http_middleware = [Provider::HTTP::EgressGuard.entry(literals: source, journal: Channel::Null.instance)]
+        config.http_middleware = [Provider::HTTP::EgressGuard.entry(literals: source, journal: Channel::Null.instance,
+                                                                    identity: Sensitivity::Secrets::Identity.session)]
         connection = Provider::HTTP::Connection.new(Loopback::Endpoint.new(url, true, {}), config)
         history = Corpus.history(@sizes.max)
         connection.post("/api/chat", Corpus.chat(history))

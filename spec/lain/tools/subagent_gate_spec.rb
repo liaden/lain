@@ -317,7 +317,8 @@ RSpec.describe "Subagent gating" do
       built = child
 
       expect(listed(built))
-        .to eq([*guards, Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
+        .to eq([Lain::Middleware::RestoreIdentity, *guards, Lain::Middleware::Sensitivity, Lain::Middleware::Gate,
+                Lain::Effect::Handler::Live])
       expect(runner_of(built).middleware.to_a.last(2).map { |layer| layer.instance_variable_get(:@sensitivity).policy })
         .to all(be(path_policy))
     end
@@ -337,7 +338,8 @@ RSpec.describe "Subagent gating" do
     # and the gate still the last layer before the interpreter.
     it "puts the unpermitted-call refusal just outside the path refusal under the handler_union posture" do
       expect(listed(child(posture: :handler_union, role: :merge_resolver)))
-        .to eq([*guards, Lain::Middleware::RefuseUnpermitted, Lain::Middleware::Sensitivity,
+        .to eq([Lain::Middleware::RestoreIdentity, *guards, Lain::Middleware::RefuseUnpermitted,
+                Lain::Middleware::Sensitivity,
                 Lain::Middleware::Gate, Lain::Effect::Handler::Live])
     end
 
@@ -359,7 +361,7 @@ RSpec.describe "Subagent gating" do
     # neighbour, never by its index, is what keeps it beside the path refusal.
     it "keeps the unpermitted-call refusal beside the path refusal when a configured member runs first" do
       expect(listed(union_child_configured_with(SubagentGateSupport::ConfiguredStamp)))
-        .to eq([SubagentGateSupport::ConfiguredStamp, *guards, Lain::Middleware::RefuseUnpermitted,
+        .to eq([Lain::Middleware::RestoreIdentity, SubagentGateSupport::ConfiguredStamp, *guards, Lain::Middleware::RefuseUnpermitted,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
     end
 
@@ -367,7 +369,7 @@ RSpec.describe "Subagent gating" do
     # could still rewrite into one the child was never granted.
     it "puts the unpermitted-call refusal beside lain's own path refusal, not a configured one that subclasses it" do
       expect(listed(union_child_configured_with(SubagentGateSupport::ConfiguredPathRefusal)))
-        .to eq([SubagentGateSupport::ConfiguredPathRefusal, *guards, Lain::Middleware::RefuseUnpermitted,
+        .to eq([Lain::Middleware::RestoreIdentity, SubagentGateSupport::ConfiguredPathRefusal, *guards, Lain::Middleware::RefuseUnpermitted,
                 Lain::Middleware::Sensitivity, Lain::Middleware::Gate, Lain::Effect::Handler::Live])
     end
 
@@ -585,7 +587,7 @@ RSpec.describe "Subagent gating" do
       parent_layers = parent_stack.to_a
 
       expect(parent_layers.map(&:class))
-        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                 Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,

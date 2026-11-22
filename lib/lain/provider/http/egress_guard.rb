@@ -26,6 +26,12 @@ module Lain
       # The values are read per request, because one can become known mid-chat.
       # Only the body is scanned: the API key is a known value and rides the
       # headers of every request.
+      #
+      # The home path, account and host are aliased to placeholders in every
+      # string of the body, never refused: a refusal is sticky, and they ride
+      # almost every chat. The alias is a pure function of the body, so the
+      # cached prefix holds. Refusal reads the body as the caller wrote it, so
+      # a secret spelling the account name is still caught.
       class EgressGuard < Faraday::Middleware
         class Refused < Lain::Error; end
 
@@ -60,22 +66,34 @@ module Lain
           def self.call(_summary) = true
         end
 
+        # The default identity: nothing to alias.
+        module Unaliased
+          # @param text [String]
+          # @return [String] the same text
+          def self.alias(text) = text
+        end
+
         # @param literals [#egress] answers a {Sensitivity::Secrets::Egress}; read per request
         # @param journal [#<<] takes each {Telemetry::EgressRefused} and its Flagged sibling
         # @param hold [#supervises?, #call] asked with a summary, never the body, when it supervises
+        # @param identity [#alias] turns the home path, account and host into placeholders
         # @return [Array] frozen, the entry the configured-middleware seat takes
-        def self.entry(literals:, journal:, hold: Unsupervised) = [self, { literals:, journal:, hold: }.freeze].freeze
+        def self.entry(literals:, journal:, hold: Unsupervised, identity: Unaliased)
+          [self, { literals:, journal:, hold:, identity: }.freeze].freeze
+        end
 
         # @param app [#call] the rest of the stack
         # @param options [Hash] the guard's collaborators, as {.entry} builds them
         # @option options [#egress] :literals answers a {Sensitivity::Secrets::Egress}; read per request
         # @option options [#<<] :journal takes each refusal and flag record
         # @option options [#supervises?, #call] :hold asked with a summary, never the body, when it supervises
+        # @option options [#alias] :identity turns the home path, account and host into placeholders
         def initialize(app, options = {})
           super
           @literals = options.fetch(:literals)
           @journal = options.fetch(:journal)
           @hold = options.fetch(:hold, Unsupervised)
+          @identity = options.fetch(:identity, Unaliased)
           @refused = Pattern.new
           @flagged = Pattern.new
           @sent = Sent.new
@@ -95,8 +113,31 @@ module Lain
 
           scan = Scan.of(env.body)
           refuse_known(host, scan, egress)
-          admit(env, host, scan, egress)
+          admit(env, host, aliased_scan(env, scan), egress)
         end
+
+        # A new body, so the caller's is left as written and a retry, which
+        # restores it, is aliased again the same way.
+        def aliased_scan(env, scan)
+          sent = aliased_value(env.body)
+          return scan if sent.equal?(env.body)
+
+          env.body = sent
+          Scan.of(sent)
+        end
+
+        # Answers the very object it was given when nothing in it changed, so
+        # a body naming no identity is neither copied nor scanned twice.
+        def aliased_value(value)
+          case value
+          when Hash then kept(value, value.transform_values { aliased_value(_1) }, &:values)
+          when Array then kept(value, value.map { aliased_value(_1) }, &:itself)
+          when String then (sent = @identity.alias(value)) == value ? value : sent
+          else value
+          end
+        end
+
+        def kept(was, now) = yield(was).zip(yield(now)).all? { |before, after| before.equal?(after) } ? was : now
 
         def admit(env, host, scan, egress)
           unsent = @sent.unsent(scan.texts)

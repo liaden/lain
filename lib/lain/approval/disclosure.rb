@@ -37,8 +37,6 @@ module Lain
       IDENTIFYING = "it sends the account identity in an outgoing request"
       HERE = "."
       RECURSIVE = "/**"
-      # Read once per process, since asking git for the author is a spawn and a bash call builds a disclosure.
-      SESSION = Concurrent::Map.new
 
       # Counts the sensitive regions in one file's leading bytes, the lockfile
       # rule applied by the file's name as the classifier reads it.
@@ -235,18 +233,15 @@ module Lain
       # @param stages [Array<Shell::Parse::Stage>] the call's stages, as parsed
       # @param cwd [String] absolute; the session's directory, a file below it named from there
       # @param scan [#call] `path -> Scanner::Count or nil`, nil for a path that names nothing
-      # @param identity [#alias] the values that name the account; the caller's own copy when it holds one
+      # @param identity [#alias] the values that name the account; the process's one session identity by default
       # @return [Disclosure]
-      def self.of(named, stages, cwd:, scan:, identity: session_identity)
+      def self.of(named, stages, cwd:, scan:, identity: Sensitivity::Secrets::Identity.session)
         read = named.paths.reject { _1.written || _1.guess || _1.directory }
         files, bulk = read.partition { _1.pattern.nil? }
         counts = files.map(&:resolved).uniq.filter_map { |path| scan.call(path)&.then { [path, _1] } }
         new(holdings: held(counts, cwd), sinks: Sinks.of(stages), unnameable: named.opaque?,
             unscanned: unscanned(bulk, counts, cwd), identifying: Sinks.identifying?(stages, identity))
       end
-
-      # @return [Sensitivity::Secrets::Identity]
-      def self.session_identity = SESSION.compute_if_absent(:identity) { Sensitivity::Secrets::Identity.current }
 
       # @param context [Object, nil]
       # @return [Disclosure] the context's, or {NONE}

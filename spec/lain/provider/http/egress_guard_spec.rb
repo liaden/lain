@@ -21,10 +21,11 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
     Class.new { define_method(:egress) { egress } }.new
   end
 
-  def build_connection(literals: self.literals, hold: described_class::Unsupervised, max_retries: 0)
+  def build_connection(literals: self.literals, hold: described_class::Unsupervised, max_retries: 0,
+                       identity: described_class::Unaliased)
     config = zero_retry_config(max_retries:)
     config.anthropic_api_key = api_key
-    config.http_middleware = [described_class.entry(literals:, journal:, hold:)]
+    config.http_middleware = [described_class.entry(literals:, journal:, hold:, identity:)]
     provider = Lain::Provider::HTTP::Providers::Anthropic.new(config)
     Lain::Provider::HTTP::Connection.new(provider, config)
   end
@@ -497,6 +498,81 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
     end
   end
 
+  # The person and the box are aliased, never refused: a refusal is sticky, and
+  # a home path rides almost every chat.
+  describe "a body naming the home path and the account" do
+    let(:identity) do
+      Lain::Sensitivity::Secrets::Identity.current(env: { "HOME" => "/home/alice", "USER" => "alice" },
+                                                   git: ->(_) {}, hostname: "wonder")
+    end
+    let(:sent) { [] }
+    let(:connection) { build_connection(identity:) }
+
+    before { stub_request(:post, url).to_return { |request| (sent << request.body) && ok } }
+
+    def naming_home
+      body("open /home/alice/dev/app/README.md", "alice's state is in /home/alice/.local/state/lain")
+        .merge(system: "cwd: /home/alice/dev/app on wonder")
+    end
+
+    it "sends placeholders in every string in their place" do
+      connection.post("/v1/messages", naming_home)
+
+      expect(sent.sole).to include("/home/<lain:user>/dev/app/README.md", "<lain:user>'s state",
+                                   "/home/<lain:user>/.local", "on <lain:host>")
+      expect(sent.sole).not_to include("/home/alice", "alice", "wonder")
+    end
+
+    it "writes no refusal and refuses nothing later" do
+      2.times { connection.post("/v1/messages", naming_home) }
+
+      expect(sent.size).to eq(2)
+      expect(journal.grep(Lain::Telemetry::EgressRefused)).to be_empty
+    end
+
+    it "sends the same bytes for the same body, so the cached prefix holds" do
+      2.times { connection.post("/v1/messages", naming_home) }
+
+      expect(sent.uniq.size).to eq(1)
+    end
+
+    it "leaves the caller's body as it was" do
+      payload = naming_home
+
+      connection.post("/v1/messages", payload)
+
+      expect(payload[:messages].first[:content]).to eq("open /home/alice/dev/app/README.md")
+    end
+
+    it "aliases a value a JSON string leaf holds behind a literal escape" do
+      at_srv = Lain::Sensitivity::Secrets::Identity.current(env: { "HOME" => "/srv/me" }, git: ->(_) {},
+                                                            hostname: "wonder")
+
+      build_connection(identity: at_srv).post("/v1/messages", body('{"cmd":"cd\\n/srv/me/dev"}'))
+
+      expect(sent.sole).to include("/home/<lain:user>/dev")
+      expect(sent.sole).not_to include("/srv/me")
+    end
+
+    # The real value no longer leaves, so there is nothing left to tell.
+    it "no longer flags a home path the masker knows, once it is aliased" do
+      flagging = build_connection(identity:, literals: source_of([], ["/home/alice/.password-store"]))
+
+      flagging.post("/v1/messages", body("pass reads /home/alice/.password-store"))
+
+      expect(sent.sole).to include("/home/<lain:user>/.password-store")
+      expect(journal.grep(Lain::Telemetry::EgressRefused::Flagged)).to be_empty
+    end
+
+    it "still refuses a secret that spells the account name, judged before the alias" do
+      payload = body("the password is alice-#{secret}")
+      guarded = build_connection(identity:, literals: source_of(["alice-#{secret}"]))
+
+      expect(refusal_of(payload, connection: guarded)).to be_a(described_class::Refused)
+      expect(sent).to be_empty
+    end
+  end
+
   it "runs once per attempt when a request is retried" do
     stub_request(:post, url).to_timeout.then.to_return(ok)
 
@@ -530,7 +606,8 @@ RSpec.describe Lain::Provider::HTTP::EgressGuard do
   it "is the entry shape the configured middleware seat takes" do
     entry = described_class.entry(literals:, journal:)
 
-    expect(entry).to eq([described_class, { literals:, journal:, hold: described_class::Unsupervised }])
+    expect(entry).to eq([described_class, { literals:, journal:, hold: described_class::Unsupervised,
+                                            identity: described_class::Unaliased }])
     expect(entry).to be_frozen
   end
 end

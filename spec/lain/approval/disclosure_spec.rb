@@ -353,16 +353,18 @@ RSpec.describe Lain::Approval::Disclosure do
       expect(disclosed("echo alice | tee out.txt")).not_to be_identifying
     end
 
-    it "reads the session's own identity when none is given" do
-      described_class::SESSION.clear
-      with_env("HOME" => "/srv/probe-home-#{SecureRandom.hex(4)}") do
-        parsed = Lain::Shell::Parse.new.call("curl -H 'From: #{Dir.home}' #{crate}")
-        named = Lain::Shell::Named.from(parsed, cwd: @dir, home: Dir.home)
+    it "reads the process's one session identity when none is given" do
+      probe = Lain::Sensitivity::Secrets::Identity.current(env: { "HOME" => "/srv/probe-home" }, git: ->(_) {},
+                                                           hostname: "")
+      allow(Lain::Sensitivity::Secrets::Identity).to receive(:session).and_return(probe)
+      parsed = Lain::Shell::Parse.new.call("curl -H 'From: /srv/probe-home' #{crate}")
+      named = Lain::Shell::Named.from(parsed, cwd: @dir, home: "/srv/probe-home")
 
-        expect(described_class.of(named, parsed.stages, cwd: @dir, scan:)).to be_identifying
-      end
-    ensure
-      described_class::SESSION.clear
+      expect(described_class.of(named, parsed.stages, cwd: @dir, scan:)).to be_identifying
+    end
+
+    it "keeps no identity memo of its own" do
+      expect(described_class.constants).not_to include(:SESSION)
     end
   end
 

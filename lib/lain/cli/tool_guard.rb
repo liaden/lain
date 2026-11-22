@@ -45,7 +45,9 @@ module Lain
     # Ahead of all of them runs what a user's or a project's config.rb
     # registers for the tool phase ({.configured}): every guard then judges
     # whatever that middleware passes on, and it sees a result only after the
-    # guards have masked it.
+    # guards have masked it. Ahead even of that, {Middleware::RestoreIdentity}
+    # turns the placeholders a model was sent back into the real home path,
+    # account and host, so every layer reads the call that will run.
     #
     # A child runs the same stack: the spawn seam carries a builder over it
     # ({Spawned}), so every child is guarded and gated over its parent's board
@@ -128,15 +130,17 @@ module Lain
       # stopped, and `mode` the approval level a paused main is held under; a
       # run with no tripwire stop stops no one. `fresh` is the lineage the
       # sandbox reads and `granting` what that sandbox would grant a build;
-      # a run with neither bars no build.
+      # a run with neither bars no build. `identity` restores the placeholders
+      # a model was sent: the process's one {Sensitivity::Secrets::Identity.session}.
       Inputs = Data.define(:ledger, :approvals, :sensitivity, :test_layout, :policy, :policy_for, :denial, :bar,
                            :scope, :middleware, :secrets, :denied_tools, :stops, :mode, :fresh,
-                           :granting) do
+                           :granting, :identity) do
         def initialize(scope: UNSCOPED, middleware: Config::Middleware.empty,
                        secrets: Lain::Sensitivity::Secrets::Source::DEFAULT, denied_tools: Set[].freeze,
                        stops: Tripwire::Stops::None,
                        mode: Middleware::TripwireStop::NoMode, fresh: Shell::Executable::Fresh::Unmarked,
-                       granting: Confine::Profiles::Granting::NONE, **)
+                       granting: Confine::Profiles::Granting::NONE,
+                       identity: Lain::Sensitivity::Secrets::Identity.session, **)
           super
         end
       end
@@ -679,7 +683,8 @@ module Lain
         journal = chronicle.instrumentation.journal
         requester &&= Requester.of(requester)
         Middleware::Gate.closes!(
-          Middleware::Stack.new([*configured_then_parsed(inputs),
+          Middleware::Stack.new([Middleware::RestoreIdentity.new(identity: inputs.identity),
+                                 *configured_then_parsed(inputs),
                                  Middleware::ConfineToScope.new(scope: inputs.scope), *held,
                                  Middleware::RefuseSecretWrites.new(**kwargs(chronicle)),
                                  Middleware::RedactSecretReads.new(**read_kwargs(chronicle, inputs), requester:),
@@ -728,7 +733,8 @@ module Lain
       # guard below reads the text that will run.
       def configured_then_parsed(inputs)
         [*configured(inputs), Middleware::ParsedCommand.new(home: inputs.sensitivity.home,
-                                                            scan: Approval::Disclosure::Scanner.over(inputs.sensitivity))]
+                                                            scan: Approval::Disclosure::Scanner.over(inputs.sensitivity),
+                                                            identity: inputs.identity)]
       end
 
       # Fresh instances on every call, so no two stacks share one.

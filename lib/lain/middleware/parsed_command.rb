@@ -60,9 +60,11 @@ module Lain
       # @param home [String, nil] for a `~` in the command, as the session's path policy reads it
       # @param scan [#call] `path -> Approval::Disclosure::Scanner::Count or nil`, what a file the call
       #   reads holds; required, so no stack reads the live disk by default
-      def initialize(scan:, home: nil)
+      # @param identity [#alias] the values that name the account, which a disclosure looks for in what a call sends
+      def initialize(scan:, home: nil, identity: ::Lain::Sensitivity::Secrets::Identity.session)
         @home = home
         @scan = scan
+        @identity = identity
         super()
         freeze
       end
@@ -86,7 +88,8 @@ module Lain
 
       # Named from the session's directory, the one the row shows beside the call.
       def disclosure(context, parsed, named)
-        Approval::Disclosure.of(named, parsed&.stages || [], cwd: ::Lain::Session.cwd_of(context).to_s, scan: @scan)
+        Approval::Disclosure.of(named, parsed&.stages || [], cwd: ::Lain::Session.cwd_of(context).to_s, scan: @scan,
+                                                             identity: @identity)
       end
 
       def parse(effect)

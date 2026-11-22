@@ -5905,8 +5905,9 @@ RSpec.describe Lain::CLI::Wiring do
     end
 
     # The backend carries what the launch read from config.rb, and the board
-    # the chat builds hands its tool members to the agent's stack, outermost.
-    it "starts the agent's tool stack with the configured tool middleware" do
+    # the chat builds hands its tool members to the agent's stack, outermost but
+    # for the identity restore, so they read the real paths.
+    it "starts the agent's tool stack with the configured tool middleware, behind the identity restore" do
       in_tree do |root|
         middleware = Lain::Config::Middleware.new(tool: [Lain::Config::Middleware::Registration.new(
           factory: WiringSpecToolStamp, args: [], kwargs: {}, block: nil, at: "/spec/config.rb:1"
@@ -5919,7 +5920,8 @@ RSpec.describe Lain::CLI::Wiring do
         runner = wiring.wire_agent(channel:, recorder:, session:, backend: configured).send(:tool_runner)
 
         expect(runner.middleware.to_a.map(&:class))
-          .to eq([WiringSpecToolStamp, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+          .to eq([Lain::Middleware::RestoreIdentity, WiringSpecToolStamp, Lain::Middleware::ParsedCommand,
+                  Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
                   Lain::Middleware::RedactSecretReads, Lain::Middleware::WithholdSecretPaths,
                   Lain::Middleware::GuardTestLayout, Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
                   Lain::Middleware::RememberedDenials, Lain::Middleware::BarUnreadBuild,
@@ -6255,7 +6257,8 @@ RSpec.describe Lain::CLI::Wiring do
           board = board_for(root:)
 
           expect(Lain::CLI::ToolGuard.stack(chronicle, board).to_a.map(&:class))
-            .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+            .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+                    Lain::Middleware::RefuseSecretWrites,
                     Lain::Middleware::RedactSecretReads,
                     Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                     Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
@@ -6773,7 +6776,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
     # is refused before a human is ever asked about it.
     it "puts all three secret guards, then the test layout guard, then the board's gate, in the tool phase" do
       expect(backing[:instrumentation].tool_middleware.to_a.map(&:class))
-        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+                Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,
@@ -6863,7 +6867,8 @@ RSpec.describe Lain::CLI::Wiring, "the Agent build" do
       runner = build.send(:tool_runner)
 
       expect([*runner.middleware.to_a.map(&:class), runner.handler.class])
-        .to eq([Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope, Lain::Middleware::RefuseSecretWrites,
+        .to eq([Lain::Middleware::RestoreIdentity, Lain::Middleware::ParsedCommand, Lain::Middleware::ConfineToScope,
+                Lain::Middleware::RefuseSecretWrites,
                 Lain::Middleware::RedactSecretReads,
                 Lain::Middleware::WithholdSecretPaths, Lain::Middleware::GuardTestLayout,
                 Lain::Middleware::WithholdAutomaticOutput, Lain::Middleware::TripwireStop,

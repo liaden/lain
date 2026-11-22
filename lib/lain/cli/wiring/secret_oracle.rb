@@ -74,8 +74,7 @@ module Lain
         end
 
         def guard(backend, journal)
-          Provider::HTTP::EgressGuard.entry(literals: backend.egress_literals, journal:,
-                                            hold: backend.egress_hold.for(Backend::EgressHold::ORACLE))
+          backend.egress_literals.guard(journal, hold: backend.egress_hold.for(Backend::EgressHold::ORACLE))
         end
 
         # The judge's model is named once here, so the options asked for and the
