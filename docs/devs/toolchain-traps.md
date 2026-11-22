@@ -355,6 +355,13 @@ Not a flake, from the same run, and fixed in it: `Lain::CLI::Wiring` "sends a fi
 
 Not a flake, from the same run: `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped` fails with "path must be shorter than SUN_LEN" when `TMPDIR` is long, because the fence's socket lives under it. Keep `TMPDIR` short (`$HOME/tmp/lain/<short>`) before reading that red as a regression.
 
+Added 2026-11-22, from the attempt 3 sweep run. Red once in a landing suite, green alone, and green 3 of 3 runs of its file with the failing worker's seed on both the base and the card: `a chat fed by an input pane joins the drafts of 2 dropped offers with 1 space at the next you>`.
+
+Not flakes, from the same run, and fixed in it:
+
+- `Lain::Bench::ApprovalReplay the disk is never asked while a call of any tool the replay holds is re-decided at any level` was red 3 of 3 on the base at seed 37921: the first I18n lookup loaded its locale files inside the disk guard. The guard now warms I18n first.
+- `a plain chat's inline prompts over a real terminal a cockpit's command> over typeahead runs a /approve typed just before the call parked, once it has` was red in 3 landing suites (seeds 17971 and 127) and green in 12 runs alone. A parked call's decision woke the call before its record was written, and under the io_uring selector that write yields, so the call could settle first. The decision is now written before the call wakes. A red under this name again is a regression.
+
 A live demonstration of why this list is by NAME and not by line: `buffers_spec.rb:329` was recorded by line in an earlier chunk, and one card in this one moved that same example to `:417` by adding 88 lines above it.
 
 ### Retired flakes, with the fix that ended each
