@@ -162,4 +162,52 @@ RSpec.describe Lain::Sensitivity::Bounds do
   it "is deeply frozen" do
     expect(Ractor.shareable?(drawn | described_class::NONE)).to be(true)
   end
+
+  describe "the rule a lend beyond the session's reads is refused by" do
+    let(:journal) { [] }
+    let(:lending) { Lain::Sensitivity::Bounds::Lending.new(journal:) }
+    let(:home) { File.join(@base, "d", "home").tap { FileUtils.mkdir_p(_1) } }
+    let(:project) { File.join(@base, "a", "b") }
+    let(:classifier) do
+      Class.new do
+        def classify(path)
+          Data.define(:level) { def ordinary? = level == :ordinary }
+              .new(File.basename(path) == ".env" ? :gated : :ordinary)
+        end
+      end.new
+    end
+
+    def refused(*paths) = lending.refused(paths, home:, roots: [project], classifier:)
+
+    it "refuses the filesystem root, home and what holds either, and what holds the project, naming why" do
+      expect(refused("/", home, File.join(@base, "d"), File.join(@base, "a")))
+        .to eq("/" => "it is the filesystem root", home => "it is the home directory or holds it",
+               File.join(@base, "d") => "it is the home directory or holds it",
+               File.join(@base, "a") => "it holds the project root")
+    end
+
+    it "refuses a path the classifier does not call ordinary, where it lands" do
+      secret = File.join(@base, "c", ".env").tap { File.write(_1, "x\n") }
+      File.symlink(secret, File.join(@base, "d", "link"))
+
+      expect(refused(secret, File.join(@base, "d", "link")))
+        .to eq(secret => "its path is classified gated",
+               File.join(@base, "d", "link") => "its path is classified gated")
+    end
+
+    it "admits a file or directory outside home and the project that is ordinary" do
+      expect(refused(File.join(home, "dev", "notes.md"), File.join(@base, "c"))).to eq({})
+    end
+
+    it "refuses the root even with no home to hold" do
+      expect(lending.refused(["/"], home: nil, roots: [], classifier:)).to eq("/" => "it is the filesystem root")
+    end
+
+    it "journals each refusal once, however often it is asked" do
+      2.times { refused("/", File.join(@base, "c")) }
+
+      expect(journal.map { [_1.class, _1.capability, _1.provider] })
+        .to eq([[Lain::Telemetry::CapabilityDegraded, :lent_path, "/: it is the filesystem root"]])
+    end
+  end
 end

@@ -696,10 +696,22 @@ RSpec.describe Lain::Confine::MaskList, :seam do
       expect(list.related.roots).to eq([])
     end
 
-    it "refuses a lent path that is not a directory, naming why" do
-      file = File.join(@base, "notes.md").tap { File.write(_1, "x\n") }
+    it "lends a lent file as a root of its own, masking nothing in it" do
+      file = File.join(refs, "rustfmt.toml").tap { File.write(_1, "edition = \"2021\"\n") }
+      File.write(File.join(refs, ".env"), "KEY=value\n")
 
-      expect(list.lent([file])).to have_attributes(roots: [], refused: { file => "it is not a directory" })
+      lent = described_class.new(root:, policy: -> { policy }, journal:).lent([file])
+
+      expect([lent.roots, lent.masks, lent.refused, journal]).to eq([[file], [], {}, []])
+    end
+
+    it "refuses a lent path that is neither a file nor a directory, or is missing, naming why" do
+      fifo = File.join(@base, "pipe").tap { File.mkfifo(_1) }
+      missing = File.join(@base, "gone.md")
+
+      expect(list.lent([fifo, missing]))
+        .to have_attributes(roots: [], refused: { fifo => "it is neither a file nor a directory",
+                                                  missing => "it is neither a file nor a directory" })
     end
 
     it "refuses a lent repository whose listing did not answer, naming why" do
@@ -715,14 +727,70 @@ RSpec.describe Lain::Confine::MaskList, :seam do
 
     it "journals each refusal once, however many calls are lent the directory" do
       hub_secret
-      file = File.join(@base, "notes.md").tap { File.write(_1, "x\n") }
+      fifo = File.join(@base, "pipe").tap { File.mkfifo(_1) }
       ticks = 0
       bounded = described_class.new(root:, policy: -> { policy }, walk_bound: 0, clock: -> { ticks += 1 }, journal:)
 
-      2.times { bounded.lent([refs, file]) }
+      2.times { bounded.lent([refs, fifo]) }
 
       expect(journal.map(&:provider)).to contain_exactly(/\A#{Regexp.escape(refs)}: its walk took longer/,
-                                                         "#{file}: it is not a directory")
+                                                         "#{fifo}: it is neither a file nor a directory")
+    end
+
+    # The real list over a real policy, bwrap, Landlock and the fence: the lend reaches the sandbox on the call's own
+    # request, as a bash call's bounds carry it.
+    describe "inside the reader sandbox" do
+      let(:fence) { Lain::Confine::Bwrap.fence_binary }
+      let(:home) { File.join(@base, "home") }
+      let(:sandbox_policy) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: root, root:), home:, root:)
+      end
+      let(:sandboxed) do
+        masks = described_class.new(root:, policy: -> { sandbox_policy }, journal:)
+        Lain::Confine::Sandbox.new(root:, home:, masks:, fence:, journal:,
+                                   probe: Lain::Confine::Probe.new(fence:, journal:))
+                              .wrap(Lain::Exec::Local.new, requirer: "Spec")
+      end
+
+      before do
+        skip("bwrap or strace is not installed") unless %w[/usr/bin/bwrap /usr/bin/strace].all? { File.executable?(_1) }
+        skip("lain-fence is not built at #{fence} -- run `bundle exec rake compile`") unless File.executable?(fence)
+        skip("bwrap cannot make a user namespace on this host") unless
+          system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
+      end
+
+      def run_lent(command, lend)
+        ruling = Lain::Approval::Escalation::Ruling.allow(rung: "surfaces", because: "spec", authority: :human,
+                                                          contained: true)
+        bounds = sandbox_policy.bounds | Lain::Sensitivity::Bounds.of(reads: [lend])
+        request = Lain::Confine::Request.new(ruling:, executables: [], cwd: root, root:, tool_use_id: "toolu_1",
+                                             bounds:)
+        sandboxed.call(command:, cwd: root, env: {}, timeout: 10, confinement: request)
+      end
+
+      it "binds a lent file read-only, and leaves its sibling unread" do
+        file = File.join(refs, "rustfmt.toml").tap { File.write(_1, "zq_lent_mark\n") }
+        sibling = File.join(refs, "notes.md").tap { File.write(_1, "zq_sibling_mark\n") }
+
+        lent = run_lent("cat #{file}", file)
+        beside = run_lent("cat #{sibling}", file)
+        written = run_lent("echo x >> #{file}", file)
+
+        expect(lent.stdout).to include("zq_lent_mark"), lent.stderr
+        expect([beside.stdout, beside.stderr]).to match(["", /No such file or directory|Permission denied/])
+        expect([written.exit_status, File.read(file)]).to match([be_nonzero, "zq_lent_mark\n"])
+      end
+
+      it "refuses a lent file classified other than ordinary, naming why, and binds nothing" do
+        secret = File.join(refs, ".env").tap { File.write(_1, "zq_env_mark\n") }
+
+        result = run_lent("cat #{secret}", secret)
+
+        expect(result.stdout).to eq("")
+        expect(result.stderr).to include("not read: #{secret} (its path is classified gated)")
+        expect(journal.grep(Lain::Telemetry::CapabilityDegraded).map(&:provider))
+          .to include("#{secret}: its path is classified gated")
+      end
     end
   end
 

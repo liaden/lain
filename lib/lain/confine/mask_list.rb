@@ -52,7 +52,7 @@ module Lain
       READ_ROOT_GIT_CONFIGS = File.join("*", "*", ".git", "config")
       # What {Related#refused} and the journal say of a refused related directory.
       CAPABILITY = :related_directory
-      NOT_A_DIRECTORY = "it is not a directory"
+      NOT_LENDABLE = "it is neither a file nor a directory"
       UNANSWERED = "its listing did not answer"
       # Follows a link, so a name is stamped by the directory it lives in, whatever its parent's spelling.
       DIRECTORY_STAT = File.method(:stat)
@@ -164,8 +164,13 @@ module Lain
         @priming = nil
         @related = {}
         @lent = {}
-        @lending = Mutex.new
+        @listing_lent = Mutex.new
+        @lending = Sensitivity::Bounds::Lending.new(journal:)
       end
+
+      # @return [Sensitivity::Bounds::Lending] the session's rule on what an agent's bounds may lend, journaling
+      #   into this list's journal
+      attr_reader :lending
 
       # Starts the first classification off the caller's thread, so a slow one
       # does not land on the first command. {#masks} joins it. Call it only once
@@ -202,20 +207,22 @@ module Lain
         Related.new(roots: listed.map(&:root).freeze, masks:, reads:, execs: policy.bounds.execs, refused:)
       end
 
-      # Listed apart from {#related}, so a directory one agent was lent is bound for its calls alone. Each is
+      # Listed apart from {#related}, so a path one agent was lent is bound for its calls alone. A directory is
       # listed and refused as a related directory is, on every call. Its tree is kept by directory, so a name
-      # already judged is not classified again, and a walk's refusal holds for the session.
+      # already judged is not classified again, and a walk's refusal holds for the session. A file is bound alone
+      # and never masked, since a mask would bind a decoy in its place. Each path has passed {#lending} first.
       #
-      # @param dirs [Array<String>] absolute; each a directory an agent's bounds lend it
-      # @return [Related] each directory whose listing answered, with its masks, and each left unread, with why
-      def lent(dirs)
+      # @param paths [Array<String>] absolute; each a file or directory an agent's bounds lend it
+      # @return [Related] each path bound, a directory's masks, and each left unread, with why
+      def lent(paths)
         join_priming
         policy = @policy.call
-        @lending.synchronize do
-          dirs, missing = dirs.partition { File.directory?(_1) }
+        @listing_lent.synchronize do
+          dirs, others = paths.partition { File.directory?(_1) }
+          files, unlendable = others.partition { File.file?(_1) }
           trees = dirs.map { |dir| @lent[dir] ||= related_tree(dir) }
           trees.each { _1.refresh(-> { policy }) }
-          lent_listing(trees, missing.to_h { [_1, NOT_A_DIRECTORY] })
+          lent_listing(trees, files, refusals: unlendable.to_h { [_1, NOT_LENDABLE] })
         end
       end
 
@@ -248,12 +255,12 @@ module Lain
         journal_refusals
       end
 
-      def lent_listing(trees, unread)
+      def lent_listing(trees, files, refusals:)
         listed = trees.select(&:listed?)
-        refusals = trees.reject(&:listed?).to_h { [_1.root, _1.refusal || UNANSWERED] }.merge(unread).freeze
-        journal_refusals(refusals)
-        Related.new(roots: listed.map(&:root).freeze, masks: listed.flat_map(&:current).uniq(&:path).freeze,
-                    refused: refusals)
+        refused = trees.reject(&:listed?).to_h { [_1.root, _1.refusal || UNANSWERED] }.merge(refusals).freeze
+        journal_refusals(refused)
+        Related.new(roots: [*listed.map(&:root), *files].freeze, masks: listed.flat_map(&:current).uniq(&:path).freeze,
+                    refused:)
       end
 
       # Locked, since the priming thread and a lent listing journal beside the caller's own refresh.

@@ -23,6 +23,15 @@ module Lain
       LINKS_HEADING = "## Links"
       DERIVED_KINDS = [*Document::LINK_FIELDS.keys, *Document::DERIVED_LINKS.keys,
                        *Document::LABEL_LINKS.keys].freeze
+      # What parts the words of a References line: markdown's own punctuation as well as space.
+      REFERENCE_BREAKS = /[\s`'"<>()\[\],]+/
+      # A path outside the project names at least 1 segment under `/` or `~/`: never the root or home alone, nor
+      # a `//host` or a `/24` subnet.
+      OUTSIDE = %r{\A~?/(?!/)(?!\d+\z)[^/]}
+      # A sentence's closing `.`, `:` or `;`, but never a dot of a trailing `..`, which steps up a directory.
+      SENTENCE_END = /(?<!\.)\.?[:;]*\z/
+      # Rendered markdown hides a comment, so a path in one is nothing the approving human saw.
+      HTML_COMMENT = /<!--.*?-->/m
 
       # The authored file is read first, so a malformed id is refused as a
       # filename before the graph is asked about it.
@@ -57,6 +66,16 @@ module Lain
                     section(CRITERIA_HEADING, criteria_section), section(REFERENCES_HEADING, @authored.references),
                     section(LINKS_HEADING, links)]
         "#{sections.reject(&:empty?).join("\n\n")}\n"
+      end
+
+      # The paths outside the project its References name, which the approval of this view lends its agents.
+      #
+      # @param home [String] what a leading `~` names
+      # @return [Array<String>] each absolute or home-relative path, expanded, in the order written
+      def lends(home:)
+        shown = @authored.references.gsub(HTML_COMMENT, " ")
+        words = shown.split(REFERENCE_BREAKS).map { _1.sub(SENTENCE_END, "") }.grep(OUTSIDE)
+        words.map { File.expand_path(_1.sub(/\A~/, home)) }.uniq
       end
 
       # @return [Gherkin::Criteria] epic.md's scenarios, then the authored ones

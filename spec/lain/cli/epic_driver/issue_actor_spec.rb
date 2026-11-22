@@ -69,6 +69,8 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   let(:home) { Lain::Epic::Home.resolve(config:, paths:, root: repo, slug: "demo") }
   let(:plan) { ->(id) { Lain::CLI::EpicSubmit.new(root: repo, paths:, config:).ensure_plan_approved!(id, "demo") } }
   let(:standing) { [] }
+  let(:switchboard) { SpecNulls::NoSwitchboard }
+  let(:user_home) { File.join(@root, "home") }
   let(:criteria_a) do
     <<~MD
       ```gherkin
@@ -138,7 +140,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
       parent: -> { CoreGraph.timeline }, journal: Lain::Channel::Null.instance,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
-      switchboard: -> { SpecNulls::NoSwitchboard }, askers: SpecNulls::UnwiredAskers.build,
+      switchboard: -> { switchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
     ).tap do |toolset|
       toolset.build(Lain::Memory::Recorder.new, ask_human: Lain::Tools::AskHuman.new(parent: -> { CoreGraph.timeline }))
@@ -214,7 +216,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   def issue_actor(supervisor)
     renderer = backend.library.renderer
     described_class.new(slug: "demo", supervisor:, subagent: build.method(:epic_subagent), renderer:, home:, plan:,
-                        repo_root: repo, tests: red_step(renderer), lanes: child_lanes)
+                        repo_root: repo, tests: red_step(renderer), lanes: child_lanes, user_home:)
   end
 
   def red_step(renderer)
@@ -523,6 +525,82 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
       expect([epic_tip, git(repo, "rev-parse", "HEAD")]).to eq(before)
       expect(git(repo, "status", "--porcelain")).to eq("")
+    end
+  end
+
+  # Scenario: an approved issue's absolute reference files are readable, their secrets are not
+  context "when the approved issue's References name a file and a directory outside the repository" do
+    let(:sample) { File.join(user_home, "dev", "sample") }
+    let(:solo) { File.join(user_home, "dev", "solo") }
+    let(:authored_a) do
+      "This issue writes meta.json with the end time.\n\n## Acceptance criteria\n\n#{added_a}\n\n" \
+        "## References\n\n- `~/dev/solo/rustfmt.toml`, the formatting rules\n" \
+        "- `~/dev/sample/`, the project it follows\n"
+    end
+    let(:gated) { [] }
+    let(:switchboard) do
+      gate = recording_gate
+      policy = Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home: user_home, cwd: repo, root: repo),
+                                             home: user_home, root: repo)
+      inputs = SpecNulls::NoSwitchboard.guard_inputs.with(sensitivity: policy, policy: gate, policy_for: ->(_) { gate })
+      Struct.new(:guard_inputs) do
+        def approvals = nil
+        def policy_switch = guard_inputs.policy
+        def sensitivity = guard_inputs.sensitivity
+      end.new(inputs)
+    end
+    let(:script) do
+      [*test_engineer,
+       tool_response(["o_lent", "read_file", { "path" => File.join(solo, "rustfmt.toml") }]),
+       tool_response(["o_beside", "read_file", { "path" => File.join(solo, "notes.md") }]),
+       tool_response(["o1", "subagent", { "prompt" => "implement it", "role" => "dev" }]),
+       tool_response(["d_lent", "read_file", { "path" => File.join(solo, "rustfmt.toml") }]),
+       tool_response(["d_grep", "grep", { "pattern" => "zq_", "path" => sample }]),
+       text_response("dev done"), text_response("plan done")]
+    end
+
+    # Approves every gated call, keeping each, so a read that would have parked is seen without a human.
+    def recording_gate
+      seen = gated
+      Object.new.tap do |gate|
+        gate.define_singleton_method(:rule) do |effect, _context|
+          seen << Lain::Sensitivity::Policy.unwrapped(effect).tool_use_id
+          Lain::Approval::Escalation::Ruling.allow(rung: "spec", because: "recorded")
+        end
+      end
+    end
+
+    def result_of(id)
+      provider.requests.flat_map(&:messages).flat_map { Array(_1["content"]) }.grep(Hash)
+              .find { _1["type"] == "tool_result" && _1["tool_use_id"] == id }
+    end
+
+    before do
+      FileUtils.mkdir_p([sample, solo])
+      File.write(File.join(solo, "rustfmt.toml"), "zq_rustfmt_mark\n")
+      File.write(File.join(solo, "notes.md"), "zq_beside_mark\n")
+      File.write(File.join(sample, "README.md"), "zq_readme_mark\n")
+      File.write(File.join(sample, ".env"), "zq_env_mark\n")
+    end
+
+    it "lets the orchestrator and its dev child read them without asking, and keeps the secret out of the grep" do
+      supervising { |supervisor| launch(supervisor, "a").actor.settle }
+
+      expect(%w[o_lent d_lent].map { result_of(_1)["content"].to_s }).to all(include("zq_rustfmt_mark"))
+      expect(result_of("d_grep")["content"].to_s).to include("zq_readme_mark")
+      expect(result_of("d_grep")["content"].to_s).not_to include("zq_env_mark")
+      expect(gated & %w[o_lent d_lent d_grep]).to eq([])
+      expect(gated).to include("o_beside")
+    end
+  end
+
+  # Scenario: a reference added after approval is not lent
+  it "refuses an issue whose References gained a path after approval, so nothing new is lent" do
+    home.issue("a").write("#{authored_a}\n## References\n\n- `/srv/elsewhere/added.md`\n")
+
+    supervising do |supervisor|
+      expect { launch(supervisor, "a") }.to raise_error(Lain::CLI::EpicSubmit::PlanNotApproved, /issue_plan/)
+      expect(supervisor.to_a).to be_empty
     end
   end
 

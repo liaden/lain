@@ -331,8 +331,9 @@ module Lain
         # @param repo_root [String] the repository the worker anchors live in
         # @param lanes [Lanes] builds the issue's own isolation and handoff
         # @param shell_out_factory [#call] builds the git subprocess runner
+        # @param user_home [String] what a `~` in the issue's References names
         def initialize(slug:, supervisor:, subagent:, tests:, renderer:, home:, plan:, repo_root:, lanes:,
-                       shell_out_factory: Lain::Shell::Out.public_method(:new))
+                       shell_out_factory: Lain::Shell::Out.public_method(:new), user_home: Dir.home)
           @slug = slug
           @supervisor = supervisor
           @subagent = subagent
@@ -343,6 +344,7 @@ module Lain
           @repo_root = repo_root
           @lanes = lanes
           @shell_out_factory = shell_out_factory
+          @user_home = user_home
         end
 
         # @param issue_id [String] the issue to launch
@@ -378,7 +380,8 @@ module Lain
         # turn a turn taken against a red suite: the branch, the tests on it,
         # then the launch. The actor's worker id and its children's lane are ONE
         # string, so a second attempt's children cannot compare-and-swap the
-        # first attempt's anchors away.
+        # first attempt's anchors away. What the actor and its children are lent
+        # is read off the view {#approved!} checked, so a path added since is not.
         def adopted(view, lane, subject:, level:, acceptance:)
           criteria = criteria_of(view)
           red = nil
@@ -387,7 +390,8 @@ module Lain
             held = cut(worker_env, view.issue.id)
             step = acceptance.red_step(@tests)
             red = step.call(criteria, worker_env, subject:, level:, since: held.from, lane:, name: view.issue.id)
-            spawner(worker_env, held.branch, lane).launch_actor(brief(view, held, red), worker_env:)
+            spawner(worker_env, held.branch, lane).lend_reads(view.lends(home: @user_home))
+                                                  .launch_actor(brief(view, held, red), worker_env:)
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end

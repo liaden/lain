@@ -130,6 +130,23 @@ class SubagentSpecCwdTool < Lain::Tool
   end
 end
 
+# Keeps the bounds the session it runs in carries, which a bash call hands its sandbox.
+class SubagentSpecBoundsTool < Lain::Tool
+  def initialize(seen)
+    super()
+    @seen = seen
+  end
+
+  def name = "bounds"
+  def description = "Reports what this agent may read and write."
+  def input_schema = { type: :object, properties: {} }
+
+  def perform(_input, invocation)
+    @seen << session_of(invocation).worker_env.bounds
+    Lain::Tool::Result.ok("noted")
+  end
+end
+
 # A tool guard that records the name of every call it is handed and passes it
 # on, so an example can see which tools really ran behind it.
 class SubagentSpecToolGuard < Lain::Middleware::Base
@@ -3630,6 +3647,140 @@ RSpec.describe Lain::Tools::Subagent do
 
       expect(backend.worker_ids)
         .to eq([Lain::Isolation::WorkerId.spawned(role: "researcher", ordinal: 1).to_s])
+    end
+
+    # Paths outside the project an approved plan names, lent to every agent the spawner starts, read-only.
+    describe "a lend of paths outside the project" do
+      let(:backend) { SubagentSpecIsolation.new(leases_root, checkouts: true) }
+      let(:base) { File.realpath(leases_root) }
+      let(:home) { File.join(base, "home") }
+      let(:project) { File.join(base, "project") }
+      let(:refs) { File.join(base, "refs") }
+      let(:file) { File.join(base, "solo", "rustfmt.toml") }
+      let(:sibling) { File.join(base, "solo", "notes.md") }
+      let(:key) { File.join(home, ".ssh", "id_ed25519") }
+      let(:held) { [] }
+      let(:sensitivity) do
+        Lain::Sensitivity::Policy.new(sensitivity: Lain::Sensitivity.new(home:, cwd: project, root: project),
+                                      home:, root: project)
+      end
+      let(:guard) do
+        inputs = Lain::CLI::ToolGuard::Inputs.new(
+          ledger: Lain::Sensitivity::Ledger.new, approvals: nil, sensitivity:,
+          test_layout: Lain::Middleware::GuardTestLayout::Run.undeclared,
+          policy: Lain::Middleware::Gate::ApproveAll.new,
+          policy_for: ->(_worker_env) { Lain::Middleware::Gate::ApproveAll.new },
+          denial: Lain::Middleware::Gate::DENIAL, bar: Lain::Middleware::WithholdAutomaticOutput::Bar.new
+        )
+        Lain::CLI::ToolGuard::Detached.new(chronicle: Lain::CLI::ToolGuard::Journaled.new(journal: []),
+                                           guard_inputs: inputs, requester: "dev")
+      end
+
+      before do
+        FileUtils.mkdir_p([project, refs, File.dirname(file), File.dirname(key)])
+        [file, sibling].each { File.write(_1, "x\n") }
+        File.write(key, "zq_key_mark\n")
+      end
+
+      def probing(*tools) = Lain::Toolset.new([SubagentSpecBoundsTool.new(held), *tools])
+
+      def spawner(provider, toolset: probing, only: %i[bounds])
+        build_subagent(provider:, toolset:, isolation: leases, policy: spawn_policy(only:), tool_middleware: guard)
+      end
+
+      def probed = mock(tool_response(["b1", "bounds", {}]), text_response("done"))
+
+      def cut(checkout) = sensitivity.bounds.with_child(checkout).lend(checkout)
+
+      it "lends each path to the child on top of its own cut, so it keeps its write hold" do
+        expect(spawner(probed).lend_reads([file, refs]).call({ "prompt" => "go" }, invocation)).to be_ok
+
+        checkout = backend.leased.first
+        bounds = held.first
+        expect(bounds).to eq(cut(checkout) | Lain::Sensitivity::Bounds.of(reads: [file, refs]))
+        expect([bounds.read?(file), bounds.read?(File.join(refs, "a.md")), bounds.read?(sibling)])
+          .to eq([true, true, false])
+        expect([bounds.write?(File.join(checkout, "x")), bounds.write?(file), bounds.write?(File.join(refs, "a.md"))])
+          .to eq([true, false, false])
+      end
+
+      it "leaves a child's bounds to its stack to cut when nothing is lent" do
+        expect(spawner(probed).call({ "prompt" => "go" }, invocation)).to be_ok
+
+        expect(held).to eq([nil])
+      end
+
+      it "lends the paths to a child spawned under a name of its own too" do
+        named = mock(tool_response(["b1", "bounds", {}]), text_response("done"))
+
+        expect(spawner(named).lend_reads([file]).call({ "prompt" => "go", "name" => "ana" }, invocation)).to be_ok
+
+        expect(held.map { _1.read?(file) }).to eq([true])
+      end
+
+      it "leaves the spawner it was asked of lending nothing" do
+        tool = spawner(probed)
+        tool.lend_reads([file])
+
+        expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+        expect(held).to eq([nil])
+      end
+
+      it "lends neither the filesystem root, nor home, nor what holds the project, journaling each refusal once" do
+        journal = Lain::Channel.new
+        provider = mock(tool_response(["b1", "bounds", {}]), text_response("done"),
+                        tool_response(["b2", "bounds", {}]), text_response("done"))
+        tool = build_subagent(provider:, toolset: probing, isolation: leases, policy: spawn_policy(only: %i[bounds]),
+                              tool_middleware: guard, journal:).lend_reads(["/", home, base, file])
+
+        2.times { expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok }
+
+        elsewhere = File.join(home, "elsewhere", "x.md")
+        expect(held.map { [_1.read?(file), _1.read?(elsewhere), _1.read?(File.join(base, "other", "y.md"))] })
+          .to eq([[true, false, false]] * 2)
+        expect(journal.drain.grep(Lain::Telemetry::CapabilityDegraded).map(&:provider))
+          .to contain_exactly("/: it is the filesystem root", "#{home}: it is the home directory or holds it",
+                              "#{base}: it holds the project root")
+      end
+
+      it "lends nothing that holds the child's own checkout" do
+        journal = Lain::Channel.new
+        leases_dir = File.join(base, "leases").tap { FileUtils.mkdir_p(_1) }
+        isolation = Lain::Isolation::Leases.new(backend: SubagentSpecIsolation.new(leases_dir, checkouts: true))
+        tool = build_subagent(provider: probed, toolset: probing, isolation:, policy: spawn_policy(only: %i[bounds]),
+                              tool_middleware: guard, journal:).lend_reads([leases_dir])
+
+        expect(tool.call({ "prompt" => "go" }, invocation)).to be_ok
+
+        expect(held.first.read?(File.join(leases_dir, "sibling", "x.md"))).to be(false)
+        expect(journal.drain.grep(Lain::Telemetry::CapabilityDegraded).map(&:provider))
+          .to eq(["#{leases_dir}: it holds the project root"])
+      end
+
+      it "lends the same paths to a grandchild its child spawns" do
+        provider = mock(tool_response(["c1", "subagent", { "prompt" => "deeper" }]),
+                        tool_response(["g1", "bounds", {}]), text_response("grandchild done"),
+                        text_response("child done"))
+        inner = spawner(provider)
+        tool = spawner(provider, toolset: probing(inner), only: %i[bounds subagent]).lend_reads([file])
+
+        expect(tool.call({ "prompt" => "start" }, invocation)).to be_ok
+
+        expect(held.size).to eq(1)
+        expect([held.first.read?(file), held.first.read?(sibling)]).to eq([true, false])
+      end
+
+      it "still refuses a lent path the policy denies" do
+        provider = mock(tool_response(["r1", "read_file", { "path" => key }]), text_response("done"))
+        tool = spawner(provider, toolset: probing(Lain::Tools::ReadFile.new), only: %i[bounds read_file])
+
+        expect(tool.lend_reads([key]).call({ "prompt" => "read it" }, invocation)).to be_ok
+
+        result = record.child(store).to_a.select { _1.role == "user" }.flat_map(&:content)
+                       .find { _1["type"] == "tool_result" }
+        expect(result).to include("is_error" => true)
+        expect(result["content"].to_s).not_to include("zq_key_mark")
+      end
     end
 
     # A worker's commits are never optional: a returning child's lease ends in

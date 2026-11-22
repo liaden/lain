@@ -117,6 +117,59 @@ RSpec.describe Lain::Epic::IssueView do
     end
   end
 
+  describe "#lends" do
+    let(:referenced) do
+      <<~MARKDOWN
+        Ingest reads rows, as /srv/elsewhere/prose.md does.
+
+        ## References
+
+        - `lib/ingest.rb`, the entry point
+        - `~/dev/sample/rustfmt.toml`, the formatting rules
+        - ~/dev/sample/, the project it follows.
+        - [the schema](/srv/data/schema.sql)
+        - https://example.com/ingest
+      MARKDOWN
+    end
+
+    it "names each absolute and home-relative path its References hold, expanded against the home" do
+      expect(view_of(referenced).lends(home: "/home/alice"))
+        .to eq(%w[/home/alice/dev/sample/rustfmt.toml /home/alice/dev/sample /srv/data/schema.sql])
+    end
+
+    it "names nothing for References that name only paths inside the project" do
+      expect(view_of.lends(home: "/home/alice")).to eq([])
+    end
+
+    it "names no path inside an HTML comment, which a reader of the rendered issue never sees" do
+      text = "## References\n\n- /srv/shown.md <!-- /srv/hidden.md -->\n<!--\n- /srv/also-hidden.md\n-->\n"
+
+      expect(view_of(text).lends(home: "/home/alice")).to eq(%w[/srv/shown.md])
+    end
+
+    it "keeps a trailing .. as a step up, so home named that way reaches the rule as home" do
+      expect(view_of("## References\n\n- ~/dev/..\n").lends(home: "/home/alice")).to eq(%w[/home/alice])
+    end
+
+    it "strips the punctuation a sentence leaves after a path" do
+      text = "## References\n\n- see /srv/x.md.\n- /srv/y.md; and /srv/z.md: the rest\n"
+
+      expect(view_of(text).lends(home: "/home/alice")).to eq(%w[/srv/x.md /srv/y.md /srv/z.md])
+    end
+
+    {
+      "the filesystem root" => "- `lib/a.rb` / `spec/a_spec.rb`",
+      "home itself" => "- `~/`, the whole home",
+      "a prose slash" => "- reads a / b, or c/d",
+      "a subnet" => "- a /24 subnet",
+      "a scheme-less URL" => "- <//example.com/x>"
+    }.each do |what, line|
+      it "names nothing for #{what}, which has no segment to lend" do
+        expect(view_of("## References\n\n#{line}\n").lends(home: "/home/alice")).to eq([])
+      end
+    end
+  end
+
   describe "#issue" do
     it "is the issue as epic.md holds it" do
       expect(view_of.issue).to eq(epic.fetch("ingest"))

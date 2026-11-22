@@ -2160,6 +2160,8 @@ RSpec.describe Lain::Confine::Profiles do
 
         def related = Lain::Confine::MaskList::Related::NONE
 
+        def lending = @lending ||= Lain::Sensitivity::Bounds::Lending.new
+
         def classify(path)
           Data.define(:level) { def ordinary? = level == :ordinary }
               .new(File.basename(path) == "secrets" ? :gated : :ordinary)
@@ -2220,9 +2222,10 @@ RSpec.describe Lain::Confine::Profiles do
       FileUtils.mkdir_p(home)
       gated = File.join(@base, "secrets").tap { FileUtils.mkdir_p(_1) }
 
-      unread = [home, @base, gated].map { lending.for(bounded(lent(_1))) }.map { [_1.unread, _1.read_dirs] }
+      unread = ["/", home, @base, gated].map { lending.for(bounded(lent(_1))) }.map { [_1.unread, _1.read_dirs] }
 
-      expect(unread).to match([[{ home => "it is the home directory or holds it" }, not_include(home)],
+      expect(unread).to match([[{ "/" => "it is the filesystem root" }, not_include("/")],
+                               [{ home => "it is the home directory or holds it" }, not_include(home)],
                                [{ @base => "it holds the project root" }, not_include(@base)],
                                [{ gated => "its path is classified gated" }, not_include(gated)]])
       expect(listing.asked).to eq([])

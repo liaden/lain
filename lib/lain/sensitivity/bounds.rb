@@ -13,7 +13,7 @@ module Lain
     class Bounds
       DIRS = %i[reads writes children].freeze
 
-      # @param reads [Array<String>] directories, each expanded against the process directory
+      # @param reads [Array<String>] files or directories, each expanded against the process directory
       # @param writes [Array<String>]
       # @param execs [Confine::ExecRules]
       # @param facts [FileFacts::Live, FileFacts::Recorded] where a directory really lands
@@ -105,6 +105,63 @@ module Lain
       private :canonical
 
       NONE = new(reads: [], writes: [], children: [], execs: Confine::ExecRules::NONE)
+
+      # Which paths beyond the session's reads may be lent to one agent's bounds, judged where each lands. One
+      # that would hand it the filesystem, home, the project or a secret wholesale is refused, and each refusal
+      # is journaled once for the life of this object, however many calls and children are lent it.
+      class Lending
+        CAPABILITY = :lent_path
+        FILESYSTEM_ROOT = "it is the filesystem root"
+        ROOT = "it holds the project root"
+        HOME = "it is the home directory or holds it"
+        CLASSIFIED = "its path is classified %<level>s"
+
+        # @param journal [#<<] receives a `Telemetry::CapabilityDegraded` for each path refused
+        def initialize(journal: Channel::Null.instance)
+          @journal = journal
+          @journaled = Set.new
+          @lock = Mutex.new
+        end
+
+        # @param paths [Array<String>] absolute
+        # @param home [String, nil] absolute; a lend may not be it or hold it
+        # @param roots [Array<String, nil>] the project roots a lend may not hold
+        # @param classifier [#classify] the session's policy on a path
+        # @return [Hash{String => String}] each path refused, with why
+        def refused(paths, home:, roots:, classifier:)
+          refusals = paths.filter_map { |path| refusal(path, home, roots.compact, classifier)&.then { [path, _1] } }
+          journal(refusals.to_h)
+        end
+
+        private
+
+        def refusal(path, home, roots, classifier)
+          landing = landing(path)
+          return FILESYSTEM_ROOT if landing == File::SEPARATOR
+          return ROOT if roots.any? { Landing.under?(landing(_1), landing) }
+          return HOME if home && Landing.under?(landing(home), landing)
+
+          verdict = classifier.classify(landing)
+          format(CLASSIFIED, level: verdict.level) unless verdict.ordinary?
+        end
+
+        def landing(path)
+          File.realpath(path)
+        rescue SystemCallError
+          File.expand_path(path)
+        end
+
+        def journal(refusals)
+          @lock.synchronize do
+            refusals.except(*@journaled).each do |path, reason|
+              @journaled << path
+              @journal << Telemetry::CapabilityDegraded.new(capability: CAPABILITY, requirer: self.class.name,
+                                                            provider: "#{path}: #{reason}")
+            end
+          end
+          refusals
+        end
+      end
     end
   end
 end

@@ -89,16 +89,12 @@ module Lain
 
         UNLISTED = "no listing masks it"
 
-        # @param dirs [Array<String>] absolute
+        # @param paths [Array<String>] absolute
         # @return [MaskList::Related] each refused, since no listing masks what it holds
-        def self.lent(dirs) = MaskList::Related.new(roots: [], masks: [], refused: dirs.to_h { [_1, UNLISTED] })
-      end
+        def self.lent(paths) = MaskList::Related.new(roots: [], masks: [], refused: paths.to_h { [_1, UNLISTED] })
 
-      # Why a directory an agent's bounds lend it is not bound, before any listing is asked.
-      module Unlent
-        HOME = "it is the home directory or holds it"
-        ROOT = "it holds the project root"
-        CLASSIFIED = "its path is classified %<level>s"
+        # @return [Sensitivity::Bounds::Lending] the rule, journaling nowhere, since no session stands behind it
+        def self.lending = Sensitivity::Bounds::Lending.new
       end
 
       # The freshness a caller that read no lineage hands over: every root and
@@ -162,10 +158,10 @@ module Lain
       # @param fresh [#any_under?, #fresh?] the lineage's freshness, which a build tool's grant needs to be quiet
       #   and a linter's file must be
       # @param env [#[]] where a grant reads where bundler installs
-      # @param classifier [#classify, #related, #lent] the session's policy on a path, asked before a git config
-      #   file outside the project is granted, the related directories a reader may read, each with its masks, and
-      #   the listing of a directory a request's bounds lend; by default every path is ordinary, none is related
-      #   and no lend is listed
+      # @param classifier [#classify, #related, #lent, #lending] the session's policy on a path, asked before a git
+      #   config file outside the project is granted, the related directories a reader may read, each with its
+      #   masks, the listing of a file or directory a request's bounds lend, and the rule that refuses a lend; by
+      #   default every path is ordinary, none is related and no lend is listed
       # @param registry [#backend] which backend mise fetches a short name through
       def initialize(masks:, probe:, home:, root:, workspace: false, tmpdir: Dir.tmpdir, fresh: Unread, env: ENV,
                      classifier: Unclassified, registry: MiseRegistry)
@@ -294,32 +290,25 @@ module Lain
       end
 
       # A lend is listed apart from the session's related directories, so only the call of the agent whose bounds
-      # lend it binds it. One that would bind home, the project or a secret wholesale is refused before any listing.
+      # lend it binds it. One the classifier's {Sensitivity::Bounds::Lending} refuses is refused before any listing.
       def related_for(request)
         related = @classifier.related
-        dirs = lent_dirs(request, related)
-        return related if dirs.empty?
+        paths = lent_paths(request, related)
+        return related if paths.empty?
 
-        refusals = dirs.filter_map { |dir| unlent(dir, request)&.then { [dir, _1] } }.to_h
-        listed = refusals.size == dirs.size ? MaskList::Related::NONE : @classifier.lent(dirs - refusals.keys)
+        refusals = @classifier.lending.refused(paths, home: @home, roots: [root_of(request), @root],
+                                                      classifier: @classifier)
+        listed = refusals.size == paths.size ? MaskList::Related::NONE : @classifier.lent(paths - refusals.keys)
         related.with(roots: [*related.roots, *listed.roots], masks: [*related.masks, *listed.masks],
                      refused: related.refused.merge(listed.refused, refusals))
       end
 
       # A read root that does not exist holds nothing to bind, and is left out rather than named on every call.
-      def lent_dirs(request, related)
+      def lent_paths(request, related)
         bounds = request.bounds
         covered = [root_of(request), @root, *related.roots, *related.reads].map { Profile.landing(_1) }
         bounds.readable.select { bounds.reads.held?(_1) && File.exist?(_1) }.map { Profile.landing(_1) }.uniq
-              .reject { |dir| covered.any? { Landing.under?(dir, _1) } }
-      end
-
-      def unlent(dir, request)
-        return Unlent::ROOT if [root_of(request), @root].any? { Landing.under?(Profile.landing(_1), dir) }
-        return Unlent::HOME if Landing.under?(Profile.landing(@home), dir)
-
-        verdict = @classifier.classify(dir)
-        format(Unlent::CLASSIFIED, level: verdict.level) unless verdict.ordinary?
+              .reject { |path| covered.any? { Landing.under?(path, _1) } }
       end
 
       # A grant fetches from the host's network; a plain workspace call gets

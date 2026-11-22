@@ -115,10 +115,12 @@ module Lain
       # `kept` gives each child a directory of its own, kept after it ends
       # ({Kept}), and adds `extends` to the input; not copied by {#descend}
       # either, since a grandchild works where its parent was put.
+      #
+      # `lend` is what each child may read outside the project, see {#lend_reads}.
       def initialize(toolset:, policy:, seam: nil, budget: Budget.ceilings,
                      name: NAME, announces_as: name, mode: :one_shot,
                      log: Log::Null, persona: Role::Persona::Null, model: ModelChoice::Null,
-                     answer: ANSWER, compaction: ParentView::None, kept: Unkept, **spawn_over)
+                     answer: ANSWER, compaction: ParentView::None, kept: Unkept, lend: NoLend, **spawn_over)
         super()
         @seam = Seam.resolve(seam, **spawn_over)
         @announces_as = Requester.of(announces_as)
@@ -127,7 +129,7 @@ module Lain
         @answer = answer
         @kept = kept
         @builder = ChildBuilder.new(seam: @seam, toolset:, policy:, budget:, persona:, model:,
-                                    name: @announces_as.label, compaction:, payer: @announces_as)
+                                    name: @announces_as.label, compaction:, payer: @announces_as, lend:)
         seed_config(name, mode, log)
       end
 
@@ -255,9 +257,20 @@ module Lain
       # grandchild is clamped to what the child has left, never to what this
       # tool's own holder had. Public only for {ChildBuilder}, which is not a
       # Subagent, so `protected` can no longer say "only the spawn machinery".
-      def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null)
-        config = @builder.config(parent:, escalation:, holder:, bounds:, spend:)
+      def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null, lend: NoLend)
+        config = @builder.config(parent:, escalation:, holder:, bounds:, spend:, lend:)
         self.class.new(**config, name: @name, announces_as: @announces_as, mode: @mode, log: @log, answer: @answer)
+      end
+
+      # A copy of this spawner lending `paths` read-only to every agent it spawns, and on through the spawners
+      # each one holds, beside the bounds its own stack cuts it. A path {Sensitivity::Bounds::Lending} refuses is
+      # not lent, and its refusal is journaled once for the whole subtree.
+      #
+      # @param paths [Array<String>] absolute; files or directories outside the project
+      # @return [Subagent]
+      def lend_reads(paths)
+        builder = @builder.lending(Lend.new([*@builder.lend.paths, *paths], journal: @seam.journal))
+        dup.tap { _1.building_with(builder) }
       end
 
       # Told by the {Choice} that offers it, so a stop tells the parent which role to resume under.
@@ -280,6 +293,8 @@ module Lain
       end
 
       protected
+
+      def building_with(builder) = @builder = builder
 
       # A model-dispatched `:actor` is refused UNLESS a running {Supervisor} is
       # wired: Agent#ask's per-call Sync owns any fiber a tool dispatch spawns,
@@ -1155,9 +1170,9 @@ module Lain
 
         # Each spawner descends as its own, so every role on offer is capped at
         # the child's ceiling exactly as a lone spawner would be.
-        def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null)
+        def descend(parent:, escalation:, holder:, bounds: NO_BOUNDS, spend: Budget::Shared::Null, lend: NoLend)
           self.class.new(@spawners.transform_values do |spawner|
-            spawner.descend(parent:, escalation:, holder:, bounds:, spend:)
+            spawner.descend(parent:, escalation:, holder:, bounds:, spend:, lend:)
           end)
         end
 
@@ -1207,6 +1222,39 @@ module Lain
 
       # The cell of a spawner no policy confines: one nothing reads, so a lease taken into it is no one's.
       NO_BOUNDS = -> { Sensitivity::Bounds::Cell.new(Sensitivity::Bounds::NONE) }
+
+      # Paths outside the project lent read-only to a spawner's children, and the one rule that refuses any.
+      # Shared by every copy of the spawner, so a refusal is journaled once however many children are lent it.
+      class Lend
+        # @param paths [Array<String>] absolute
+        # @param journal [#<<] where a refused path is journaled
+        def initialize(paths, journal:)
+          @paths = paths.uniq.freeze
+          @lending = Sensitivity::Bounds::Lending.new(journal:)
+        end
+
+        # @return [Array<String>]
+        attr_reader :paths
+
+        def empty? = @paths.empty?
+
+        # @param policy [Sensitivity::Policy] the session's, which the child's stack cuts its bounds from
+        # @param worker_env [WorkerEnv] the child's
+        # @return [WorkerEnv] carrying the bounds its stack would cut it, joined with each path not refused
+        def over(policy, worker_env)
+          roots = [policy.root, worker_env.checkout || worker_env.cwd]
+          refused = @lending.refused(@paths, home: policy.home, roots:, classifier: policy)
+          lent = Sensitivity::Bounds.of(reads: @paths - refused.keys, facts: policy.file_facts)
+          worker_env.with(bounds: Sensitivity::Policy.bounds_for(policy, worker_env) | lent)
+        end
+      end
+
+      # What a spawner lends when nothing is.
+      module NoLend
+        def self.paths = [].freeze
+
+        def self.empty? = true
+      end
 
       # The scope of a seam no board confines.
       module UNSCOPED
@@ -1907,15 +1955,16 @@ module Lain
           end
         end
 
-        attr_reader :policy, :toolset, :budget, :reservation
+        attr_reader :policy, :toolset, :budget, :reservation, :lend
 
         # `name` is what a human is TOLD is asking when this child puts a
         # question to them, so a role spawn announces as "researcher" rather
         # than as a 71-character correlation.
         def initialize(seam:, toolset:, policy:, budget:, persona: Role::Persona::Null,
                        model: ModelChoice::Null, name: "subagent", compaction: ParentView::None,
-                       reservation: Budget::Shared::Unreserved, payer: Requester::UNNAMED)
+                       reservation: Budget::Shared::Unreserved, payer: Requester::UNNAMED, lend: NoLend)
           @payer = payer
+          @lend = lend
           @seam = seam
           @toolset = toolset
           @policy = policy
@@ -1931,7 +1980,14 @@ module Lain
         def named(requester)
           self.class.new(seam: @seam.with(tool_middleware: @seam.tool_middleware.with(requester:)), toolset: @toolset,
                          policy: @policy, budget: @budget, persona: @persona, model: @model, name: @name,
-                         compaction: @compaction, payer: @payer)
+                         compaction: @compaction, payer: @payer, lend: @lend)
+        end
+
+        # This builder, lending `lend` to each child and to the spawners its union holds.
+        def lending(lend)
+          self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: @budget, persona: @persona,
+                         model: @model, name: @name, compaction: @compaction, reservation: @reservation,
+                         payer: @payer, lend:)
         end
 
         # Every copy gets the spawn wiring verbatim, the seam's observer and
@@ -1952,9 +2008,11 @@ module Lain
         # `parent`'s: a bound model is ONE child's property, not a subtree's.
         # The copy this builds is the run's own `subagent` tool descending into
         # a child's union, and what binds a grandchild is whoever spawns it.
-        def config(parent:, escalation:, holder:, bounds:, spend:)
+        #
+        # `lend` is what the spawner a copy descends into was lent, so the subtree below it is lent the same.
+        def config(parent:, escalation:, holder:, bounds:, spend:, lend: NoLend)
           { seam: @seam.with(parent:, escalation:, holder:, bounds:, spend:), toolset: @toolset, policy: @policy,
-            budget: @budget, persona: @persona }
+            budget: @budget, persona: @persona, lend: }
         end
 
         # This builder, its child run under what the spawn was granted once
@@ -1962,7 +2020,7 @@ module Lain
         def granting(reservation)
           self.class.new(seam: @seam, toolset: @toolset, policy: @policy, budget: reservation.ceilings,
                          persona: @persona, model: @model, name: @name, compaction: @compaction, reservation:,
-                         payer: @payer)
+                         payer: @payer, lend: @lend)
         end
 
         # `child` is late-bound through the thunk exactly as the exe wires the
@@ -1984,6 +2042,7 @@ module Lain
                   progress: Progress::Null, task: nil, opening: Fresh.new(prompt: task))
           child = nil
           spend = Budget::Shared.new
+          worker_env = with_lend(worker_env)
           chain = own_chain(parent, progress, opening) { child.timeline }
           progress.measuring(ceiling: @budget.iterations) { child }
           view = @compaction.call(base: chain.base, worker_env: scope.env_over(worker_env), scope:)
@@ -1996,6 +2055,12 @@ module Lain
         private
 
         def enrolled(chain) = @seam.askers.enrol(chain.asking_handle, agent: @name, spawn: chain.spawn)
+
+        # On top of the bounds the child's stack would cut it from the same policy, never in their place, so the
+        # child keeps its write hold and its cut's reads.
+        def with_lend(worker_env)
+          @lend.empty? ? worker_env : @lend.over(@seam.tool_middleware.guard_inputs.sensitivity, worker_env)
+        end
 
         # One spawn's own chain, built HERE rather than at the Agent, because
         # the asker is enrolled before the Agent exists and needs the feed.
@@ -2079,7 +2144,7 @@ module Lain
         # own wiring decides what is in it, never the model, so a tool answering
         # the duck is one lain put there.
         def child_union(parent_handle, escalation, holder, spend, bounds)
-          over = { parent: parent_handle, escalation:, holder:, spend:, bounds: }
+          over = { parent: parent_handle, escalation:, holder:, spend:, bounds:, lend: @lend }
           Toolset.new(@toolset.map { |tool| tool.respond_to?(:descend) ? tool.descend(**over) : tool })
         end
 
