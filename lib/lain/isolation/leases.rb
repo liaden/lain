@@ -77,6 +77,9 @@ module Lain
       # What a lender with no lease of its own answers when a dispatch asks to keep one.
       KEEP_NOTHING = ->(**) {}
 
+      # What a lender that cut no checkout for the dispatch says it was cut from.
+      NO_CUT = Lease::Origin.new
+
       # Where a kept checkout's snapshot is pinned in the repository checkouts are cut from, so any
       # later checkout reaches it, a shared clone included. Outside `refs/lain/worker/`, which the
       # reaper ages out. A pin is dropped once a resume takes it up, or at close when no later run
@@ -190,11 +193,12 @@ module Lain
         # @yieldparam worker [nil] no worker key: this lease was cut for the
         #   LENDER, and naming the lender's worker as the child's would put a
         #   checkout on a record beside a child that was never given one
+        # @yieldparam origin [Lease::Origin] naming nothing, for the same reason
         # @return [Held] the block's value, with nothing synced or handed back
         def hold(_role, **)
           none = SelfSync::Result::NONE
           @monitor.synchronize do
-            Held.new(value: yield(worker_env, ->(_worker) { none }, nil, KEEP_NOTHING), sync: none,
+            Held.new(value: yield(worker_env, ->(_worker) { none }, nil, KEEP_NOTHING, NO_CUT), sync: none,
                      report: WorkerHandoff::Report.nothing)
           end
         end
@@ -264,6 +268,8 @@ module Lain
       # @yieldparam keep [#call] called by a block about to stop resumably: the
       #   lease is then neither reclaimed nor surrendered on its way out, and
       #   the call answers the {Retained} a resume holds again
+      # @yieldparam origin [Lease::Origin] the checkout and the commit it was
+      #   cut from, so a dispatch can key a record on what its worker read
       # @return [Held] the block's value and the handback's report
       def hold(role, journal:, &block)
         worker = @lane.worker(role:, ordinal: next_ordinal)
@@ -321,7 +327,8 @@ module Lain
         kept = nil
         keep = ->(lasting: true) { kept = retain(lease, worker, journal, lasting) }
         value = yield(@sync.editorless(lease.worker_env),
-                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker, keep)
+                      ->(asked) { synced = @sync.call(lease, worker: asked, worker_id: worker) }, worker, keep,
+                      lease.origin)
         synced ||= SelfSync::Result::NONE
         Held.new(value:, sync: synced, report: reclaim(lease, worker, journal, synced))
       rescue StandardError => e

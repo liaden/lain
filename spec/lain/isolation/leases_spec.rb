@@ -98,6 +98,19 @@ RSpec.describe Lain::Isolation::Leases do
     expect(journal.drain).to be_empty
   end
 
+  # A reviewer's record is keyed by the commit its checkout was cut from, which only the lease knows.
+  it "hands the block the origin its lease was cut from" do
+    origin = Lain::Isolation::Lease::Origin.new(path: leases_root, base: "c0ffee", branch: "lain/issue/demo/a")
+    cut = Object.new
+    cut.define_singleton_method(:acquire) do |_worker|
+      Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: origin.path), origin:)
+    end
+
+    held = described_class.new(backend: cut).hold("subagent", journal:) { |*, origin_seen| origin_seen }
+
+    expect(held.value).to eq(origin)
+  end
+
   # The teardown that FAILS. {Lain::Isolation::Worktree#remove} raises rather
   # than leave a checkout it could not reclaim standing, and `Tool#call` does
   # not rescue -- so a bare `ensure lease.release` would hand a caller the
@@ -350,6 +363,14 @@ RSpec.describe Lain::Isolation::Leases do
       expect(lent.value).to eq([held, Lain::Isolation::SelfSync::Result::NONE])
       expect([lent.report.kind, lent.sync, place.lane])
         .to eq([:nothing_to_do, Lain::Isolation::SelfSync::Result::NONE, described_class::Lane::UNNAMED])
+    end
+
+    it "hands the block an origin naming no commit, since it cut no checkout for the child" do
+      place = described_class::InPlace.new(worker_env: Lain::WorkerEnv.default.with(cwd: leases_root))
+
+      lent = place.hold("subagent", journal: Lain::Channel::Null.instance) { |*, origin| origin }
+
+      expect(lent.value).to eq(Lain::Isolation::Lease::Origin.new)
     end
   end
 

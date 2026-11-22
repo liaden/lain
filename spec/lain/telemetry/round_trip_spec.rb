@@ -93,6 +93,7 @@ RSpec.describe Lain::Telemetry, ".read over every journaled record" do
                    requester: "summarizer" },
     ReentryNote: { note: "waiting on CI" },
     ResendDispatched: { digest: d },
+    ReviewerReads: { epic_slug: "e", issue_id: "i1", sha: "abc", reads: ["lib/a.rb", "git show abc:src/a.rs"] },
     RoundBounded: { head: d, basis: "tokens", budget: 100, delivered: ["tu_1"], deduplicated: [], withheld: ["tu_2"] },
     RunAllowance: { iterations: 103 },
     RunArms: { arms: { "confine" => "reader", "judge" => true } },

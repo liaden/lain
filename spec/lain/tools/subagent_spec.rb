@@ -5482,6 +5482,110 @@ RSpec.describe Lain::Tools::Subagent do
   #
   # Every OTHER example in this file constructs with the loose keywords, so this
   # block's green plus theirs is the additive claim: both styles are valid.
+  # Scenario: a reviewer's reads reach the gate, bash reads included
+  describe "what a reviewing child read" do
+    let(:journal) { RecordingChannel.new }
+    let(:reviewing) do
+      review = Lain::Tools::Subagent::Reviewing.new(epic_slug: "demo", issue_id: "a")
+      Lain::Tools::Subagent::Answer.new(reviewing: review)
+    end
+    let(:cut_at) { Lain::Isolation::Lease::Origin.new(base: "c0ffee") }
+    let(:history) do
+      child_of(use("r1", "read_file", { "path" => "lib/a.rb" }), result("r1", "1"),
+               use("r2", "read_file", { "path" => "lib/b.rb" }), result("r2", "2"),
+               use("r3", "read_file", { "path" => "gone.rb" }), result("r3", "no such file", error: true),
+               use("b1", "bash", { "command" => "git show c0ffee:src/a.rs" }), result("b1", "exit status: 0\nfn a"),
+               use("b2", "bash", { "command" => "cat missing.rs" }), result("b2", "exit status: 1\nstderr: gone"),
+               use("b3", "bash", { "command" => "cat refused.rs" }), result("b3", "refused", error: true),
+               use("b4", "bash", { "command" => "pwd" }), result("b4", "exit status: 0\n/w"))
+    end
+
+    def use(id, name, input) = { "type" => "tool_use", "id" => id, "name" => name, "input" => input }
+
+    def result(id, text, error: false)
+      { "type" => "tool_result", "tool_use_id" => id, "is_error" => error, "content" => text }
+    end
+
+    def child_of(*blocks) = Struct.new(:timeline).new([Struct.new(:role, :content).new("assistant", blocks)])
+
+    def reads_in(records) = records.grep(Lain::Telemetry::ReviewerReads)
+
+    it "counts each file read and each clean bash call naming a path, and nothing that failed" do
+      expect(Lain::Tools::Subagent::Answer.new.reads(history))
+        .to eq(["lib/a.rb", "lib/b.rb", "git show c0ffee:src/a.rs"])
+    end
+
+    it "journals a reviewer's reads under its issue and the commit its lease was cut from" do
+      reviewing.bounded(history, text_response("approve"), journal:, origin: cut_at)
+
+      expect(reads_in(journal.events)).to eq([Lain::Telemetry::ReviewerReads.new(
+        epic_slug: "demo", issue_id: "a", sha: "c0ffee", reads: ["lib/a.rb", "lib/b.rb", "git show c0ffee:src/a.rs"]
+      )])
+    end
+
+    it "journals a review that read nothing as one with no reads" do
+      blind = child_of(use("r1", "read_file", { "path" => "gone.rb" }), result("r1", "no such file", error: true))
+
+      reviewing.bounded(blind, text_response("approve"), journal:, origin: cut_at)
+
+      expect(reads_in(journal.events).map(&:reads)).to eq([[]])
+    end
+
+    it "journals nothing for a child reviewing no issue, or a lease cut from no commit" do
+      Lain::Tools::Subagent::Answer.new.bounded(history, text_response("approve"), journal:, origin: cut_at)
+      reviewing.bounded(history, text_response("approve"), journal:, origin: Lain::Isolation::Lease::Origin.new)
+
+      expect(reads_in(journal.events)).to be_empty
+    end
+
+    it "stays shareable with a review to record" do
+      expect(Ractor.shareable?(reviewing)).to be(true)
+    end
+
+    # Leases a checkout of `dir` cut at c0ffee.
+    def cut_at_commit(dir)
+      Object.new.tap do |cut|
+        cut.define_singleton_method(:acquire) do |_worker|
+          Lain::Isolation::Lease.new(worker_env: Lain::WorkerEnv.default.with(cwd: dir),
+                                     origin: Lain::Isolation::Lease::Origin.new(base: "c0ffee"))
+        end
+      end
+    end
+
+    it "records the reads of a child its spawner leased a checkout cut at a commit" do
+      Dir.mktmpdir("lain-reviewer-reads") do |dir|
+        File.write(File.join(dir, "a.rb"), "a\n")
+        File.write(File.join(dir, "b.rb"), "b\n")
+        provider = mock(tool_response(["r1", "read_file", { "path" => File.join(dir, "a.rb") }],
+                                      ["r2", "read_file", { "path" => File.join(dir, "b.rb") }]),
+                        text_response("approve"))
+        tool = build_subagent(provider:, journal:, answer: reviewing,
+                              isolation: Lain::Isolation::Leases.new(backend: cut_at_commit(dir)))
+
+        expect(tool.call({ "prompt" => "review it" }, invocation)).to be_ok
+        expect(reads_in(journal.events)).to eq([Lain::Telemetry::ReviewerReads.new(
+          epic_slug: "demo", issue_id: "a", sha: "c0ffee", reads: [File.join(dir, "a.rb"), File.join(dir, "b.rb")]
+        )])
+      end
+    end
+
+    # The clean-exit reading is pinned against the bash tool's own result, not a copy of its wording.
+    it "counts a real bash read that exited 0, and not one that failed" do
+      Dir.mktmpdir("lain-reviewer-bash") do |dir|
+        File.write(File.join(dir, "a.rb"), "a\n")
+        provider = mock(tool_response(["b1", "bash", { "command" => "cat a.rb" }],
+                                      ["b2", "bash", { "command" => "cat gone.rb" }]),
+                        text_response("approve"))
+        tool = build_subagent(provider:, journal:, answer: reviewing, policy: spawn_policy(only: %i[bash]),
+                              toolset: Lain::Toolset.new([Lain::Tools::Bash.new]),
+                              isolation: Lain::Isolation::Leases.new(backend: cut_at_commit(dir)))
+
+        expect(tool.call({ "prompt" => "review it" }, invocation)).to be_ok
+        expect(reads_in(journal.events).map(&:reads)).to eq([["cat a.rb"]])
+      end
+    end
+  end
+
   describe "the spawn Seam" do
     let(:seam) do
       Lain::Tools::Subagent::Seam.new(provider: mock(text_response("seamed")),

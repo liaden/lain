@@ -346,7 +346,7 @@ module Lain
         # @param slug [String] the epic
         # @param supervisor [Supervisor] the epic's own, whose checkouts are cut
         #   from `epic/<slug>`
-        # @param subagent [#call] `epic_subagent(isolation:, handoff:, lane:)`
+        # @param subagent [#call] `epic_subagent(isolation:, handoff:, lane:, issue_id:, epic_slug:)`
         # @param tests [IssueTests] the red step, run in the held checkout
         # @param renderer [Skill::Renderer] renders the plan-running skill
         # @param home [Epic::Home] where the issue is read
@@ -423,8 +423,8 @@ module Lain
             held = cut(worker_env, view.issue.id)
             step = acceptance.red_step(@tests)
             red = step.call(criteria, worker_env, subject:, level:, since: held.from, lane:, name: view.issue.id)
-            launched(worker_env, held, lane, lent: [*view.lends(home: @user_home), *kept],
-                                             prompt: brief(view, held, red, kept))
+            launched(worker_env, held, lane, view.issue.id, lent: [*view.lends(home: @user_home), *kept],
+                                                            prompt: brief(view, held, red, kept))
           end
           Launch.new(actor:, worker_id: lane, branch: held.branch.name, tests: red)
         end
@@ -492,12 +492,12 @@ module Lain
                        "next attempt instead"
         end
 
-        def launched(worker_env, held, lane, lent:, prompt:)
-          spawner(worker_env, held.branch, lane).lend_reads(lent).launch_actor(prompt, worker_env:)
+        def launched(worker_env, held, lane, issue_id, lent:, prompt:)
+          spawner(worker_env, held.branch, lane, issue_id).lend_reads(lent).launch_actor(prompt, worker_env:)
         end
 
-        def spawner(worker_env, branch, lane)
-          @subagent.call(**@lanes.over(worker_env, branch.name), lane:)
+        def spawner(worker_env, branch, lane, issue_id)
+          @subagent.call(**@lanes.over(worker_env, branch.name), lane:, issue_id:, epic_slug: @slug)
         end
 
         def brief(view, cut, red, earlier)

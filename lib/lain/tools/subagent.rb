@@ -455,14 +455,16 @@ module Lain
       # researcher goes back to the directory it stopped in; a leased checkout is kept live.
       def leased(record, prompt, scope:, lease:, on_stream_started:, builder:, announced:, opening:, stops:)
         scope, lent = lending(scope, lease)
-        lent.hold(@name, journal:) do |worker_env, sync, worker, keep = Isolation::Leases::KEEP_NOTHING|
+        lent.hold(@name, journal:) do |worker_env, sync, worker, keep = Isolation::Leases::KEEP_NOTHING,
+                                        origin = Isolation::Leases::NO_CUT|
           leased_to_child(worker_env)
           spawn = record.spawned(prompt, resumed: opening.resumed)
           progress = reporting(spawn, prompt, worker, announced)
           child = build_child(record.parent, worker_env, scope, progress:, task: prompt, builder:, opening:)
           stopped = Stopped.new(label: announced.label, spawn: spawn.digest, head: nil, prompt:, builder:,
                                 announced:, scope:, lease:, parent: EventLog::ChainWriter.correlation_of(record.parent))
-          run_child(record.built(child), opening, sync, on_stream_started:, stopping: stops.keeping(stopped, keep))
+          run_child(record.built(child), opening, sync, on_stream_started:,
+                                                        stopping: stops.keeping(stopped, keep), origin:)
         end
       end
 
@@ -529,10 +531,10 @@ module Lain
       # to the child that made the commits, and only this block still holds
       # it live. A child that raised never reaches it, and its lease syncs the
       # checkout with nobody to ask before surrendering it.
-      def run_child(child, opening, sync, on_stream_started:, stopping:)
+      def run_child(child, opening, sync, on_stream_started:, stopping:, origin:)
         child.answered do |agent, tools|
-          @answer.bounded(agent, refusing_malformed(asked(agent, opening, on_stream_started, stopping)), journal:)
-                 .tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
+          answered = refusing_malformed(asked(agent, opening, on_stream_started, stopping))
+          @answer.bounded(agent, answered, journal:, origin:).tap { sync.call(Isolation::SelfSync.worker(agent, tools:)) }
         end
       end
 
@@ -813,6 +815,28 @@ module Lain
       # The tools whose arguments say what a stopped child looked for.
       SEARCH_TOOLS = %w[grep glob list_files].freeze
 
+      # How {Tools::Bash} opens the result of a command that exited 0.
+      CLEAN_EXIT = "exit status: 0\n"
+
+      # A child reviewing one issue's implementation: its reads are journaled
+      # under the epic, the issue and the commit its checkout was cut from,
+      # which is what the gate reads them back by.
+      Reviewing = Data.define(:epic_slug, :issue_id) do
+        def initialize(epic_slug:, issue_id:) = super(epic_slug: -epic_slug.to_s, issue_id: -issue_id.to_s)
+
+        # A lease cut from no commit names nothing a gate could match the review to.
+        def record(answer, agent, origin, journal)
+          return if origin.base.nil?
+
+          journal << Telemetry::ReviewerReads.new(epic_slug:, issue_id:, sha: origin.base, reads: answer.reads(agent))
+        end
+      end
+
+      # A null {Reviewing}, so an answer never asks whether its child reviews anything.
+      module Unreviewed
+        def self.record(*) = nil
+      end
+
       # A child's answer, kept under {ANSWER_BOUND} by asking the CHILD to
       # summarize it. Its context already holds the answer, so that ask is the
       # cheapest summarizer available and the only one that cannot mistake what
@@ -829,17 +853,22 @@ module Lain
       #
       # An answer whose summary is still over the ceiling is kept whole by
       # `spill` and handed back as a pointer, for the same two reasons.
-      Answer = Data.define(:bounds, :spill) do
-        def initialize(bounds: ANSWER_BOUND, spill: Tool::Spill::Null)
+      #
+      # `reviewing` records what a reviewer read before it answered; a child
+      # that reviews no issue records nothing.
+      Answer = Data.define(:bounds, :spill, :reviewing) do
+        def initialize(bounds: ANSWER_BOUND, spill: Tool::Spill::Null, reviewing: Unreviewed)
           super
         end
 
-        # @param agent [#ask] the child that gave the answer, still live
+        # @param agent [#ask, #timeline] the child that gave the answer, still live
         # @param response [Response] what it answered
         # @param journal [#<<] where the bounding decision is recorded
+        # @param origin [Isolation::Lease::Origin] what the child's checkout was cut from
         # @return [Response] the response itself when it fits, else the same
         #   response carrying what the parent is given instead
-        def bounded(agent, response, journal: Channel::Null.instance)
+        def bounded(agent, response, journal: Channel::Null.instance, origin: Isolation::Leases::NO_CUT)
+          reviewing.record(self, agent, origin, journal)
           size = response.text.bytesize
           return response if bounds.admits?(size)
 
@@ -860,6 +889,17 @@ module Lain
           [message, *lists(events, room), text].reject(&:empty?).join("\n\n")
         end
 
+        # A bash command is listed whole, once, when it names a path and exits 0: not every
+        # word it names is a file, so it is not split into them.
+        #
+        # @param agent [#timeline] the child
+        # @return [Array<String>] each file a read_file opened, then each such command
+        def reads(agent)
+          blocks = agent.timeline.to_a.flat_map(&:content)
+          calls = blocks.select { |b| b["type"] == "tool_use" }
+          read_paths(calls, failed_ids(blocks)) + named_commands(calls, exited_clean(blocks))
+        end
+
         private
 
         def lists(events, room)
@@ -878,6 +918,23 @@ module Lain
         def read_paths(calls, failed)
           calls.select { |c| c["name"] == "read_file" && !failed.include?(c["id"]) }
                .filter_map { |c| arguments(c)["path"] }.grep(String).uniq
+        end
+
+        def exited_clean(blocks)
+          blocks.select { |b| b["type"] == "tool_result" && !b["is_error"] && result_text(b).start_with?(CLEAN_EXIT) }
+                .to_set { |b| b["tool_use_id"] }
+        end
+
+        def result_text(block) = Array(block["content"]).map { |part| part.is_a?(Hash) ? part["text"] : part }.join
+
+        def named_commands(calls, clean)
+          calls.select { |c| c["name"] == "bash" && clean.include?(c["id"]) }
+               .filter_map { |c| arguments(c)["command"] }.grep(String).select { |command| names_a_file?(command) }.uniq
+        end
+
+        # The cwd only places the paths, and only whether there are any is read.
+        def names_a_file?(command)
+          Shell::Named.of(command, cwd: "/", home: nil).paths.any? { |path| !path.directory && !path.git }
         end
 
         def search_lines(calls)

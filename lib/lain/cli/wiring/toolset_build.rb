@@ -349,15 +349,19 @@ module Lain
         #   anchors cannot meet another lane's in the repository every
         #   worktree shares; e.g. `issue.<slug>.<id>`, refused when git would
         #   not accept it in a ref
+        # @param issue_id [String] the issue the orchestrator carries, which its
+        #   reviewer's reads are recorded under
+        # @param epic_slug [String] the epic that issue is in
         # @return [Lain::Tools::Subagent]
         # @raise [Lain::Isolation::Leases::Lane::Refused]
-        def epic_subagent(isolation:, handoff:, lane:)
+        def epic_subagent(isolation:, handoff:, lane:, issue_id:, epic_slug:)
           raise Lain::Error, "the epic Subagent spawns over the floor #build makes; build the toolset first" if
             @floor.nil?
 
           issue = seam.with(isolation: issue_leases(isolation, handoff, lane), holder: EPIC_ROOM)
           Lain::Tools::Subagent.new(seam: announcing(ISSUE_ORCHESTRATOR.to_s, over: issue),
-                                    toolset: orchestrating(issue, isolation, supervisor: seam.supervisor),
+                                    toolset: orchestrating(issue, isolation, reviewed_as(epic_slug, issue_id),
+                                                           supervisor: seam.supervisor),
                                     policy: backend.spawn_policy(ISSUE_ORCHESTRATOR), budget: orchestrator_budget,
                                     persona: persona(ISSUE_ORCHESTRATOR), mode: :actor,
                                     announces_as: ISSUE_ORCHESTRATOR.to_s, answer:)
@@ -613,21 +617,24 @@ module Lain
         # The floor plus the three names only the orchestrator holds: one spawner
         # over both roles it fans work out to, the renderer that puts the
         # plan's skill in front of it, and the mailbox.
-        def orchestrating(issue, isolation, supervisor:)
+        def orchestrating(issue, isolation, review, supervisor:)
           actors = -> { supervisor.live.map(&:actor).grep(Lain::Tools::Subagent::Actor) }
           mailbox = Lain::Tools::SendMessage.new(live: actors)
-          Lain::Toolset.new(@floor.to_a + [spawning(issue, isolation), run_skill, mailbox])
+          Lain::Toolset.new(@floor.to_a + [spawning(issue, isolation, review), run_skill, mailbox])
         end
 
         # The one spawner the orchestrator holds, offering both roles it fans
         # work out to. Which one a child takes is the orchestrator's choice per
         # call; that the set is these two is not.
-        def spawning(issue, isolation)
+        def spawning(issue, isolation, review)
+          reviewed = answer.with(reviewing: review)
           Lain::Tools::Subagent::Choice.new(
             IMPLEMENTER => spawner(IMPLEMENTER, issue),
-            REVIEWER => reviewing(spawner(REVIEWER, issue), isolation)
+            REVIEWER => reviewing(spawner(REVIEWER, issue, answer: reviewed), isolation)
           )
         end
+
+        def reviewed_as(epic_slug, issue_id) = Lain::Tools::Subagent::Reviewing.new(epic_slug:, issue_id:)
 
         # A reviewer is cut from the committed tip, so work the orchestrator has
         # not committed is invisible to it and would be reviewed as absent.
@@ -641,7 +648,7 @@ module Lain
         # orchestrator has left, and attenuates from the floor, which holds no
         # spawner. Over the issue's seam, so it leases where the orchestrator's
         # children must.
-        def spawner(role, issue)
+        def spawner(role, issue, answer: self.answer)
           Lain::Tools::Subagent.new(seam: announcing(role.to_s, over: issue), toolset: @floor,
                                     policy: backend.spawn_policy(role), persona: persona(role), announces_as: role.to_s,
                                     budget: role_budget(role), answer:)

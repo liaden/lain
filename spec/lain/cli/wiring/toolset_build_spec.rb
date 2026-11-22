@@ -1811,7 +1811,10 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def granted(role) = (role.only.map(&:to_s) + %w[ask_human]).sort
 
-    def issued(build) = build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane: "issue.demo.a")
+    def issued(build)
+      build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane: "issue.demo.a", issue_id: "a",
+                          epic_slug: "demo")
+    end
 
     def issue_epic = issued(toolset_build)
 
@@ -1829,20 +1832,29 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect { issue_epic }.to raise_error(Lain::Error, /build/)
     end
 
-    it "requires the issue's own isolation and handoff, with no fallback to the chat's" do
+    it "requires the issue's own isolation, handoff, lane and id, with no fallback to the chat's" do
       toolset_build.build(recorder, ask_human:)
 
       expect { toolset_build.epic_subagent(handoff: issue_handoff) }.to raise_error(ArgumentError, /isolation/)
       expect { toolset_build.epic_subagent(isolation: issue_isolation) }.to raise_error(ArgumentError, /handoff/)
       expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff) }
         .to raise_error(ArgumentError, /lane/)
+      expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane: "issue.demo.a") }
+        .to raise_error(ArgumentError, /issue_id/)
+      expect do
+        toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane: "issue.demo.a",
+                                    issue_id: "a")
+      end.to raise_error(ArgumentError, /epic_slug/)
     end
 
     it "refuses a lane that cannot name a ref, rather than escaping it", :seam do
       toolset_build.build(recorder, ask_human:)
 
       ["bad lane", "a..b", "issue.lock", ""].each do |lane|
-        expect { toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane:) }
+        expect do
+          toolset_build.epic_subagent(isolation: issue_isolation, handoff: issue_handoff, lane:, issue_id: "a",
+                                      epic_slug: "demo")
+        end
           .to raise_error(Lain::Isolation::Leases::Lane::Refused, /cannot name a ref/)
       end
     end
@@ -2025,7 +2037,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       after { FileUtils.rm_rf(checkout) }
 
       def offer
-        toolset_build.epic_subagent(isolation: isolation_over_checkout, handoff: issue_handoff, lane: "issue.demo.a")
+        toolset_build.epic_subagent(isolation: isolation_over_checkout, handoff: issue_handoff, lane: "issue.demo.a",
+                                    issue_id: "a", epic_slug: "demo")
                      .attenuates_from.fetch("subagent")
       end
 
@@ -2223,7 +2236,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def orchestrator_over(build)
       build.epic_subagent(isolation: Lain::Isolation::Null.new, handoff: ToolsetBuildHandoff.new,
-                          lane: "issue.demo.spill")
+                          lane: "issue.demo.spill", issue_id: "spill", epic_slug: "demo")
     end
 
     after { FileUtils.rm_rf(Dir.glob(File.join(Lain::Paths.new.state_home, "research", "*"))) }

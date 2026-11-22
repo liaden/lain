@@ -273,7 +273,7 @@ module Lain
     # inside a plan's content address, because the gate decision and the
     # sign-off queue partition on the issue, and a grader joins on the criteria.
     Submission = Data.define(:stage, :slug, :content_digest, :fact, :issue_id, :criteria_digest, :changeset,
-                             :review, :manual_commands, :procedure) do
+                             :review, :manual_commands, :procedure, :reviewer_reads) do
       # `sources` maps each source name to its text, so an approval of the
       # research is an approval of the facts it cites. With none the digest is
       # the text's alone, as it was before sources existed.
@@ -350,13 +350,16 @@ module Lain
       # `manual_commands` is nil for an issue judged by tests, and for one a
       # human judges, the commands its scenarios name. `procedure` is that
       # human's steps in the issue's own words; like `tests` it is shown, not
-      # addressed, so editing a step reopens no gate.
-      def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil, procedure: nil)
+      # addressed, so editing a step reopens no gate. `reviewer_reads` is the
+      # newest record of what the issue's reviewer read, shown and not
+      # addressed for the same reason; nil when no review was recorded.
+      def self.implementation(slug:, issue_id:, digest:, tests: nil, manual_commands: nil, procedure: nil,
+                              reviewer_reads: nil)
         issue_id = clean_issue_id(issue_id)
         fact = "issue #{issue_id}, #{digest}, tests: #{tests_said(tests)}#{manual_said(manual_commands)}"
         Contracts::Submission.check!(stage: "implementation", slug:, content_digest: digest, fact:)
         new(stage: "implementation", slug:, content_digest: implemented(digest, issue_id), fact:, issue_id:,
-            changeset: digest, manual_commands:, procedure:)
+            changeset: digest, manual_commands:, procedure:, reviewer_reads:)
       end
 
       def self.manual_said(commands)
@@ -395,7 +398,7 @@ module Lain
       private_class_method :clean_issue_id
 
       def initialize(stage:, slug:, content_digest:, fact:, issue_id: nil, criteria_digest: nil, changeset: nil,
-                     review: nil, manual_commands: nil, procedure: nil)
+                     review: nil, manual_commands: nil, procedure: nil, reviewer_reads: nil)
         # Interned BEFORE the contract, so `presence:` judges the bytes that
         # actually get asked and journaled.
         stage = -stage.to_s
@@ -410,7 +413,7 @@ module Lain
         super(**Contracts::Submission.settle!(stage:, slug:, content_digest:, fact:),
               issue_id: issue_id && -issue_id.to_s, criteria_digest: criteria_digest && -criteria_digest.to_s,
               changeset: changeset && -changeset.to_s, review:,
-              manual_commands: interned(manual_commands), procedure: interned(procedure))
+              manual_commands: interned(manual_commands), procedure: interned(procedure), reviewer_reads:)
       end
 
       def interned(lines) = lines&.map { |line| -line.to_s }&.freeze
@@ -438,13 +441,25 @@ module Lain
         # be the one thing on it that hands back a mutable String, or a caller
         # mutating the return value would read as this record's state changing.
         head = "Approve the #{stage} stage for #{slug.inspect}? (#{fact})"
-        return -"#{head} #{GateReply::INSTRUCTION}" unless review || procedure&.any?
+        lines = [*procedure_lines, *reviewer_line, *review&.gate_lines([self])]
+        return -"#{head} #{GateReply::INSTRUCTION}" if lines.empty?
 
-        -[head, *procedure_lines, *review&.gate_lines([self]), GateReply::INSTRUCTION].join("\n")
+        -[head, *lines, GateReply::INSTRUCTION].join("\n")
       end
 
       def procedure_lines = procedure&.any? ? ["a human runs, in order:", *procedure.map { "- #{_1}" }] : []
       private :procedure_lines
+
+      # A review whose every read failed approves what it never looked at.
+      def reviewer_line
+        return [] if reviewer_reads.nil?
+
+        reads = reviewer_reads.reads.size
+        return ["review read nothing; its verdict is unverified"] if reads.zero?
+
+        ["review read #{reads} #{reads == 1 ? "file" : "files"} at #{reviewer_reads.sha}"]
+      end
+      private :reviewer_line
     end
 
     class Submission

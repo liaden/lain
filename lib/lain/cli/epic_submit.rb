@@ -197,12 +197,15 @@ module Lain
       # letting {Epic::Submission} refuse in its own vocabulary, one frame away
       # from the flag to pass.
       class Artifacts
-        def initialize(home:, root:, issue: nil, digest: nil, tests: nil)
+        # `reviews` answers the session records a reviewer's reads are found in, read only when an
+        # implementation is submitted.
+        def initialize(home:, root:, issue: nil, digest: nil, tests: nil, reviews: -> { [] })
           @home = home
           @root = root
           @issue = issue
           @digest = digest
           @tests = tests
+          @reviews = reviews
         end
 
         # An `else` that RAISES: {Epic::STAGES}' closure is enforced over there,
@@ -264,7 +267,16 @@ module Lain
           commands = EpicDriver::Acceptance.of(view.issue.level, scenarios:).manual_commands
           Lain::Epic::Submission.implementation(slug: @home.slug, issue_id: id, digest:, tests: @tests,
                                                 manual_commands: commands,
-                                                procedure: commands && EpicDriver::Acceptance.procedure(scenarios))
+                                                procedure: commands && EpicDriver::Acceptance.procedure(scenarios),
+                                                reviewer_reads: newest_review(id))
+        end
+
+        # The newest, not the one at the gate's commit: the reviewer read the tip it was cut from, and the
+        # handback the gate is asked about can be a later commit. A line that will not rebuild reads back
+        # untyped, and is passed over rather than failing the gate.
+        def newest_review(id)
+          Journal.records(@reviews.call, type: REVIEWER_READS, typed: true).grep(Telemetry::ReviewerReads)
+                 .select { _1.epic_slug == @home.slug && _1.issue_id == id }.to_a.last
         end
 
         # The red step's commit passes every gate a real changeset does, so an
@@ -433,6 +445,9 @@ module Lain
       end
 
       HELD_NOTE_BYTES = 300
+
+      # Read off the record itself, so the type the gate looks for cannot drift from the one written.
+      REVIEWER_READS = Telemetry::ReviewerReads.allocate.journal_type
 
       # Nothing outside the chat answers a held gate yet, so the user decides when it is asked again.
       KEPT = "It is held: tell the user, and call epic_submit again only when they ask."
@@ -868,7 +883,8 @@ module Lain
         epic_home = home(slug)
         return decide_wave(staged, epic_home, wave_of(staged, epic_home, wave, issue).with(review:)) if wave
 
-        decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:), review:)
+        decide(staged, epic_home, Artifacts.new(home: epic_home, root: @root, issue:, digest:, tests:,
+                                                reviews: -> { journals }), review:)
       end
 
       # The question an issue's launch asks before any work starts: is this
@@ -1077,7 +1093,7 @@ module Lain
       # same artifact twice, journaled two verdicts, and advanced the stage twice.
       # One object per process is a property of the executable, not of this class.
       def journals
-        SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE])
+        SessionJournals.of(@paths, @root, types: [Lain::Epic::SignoffQueue::JOURNAL_TYPE, REVIEWER_READS])
       end
 
       # A second verdict over the partition's standing approval of these bytes

@@ -134,11 +134,12 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
   # The test_engineer's two round trips, then the orchestrator's one.
   let(:script) { [*test_engineer, text_response("plan done")] }
 
+  let(:run_journal) { Lain::Channel::Null.instance }
   let(:build) do
     Lain::CLI::Wiring::ToolsetBuild.new(
       human: Lain::CLI::Human.new(kind: :terminal),
       backend:, provider:, chronicle: Lain::CLI::Chronicle::Null.new, options: {}, supervisor: Lain::Supervisor.new,
-      parent: -> { CoreGraph.timeline }, journal: Lain::Channel::Null.instance,
+      parent: -> { CoreGraph.timeline }, journal: run_journal,
       library: backend.library, epic: SpecNulls.unmounted_epic, root: repo,
       switchboard: -> { switchboard }, askers: SpecNulls::UnwiredAskers.build,
       **SpecNulls.unloaded_project
@@ -526,6 +527,29 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
 
       expect([epic_tip, git(repo, "rev-parse", "HEAD")]).to eq(before)
       expect(git(repo, "status", "--porcelain")).to eq("")
+    end
+  end
+
+  # Scenario: a reviewer's reads reach the gate
+  context "when the orchestrator hands the reviewing to a reviewer_code child" do
+    let(:run_journal) { RecordingChannel.new }
+    let(:script) do
+      [*test_engineer,
+       tool_response(["o1", "subagent", { "prompt" => "review the tip", "role" => "reviewer_code" }]),
+       tool_response(["v1", "read_file", { "path" => target }],
+                     ["v2", "read_file", { "path" => "app/models/order.rb" }]),
+       text_response("approve"), text_response("plan done")]
+    end
+
+    it "journals what the reviewer read under the issue and the commit its checkout was cut from" do
+      tip = nil
+      supervising do |supervisor|
+        tip = launch(supervisor, "a").tap { _1.actor.settle }.tests.sha
+      end
+
+      expect(run_journal.events.grep(Lain::Telemetry::ReviewerReads))
+        .to eq([Lain::Telemetry::ReviewerReads.new(epic_slug: "demo", issue_id: "a", sha: tip,
+                                                   reads: [target, "app/models/order.rb"])])
     end
   end
 

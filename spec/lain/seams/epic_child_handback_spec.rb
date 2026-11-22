@@ -71,7 +71,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
   end
 
   def run_plan(id)
-    epic = build.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}")
+    epic = build.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}", issue_id: id, epic_slug: "demo")
     Sync do
       actor = epic.launch_actor("run the plan", worker_env: Lain::WorkerEnv.default.with(cwd: checkout(id)))
       actor.settle
@@ -117,7 +117,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild, "an issue orchestrator's childre
                                 askers: SpecNulls::UnwiredAskers.build,
                                 **SpecNulls.unloaded_project)
     fleet.build(recorder, ask_human:)
-    epics = %w[a b].map { |id| fleet.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}") }
+    epics = %w[a b].map do |id|
+      fleet.epic_subagent(**issue_lane(id), lane: "issue.demo.#{id}", issue_id: id, epic_slug: "demo")
+    end
 
     Sync do |task|
       supervisor = Lain::Supervisor.new(journal:).run(task)

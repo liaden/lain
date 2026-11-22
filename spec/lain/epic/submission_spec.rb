@@ -615,6 +615,46 @@ RSpec.describe Lain::Epic::Submission do
       end
     end
 
+    # Scenario: a reviewer's reads reach the gate; Scenario: a blind approval is flagged
+    describe "what the implementation's reviewer read" do
+      def reviewed(reads, sha: "c0ffee")
+        reads = Lain::Telemetry::ReviewerReads.new(epic_slug: "demo", issue_id: "c", sha:, reads:)
+        described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40, reviewer_reads: reads)
+      end
+
+      let(:unreviewed) { described_class.implementation(slug: "demo", issue_id: "c", digest: "a" * 40) }
+      let(:three) { ["src/b.rs", "src/c.rs", "git show c0ffee:src/a.rs"] }
+
+      it "says how many files the review read, at the commit it read them" do
+        expect(reviewed(three).gate_question).to include("review read 3 files at c0ffee")
+      end
+
+      it "says a single file in the singular" do
+        expect(reviewed(["src/b.rs"]).gate_question).to include("review read 1 file at c0ffee")
+      end
+
+      it "flags a review that read nothing" do
+        expect(reviewed([]).gate_question).to include("review read nothing; its verdict is unverified")
+      end
+
+      it "says nothing of a review when none was recorded, as an old journaled gate loads" do
+        old = described_class.new(stage: "implementation", slug: "demo", content_digest: "d", fact: "f")
+
+        expect(old.reviewer_reads).to be_nil
+        expect([old.gate_question, unreviewed.gate_question]).to all(satisfy { !_1.include?("review read") })
+      end
+
+      it "stays out of the gate address and the fact" do
+        expect(reviewed(three)).to have_same_digest_as(unreviewed)
+        expect(reviewed(three).content_digest).to eq(unreviewed.content_digest)
+        expect(reviewed(three).fact).to eq(unreviewed.fact)
+      end
+
+      it "is deeply frozen" do
+        expect(Ractor.shareable?(reviewed(three))).to be(true)
+      end
+    end
+
     describe ".tests_said" do
       def said(**given) = described_class.tests_said(Lain::Telemetry::TestsRan.new(issue_id: "a", sha: "s", **given))
 

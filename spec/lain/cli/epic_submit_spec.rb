@@ -253,6 +253,60 @@ RSpec.describe Lain::CLI::EpicSubmit do
         .to include("a human runs", "- the human opens the battery doc", "- runs row 1 by hand")
     end
 
+    # The gate is asked at the handback's commit, which can differ from the one the reviewer read.
+    it "names the issue's newest review record, at the commit that review read", :seam do
+      home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual"),
+                                                     issue("b")]))
+      write_research
+      session("started.ndjson", *epic_approved, stage_event("issue_plan"), reviewed("a", "0ld5ha", []))
+      session("reviewed.ndjson", reviewed("a", "c0ffee", %w[x.sh y.sh z.sh]), reviewed("b", "beef", []),
+              at: "2026-01-02T00:00:00Z")
+      home.issue("a").write("the prose for a\n")
+      command.submit("issue_plan", issue: "a")
+
+      command.submit("implementation", issue: "a", digest: commit_sha)
+
+      summary = session_records.find { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" }
+      expect(summary["summary"]).to include("review read 3 files at c0ffee")
+      expect(summary["summary"]).not_to include("review read nothing")
+    end
+
+    def reviewed(id, sha, reads, slug: "alpha")
+      Lain::Telemetry::ReviewerReads.new(epic_slug: slug, issue_id: id, sha:, reads:)
+    end
+
+    def manual_issue_a_submitted
+      home.write_epic(Lain::Epic::Graph.new(issues: [issue("a", subject: "scripts/x.sh", level: "manual")]))
+      write_research
+      yield
+      home.issue("a").write("the prose for a\n")
+      command.submit("issue_plan", issue: "a")
+      command.submit("implementation", issue: "a", digest: commit_sha)
+      session_records.find { |record| record["type"] == "awaiting_human" && record["issue_id"] == "a" }["summary"]
+    end
+
+    # The session journals are the project's, so two epics' issue a share them.
+    it "names only its own epic's review of the issue, never another epic's", :seam do
+      summary = manual_issue_a_submitted do
+        session("started.ndjson", *epic_approved, stage_event("issue_plan"), reviewed("a", "c0ffee", %w[x.sh]))
+        session("other.ndjson", reviewed("a", "beef", [], slug: "beta"), at: "2026-01-02T00:00:00Z")
+      end
+
+      expect(summary).to include("review read 1 file at c0ffee")
+      expect(summary).not_to include("beef", "review read nothing")
+    end
+
+    it "passes over a review record that will not rebuild, rather than failing the gate", :seam do
+      summary = manual_issue_a_submitted do
+        session("started.ndjson", *epic_approved, stage_event("issue_plan"), reviewed("a", "c0ffee", %w[x.sh]))
+        drifted = { "ts" => "2026-01-02T00:00:00.000000Z", "type" => "reviewer_reads", "epic_slug" => "alpha",
+                    "issue_id" => "a", "sha" => "", "reads" => [] }
+        File.write(File.join(sessions_dir, "drifted.ndjson"), "#{JSON.generate(drifted)}\n")
+      end
+
+      expect(summary).to include("review read 1 file at c0ffee")
+    end
+
     # `Bench::EpicMetrics` folds round trips on the record's `issue_id`, and an
     # epic-wide decision is the nil member of that key -- present, not absent.
     it "journals an epic-wide decision with a nil issue" do
