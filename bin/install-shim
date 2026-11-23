@@ -18,6 +18,12 @@ if { [ -e "$dest" ] || [ -L "$dest" ]; } && ! grep -qxF "$marker" "$dest"; then
   exit 1
 fi
 
+# Read from the one constant, so the shim cannot drift from what panes and the daemon export.
+# Read before the old shim is removed, so a ruby that fails leaves it in place.
+# shellcheck disable=SC2016  # the program is Ruby, not shell
+heap=$("$ruby" -e 'load ARGV.first; Lain::HeapEnv::VALUES.each { |n, v| puts "export #{n}=${#{n}:-#{v}}" }' \
+  "$repo/lib/lain/heap_env.rb")
+
 mkdir -p "$target"
 rm -f "$dest"
 {
@@ -26,6 +32,7 @@ rm -f "$dest"
   if [ -n "${LD_LIBRARY_PATH:-}" ]; then
     printf 'export LD_LIBRARY_PATH=%q\n' "$LD_LIBRARY_PATH"
   fi
+  echo "$heap"
   printf 'exec %q %q "$@"\n' "$ruby" "$repo/exe/lain"
 } >"$dest"
 chmod +x "$dest"

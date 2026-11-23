@@ -49,7 +49,15 @@ RSpec.describe Lain::Daemon::Launch do
                "XDG_STATE_HOME" => "/home/someone/.local/state",
                "XDG_CONFIG_HOME" => "/home/someone/.config",
                "XDG_CACHE_HOME" => "/home/someone/.cache",
-               "ANTHROPIC_API_KEY" => "sk-secret", "LC_PAPER" => "a4")
+               "ANTHROPIC_API_KEY" => "sk-secret", "LC_PAPER" => "a4", **Lain::HeapEnv::VALUES)
+    end
+
+    it "carries the heap settings, and a caller's own value wins" do
+      own = described_class.current(paths: Lain::Paths.new(env: SpecHome.env(env)),
+                                    env: env.merge("RUBY_GC_HEAP_0_INIT_SLOTS" => "500000")).env
+
+      expect([current.env.slice(*Lain::HeapEnv::VALUES.keys), own["RUBY_GC_HEAP_0_INIT_SLOTS"]])
+        .to eq([Lain::HeapEnv::VALUES, "500000"])
     end
 
     # The daemon hands a run its own env, so what a headless chat needs to run rides in it too.

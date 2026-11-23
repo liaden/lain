@@ -193,8 +193,13 @@ module Lain
       def self.lain_exports(env = ENV) = exports(PANE_ENV, env)
 
       # Same rules as {.lain_exports}: no secret, the launching shell's value,
-      # stable order.
-      def self.runtime_exports(env = ENV) = exports(RUNTIME_ENV, env)
+      # stable order. The heap settings ride here so every caller that already
+      # composes this preamble carries them.
+      def self.runtime_exports(env = ENV) = exports(RUNTIME_ENV, env) + heap_exports(env)
+
+      # The measured initial heap sizes; a pane's lain is a fresh process, so it starts with them
+      # unless the launching shell already chose its own.
+      def self.heap_exports(env = ENV) = exports(HeapEnv::VALUES.keys, HeapEnv.over(env))
 
       def self.exports(names, env)
         names.filter_map do |name|

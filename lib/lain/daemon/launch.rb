@@ -51,7 +51,8 @@ module Lain
           new(binary: File.join(Paths::Shipped.cargo_target(env:), "release", "lain-daemon"),
               socket: Daemon.socket(paths:), trace: trace_path(paths:),
               ruby: RbConfig.ruby, lain: File.join(Paths::Shipped::GEM_ROOT, "exe", "lain"), runs: runs_dir(paths),
-              env: kept(env).merge(run_env(env), homes(paths), topic_env(remote)),
+              env: kept(env).merge(run_env(env), HeapEnv.over(env).slice(*HeapEnv::VALUES.keys), homes(paths),
+                                   topic_env(remote)),
               settings: relay_settings(remote, paths).merge(polled ? POLL : {}), config_error:)
         )
       end

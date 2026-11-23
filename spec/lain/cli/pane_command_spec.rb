@@ -205,15 +205,16 @@ RSpec.describe Lain::CLI::PaneCommand do
 
       expect(described_class.runtime_exports(env))
         .to eq("export LAIN_PROVIDER_CONCURRENCY=2; export LD_LIBRARY_PATH=/opt/lib; " \
-               'export TMPDIR=/home/me/my\ tmp; ')
+               'export TMPDIR=/home/me/my\ tmp; ' \
+               "#{described_class.heap_exports({})}")
     end
 
     it "omits a name that is unset or blank" do
-      expect(described_class.runtime_exports({ "TMPDIR" => " " })).to eq("")
+      expect(described_class.runtime_exports({ "TMPDIR" => " " })).to eq(described_class.heap_exports({}))
     end
 
     it "carries no credential" do
-      expect(described_class.runtime_exports({ "OLLAMA_API_KEY" => "secret" })).to eq("")
+      expect(described_class.runtime_exports({ "OLLAMA_API_KEY" => "secret" })).not_to include("secret")
     end
 
     it "reaches the command .call builds from the real environment" do
@@ -221,6 +222,26 @@ RSpec.describe Lain::CLI::PaneCommand do
       allow(ENV).to receive(:[]).with("LD_LIBRARY_PATH").and_return("/opt/lib")
 
       expect(described_class.call("chat")).to include("export LD_LIBRARY_PATH=/opt/lib; ")
+    end
+  end
+
+  describe ".heap_exports" do
+    it "exports the 3 measured heap settings when the environment holds none" do
+      expect(described_class.heap_exports({}))
+        .to eq("export RUBY_GC_HEAP_0_INIT_SLOTS=300000; export RUBY_GC_HEAP_1_INIT_SLOTS=150000; " \
+               "export RUBY_GC_HEAP_2_INIT_SLOTS=75000; ")
+    end
+
+    it "lets the caller's own value win" do
+      expect(described_class.heap_exports({ "RUBY_GC_HEAP_0_INIT_SLOTS" => "500000" }))
+        .to start_with("export RUBY_GC_HEAP_0_INIT_SLOTS=500000; ")
+    end
+
+    it "reaches the command .call builds" do
+      allow(ENV).to receive(:to_h).and_return({ "RUBY_GC_HEAP_0_INIT_SLOTS" => "500000" })
+
+      expect(described_class.call("chat")).to include("export RUBY_GC_HEAP_0_INIT_SLOTS=500000; ")
+        .and include("export RUBY_GC_HEAP_2_INIT_SLOTS=75000; ")
     end
   end
 
@@ -308,12 +329,12 @@ RSpec.describe Lain::CLI::PaneCommand do
 
       it "exports the stream stall remedy" do
         expect(described_class.runtime_exports({ "LAIN_STREAM_STALL_TIMEOUT" => "600" }))
-          .to eq("export LAIN_STREAM_STALL_TIMEOUT=600; ")
+          .to eq("export LAIN_STREAM_STALL_TIMEOUT=600; #{described_class.heap_exports({})}")
       end
 
       it "exports the human's pass list" do
         expect(described_class.runtime_exports({ "LAIN_ENV_PASS" => "RAILS_ENV" }))
-          .to eq("export LAIN_ENV_PASS=RAILS_ENV; ")
+          .to eq("export LAIN_ENV_PASS=RAILS_ENV; #{described_class.heap_exports({})}")
       end
 
       it "keeps LAIN_ENV_PASS out of the flag-default list" do

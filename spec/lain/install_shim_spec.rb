@@ -17,7 +17,8 @@ RSpec.describe "bin/install-shim" do
 
   def fake_ruby
     path = File.join(fake_bin, "ruby")
-    File.write(path, "#!/bin/sh\necho \"ruby=$0 ld=$LD_LIBRARY_PATH args=$*\"\n")
+    File.write(path, "#!/bin/sh\n[ \"$1\" = -e ] && exec #{RbConfig.ruby} \"$@\"\n" \
+                     "echo \"ruby=$0 ld=$LD_LIBRARY_PATH args=$*\"\n")
     File.chmod(0o755, path)
   end
 
@@ -48,6 +49,37 @@ RSpec.describe "bin/install-shim" do
 
     out, = Open3.capture2e({ "LD_LIBRARY_PATH" => nil }, File.join(target, "lain"), "--version")
     expect(out.strip).to eq("ruby=#{fake_bin}/ruby ld=/installed/lib args=#{repo}/exe/lain --version")
+  end
+
+  it "exports the heap settings before the exec line" do
+    _, err, status = install
+    shim = File.read(File.join(target, "lain")).lines.map(&:chomp)
+    exec_at = shim.index { |l| l.start_with?("exec ") }
+    lines = Lain::HeapEnv::VALUES.map { |name, value| "export #{name}=${#{name}:-#{value}}" }
+
+    expect([err, status.success?]).to eq(["", true])
+    expect(lines.map { |l| shim.index(l) }).to all(be_a(Integer).and(be < exec_at))
+  end
+
+  it "lets a heap setting the caller already exported win over the shim's default" do
+    fake_ruby
+    install("PATH" => "#{fake_bin}:#{ENV.fetch("PATH")}")
+    File.write(File.join(fake_bin, "ruby"), "#!/bin/sh\n[ \"$1\" = -e ] && exec #{RbConfig.ruby} \"$@\"\n" \
+                                            "echo \"$RUBY_GC_HEAP_0_INIT_SLOTS $RUBY_GC_HEAP_1_INIT_SLOTS\"\n")
+
+    out, = Open3.capture2e({ "RUBY_GC_HEAP_0_INIT_SLOTS" => "500000", "RUBY_GC_HEAP_1_INIT_SLOTS" => nil },
+                           File.join(target, "lain"))
+    expect(out.strip).to eq("500000 150000")
+  end
+
+  it "leaves the earlier shim intact when the heap values cannot be read" do
+    install
+    before = File.read(File.join(target, "lain"))
+    File.write(File.join(fake_bin, "ruby"), "#!/bin/sh\nexit 1\n")
+    File.chmod(0o755, File.join(fake_bin, "ruby"))
+    _, _, status = install("PATH" => "#{fake_bin}:#{ENV.fetch("PATH")}")
+
+    expect([status.success?, File.read(File.join(target, "lain"))]).to eq([false, before])
   end
 
   it "refuses to overwrite a lain that is not a shim" do
