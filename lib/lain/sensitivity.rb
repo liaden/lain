@@ -1051,7 +1051,9 @@ module Lain
       anchored_root = project_root(root, rules)
       @anchors = Anchors.new(home: @home, root: anchored_root, base: anchored_root || @cwd)
 
-      @rules = ordered(rules, records || Records.of(Paths.new(env: { "HOME" => @home })))
+      records ||= Records.of(Paths.new(env: { "HOME" => @home }))
+      @rules = ordered(rules, records)
+      @added = added(rules, records)
       @related = rules.related.map { |entry| lexical(entry).freeze }.freeze
       freeze
     end
@@ -1086,6 +1088,15 @@ module Lain
     # @return [String] the cleaned absolute directory a relative path resolves against
     attr_reader :cwd
 
+    # Everything {#classify} answers from besides the built-in tables, which live in lain's source:
+    # the anchors and what the project and the records added. Pure string work, so nothing on disk is covered.
+    #
+    # @return [String] a blake3 content address
+    def digest
+      Canonical.digest(home: @home, cwd: @cwd, root: @anchors.root, related: @related,
+                       added: @added.transform_values { |rules| rules.map(&:to_h) })
+    end
+
     def denied?(path) = classify(path).denied?
     def gated?(path) = classify(path).gated?
 
@@ -1115,6 +1126,11 @@ module Lain
     def related_directories = @related
 
     private
+
+    def added(rules, records)
+      { denied: rules.denied, gated: rules.gated, exempt: rules.exempt, state: records.state,
+        config: records.config }.freeze
+    end
 
     def marked(path)
       given = text!(path)

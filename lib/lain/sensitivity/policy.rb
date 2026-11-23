@@ -128,11 +128,16 @@ module Lain
       # default would make two otherwise identical {Tools::Subagent::Seam}s
       # compare unequal.
       class Null
+        DIGEST = Canonical.digest(null: true)
+
         def gates?(_effect, **) = false
         def denial(_effect, **) = nil
 
         def classify(_path, **) = ORDINARY.verdict
         def judge(_path, **) = ORDINARY.verdict
+
+        # @return [String] one address for every null policy, since none holds a rule
+        def digest = DIGEST
 
         # Still confined: a never-parking child over a run with no chat
         # refuses what it would otherwise have read outside its tree.
@@ -258,6 +263,11 @@ module Lain
 
         # @return [FileFacts::Live, FileFacts::Recorded] the policy's own
         def file_facts = @policy.file_facts
+
+        # The policy's own: classify is delegated to it, and a confinement adds no rule.
+        #
+        # @return [String]
+        def digest = @policy.digest
 
         # @param effect [Lain::Effect]
         # @param cwd [String] absolute
@@ -395,7 +405,8 @@ module Lain
         @taint = taint
         @file_facts = file_facts
         @read_roots = read_roots.map { absolute!(_1) }.freeze
-        @epic_roots = Roots.of(*epic_home && absolute!(epic_home, "an epic home"), facts: file_facts)
+        @epic_home = epic_home && absolute!(epic_home, "an epic home")
+        @epic_roots = Roots.of(*@epic_home, facts: file_facts)
         @anchors = { home:, root: }.freeze
         @landing_anchors = @anchors.transform_values { self.class.text_of(_1) }.freeze
         @bounds = own_bounds(file_facts)
@@ -404,6 +415,15 @@ module Lain
         # and the first asker is the tool phase, mid-run.
         @filter = Filter.new(sensitivity: Rows.new(self))
         freeze
+      end
+
+      # What {#classify} reads; {#judge} reads the live disk and is not covered. The taint is live
+      # state, so this is recomputed on each call rather than kept.
+      #
+      # @return [String] a blake3 content address of the rules, anchors, read roots, epic home and taint
+      def digest
+        Canonical.digest(sensitivity: @sensitivity.digest, anchors: @anchors.transform_values(&:to_s),
+                         read_roots: @read_roots, epic_home: @epic_home, taint: @taint.paths.sort)
       end
 
       # @return [String, nil] the home as configured, nil when none was

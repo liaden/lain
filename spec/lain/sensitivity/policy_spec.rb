@@ -464,6 +464,62 @@ RSpec.describe Lain::Sensitivity::Policy do
     end
   end
 
+  describe "#digest" do
+    def built(rules: Lain::Sensitivity::Rules.empty, root: cwd, **rest)
+      sensitivity = Lain::Sensitivity.new(home:, cwd: root, rules:, root:)
+      described_class.new(sensitivity:, home:, root:, **rest)
+    end
+
+    it "is equal for 2 policies built from the same config, home and root" do
+      expect(built.digest).to eq(built.digest)
+    end
+
+    it "is a blake3 address" do
+      expect(built.digest).to match(/\Ablake3:\h{64}\z/)
+    end
+
+    it "differs when a project rule is added" do
+      widened = built(rules: Lain::Sensitivity::Rules.from({ "gated" => ["*.private"] }))
+
+      expect(widened.digest).not_to eq(built.digest)
+    end
+
+    it "differs for a different root" do
+      expect(built(root: "/home/tester/other").digest).not_to eq(built.digest)
+    end
+
+    it "differs when only the policy's configured root differs" do
+      sensitivity = Lain::Sensitivity.new(home:, cwd:)
+
+      digest = ->(root) { described_class.new(sensitivity:, root:).digest }
+
+      expect(digest.call("/a")).not_to eq(digest.call("/b"))
+    end
+
+    it "differs when only the classifier's root differs" do
+      with_root = ->(root) { described_class.new(sensitivity: Lain::Sensitivity.new(home:, cwd:, root:), root: "/a") }
+
+      expect(with_root.call("/a").digest).not_to eq(with_root.call("/b").digest)
+    end
+
+    it "differs for a different read root" do
+      expect(built(read_roots: ["/srv/shared"]).digest).not_to eq(built.digest)
+    end
+
+    it "differs for a different epic home" do
+      expect(built(epic_home: "/srv/epics").digest).not_to eq(built.digest)
+    end
+
+    it "differs once a run has tainted a file" do
+      taint = Lain::Sensitivity::Taint.new
+      tainted = built(taint:)
+      before = tainted.digest
+      taint.hold_whole("/home/tester/project/leaked.txt")
+
+      expect(tainted.digest).not_to eq(before)
+    end
+  end
+
   describe "construction" do
     it "requires a classifier rather than reaching for one" do
       expect { described_class.new }.to raise_error(ArgumentError)
