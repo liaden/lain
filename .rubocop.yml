@@ -205,9 +205,11 @@ Metrics/ParameterLists:
 # builds the phone's remote surface, one more collaborator the chat is handed. Inlining
 # that call into `repl_over` trips AbcSize there. 309 on 2026-11-16, for Wiring again: it
 # now builds the process's one GitHub account and hands it to the command surface and
-# the bash backend, so the token is asked for once.
+# the bash backend, so the token is asked for once. 310 on 2026-11-23, for Wiring again: it
+# now hands the chat agent the before-effect hook that primes the round's snapshot, beside
+# the slot itself. Inlining that 3-line helper into `agent_over` trips AbcSize there.
 Metrics/ClassLength:
-  Max: 309
+  Max: 310
 
 # 15: the default 10 is the limit this codebase paid for hardest, and lib/'s long methods
 # pile up at exactly 10 -- a queue, not a distribution. 15 clears the queue with half
