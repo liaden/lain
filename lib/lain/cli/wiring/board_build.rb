@@ -310,11 +310,11 @@ module Lain
         # @param sensitivity [Lain::Sensitivity::Policy] what the history walk reads the sensitive paths from
         # @param child_env [Lain::Exec::ChildEnv]
         # @param journal [#<<] where a credentials file that adds no known value says why
-        # @return [Lain::Sensitivity::Secrets::Source]
+        # @return [Lain::Sensitivity::Secrets::Remembered]
         def secrets(project:, sensitivity:, child_env:, journal: Lain::Channel::Null.instance)
           history = Lain::Sensitivity::HistoryLiterals.new(root: project.root, policy: sensitivity,
                                                            report: credentials_report(journal)).prime
-          Lain::Sensitivity::Secrets::Source.new(child_env:, history:)
+          Lain::Sensitivity::Secrets::Remembered.new(Lain::Sensitivity::Secrets::Source.new(child_env:, history:))
         end
 
         def credentials_report(journal)

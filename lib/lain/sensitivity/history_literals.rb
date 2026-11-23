@@ -40,10 +40,32 @@ module Lain
         end
       end
 
+      # What the values are read from, for a caller that keeps a set built
+      # from them. The leaves stand in as a digest, so no value is handed out.
+      #
+      # @!attribute [r] files
+      #   @return [Fingerprint] the refs and the sensitive files on disk
+      # @!attribute [r] credentials
+      #   @return [String] a digest of what the credentials decrypt to
+      Stamps = Data.define(:files, :credentials) do
+        # @param leaves [Array<String>] binary
+        # @return [String]
+        def self.digest(leaves) = Digest::SHA256.digest(leaves.map { [_1.bytesize].pack("N") + _1 }.join)
+
+        # @param earlier [Stamps, nil]
+        # @return [Boolean] whether nothing moved since the earlier take, and it could tell
+        def unchanged_since?(earlier)
+          !earlier.nil? && credentials == earlier.credentials && files.unchanged_since?(earlier.files)
+        end
+      end
+
       # The history of a run with no project behind it.
       module Null
         # @return [self]
         def self.prime = self
+
+        # @return [Stamps] the same value on every take
+        def self.stamps = Stamps.new(files: Fingerprint::NONE, credentials: Stamps.digest([]))
 
         # @return [Array<String>] none
         def self.to_a = [].freeze
@@ -71,6 +93,7 @@ module Lain
         @lock = Mutex.new
         @wall = wall
         @fingerprint = Fingerprint::NONE
+        @taken = Fingerprint::NONE
         @sensitive = {}
         @blobs = {}
         @start = UNREAD
@@ -103,6 +126,17 @@ module Lain
         Split.new(known: values.keys, refusable: values.select { |_, refusable| refusable }.keys)
       end
 
+      # Taken after a refresh, so they cover the files a read now lists.
+      #
+      # @return [Stamps]
+      def stamps
+        join_priming
+        @lock.synchronize do
+          disk = refresh.on_disk
+          Stamps.new(files: @taken.including(disk), credentials: Stamps.digest(@credentials.leaves))
+        end
+      end
+
       private
 
       State = Data.define(:history, :on_disk, :public)
@@ -128,7 +162,7 @@ module Lain
       def refresh
         start = starting_commit
         repository = (@repository ||= Repository.at(@git, @root))
-        fingerprint = repository.fingerprint(now: @wall.call)
+        fingerprint = @taken = repository.fingerprint(now: @wall.call)
         return @state if fingerprint.unchanged_since?(@fingerprint)
 
         held = history(repository) || @state.history
@@ -315,6 +349,12 @@ module Lain
           freeze
         end
 
+        # Stamped after this take's own paths, so its time still comes before every stamp.
+        #
+        # @param paths [Enumerable<String>] absolute
+        # @return [Fingerprint] this take's paths and these, at this take's time
+        def including(paths) = self.class.new(@taken_at, @by_path.merge(self.class.take(paths, now: @taken_at).by_path))
+
         # Only the earlier take's racy window counts, so the argument order matters.
         #
         # @param earlier [Fingerprint, nil]
@@ -328,6 +368,10 @@ module Lain
         # The same value a reader that has taken nothing holds, so a directory
         # that is no repository is never enumerated.
         NONE = new(Time.at(0), {})
+
+        protected
+
+        attr_reader :by_path
 
         private
 

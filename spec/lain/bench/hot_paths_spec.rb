@@ -66,6 +66,21 @@ RSpec.describe Lain::Bench::HotPaths do
         expect(described_class::Corpus.literals(root).split.known.size).to be >= 3
       end
     end
+
+    it "time the secret source the board builds, which remembers its set", :seam do
+      built = []
+      allow(Lain::CLI::Wiring::BoardBuild).to receive(:secrets).and_wrap_original do |original, **options|
+        original.call(**options).tap do |secrets|
+          built << secrets
+          allow(secrets).to receive(:for).and_call_original
+        end
+      end
+
+      described_class.new(turns: 10, reps: 1, sizes: [1_000]).send(:history_rows)
+
+      expect(built).to contain_exactly(an_instance_of(Lain::Sensitivity::Secrets::Remembered))
+      expect(built.first).to have_received(:for).at_least(2).times
+    end
   end
 
   describe "the guarded request row" do

@@ -678,6 +678,71 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
     end
   end
 
+  describe "#stamps" do
+    let(:spy) { HistoryLiteralsSpecSpy.new }
+    let(:literals) { described_class.new(root:, policy:, shell: spy, wall: later) }
+
+    before do
+      seed_deleted("ADMIN_PIN=48291377\n")
+      File.write(File.join(root, ".gitignore"), ".env.local\n")
+      File.write(File.join(root, ".env.local"), "LOCAL_PIN=55501234\n")
+    end
+
+    def rewritten(path, bytes)
+      File.write(path, bytes)
+      File.utime(Time.now - 600, Time.now - 600, path)
+    end
+
+    it "is unchanged while nothing the history reads moved, and runs no second enumeration" do
+      earlier = literals.stamps
+
+      expect(literals.stamps).to be_unchanged_since(earlier)
+      expect(spy.enumerations).to eq(1)
+    end
+
+    it "moves when an on-disk sensitive file is rewritten in place at the same length" do
+      earlier = literals.stamps
+      rewritten(File.join(root, ".env.local"), "LOCAL_PIN=55509999\n")
+
+      expect(literals.stamps).not_to be_unchanged_since(earlier)
+    end
+
+    it "moves when a ref moves" do
+      earlier = literals.stamps
+      commit("notes.txt", "a note\n")
+
+      expect(literals.stamps).not_to be_unchanged_since(earlier)
+    end
+
+    it "vouches for nothing when taken within a tick of a change" do
+      stamped = File.stat(File.join(root, ".env.local")).mtime
+      racy = described_class.new(root:, policy:, wall: -> { stamped + 0.001 })
+      earlier = racy.stamps
+
+      expect(racy.stamps).not_to be_unchanged_since(earlier)
+    end
+
+    # Written after the first take, so no on-disk stamp covers it and only the leaves can move.
+    it "moves when the credentials decrypt to a new leaf" do
+      earlier = literals.stamps
+      key = SecureRandom.hex(16)
+      FileUtils.mkdir_p(File.join(root, "config"))
+      File.write(File.join(root, "config/master.key"), key)
+      File.write(File.join(root, "config/credentials.yml.enc"),
+                 Lain::Sensitivity::RailsCredentials.seal("signing:\n  value: synthetic-leaf-4f9a2c\n", key:))
+
+      expect(literals.stamps).not_to be_unchanged_since(earlier)
+    end
+
+    it "is never unchanged since nothing" do
+      expect(literals.stamps).not_to be_unchanged_since(nil)
+    end
+
+    it "is one value forever for the null history" do
+      expect(described_class::Null.stamps).to be_unchanged_since(described_class::Null.stamps)
+    end
+  end
+
   describe "a read during the prime" do
     let(:gate) { Queue.new }
     let(:literals) { described_class.new(root:, policy:, shell: HistoryLiteralsSpecSpy.new(gate:)) }

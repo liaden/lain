@@ -32,7 +32,7 @@ module Lain
     #
     # The improver READS the session's record; it must never INHERIT the
     # parent's prompt, so it spawns over a FRESH Timeline root
-    # ({Role#spawn_policy}'s default `:fresh` prefix).
+    # (`Role#spawn_policy`'s default `:fresh` prefix).
     #
     # == What the pass leaves behind
     #
@@ -47,7 +47,7 @@ module Lain
     # {#report} spawns the improver; {#dry_report} renders the scaffold it
     # WOULD have seen. Separate methods, because `report_for(dry_run: true)`
     # was a flag that changed what the method MEANT. Both read the session
-    # ONCE, through the same private {Review}. A dry run opens no journal for
+    # ONCE, through the same private `Review`. A dry run opens no journal for
     # the same reason it builds no backend.
     class Improve
       # The role every session is handed to: read_file/list_files/glob/grep/
@@ -183,7 +183,7 @@ module Lain
       #
       # @param project [Project]
       # @param paths [Paths]
-      # @return [Sensitivity::Secrets::Source]
+      # @return [Sensitivity::Secrets::Remembered]
       # @raise [Project::Trust::Untrusted] when the project's config is not trusted, as a chat launched there is
       def self.secrets_of(project, paths)
         board = Wiring::BoardBuild
@@ -303,7 +303,7 @@ module Lain
       end
 
       # Routed through the role's own policy so the fresh-root decision has one
-      # owner ({Role#spawn_policy}'s default), not a bare `Timeline.empty` that
+      # owner (`Role#spawn_policy`'s default), not a bare `Timeline.empty` that
       # could drift from it.
       def fresh_root = role.spawn_policy(prefix: :fresh).prefix.base_timeline(store: Dag::Factory.store)
 

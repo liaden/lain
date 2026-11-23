@@ -186,7 +186,7 @@ module Lain
         Dir.mktmpdir("hot-path-history") do |dir|
           root = File.realpath(dir)
           Corpus.history_repo(root, paths: HISTORY_PATHS, sensitive: HISTORY_SENSITIVE, refs: HISTORY_REFS)
-          warm = Sensitivity::Secrets::Source.new(child_env: Exec::ChildEnv::DEFAULT, history: Corpus.literals(root))
+          warm = Corpus.board_secrets(root)
           warm.for(nil)
           [measure(@reps, name: "secrets_for_warm") { warm.for(nil) },
            measure(cold_reps, name: "history_scan_launch") { Corpus.literals(root).split }]
@@ -345,9 +345,19 @@ module Lain
         end
 
         # @return [Sensitivity::HistoryLiterals] a new instance over `root`, as a launch builds one
-        def literals(root)
-          sensitivity = Sensitivity.new(home: root, cwd: root, root:)
-          Sensitivity::HistoryLiterals.new(root:, policy: Sensitivity::Policy.new(sensitivity:, home: root, root:))
+        def literals(root) = Sensitivity::HistoryLiterals.new(root:, policy: policy(root))
+
+        # @param root [String] the fixture repository
+        # @return [Sensitivity::Secrets::Remembered] the secret source as a chat's board builds it
+        def board_secrets(root)
+          project = Project.new(root:, cwd: root, kind: :project, detected_by: :flag)
+          ::Lain::CLI::Wiring::BoardBuild.secrets(project:, sensitivity: policy(root), child_env: Exec::ChildEnv::DEFAULT)
+        end
+
+        # @param root [String] the project root, also its home
+        # @return [Sensitivity::Policy]
+        def policy(root)
+          Sensitivity::Policy.new(sensitivity: Sensitivity.new(home: root, cwd: root, root:), home: root, root:)
         end
 
         def probe = Confine::Probe.new(fence: Confine::Bwrap.fence_binary, journal: Channel::Null.instance)
