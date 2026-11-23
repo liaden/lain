@@ -203,10 +203,17 @@ module Lain
     #   or carrying it whole raises {Declarative::UnsettleableAttribute}.
     # @return [Enumerator::Lazy<Hash{String=>Object}, Telemetry::Journalable, Telemetry::Untyped>]
     def self.records(entries, type: nil, typed: false)
-      records = entries.lazy.filter_map { |entry| parse(entry) }
+      needle = %("type":"#{type}") unless type.nil?
+      records = entries.lazy.filter_map { |entry| parse(entry) unless skippable?(entry, needle) }
       records = records.select { |record| record["type"].to_s == type.to_s } unless type.nil?
       typed ? records.map { |record| Telemetry.read(record, strict: false) } : records
     end
+
+    # A String line that never names the type needs no parse; Hashes are cheap and always parsed.
+    def self.skippable?(entry, needle)
+      !needle.nil? && entry.is_a?(String) && !entry.include?(needle)
+    end
+    private_class_method :skippable?
 
     # The inverse of the envelope {#record} adds: the stamp and the chain's own link go, and an
     # entry's own link, renamed on the way in to make room, comes back under its name.

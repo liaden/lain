@@ -779,6 +779,29 @@ RSpec.describe Lain::Journal do
         .to eq(%w[tu_1])
     end
 
+    it "returns every turn and no child_turn from a mixed session" do
+      lines = [%({"type":"turn","n":1}), %({"type":"child_turn","n":2}), %({"type":"request_sent"}),
+               "junk {", %({"type":"turn","n":3,"meta":{"type":"child_turn"}})]
+      expect(described_class.records(lines, type: "turn").map { |record| record["n"] }.to_a).to eq([1, 3])
+    end
+
+    it "parses only the lines that name the type" do
+      lines = Array.new(100) { %({"type":"request_sent","n":#{_1}}) } << %({"type":"turn","n":1})
+      allow(JSON).to receive(:parse).and_call_original
+      described_class.records(lines, type: "turn").to_a
+      expect(JSON).to have_received(:parse).once
+    end
+
+    it "still ignores a nested type match" do
+      line = %({"type":"other","body":{"type":"turn"}})
+      expect(described_class.records([line], type: "turn").to_a).to eq([])
+    end
+
+    it "filters Hash entries by type" do
+      entries = [{ type: "turn", n: 1 }, { type: "child_turn", n: 2 }]
+      expect(described_class.records(entries, type: :turn).map { |record| record["n"] }.to_a).to eq([1])
+    end
+
     it "is lazy, so a stream can be read without materializing it" do
       endless = Enumerator.new { |y| loop { y << %({"type":"turn_usage","digest":"d"}) } }
       expect(described_class.records(endless, type: "turn_usage").first(2).size).to eq(2)

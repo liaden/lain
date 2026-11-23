@@ -8,8 +8,8 @@ module Lain
     # NEW journal opens with, and the notices the frontend renders. The recorded
     # tool schema in the old header is display-only: the live toolset always
     # comes from the current flags. The recorded run profile is what an untyped
-    # backend field defaults to ({#recorded_profile}), and a typed field that
-    # disagrees with it is LOUD-and-continue ({MismatchNotices}), never a silent
+    # backend field defaults to (`MismatchNotices#recorded_profile`), and a typed field that
+    # disagrees with it is LOUD-and-continue (`MismatchNotices`), never a silent
     # override in either direction.
     class Resume
       # A resume that cannot proceed: nothing to resume, an ambiguous or
@@ -251,7 +251,7 @@ module Lain
       end
 
       def granted(entries)
-        grant = Journal.records(entries).select { _1["type"] == "run_allowance" }.to_a.last
+        grant = Journal.records(entries, type: "run_allowance").to_a.last
         grant && Budget.ceilings(iterations: Telemetry.read(grant).iterations)
       end
 
