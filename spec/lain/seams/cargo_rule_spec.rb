@@ -43,7 +43,7 @@ RSpec.describe "A cargo build the composed_term rule approves", :seam do
       project:, paths:, toolset: Lain::Toolset.new([Lain::Tools::Bash.new]), arms:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new), resolver:,
       worker_env: session.worker_env
-    ).bind_session(session)
+    ).bind_session(session).bind_snapshots(Lain::Agent::SnapshotSlot.new(root:))
   end
   let(:parent) { -> { Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store) } }
   let(:toolset_build) do

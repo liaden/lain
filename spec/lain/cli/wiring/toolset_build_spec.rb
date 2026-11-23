@@ -157,13 +157,16 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
         toolset = build_with(options, exec: chosen).build(recorder, ask_human:)
 
-        expect(bash_backend(toolset)).to be(chosen)
+        expect(bash_backend(toolset)).to be_a(Lain::Exec::Priming)
+        expect(bash_backend(toolset).__getobj__).to be(chosen)
       end
 
       # The default is the whole point: an unflagged chat runs commands through
       # the in-process backend exactly as it did before `--exec` existed.
       it "defaults to the in-process backend, so an unflagged chat is unchanged" do
-        expect(bash_backend(toolset_build.build(recorder, ask_human:))).to be_a(Lain::Exec::Local)
+        backend = bash_backend(toolset_build.build(recorder, ask_human:))
+
+        expect([backend.class, backend.__getobj__.class]).to eq([Lain::Exec::Priming, Lain::Exec::Local])
       end
 
       # The floor is what a subagent role attenuates FROM, so a child's bash
@@ -567,6 +570,20 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       expect(toolset_build.role_spawn.seam.telemetry).to be(tee)
     end
 
+    # An actor child's write can land in a later parent round that would otherwise stage nothing.
+    it "gives that seam a hook that primes the board's slot for a write_file and leaves bash to its exec" do
+      primed = []
+      slot = Struct.new(:trail) { def prime = trail << :prime }.new(primed)
+      board = Struct.new(:snapshots).new(slot)
+      build = build_with(options, switchboard: -> { board }).tap { _1.build(recorder, ask_human:) }
+      hooks = build.role_spawn.seam.before_effect
+
+      hooks.call(tool: Lain::Tools::Bash.new, context: nil)
+      expect(primed).to eq([])
+      hooks.call(tool: Lain::Tools::WriteFile.new, context: nil)
+      expect(primed).to eq([:prime])
+    end
+
     it "fills that seam from the run's provider, parent handle, journal, supervisor and chronicle observer" do
       toolset_build.build(recorder, ask_human:)
       seam = toolset_build.role_spawn.seam
@@ -812,7 +829,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
             human: Lain::CLI::Human.new(kind: :terminal),
             chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
             paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
-          )
+          ).bind_snapshots(Lain::Agent::SnapshotSlot.new(root: project_root))
         end
         let(:state) { File.realpath(Dir.mktmpdir("research-state")) }
         let(:paths) do
@@ -950,7 +967,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
             human: Lain::CLI::Human.new(kind: :terminal),
             chronicle:, options: {}, judge: Lain::CLI::Switchboard::DEFERRING, model: "test-model", project:,
             paths:, toolset: Lain::Toolset.new(ToolRegistry.names.map { |name| ToolRegistry.build(name) })
-          )
+          ).bind_snapshots(Lain::Agent::SnapshotSlot.new(root: project_root))
         end
         let(:state) { File.realpath(Dir.mktmpdir("review-state")) }
         let(:paths) do
@@ -1258,6 +1275,9 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     def bash_exec(toolset) = toolset.fetch("bash").instance_variable_get(:@exec)
 
+    # The profiles the sandbox chose from, under the wrapper that primes the round's snapshot.
+    def wrapped_profiles(exec) = exec.instance_variable_get(:@profiles).__getobj__
+
     def degraded = journal.events.grep(Lain::Telemetry::CapabilityDegraded)
 
     def built(arms, **over)
@@ -1325,7 +1345,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     it "reads the mask list through the board's sensitivity, and the profiles from the state's home" do
       board = switchboard
-      profiles = bash_exec(built(reader, switchboard: -> { board })).instance_variable_get(:@profiles)
+      profiles = wrapped_profiles(bash_exec(built(reader, switchboard: -> { board })))
       masks = profiles.instance_variable_get(:@masks)
 
       expect(masks.instance_variable_get(:@policy).call).to be(board.sensitivity)
@@ -1334,7 +1354,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     end
 
     it "hands the mask list the seam's journal, so a related directory it refuses is journaled" do
-      masks = bash_exec(built(reader)).instance_variable_get(:@profiles).instance_variable_get(:@masks)
+      masks = wrapped_profiles(bash_exec(built(reader))).instance_variable_get(:@masks)
 
       expect(masks.instance_variable_get(:@journal)).to be(journal)
     end
@@ -1342,7 +1362,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     it "hands the sandbox and its mask list the board's taint and known values, read through the board" do
       board = switchboard
       exec = bash_exec(built(reader, switchboard: -> { board }))
-      masks = exec.instance_variable_get(:@profiles).instance_variable_get(:@masks)
+      masks = wrapped_profiles(exec).instance_variable_get(:@masks)
       scanning = exec.instance_variable_get(:@scanning)
       read = ->(holder, name) { holder.instance_variable_get(name).call }
 
@@ -1369,7 +1389,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         ruling = Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged")
         request = Lain::Confine::Request.new(ruling:, executables: [git], argv: [%w[git fetch]], cwd: @checkout,
                                              root: @checkout, tool_use_id: "toolu_1")
-        profiles = bash_exec(built(reader, **over)).instance_variable_get(:@profiles)
+        profiles = wrapped_profiles(bash_exec(built(reader, **over)))
         profiles.instance_variable_get(:@granting).build_grant_for(request)
       end
 
@@ -1389,7 +1409,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
     # would hand the session's first bash call the NoMethodError. The Wiring primes once it does.
     it "starts no classification and asks nothing of the board while the toolset is built" do
       asked = Queue.new
-      profiles = bash_exec(built(reader, switchboard: -> { asked << :asked and nil })).instance_variable_get(:@profiles)
+      profiles = wrapped_profiles(bash_exec(built(reader, switchboard: -> { asked << :asked and nil })))
       sleep 0.3
 
       expect(asked).to be_empty
@@ -1398,8 +1418,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
     it "primes the mask list it built when told to", :primes do
       build = build_with(options, arms: reader, probe:, fence:)
-      masks = bash_exec(build.build(recorder,
-                                    ask_human:)).instance_variable_get(:@profiles).instance_variable_get(:@masks)
+      masks = wrapped_profiles(bash_exec(build.build(recorder, ask_human:))).instance_variable_get(:@masks)
 
       build.record_opened
 
@@ -1411,7 +1430,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
 
       exec = bash_exec(opened(reader, exec: chosen))
 
-      expect(exec).to be(chosen)
+      expect([exec.class, exec.__getobj__]).to eq([Lain::Exec::Priming, chosen])
       expect(degraded.map(&:to_h)).to contain_exactly(
         a_hash_including(capability: :container, provider: "docker")
       )
@@ -1432,7 +1451,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       it "falls back to Exec::Local and journals both layers and the sandbox as degraded" do
         exec = bash_exec(opened(reader))
 
-        expect(exec).to be_a(Lain::Exec::Local)
+        expect([exec.class, exec.__getobj__.class]).to eq([Lain::Exec::Priming, Lain::Exec::Local])
         expect(degraded.map(&:capability)).to include(:bwrap, :landlock, :sandbox)
       end
 
@@ -1447,7 +1466,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:runner) { ->(argv) { argv.include?("--status") ? ["", false] : ["", true] } }
 
       it "falls back to Exec::Local and says the sandbox is unavailable" do
-        expect(bash_exec(opened(reader))).to be_a(Lain::Exec::Local)
+        exec = bash_exec(opened(reader))
+        expect([exec.class, exec.__getobj__.class]).to eq([Lain::Exec::Priming, Lain::Exec::Local])
         expect(degraded.map(&:capability)).to contain_exactly(:landlock, :sandbox)
       end
     end
@@ -1456,7 +1476,8 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       let(:runner) { ->(argv) { File.basename(argv.first) == "bwrap" ? ["", false] : full_box.call(argv) } }
 
       it "falls back to Exec::Local and says the sandbox is unavailable" do
-        expect(bash_exec(opened(reader))).to be_a(Lain::Exec::Local)
+        exec = bash_exec(opened(reader))
+        expect([exec.class, exec.__getobj__.class]).to eq([Lain::Exec::Priming, Lain::Exec::Local])
         expect(degraded.map(&:capability)).to contain_exactly(:bwrap, :sandbox)
       end
     end
@@ -1557,7 +1578,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
       it "builds no sandbox under --confine #{arm}" do
         exec = bash_exec(built(Lain::CLI::Arms::OFF.with(confine: arm)))
 
-        expect(exec).to be_a(Lain::Exec::Local)
+        expect([exec.class, exec.__getobj__.class]).to eq([Lain::Exec::Priming, Lain::Exec::Local])
         expect(journal.events).to be_empty
       end
     end
@@ -1712,7 +1733,7 @@ RSpec.describe Lain::CLI::Wiring::ToolsetBuild do
         arms: Lain::CLI::Arms::OFF.with(confine: :classes),
         verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths: Lain::Paths.new), resolver:,
         worker_env: session.worker_env
-      ).bind_session(session)
+      ).bind_session(session).bind_snapshots(Lain::Agent::SnapshotSlot.new(root: project_root))
     end
     let(:requests) { [] }
     let(:exec) do

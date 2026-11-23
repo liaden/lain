@@ -5,13 +5,15 @@ require "securerandom"
 module Lain
   class Agent
     # Where a turn's snapshot writer lives, so the writer can change under a
-    # {ToolDelivery} that is built once and never rebuilt. The delivery primes
-    # it before a turn's tools run and writes through it when they settle; a
+    # {ToolDelivery} that is built once and never rebuilt. The delivery arms
+    # it for each round and writes through it when the round settles; a
     # `/mode` flip into or out of plan scope rebinds it at the scope's root.
     #
-    # Every prime restages the scope's before-tree, and every write records
-    # the snapshot in the {#log} with the turn's tree pair, so an undo of a
-    # shadow turn reverts exactly what that turn changed.
+    # The round's first call that can write primes it, which restages the
+    # scope's before-tree, and every write records the snapshot in the {#log}
+    # with the turn's tree pair, so an undo of a shadow turn reverts exactly
+    # what that turn changed. A shadow round no call primed could not write
+    # under the root, so it lands nothing, as a round with no change always has.
     #
     # A shadow store that fails costs one turn its shadow record, never its
     # answers: the failure is journaled, that turn is recorded as the write-set
@@ -59,7 +61,33 @@ module Lain
         def self.log = raise(NotBound, REFUSAL)
 
         def self.root = raise(NotBound, REFUSAL)
+
+        # A silent prime would drop the round's undo with nobody told.
+        def self.prime = raise(NotBound, REFUSAL)
+
+        def self.unwritable_by?(_dirs) = raise(NotBound, REFUSAL)
       end
+
+      # What an exec built with no chat behind it primes: there is no round to stage.
+      module Null
+        def self.prime = self
+
+        def self.unwritable_by?(_dirs) = true
+      end
+
+      # The before-effect hook that primes the round for a call about to run.
+      # A tool whose writes its exec's sandbox profile decides is left to that
+      # exec, which knows the profile only once it has chosen one.
+      #
+      # @param snapshots [#call] answers the slot, read at each call
+      # @return [#call] taking `tool:` and `context:`
+      def self.priming(snapshots)
+        ->(tool:, **) { snapshots.call.prime unless tool.writes_by_profile? }
+      end
+
+      # @param snapshots [#call] answers the slot, read at each call
+      # @return [BeforeEffect] the hooks that prime it
+      def self.before_effect(snapshots) = BeforeEffect::NONE.with(priming(snapshots))
 
       attr_reader :root, :log
 
@@ -80,25 +108,53 @@ module Lain
         @channel = channel
         @session = SecureRandom.hex(6)
         @scope = resolve(scope)
+        @staging = Mutex.new
       end
 
       def label = @scope.label
 
+      # Opens a round: its first {#prime} stages, and its {#write} settles it.
+      #
+      # @return [self]
+      def arm
+        @armed = true
+        @primed = false
+        @degraded = false
+        self
+      end
+
+      # Stages the round's baseline the first time it is asked in an armed
+      # round. A `Mutex` because it yields to the fiber scheduler: sibling
+      # calls of one round wait for the one stage rather than running 2 on 1
+      # index, and a stop that lands mid-stage releases it. Outside a round
+      # it stages nothing: a child's call between its parent's rounds lands
+      # in no round's undo.
+      #
       # @return [self]
       def prime
-        @degraded = false
-        @writer ? @writer.prime : @writer = built
+        @staging.synchronize { staged if @armed && !@primed }
         self
-      rescue *DEGRADABLE => e
-        degrade(:prime, e)
+      end
+
+      # @return [BeforeEffect] the hooks that prime this slot for a call about to run
+      def before_effect = self.class.before_effect(-> { self })
+
+      # Against the root's real path, since a profile's write dirs are real paths.
+      #
+      # @param dirs [Array<String>] absolute; where a call may write
+      # @return [Boolean] whether no dir is at, under or above this slot's root
+      def unwritable_by?(dirs)
+        real = Confine::Profile.landing(@root)
+        dirs.none? { Landing.under?(real, _1) || Landing.under?(_1, real) }
       end
 
       # The writer duck, so {ToolDelivery} holds one object either way.
       # `pre_images:` is what the turn's tools captured before their first
       # writes, handed to the log beside the snapshot and never written into it.
       def write(timeline:, paths:, pre_images: {})
-        prime unless @writer || @degraded
-        land(@degraded ? fallback : @writer, timeline:, paths:, pre_images:)
+        writer = settling
+        @armed = false
+        writer && land(writer, timeline:, paths:, pre_images:)
       rescue *DEGRADABLE => e
         degrade(:settle, e)
         land(fallback, timeline:, paths:, pre_images:)
@@ -145,6 +201,27 @@ module Lain
       end
 
       private
+
+      # Set once the stage has landed, so a stage a stop cut short is tried
+      # again by the round's next prime.
+      def staged
+        @writer ? @writer.prime : @writer = built
+        @primed = true
+      rescue *DEGRADABLE => e
+        @primed = true
+        degrade(:prime, e)
+      end
+
+      # A write-set scope stages nothing, so its writer settles every round;
+      # a shadow one settles only a round that staged its baseline.
+      def settling
+        return fallback if @degraded
+        return @writer if @primed
+
+        staging? ? nil : (@writer ||= built)
+      end
+
+      def staging? = @scope.note != Workspace::Snapshot::SCOPE_NOTE
 
       def land(writer, timeline:, paths:, pre_images:)
         event = writer.write(timeline:, paths:) || rewritten(writer, timeline:, paths:, pre_images:)

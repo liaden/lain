@@ -125,10 +125,10 @@ RSpec.describe Lain::Agent::SnapshotSlot do
       Dir.mktmpdir("lain-slot-spike") do |spike|
         put("kept.txt", "the human's own\n")
         filled = slot(scope: :shadow_git)
-        filled.rebind(root: spike).prime
+        filled.rebind(root: spike).arm.prime
         spiked = File.join(spike, "note.md").tap { |path| File.binwrite(path, "spiked\n") }
         filled.write(timeline: turn("in the spike"), paths: [spiked])
-        filled.rebind(root:).prime
+        filled.rebind(root:).arm.prime
         made = put("made.rb", "back in the checkout\n")
         filled.write(timeline: turn("after the spike"), paths: [spiked, made])
 
@@ -145,11 +145,11 @@ RSpec.describe Lain::Agent::SnapshotSlot do
     # turns lands there and never in the second turn's undo.
     it "records each turn with the trees its prime and its settle staged" do
       put("h.txt", "original\n")
-      filled = slot(scope: :shadow_git).prime
+      filled = slot(scope: :shadow_git).arm.prime
       put("made.txt", "m\n")
       filled.write(timeline: turn, paths: [])
       put("h.txt", "HUMAN EDIT, keep me\n")
-      filled.prime
+      filled.arm.prime
       put("y.txt", "y\n")
       filled.write(timeline: turn("second"), paths: [])
 
@@ -158,7 +158,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
 
     it "records a turn that only deleted a file" do
       put("z.txt", "precious\n")
-      filled = slot(scope: :shadow_git).prime
+      filled = slot(scope: :shadow_git).arm.prime
       File.delete(File.join(root, "z.txt"))
       filled.write(timeline: turn, paths: [])
 
@@ -196,7 +196,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
     it "records the turn under the write-set scope when the prime fails, and journals why" do
       filled = failing_slot(on: %w[init add])
 
-      filled.prime
+      filled.arm.prime
       event = filled.write(timeline: turn, paths: [put("a.rb", "one")])
 
       expect(event.body.fetch("snapshot_scope")).to eq(scope_note(:write_set))
@@ -212,7 +212,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
       scope = Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:, shell_out_factory: git_failing(on: %w[init]))
       filled = described_class.new(root:, scope:, log:, paths:, journal:, channel:)
 
-      filled.prime
+      filled.arm.prime
 
       expect(channel.grep(described_class::SnapshotDegraded).map(&:phase)).to eq([:prime])
     end
@@ -220,7 +220,7 @@ RSpec.describe Lain::Agent::SnapshotSlot do
     it "records the turn under the write-set scope when the settle fails", :seam do
       filled = failing_slot(on: %w[diff-index])
 
-      filled.prime
+      filled.arm.prime
       event = filled.write(timeline: turn, paths: [put("a.rb", "one")])
 
       expect(event.body.fetch("snapshot_scope")).to eq(scope_note(:write_set))
@@ -229,10 +229,10 @@ RSpec.describe Lain::Agent::SnapshotSlot do
 
     it "tries the shadow store again on the next turn", :seam do
       filled = failing_slot(on: %w[init add], times: 1)
-      filled.prime
+      filled.arm.prime
       filled.write(timeline: turn, paths: [put("a.rb", "one")])
 
-      filled.prime
+      filled.arm.prime
       put("b.txt", "made by a shell\n")
       event = filled.write(timeline: turn("second"), paths: [])
 
@@ -259,6 +259,165 @@ RSpec.describe Lain::Agent::SnapshotSlot do
 
     expect(log.count).to eq(2)
     expect(log.to_a.last.turn).to eq(turn("three").head_digest)
+  end
+
+  # A round stages its baseline at most once, and only when a call that can
+  # write is about to run: a round of reads costs no stage at all.
+  describe "a round", :seam do
+    let(:adds) { [] }
+
+    def counting_slot(gate: nil)
+      real = Lain::Shell::Out.public_method(:new)
+      git = lambda do |*argv, **options|
+        if argv.include?("add")
+          adds << argv
+          gate&.wait
+        end
+        real.call(*argv, **options)
+      end
+      scope = Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:, shell_out_factory: git)
+      described_class.new(root:, scope:, log:, paths:)
+    end
+
+    it "stages nothing for a prime outside an armed round" do
+      counting_slot.prime
+
+      expect([adds, Dir.children(state)]).to eq([[], []])
+    end
+
+    it "stages once for every prime of one armed round" do
+      filled = counting_slot.arm
+      3.times { filled.prime }
+
+      expect(adds.size).to eq(1)
+    end
+
+    it "stages once when 2 fibers prime the round together" do
+      filled = counting_slot.arm
+      Sync do |task|
+        Array.new(2) { task.async { filled.prime } }.each(&:wait)
+      end
+
+      expect(adds.size).to eq(1)
+    end
+
+    it "lets the next round stage after a stop cancelled a stage mid-way" do
+      gate = Async::Promise.new
+      filled = counting_slot(gate:).arm
+      Sync do |task|
+        staging = task.async { filled.prime }
+        task.yield until adds.any?
+        staging.stop
+        gate.resolve(true)
+        filled.arm.prime
+      end
+
+      expect(adds.size).to eq(2)
+    end
+
+    it "lands nothing and stages nothing for a shadow round that never primed" do
+      filled = counting_slot.arm
+      event = filled.write(timeline: turn, paths: [])
+
+      expect([event, adds, log.count]).to eq([nil, [], 0])
+    end
+
+    # The write set is cumulative, so a record of it in a later round would
+    # restate an earlier round's writes as this round's.
+    it "carries no earlier round's write set into a round that never primed" do
+      filled = counting_slot.arm.prime
+      path = put("a.rb", "one")
+      filled.write(timeline: turn("one"), paths: [path],
+                   pre_images: { path => Lain::Session::PreImage.new(bytes: nil) })
+
+      filled.arm.write(timeline: turn("two"), paths: [path])
+
+      expect(log.count).to eq(1)
+      expect(log.undo(store:).moves.map(&:key)).to eq(["a.rb"])
+    end
+
+    it "stages nothing for a stray prime after an unprimed round settled" do
+      filled = counting_slot.arm
+      filled.write(timeline: turn, paths: [])
+      filled.prime
+
+      expect(adds).to eq([])
+    end
+
+    it "journals 1 degrade for 2 primes of a round over a store that fails" do
+      journal = []
+      git = ->(*, **) { raise Errno::ENOENT, "git" }
+      scope = Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:, shell_out_factory: git)
+      filled = described_class.new(root:, scope:, log:, paths:, journal:).arm
+      2.times { filled.prime }
+
+      expect(journal.grep(described_class::SnapshotDegraded).size).to eq(1)
+    end
+
+    it "keeps writing a write-set round that never primed, as it always has" do
+      filled = slot.arm
+      event = filled.write(timeline: turn, paths: [put("a.rb", "one")])
+
+      expect(event.body.fetch("snapshot_scope")).to eq(scope_note(:write_set))
+    end
+  end
+
+  describe "#unwritable_by?" do
+    it "is false for a write dir at, under or above the root" do
+      filled = slot
+      reaching = [[root], [File.join(root, "sub")], [File.dirname(root)]]
+
+      expect(reaching.map { filled.unwritable_by?(_1) }).to eq([false, false, false])
+    end
+
+    # A profile's write dirs are real paths, so a root spelled through a link is compared as one.
+    it "is false for the real path of a root spelled through a symlink" do
+      Dir.mktmpdir("lain-slot-link") do |dir|
+        link = File.join(dir, "project")
+        File.symlink(root, link)
+
+        expect(described_class.new(root: link).unwritable_by?([File.realpath(root)])).to be(false)
+      end
+    end
+
+    it "is true when every write dir lies beside the root" do
+      expect(slot.unwritable_by?(["/dev/null", "#{root}-beside"])).to be(true)
+    end
+  end
+
+  describe ".before_effect" do
+    it "primes the slot its thunk answers" do
+      filled = slot
+      allow(filled).to receive(:prime)
+
+      described_class.before_effect(-> { filled }).call(tool: Lain::Tools::WriteFile.new, context: nil)
+
+      expect(filled).to have_received(:prime)
+    end
+  end
+
+  describe ".priming" do
+    let(:primed) { [] }
+    let(:recording) do
+      Class.new do
+        def initialize(trail) = @trail = trail
+        def prime = @trail << :prime
+      end.new(primed)
+    end
+
+    def tool(by_profile:) = Struct.new(:writes_by_profile?).new(by_profile)
+
+    it "primes the slot for a tool whose writes no sandbox profile decides" do
+      described_class.priming(-> { recording }).call(tool: tool(by_profile: false), context: nil)
+
+      expect(primed).to eq([:prime])
+    end
+
+    it "leaves a tool whose exec primes by its profile to that exec" do
+      described_class.priming(-> { recording }).call(tool: tool(by_profile: true), context: nil)
+
+      expect(primed).to eq([])
+    end
   end
 
   describe "#rebind" do
@@ -334,6 +493,20 @@ RSpec.describe Lain::Agent::SnapshotSlot do
     it "refuses to answer a log or a root" do
       expect { described_class.log }.to raise_error(Lain::Agent::SnapshotSlot::NotBound, /snapshot slot/)
       expect { described_class.root }.to raise_error(Lain::Agent::SnapshotSlot::NotBound)
+    end
+
+    # A silent prime would drop the round's undo with nobody told.
+    it "refuses a prime and a reach question" do
+      expect { described_class.prime }.to raise_error(Lain::Agent::SnapshotSlot::NotBound)
+      expect { described_class.unwritable_by?(["/tmp"]) }.to raise_error(Lain::Agent::SnapshotSlot::NotBound)
+    end
+  end
+
+  # What an exec built with no chat behind it holds: no round, so nothing to stage.
+  describe described_class::Null do
+    it "primes nothing and is reached by no write dir" do
+      expect(described_class.prime).to be(described_class)
+      expect(described_class.unwritable_by?(["/"])).to be(true)
     end
   end
 end

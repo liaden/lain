@@ -50,11 +50,12 @@ module Lain
       # commits and re-raises, and a return value would be discarded by the very
       # interrupt the commit exists to survive.
       #
-      # The slot is primed before the tools run: a shadow scope's before-tree
-      # has to predate the first write the turn's undo will put back. The
-      # session's pre-images open at the same moment, for the write-set
-      # scope's undo, which has no tree to read that from, and so does the
-      # chain a read has to be on to license an edit.
+      # The slot is armed before the tools run, and the round's first call that
+      # can write primes it: a shadow scope's before-tree has to predate the
+      # first write the turn's undo will put back. The session's pre-images
+      # open at the same moment, for the write-set scope's undo, which has no
+      # tree to read that from, and so does the chain a read has to be on to
+      # license an edit.
       #
       # @param response [Lain::Response] the assistant turn carrying the calls
       # @param timeline [Lain::Ext::Timeline] the timeline as of the assistant commit
@@ -69,7 +70,7 @@ module Lain
       def perform(response, timeline:, session:, &commit)
         answers = ToolRunner::Answers.for(response)
         report_text(response)
-        @snapshots.prime
+        @snapshots.arm
         session.open_pre_images.on_chain(timeline)
         delivery = @runner.delivery(response, context: session, answers:)
       rescue Async::Stop => e
@@ -166,7 +167,7 @@ module Lain
         timeline.commit(role: :user, content:)
       end
 
-      # Shielded as ONE atom for {Agent#commit_and_account}'s reason and one
+      # Shielded as ONE atom for `Agent#commit_and_account`'s reason and one
       # more: this runs while the task is ALREADY unwinding. `defer_stop` resets
       # its tri-state guard in both its `rescue Cancel` arm and its `ensure`, so
       # a fresh region entered here arms correctly even though the Cancel that
@@ -180,15 +181,15 @@ module Lain
       # cancel arriving inside this region is raised, not deferred. Measured
       # 2026-08-22 with two extra stops inside the region: the Timeline commit
       # still lands -- pure Ruby, no suspension point, and it runs first -- and
-      # the {Telemetry::ToolCancelled} record is LOST, 0 written rather than 1.
+      # the `Telemetry::ToolCancelled` record is LOST, 0 written rather than 1.
       # So the turn is answered and the witness is missing. Not reachable from a
-      # double Ctrl-C ({CLI::Shutdown} blocks in `force_stop`'s `@run_task.wait`
+      # double Ctrl-C (`CLI::Shutdown` blocks in `force_stop`'s `@run_task.wait`
       # and reads no second key), but reachable from an ancestor task or a
       # reactor teardown landing on an already-unwinding run.
-      # {Agent#commit_and_account} carries the identical exposure and claims
+      # `Agent#commit_and_account` carries the identical exposure and claims
       # nothing about it either.
       #
-      # The delivery is built BEFORE the region opens: {Tool::ResultBlock.of}
+      # The delivery is built BEFORE the region opens: `Tool::ResultBlock.of`
       # refuses an unpairable id, and that refusal raised inside the shield
       # would replace the interrupt with an ArgumentError and leave the region
       # half-run.

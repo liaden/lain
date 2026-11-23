@@ -1215,6 +1215,72 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
     end
 
+    # The round's baseline is staged once the profile is chosen and before the
+    # command runs, and only when that profile can write under the slot's root.
+    describe "priming the round's snapshot" do
+      let(:trail) { [] }
+      let(:slot) { Lain::Agent::SnapshotSlot.new(root: slot_root) }
+      let(:slot_root) { root }
+      let(:primed_over) do
+        lambda do |chosen|
+          profiles = Lain::Exec::Priming::ByProfile.new(chosen, snapshots: -> { slot })
+          described_class.new(inner:, launcher:, profiles:, journal:)
+        end
+      end
+
+      before do
+        allow(slot).to receive(:prime) { trail << :prime }
+        inner.behaviour = lambda do |**|
+          trail << :ran
+          Lain::Exec::Capture.new(exit_status: 0, stdout: "", stderr: "")
+        end
+      end
+
+      def run_over(profile)
+        primed_over.call(Struct.new(:profile) { def for(_request) = profile }.new(profile))
+                   .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                         confinement: composed)
+      end
+
+      it "skips the prime for a reader whose write dirs lie beside the root" do
+        run_over(Lain::Confine::Profile.reader(root:, home:))
+
+        expect(trail).to eq([:ran])
+      end
+
+      it "primes before the command for a profile that writes the root" do
+        run_over(Lain::Confine::Profile.reader(root:, home:).with(write_dirs: [root]))
+
+        expect(trail).to eq(%i[prime ran])
+      end
+
+      context "with a root under /tmp, which the reader profile writes" do
+        let(:slot_root) { "/tmp/lain-sandboxed-project" }
+
+        it "primes for a reader" do
+          run_over(Lain::Confine::Profile.reader(root:, home:))
+
+          expect(trail).to eq(%i[prime ran])
+        end
+      end
+
+      # An unconfined profile names no write dir, because it writes anywhere.
+      it "primes for an unconfined profile" do
+        run_over(Lain::Confine::Profile::NONE)
+
+        expect(trail).to eq(%i[prime ran])
+      end
+
+      it "primes nothing when the profile refuses the call" do
+        raising = Struct.new(:error) { def for(_request) = raise(error) }
+        primed_over.call(raising.new(Lain::Confine::Sandbox::Unconfined.new(profile: :none)))
+                   .call(command: Lain::Shell::Term.of(%w[cat README.md]), cwd: root, env: {}, timeout: 5,
+                         confinement: composed)
+
+        expect(trail).to eq([])
+      end
+    end
+
     describe "a profile that refuses the call" do
       let(:raising) { Struct.new(:error) { def for(_request) = raise(error) } }
 

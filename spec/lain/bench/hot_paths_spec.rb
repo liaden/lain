@@ -178,6 +178,16 @@ RSpec.describe Lain::Bench::HotPaths do
       expect(journal.events.grep(Lain::Telemetry::Sandbox).map(&:profile)).to eq([:workspace])
     end
 
+    # Bound, so the snapshot round's reader call skips its prime by profile rather than for want of a slot.
+    it "primes the snapshot slot it is handed when its profile writes the root" do
+      slot = Lain::Agent::SnapshotSlot.new(root: @scratch)
+      allow(slot).to receive(:prime)
+
+      bash.caller_for("workspace", snapshots: -> { slot }).call
+
+      expect(slot).to have_received(:prime)
+    end
+
     it "gives the row bash_rows builds a git repository to run in" do
       roots = []
       real = described_class.const_get(:Bash)

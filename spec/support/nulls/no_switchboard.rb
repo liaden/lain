@@ -34,6 +34,8 @@ module SpecNulls
     def approvals = nil
     def policy_switch = guard_inputs.policy
     def sensitivity = guard_inputs.sensitivity
+    # No chat, so no round to undo: a call primes nothing.
+    def snapshots = Lain::Agent::SnapshotSlot::Null
 
     def inspect = "SpecNulls::NoSwitchboard"
     alias_method :to_s, :inspect

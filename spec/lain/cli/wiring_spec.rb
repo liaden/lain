@@ -794,7 +794,7 @@ RSpec.describe Lain::CLI::Wiring do
           board = board_on_path("/usr/bin")
           held = classed.send(:exec_backend)
 
-          expect(board.toolset.fetch("bash").instance_variable_get(:@exec)).to equal(held.backend)
+          expect(board.toolset.fetch("bash").instance_variable_get(:@exec).__getobj__).to equal(held.backend)
           expect(board.toolset.fetch("bash").instance_variable_get(:@resolver))
             .to be_a(Lain::Shell::Executable::Resolver)
         end

@@ -19,8 +19,8 @@ module ToolDeliverySpecSupport
       @hook = hook
     end
 
-    def prime
-      @trail << :prime
+    def arm
+      @trail << :arm
       self
     end
 
@@ -490,7 +490,16 @@ RSpec.describe Lain::Agent::ToolDelivery do
   end
 
   describe "the snapshot slot it is handed" do
-    it "is primed before any tool runs, so a baseline predates the turn's first write" do
+    # A call that can write primes the round, as the before-effect hook does.
+    def priming(slot)
+      Lain::Effect::Handler::Mock.new do |_effect, _|
+        slot.prime
+        Lain::Tool::Result.ok("ran")
+      end
+    end
+
+    # Arming stages nothing: the first call that can write primes the round.
+    it "is armed for the round before any tool runs" do
       trail = []
       recording = Lain::Effect::Handler::Mock.new do |effect, _|
         trail << effect.tool_use_id
@@ -499,7 +508,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
 
       perform(recording, slot: ToolDeliverySpecSupport::Snapshots.new(trail:))
 
-      expect(trail).to eq([:prime, "tu_1", "tu_2", :write])
+      expect(trail).to eq([:arm, "tu_1", "tu_2", :write])
     end
 
     # Read at each settle rather than captured at construction: a posture flip
@@ -517,7 +526,7 @@ RSpec.describe Lain::Agent::ToolDelivery do
 
           perform(echoing, slot:)
           slot.rebind(:shadow_git)
-          perform(echoing, slot:)
+          perform(priming(slot), slot:)
 
           expect(notes).to eq([Lain::Workspace::Snapshot::Scope::WriteSet::NOTE,
                                Lain::Workspace::Snapshot::Scope::ShadowGit::NOTE])

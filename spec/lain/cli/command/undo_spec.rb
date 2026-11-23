@@ -67,7 +67,7 @@ RSpec.describe Lain::CLI::Command::Undo do
   # tool-result commit, the snapshot that settles the pre-images. `captured: false` is a tool that records
   # its write without capturing what it replaced.
   def turn(tools: {}, shell: {}, captured: true)
-    slot.prime
+    slot.arm.prime
     session.open_pre_images
     tools.each_key { |name| capture(in_root(name)) } if captured
     tools.merge(shell).each { |name, bytes| write(name, bytes) }
@@ -121,6 +121,7 @@ RSpec.describe Lain::CLI::Command::Undo do
                    tool_response(["tu_2", "write_file", { "path" => a_rb, "content" => "edited by C\n" }]),
                    text("done")]
       Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), snapshot_slot: slot,
+                      before_effect: slot.before_effect,
                       toolset: Lain::Toolset.new([Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new]),
                       context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024))
     end
@@ -292,11 +293,11 @@ RSpec.describe Lain::CLI::Command::Undo do
           @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => text }])
           ws_slot.write(timeline: @timeline, paths: [in_root("a.rb")])
         end
-        ws_slot.prime
+        ws_slot.arm.prime
         write("a.rb", "a1\n")
         settle.call("1")
         ws_slot.rebind(:shadow_git)
-        ws_slot.prime
+        ws_slot.arm.prime
         write("b.txt", "b\n")
         settle.call("2")
 
@@ -323,7 +324,7 @@ RSpec.describe Lain::CLI::Command::Undo do
       # chat whose turn began after the other's settled cannot revert it.
       it "never reverts another chat's file written before its own turn began" do
         other = Lain::Agent::SnapshotSlot.new(root:, scope: :shadow_git, paths:)
-        other.prime
+        other.arm.prime
         write("from-A.txt", "A's work\n")
         other_timeline = Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                                            .commit(role: :user, content: [{ "type" => "text", "text" => "a" }])
@@ -340,8 +341,8 @@ RSpec.describe Lain::CLI::Command::Undo do
       # this turn's change -- so the undo removes it, and names it doing so.
       it "names another chat's file written during its turn among what it deleted" do
         other = Lain::Agent::SnapshotSlot.new(root:, scope: :shadow_git, paths:)
-        slot.prime
-        other.prime
+        slot.arm.prime
+        other.arm.prime
         write("from-A.txt", "A's work\n")
         other.write(timeline: Lain::Dag::Factory.timeline(store: Lain::Dag::Factory.store)
                                                 .commit(role: :user, content: [{ "type" => "text", "text" => "a" }]),
@@ -407,7 +408,7 @@ RSpec.describe Lain::CLI::Command::Undo do
         # the key this refusal answers about comes from a scope that keeps it.
         scope = UncontainedSnapshotScope.new(Lain::Workspace::Snapshot::Scope::ShadowGit.new(paths:))
         inner = Lain::Agent::SnapshotSlot.new(root: project, scope:, paths:)
-        inner.prime
+        inner.arm.prime
         write("escape.txt", "x\n")
         @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "escape" }])
         inner.write(timeline: @timeline, paths: [in_root("escape.txt")])
@@ -447,7 +448,7 @@ RSpec.describe Lain::CLI::Command::Undo do
       # One turn under whatever root the slot is bound to now, its change
       # carried by the shadow scope's trees rather than by a write-set.
       def bound_turn
-        slot.prime
+        slot.arm.prime
         yield
         @timeline = @timeline.commit(role: :user, content: [{ "type" => "text", "text" => "a turn" }])
         slot.write(timeline: @timeline, paths: [])
@@ -600,6 +601,7 @@ RSpec.describe Lain::CLI::Command::Undo do
     def agent_over(*responses)
       tools = [Lain::Tools::ReadFile.new, Lain::Tools::WriteFile.new, UndoSpecSupport::Parking.new(entered:, release:)]
       Lain::Agent.new(provider: Lain::Provider::Mock.new(responses:), snapshot_slot: slot, session:,
+                      before_effect: slot.before_effect,
                       toolset: Lain::Toolset.new(tools),
                       context: Lain::Context.new(model: "claude-opus-4-8", max_tokens: 1024))
     end

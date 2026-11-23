@@ -71,11 +71,25 @@ RSpec.describe Lain::Confine::Sandbox do
     end
 
     it "hands the profiles the mask list it was given and the home" do
-      profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles)
+      profiles = sandbox.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles).__getobj__
 
       expect(profiles.instance_variable_get(:@masks)).to be(masks)
       expect([profiles.instance_variable_get(:@home), profiles.instance_variable_get(:@root)])
         .to eq(["/home/h", "/srv/project"])
+    end
+
+    # The slot a chat binds after this sandbox is built, read once a call's profile is chosen.
+    it "primes the snapshot slot it was given once the exec chooses a call's profile" do
+      slot = Lain::Agent::SnapshotSlot.new(root: "/srv/project")
+      allow(slot).to receive(:prime)
+      slotted = described_class.new(root: "/srv/project", home: "/home/h", masks:, probe:, fence:, journal:,
+                                    snapshots: -> { slot })
+      ruling = Lain::Approval::Escalation::Ruling.allow(rung: "auto", because: "judged")
+      request = Lain::Confine::Request.new(ruling:, executables: [], cwd: nil, root: nil, tool_use_id: "toolu_1")
+
+      slotted.wrap(inner, requirer: "Spec").instance_variable_get(:@profiles).for(request)
+
+      expect(slot).to have_received(:prime)
     end
 
     it "leaves the workspace profile off unless it is asked for" do

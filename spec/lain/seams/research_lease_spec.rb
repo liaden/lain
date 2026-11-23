@@ -50,6 +50,7 @@ RSpec.describe "A researcher spawn leases its own kept, confined directory", :se
       model: "m", toolset: Lain::Toolset.new([]), project:, paths:,
       verdict: Lain::CLI::Wiring::BoardBuild.shell_verdict(project:, paths:)
     ).bind_session(Lain::Session.new(worker_env: Lain::WorkerEnv.default.with(cwd: @repo)))
+                                            .bind_snapshots(Lain::Agent::SnapshotSlot.new(root: @repo))
   end
 
   def toolset_build(provider)

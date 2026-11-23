@@ -264,11 +264,14 @@ module Lain
       #   unless a human approved it and it runs traced
       # @param taint [#call] returns the {Sensitivity::Taint} an unmasked call's writes are scanned into
       # @param secrets [#call] returns the known values that scan looks for
+      # @param snapshots [#call] answers the round's {Agent::SnapshotSlot}, which the exec primes
       def initialize(root:, home:, masks:, probe:, fence:, journal:, notes: journal, workspace: false,
                      tmpdir: Dir.tmpdir, fresh: Profiles::Unread, phone_answered: false,
                      taint: Sensitivity::Taint.new.then { |own| -> { own } },
-                     secrets: -> { Sensitivity::Secrets::Source::DEFAULT })
+                     secrets: -> { Sensitivity::Secrets::Source::DEFAULT },
+                     snapshots: -> { Agent::SnapshotSlot::Null })
         @scanning = { taint:, secrets:, classifier: masks }
+        @snapshots = snapshots
         @root = root
         @home = home
         @masks = masks
@@ -347,7 +350,8 @@ module Lain
 
       def profiles
         built = Profiles.new(masks: @masks, probe: @probe, home: @home, root: @root, classifier: @masks, **@profiling)
-        @phone_answered ? PhoneAnswered.new(built, reaps: @probe.supports?(:reap)) : built
+        chosen = @phone_answered ? PhoneAnswered.new(built, reaps: @probe.supports?(:reap)) : built
+        Exec::Priming::ByProfile.new(chosen, snapshots: @snapshots)
       end
 
       # A box can lose a layer after the launch checked it, and a phone's session never runs a call bare.

@@ -162,8 +162,8 @@ module Lain
         end
       end
 
-      # A turn's snapshot over a project the size of a real one: the shadow baseline staged before the
-      # tools run, the stage after, and the diff between them.
+      # A reader round's snapshot over a project the size of a real one: the stage a round that cannot write
+      # the root no longer pays.
       def snapshot_row
         Dir.mktmpdir("hot-path-snapshot") do |dir|
           base = File.realpath(dir)
@@ -177,7 +177,7 @@ module Lain
 
       def snapshot_measured(bash, root, state)
         bash.check_unwritable!("reader", root)
-        round = SnapshotRound.new(root:, state:, call: bash.caller_for("reader"))
+        round = SnapshotRound.new(root:, state:) { |slot| bash.caller_for("reader", snapshots: -> { slot }) }
         round.call
         measure(@reps, name: "snapshot_reader_round") { round.call }
       end
@@ -380,16 +380,18 @@ module Lain
         end
       end
 
-      # One bash `true` call, run in the reader sandbox, delivered over a shadow-git snapshot slot, which
-      # stages the tree twice.
+      # One bash `true` call, run in the reader sandbox, delivered over a shadow-git snapshot slot that the
+      # call's exec primes only when its profile can write the root.
       class SnapshotRound
         # @param root [String] the project tree
         # @param state [String] the state home the shadow store lives in
-        # @param call [#call] runs the bash `true` through the sandbox
-        def initialize(root:, state:, call:)
+        # @yieldparam slot [Agent::SnapshotSlot] the round's slot, which the call's exec is bound to
+        # @yieldreturn [#call] runs the bash `true` through the sandbox
+        def initialize(root:, state:)
           FileUtils.mkdir_p(state)
           @session = ::Lain::Session.new(root:)
           slot = Agent::SnapshotSlot.new(root:, scope: :shadow_git, paths: Paths.new(env: { "HOME" => state }))
+          call = yield slot
           handler = Effect::Handler::Mock.new do |_effect, _|
             call.call
             Tool::Result.ok("")
@@ -442,10 +444,13 @@ module Lain
           gap || fence_gap
         end
 
+        # @param profile [String] the profile's name
+        # @param snapshots [#call] answers the slot the call primes when its profile can write the root
         # @return [#call] one `true` through the profile
-        def caller_for(profile)
+        def caller_for(profile, snapshots: -> { Agent::SnapshotSlot::Null })
           sandboxed = Exec::Sandboxed.new(inner: Exec::Local.new, launcher: Confine::Bwrap.new(fence: Confine::Bwrap.fence_binary),
-                                          profiles: profiles(profile), journal: @journal)
+                                          profiles: Exec::Priming::ByProfile.new(profiles(profile), snapshots:),
+                                          journal: @journal)
           request = request_for(profile)
           cwd = root_for(profile)
           -> { sandboxed.call(command: "true", cwd:, env: {}, timeout: 10, confinement: request) }

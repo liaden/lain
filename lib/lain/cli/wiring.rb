@@ -582,7 +582,7 @@ module Lain
                         round_budget: arms.round_budget_policy,
                         budget: backend.ceilings.with(depth: 1), # one level of children below the chat
                         **shown(board, channel), mailbox: notes.mailbox,
-                        snapshot_slot: snapshot_slot(board, session:, journal: chronicle.record_journal, channel:),
+                        **snapshotting(board, session:, journal: chronicle.record_journal, channel:),
                         **backing(backend, channel, -> { agent.timeline }, board:)).tap do |built|
           agent = built
         end
@@ -603,16 +603,17 @@ module Lain
         )
       end
 
-      # Born here and handed to the board, because the board is the one object
-      # a `/mode` flip goes through: a flip into plan scope roots it at the
-      # spike, and the session it was handed first runs there. The board's own
-      # build is not where it can be born: that runs before any root reaches
-      # it. The root is the PROJECT's, where every snapshot is rooted until
-      # then, and `paths:` the state home a shadow snapshot scope keeps its
-      # store in.
-      def snapshot_slot(board, session:, journal:, channel:)
-        Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope, paths: @paths, journal:,
-                                      channel:).tap { |slot| board.bind_session(session).bind_snapshots(slot) }
+      # The slot is born here and handed to the board, because the board is the
+      # one object a `/mode` flip goes through: a flip into plan scope roots it
+      # at the spike, and the session it was handed first runs there. The
+      # board's own build is not where it can be born: that runs before any
+      # root reaches it. The root is the PROJECT's, where every snapshot is
+      # rooted until then, and `paths:` the state home a shadow snapshot scope
+      # keeps its store in. The agent's before-effect hook primes it.
+      def snapshotting(board, session:, journal:, channel:)
+        slot = Lain::Agent::SnapshotSlot.new(root:, scope: board.snapshot_scope, paths: @paths, journal:, channel:)
+        board.bind_session(session).bind_snapshots(slot)
+        { snapshot_slot: slot, before_effect: slot.before_effect }
       end
 
       # The provider, and the compaction wiring hung off it -- the per-turn

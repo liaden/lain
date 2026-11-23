@@ -232,7 +232,7 @@ module Lain
       #   compare their bytes
       # @param journal [#<<] where every call's {Telemetry::ShellArm} record
       #   lands. Null by default, so a tool built with no session around it --
-      #   {Subagent} runs an ungated handler, and `bash_spec` constructs this
+      #   `Subagent` runs an ungated handler, and `bash_spec` constructs this
       #   tool alone -- writes nowhere and no caller guards on nil.
       # @param resolver [#for] names what each stage resolves to before it runs;
       #   the null default resolves every stage unresolved
@@ -277,6 +277,9 @@ module Lain
       # model wrote. WHICH calls may skip a human is the escalation ladder's
       # question, asked per call and answered from the verdict.
       def requires_approval? = true
+
+      # The exec primes the round's snapshot once it has chosen a profile.
+      def writes_by_profile? = true
 
       # What this tool makes of an input, offered so a caller that must decide
       # ABOUT a call can read what the call will run on. The approval ladder's

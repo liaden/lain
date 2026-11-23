@@ -572,6 +572,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         def approvals = nil
         def policy_switch = guard_inputs.policy
         def sensitivity = guard_inputs.sensitivity
+        def snapshots = Lain::Agent::SnapshotSlot::Null
       end.new(inputs)
     end
     let(:script) do
@@ -631,6 +632,7 @@ RSpec.describe Lain::CLI::EpicDriver::IssueActor, :seam do
         def policy_switch = guard_inputs.policy
         def sensitivity = guard_inputs.sensitivity
         def secrets = Lain::Sensitivity::Secrets::Source::DEFAULT
+        def snapshots = Lain::Agent::SnapshotSlot::Null
       end.new(inputs)
     end
     let(:build) do

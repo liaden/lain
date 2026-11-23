@@ -431,7 +431,10 @@ module Lain
                                                                                   paths: @in_chat.fetch(:paths))))
         end
 
-        def bash_exec = @arms.sandboxed? ? confined(@exec) : @exec
+        def bash_exec = Lain::Exec::Priming.over(@arms.sandboxed? ? confined(@exec) : @exec, snapshots:)
+
+        # The board's slot, read at each call: the board is built after this toolset.
+        def snapshots = -> { @switchboard.call.snapshots }
 
         def confined(exec)
           case exec
@@ -453,7 +456,7 @@ module Lain
           @masks = masks = mask_list(taint)
           @sandbox = Lain::Confine::Sandbox.new(root: @root, home:, masks:, probe: @probe, fence: @fence,
                                                 journal: seam.journal, notes: @notes, fresh: @fresh, taint:,
-                                                secrets: -> { @switchboard.call.secrets },
+                                                secrets: -> { @switchboard.call.secrets }, snapshots:,
                                                 workspace: @arms.workspace?,
                                                 phone_answered: @human.answers_remotely?)
           @confined = @sandbox.wrap(inner, requirer: self.class.name)
@@ -512,7 +515,10 @@ module Lain
                                           twins: Lain::Tools::Subagent::Lineage::Twins.new,
                                           supervisor:, observer: chronicle.observer, askers:,
                                           scope: CLI::ToolGuard::BoardScope.new(board: switchboard),
-                                          isolation: spawn_leases_over(isolation, handback))
+                                          isolation: spawn_leases_over(isolation, handback),
+                                          before_effect: Lain::Agent::SnapshotSlot.before_effect(
+                                            -> { switchboard.call.snapshots }
+                                          ))
         end
 
         def spawn_leases_over(isolation, handback)

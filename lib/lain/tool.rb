@@ -134,6 +134,12 @@ module Lain
       true
     end
 
+    # Whether what a call may write is decided by the sandbox profile its exec
+    # applies, so the exec, not a before-effect hook, primes the round's snapshot.
+    def writes_by_profile?
+      false
+    end
+
     # Whether this is a tool a `Toolset` holds: always, for a real one.
     # `Toolset::Unheld` is the stand-in that answers no, so the approval gate
     # can decline to ask a human about a call that will run nothing.
