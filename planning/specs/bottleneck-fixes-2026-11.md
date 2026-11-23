@@ -1,6 +1,7 @@
 # Bottleneck fixes: per-call gates, launch, panes, journal, judge, masking
 
-status: draft
+status: in-progress
+base: a416bd2a787801cd0c4e9b06f8efd64406d4f16e
 commit-mode: orchestrator-commits
 language: ruby, rust
 panel: Ruby (Linus Torvalds, Jeremy Evans, Sandi Metz, Richard Schneeman, Aaron Patterson), plus Andrew Gallant and Raph Levien for the Rust cards
@@ -1485,3 +1486,19 @@ After the last card lands:
 - Then measure again, with the research's method, whether the snapshot stage on write rounds still dominates. That decides the watcher.
 
 ## Execution log
+
+- Run started 2026-11-23. Base main at a416bd2a7 (the plan commit over the Grounding base 9a82c7363; no lib, spec, crates or ext change between them, so Grounding holds).
+- Start state: worktree nyotes/implement-readiness at ~/w/ir left alone. Snapshots in the session scratchpad bf-run/ (start-status.txt, start-worktrees.txt, start-branches.txt, start-submodules.txt).
+- Pre-staged user work unstaged for the run. Re-stage at close-out: `git add .gitmodules && git update-index --add --cacheinfo 160000,b48d660ae3c1f6037094d6cfc6b5d9f5938a7957,references/repos/cliffcompaction --cacheinfo 160000,36be9c612e64082a4f0d4d0a94706c38ecbc20a1,references/repos/pi`.
+- Hook: pre-commit hygiene hooks, gitleaks, lychee and vale (docs), shellcheck, cargo fmt/clippy/test (rust files), cargo deny (Cargo/deny files), `bundle exec rake compile daemon:build check` (rubocop whole repo + pspec, about 121s), daemon-tier (`rspec --tag core --tag daemon`, for crates/lain-(rpc|daemon|wire), Rakefile and lib/lain/daemon paths), yard-lint --staged, bin/lint-gherkin-docs (planning/specs), bin/lint-commit-msg (commit-msg), bin/lint-price-freshness. Example count: the hook log's first pass or tmp/parallel_runtime_rspec.log.
+- Agent checks on own paths: bundle exec rubocop <paths>; bundle exec yard-lint <ruby paths>; shellcheck on shell files; Rust: cargo fmt --check, cargo clippy --all-targets -- -D warnings, cargo test, with its own CARGO_TARGET_DIR.
+- Ratchet specs: spec/*_spec.rb (top-level scanners), plus spec/lain/rust/binding_coverage_spec.rb, spec/lain/telemetry/round_trip_spec.rb, spec/lain/review/journal_discriminators_spec.rb, spec/lain/sensitivity_spec.rb, spec/lain/comment_census_spec.rb, spec/lain/zeitwerk_census_spec.rb, spec/lain/cli_spec.rb, spec/lain/project/root_defaults_spec.rb, spec/lain/cli/pane_command_spec.rb, spec/lain/cli/wiring_spec.rb, spec/lain/cli/tool_guard_spec.rb, spec/lain/tools/parallel_safety_spec.rb, spec/lain/tools/parallel_commutation_spec.rb.
+- Build outputs a worktree needs: lib/lain/lain.so (Nov 22 10:46, after the last ext change), target/release/lain-fence (fresh: the Nov 18 crate commit was README only), target/release/lain-daemon, tmp/parallel_runtime_rspec.log.
+- Locks: tmp/gate.lock and tmp/suite.lock (repo tmp/). Test-runner pattern for wait-quiet: 'rspec|parallel_rspec|cargo (test|build|clippy)|rake (pspec|check|compile|daemon)|tmp/probes/|llama-server'.
+- Landings run with the terminal identity unset (KITTY_*, TERM_PROGRAM) and LAIN_SPEC_WORKERS=10.
+- Worktree prefix: tmp/worktrees/bf-T<id>, branch card/bf-T<id>. Each worktree TMPDIR=$HOME/tmp/lain/bf-T<id>.
+- Memory 15 GB (9 available at start), load 0.8 on 16 cores. User ruling 2026-11-23: go wide, start every ready card at once rather than a fixed cap; watch free memory and swap instead.
+- Implementer model: opus for high risk, sonnet otherwise. No path needs user approval.
+- The plan's second panel round on the 10 rewritten high-risk cards was offered; the user went to execution instead. Each high-risk card gets a high-depth review.
+
+### Run log
