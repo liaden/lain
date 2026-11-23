@@ -6,6 +6,8 @@ RSpec.describe Lain::Bench::HotPaths do
       render_chat_10 render_cold_10 bash_true_none bash_true_traced bash_true_reader bash_true_workspace
       mask_list_warm request_1000 request_guarded_1000
       journal_small journal_1000 journal_chained_small journal_chained_1000 mask_first_output wire_ready
+      snapshot_reader_round secrets_for_warm history_scan_launch journal_turn journal_records_typed
+      mask_lockfile_100k
     ]
   end
 
@@ -46,6 +48,26 @@ RSpec.describe Lain::Bench::HotPaths do
     end
   end
 
+  describe "the mask_lockfile_100k row" do
+    it "masks the planted secret and leaves its placeholder", :seam do
+      masked = described_class::Corpus.masked_lockfile(100_000)
+
+      expect(masked).not_to include(described_class::Corpus::LOCKFILE_SECRET)
+      expect(masked).to include("<redacted:1>")
+    end
+  end
+
+  describe "the history rows' fixtures" do
+    it "hold sensitive values the scan finds, in a repository built under a fresh directory", :seam do
+      Dir.mktmpdir("hot-path-history-spec") do |dir|
+        root = File.realpath(dir)
+        described_class::Corpus.history_repo(root, paths: 30, sensitive: 3, refs: 4)
+
+        expect(described_class::Corpus.literals(root).split.known.size).to be >= 3
+      end
+    end
+  end
+
   describe "the guarded request row" do
     it "posts through an egress guard bound to this process's secrets source", :seam do
       built = []
@@ -53,7 +75,7 @@ RSpec.describe Lain::Bench::HotPaths do
         original.call(app, options).tap { built << options.fetch(:literals) }
       end
 
-      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000]).rows }
+      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000]).send(:request_rows) }
 
       expect(built).not_to be_empty
       expect(built).to all(be_a(Lain::Sensitivity::Secrets::Source))
@@ -68,11 +90,17 @@ RSpec.describe Lain::Bench::HotPaths do
     end
 
     it "skips the reader and workspace rows by name and measures none of their time", :seam do
-      rows = NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).rows }
+      rows = NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).send(:bash_rows) }
       confined = rows.select { %w[bash_true_reader bash_true_workspace].include?(_1.name) }
 
       expect(confined).to all(have_attributes(skipped: "no bwrap", median_ms: nil))
       expect(confined.size).to eq(2)
+    end
+
+    it "skips the snapshot round, which runs its call under the reader profile", :seam do
+      row = described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).send(:snapshot_row)
+
+      expect(row).to have_attributes(name: "snapshot_reader_round", skipped: "no bwrap", median_ms: nil)
     end
   end
 
@@ -93,8 +121,7 @@ RSpec.describe Lain::Bench::HotPaths do
     end
 
     def bash_rows
-      rows = NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).rows }
-      rows.select { _1.name.start_with?("bash_true_") }
+      NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], probe:).send(:bash_rows) }
     end
 
     # Without the fence every bash row would time an exit of 127, which reads as fast.
@@ -139,13 +166,19 @@ RSpec.describe Lain::Bench::HotPaths do
     it "gives the row bash_rows builds a git repository to run in" do
       roots = []
       real = described_class.const_get(:Bash)
-      spy = lambda { |probe:, scratch:|
-        roots << File.directory?(File.join(scratch, ".git"))
-        real.new(probe:, scratch:)
+      spy = lambda { |**options|
+        roots << File.directory?(File.join(options.fetch(:scratch), ".git"))
+        real.new(**options)
       }
       NetworkAccess.permit { described_class.new(turns: 10, reps: 1, sizes: [1_000], bash: spy).send(:bash_rows) }
 
       expect(roots).to eq([true])
+    end
+
+    it "refuses a root the reader profile could write, so the snapshot round never measures an unprimed path" do
+      expect { bash.check_unwritable!("workspace", @scratch) }.to raise_error(Lain::Error, /could write/)
+      expect { bash.check_unwritable!("reader", "/") }.to raise_error(Lain::Error, /could write/)
+      expect { bash.check_unwritable!("reader", @scratch) }.not_to raise_error
     end
 
     # What the profile grants is not visible from a run that writes nothing, so it is read off the profile.

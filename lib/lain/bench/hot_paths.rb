@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "digest"
 require "fileutils"
 require "json"
 require "open3"
@@ -20,6 +21,13 @@ module Lain
       CHAT_BODY = ("lorem ipsum dolor sit amet " * 14).freeze
       SAMPLE_OUTPUT = "build ok\nAPI_TOKEN=sk-ant-api03-#{"a1B2c3D4" * 8}\ndone\n".freeze
 
+      SNAPSHOT_FILES = 2_000
+      HISTORY_PATHS = 2_000
+      HISTORY_SENSITIVE = 9
+      HISTORY_REFS = 20
+      TURN_RECORDS = 12
+      LOCKFILE_BYTES = 100_000
+
       # @param turns [Integer] how long the rendered conversation is
       # @param reps [Integer] repetitions of a cheap row; the render cold row runs a tenth of them, at least 5
       # @param sizes [Array<Integer>] request body sizes in bytes; the largest also sizes the journal line
@@ -38,7 +46,8 @@ module Lain
 
       # @return [Array<Row>] one per measured row, in the table's order
       def rows
-        [*render_rows, *bash_rows, mask_list_row, *request_rows, *journal_rows, mask_row, wire_row]
+        [*render_rows, *bash_rows, mask_list_row, *request_rows, *journal_rows, mask_row, wire_row,
+         snapshot_row, *history_rows, journal_turn_row, journal_records_row, mask_lockfile_row]
       end
 
       # @param reps [Integer]
@@ -153,6 +162,63 @@ module Lain
         end
       end
 
+      # A turn's snapshot over a project the size of a real one: the shadow baseline staged before the
+      # tools run, the stage after, and the diff between them.
+      def snapshot_row
+        Dir.mktmpdir("hot-path-snapshot") do |dir|
+          base = File.realpath(dir)
+          root = File.join(base, "project")
+          Corpus.tree(root, SNAPSHOT_FILES)
+          bash = @bash.call(probe: @probe || Corpus.probe, scratch: root, root:)
+          reason = bash.unavailable("reader")
+          reason ? skipped("snapshot_reader_round", reason) : snapshot_measured(bash, root, File.join(base, "state"))
+        end
+      end
+
+      def snapshot_measured(bash, root, state)
+        bash.check_unwritable!("reader", root)
+        round = SnapshotRound.new(root:, state:, call: bash.caller_for("reader"))
+        round.call
+        measure(@reps, name: "snapshot_reader_round") { round.call }
+      end
+
+      def history_rows
+        Dir.mktmpdir("hot-path-history") do |dir|
+          root = File.realpath(dir)
+          Corpus.history_repo(root, paths: HISTORY_PATHS, sensitive: HISTORY_SENSITIVE, refs: HISTORY_REFS)
+          warm = Sensitivity::Secrets::Source.new(child_env: Exec::ChildEnv::DEFAULT, history: Corpus.literals(root))
+          warm.for(nil)
+          [measure(@reps, name: "secrets_for_warm") { warm.for(nil) },
+           measure(cold_reps, name: "history_scan_launch") { Corpus.literals(root).split }]
+        end
+      end
+
+      def cold_reps = [@reps / 10, 5].max.clamp(..@reps)
+
+      # What a chat pays at the end of a turn: the records of one turn, each fsynced as the session's is.
+      def journal_turn_row
+        Dir.mktmpdir("hot-path-turn") do |dir|
+          Journal.open(File.join(dir, "turn.ndjson"), fsync: true, chain: true) do |journal|
+            measure(cold_reps, name: "journal_turn") do
+              TURN_RECORDS.times { |n| journal.record({ "type" => "turn", "n" => n }) }
+            end
+          end
+        end
+      end
+
+      def journal_records_row
+        # 20 lines' worth of the journal row's largest record, so a small-size run stays small.
+        lines = Corpus.session_lines(@sizes.max * 20)
+        measure(cold_reps, name: "journal_records_typed") { Journal.records(lines, type: "turn").count }
+      end
+
+      def mask_lockfile_row
+        text = Corpus.lockfile(LOCKFILE_BYTES)
+        secrets = Sensitivity::Secrets.for(child_env: Exec::ChildEnv::DEFAULT, context: nil)
+        mask = Sensitivity::TextMask.new(secrets:)
+        measure(@reps, name: "mask_lockfile_100k") { mask.call(text) }
+      end
+
       # Median and interquartile range, by linear interpolation between ranks.
       module Stats
         module_function
@@ -227,6 +293,63 @@ module Lain
           Confine::MaskList.new(root:, policy: -> { policy })
         end
 
+        LOCKFILE_SECRET = "sk-ant-api03-#{"a1B2c3D4" * 8}".freeze
+
+        # @return [String] `Cargo.lock` stanzas filling about `bytes`, with 1 secret planted in the middle
+        def lockfile(bytes)
+          stanza = lambda { |i|
+            "[[package]]\nname = \"crate-#{i}\"\nversion = \"1.#{i}.0\"\n" \
+              "checksum = \"#{Digest::SHA256.hexdigest(i.to_s)}\"\n\n"
+          }
+          count = (bytes / stanza.call(0).bytesize).clamp(2..)
+          stanzas = Array.new(count) { stanza.call(_1) }
+          stanzas.insert(count / 2, "# API_TOKEN=#{LOCKFILE_SECRET}\n\n").join
+        end
+
+        # @return [String] the lockfile as the row's mask leaves it
+        def masked_lockfile(bytes)
+          secrets = Sensitivity::Secrets.for(child_env: Exec::ChildEnv::DEFAULT, context: nil)
+          Sensitivity::TextMask.new(secrets:).call(lockfile(bytes)).text
+        end
+
+        # @return [Array<String>] session lines totalling about `bytes`, 85% of them in request_sent
+        def session_lines(bytes)
+          line = ->(type, size) { JSON.generate("type" => type, "body" => "x" * size) }
+          group = [line.call("request_sent", 85_000)].concat(Array.new(15) { line.call("turn", 1_000) })
+          Array.new((bytes / group.sum(&:bytesize)).clamp(1..)) { group }.flatten
+        end
+
+        # @param root [String] created here; never a checkout
+        # @param files [Integer]
+        def tree(root, files)
+          files.times do |i|
+            path = File.join(root, "dir#{i / 50}", "file#{i}.txt")
+            FileUtils.mkdir_p(File.dirname(path))
+            File.write(path, "content #{i}\n")
+          end
+        end
+
+        # A repository of `paths` history paths, `sensitive` of them .env files holding a value each, and
+        # `refs` branches.
+        def history_repo(root, paths:, sensitive:, refs:)
+          tree(root, paths - sensitive)
+          sensitive.times do |i|
+            FileUtils.mkdir_p(File.join(root, "svc#{i}"))
+            File.write(File.join(root, "svc#{i}", ".env"), "DB_PASSWORD=#{Digest::SHA256.hexdigest("pw#{i}")[0, 24]}\n")
+          end
+          git = ->(*args) { system(Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, *args, exception: true) }
+          git.call("init", "-q")
+          git.call("add", "-A")
+          git.call("-c", "user.name=bench", "-c", "user.email=bench@x", "commit", "-qm", "seed")
+          refs.times { git.call("update-ref", "refs/heads/ref#{_1}", "HEAD") }
+        end
+
+        # @return [Sensitivity::HistoryLiterals] a new instance over `root`, as a launch builds one
+        def literals(root)
+          sensitivity = Sensitivity.new(home: root, cwd: root, root:)
+          Sensitivity::HistoryLiterals.new(root:, policy: Sensitivity::Policy.new(sensitivity:, home: root, root:))
+        end
+
         def probe = Confine::Probe.new(fence: Confine::Bwrap.fence_binary, journal: Channel::Null.instance)
 
         def wire_agent(dir)
@@ -247,6 +370,32 @@ module Lain
         end
       end
 
+      # One bash `true` call, run in the reader sandbox, delivered over a shadow-git snapshot slot, which
+      # stages the tree twice.
+      class SnapshotRound
+        # @param root [String] the project tree
+        # @param state [String] the state home the shadow store lives in
+        # @param call [#call] runs the bash `true` through the sandbox
+        def initialize(root:, state:, call:)
+          FileUtils.mkdir_p(state)
+          @session = ::Lain::Session.new(root:)
+          slot = Agent::SnapshotSlot.new(root:, scope: :shadow_git, paths: Paths.new(env: { "HOME" => state }))
+          handler = Effect::Handler::Mock.new do |_effect, _|
+            call.call
+            Tool::Result.ok("")
+          end
+          @delivery = Agent::ToolDelivery.new(runner: Agent::ToolRunner.new(handler:), snapshots: slot)
+          @response = Response.new(content: [{ "type" => "tool_use", "id" => "bench", "name" => "bash",
+                                               "input" => { "command" => "true" } }], stop_reason: :tool_use)
+          @timeline = Dag::Factory.timeline(store: Dag::Factory.store)
+                                  .commit(role: :user, content: [{ "type" => "text", "text" => "go" }])
+                                  .commit(role: :assistant, content: @response.content)
+        end
+
+        def call = Sync { @delivery.perform(@response, timeline: @timeline, session: @session) { nil } }
+      end
+      private_constant :SnapshotRound
+
       # Runs `true` through {Exec::Sandboxed} under each profile the box can give.
       class Bash
         STALE_FENCE = "stale lain-fence: run bundle exec rake compile"
@@ -263,9 +412,11 @@ module Lain
         # @param scratch [String] absolute; the repository the workspace row may write, so its writable
         #   profile never covers the checkout
         # @param journal [#<<] where each call's sandbox record lands
-        def initialize(probe:, scratch:, journal: Channel::Null.instance)
+        # @param root [String, nil] the root the non-workspace profiles run in; the working directory when nil
+        def initialize(probe:, scratch:, journal: Channel::Null.instance, root: nil)
           @probe = probe
           @scratch = scratch
+          @root = root || Dir.pwd
           @journal = journal
         end
 
@@ -290,6 +441,18 @@ module Lain
           -> { sandboxed.call(command: "true", cwd:, env: {}, timeout: 10, confinement: request) }
         end
 
+        # A profile that can write the root makes the round stage, which would hide the skip a reader
+        # round is measured for.
+        #
+        # @param profile [String]
+        # @param path [String] absolute
+        # @raise [Error] when `path` is at, under or above a directory the profile writes
+        def check_unwritable!(profile, path)
+          writable = profiles(profile).for(request_for(profile)).write_dirs
+          clash = writable.find { Landing.under?(path, _1) || Landing.under?(_1, path) }
+          raise Error, "the #{profile} profile could write #{clash}, which holds #{path}" if clash
+        end
+
         private
 
         def reader_gap
@@ -310,7 +473,7 @@ module Lain
                                 workspace: profile == "workspace", fresh: Shell::Executable::Fresh.for_lineage([]))
         end
 
-        def root_for(profile) = profile == "workspace" ? @scratch : Dir.pwd
+        def root_for(profile) = profile == "workspace" ? @scratch : @root
 
         def request_for(profile)
           ruling = { "reader" => ALLOWED, "workspace" => JUDGED }[profile]
