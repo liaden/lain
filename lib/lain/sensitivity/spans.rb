@@ -58,12 +58,13 @@ module Lain
                 "span with start #{span.start} and length #{span.length}"
         end
 
-        Span.new(start: span.start, length: span.length)
+        # A Span is already frozen and valid; rebuilding it costs an array per span.
+        span.is_a?(Span) ? span : Span.new(start: span.start, length: span.length)
       end
 
       def self.merged(sorted)
-        sorted.inject([]) do |kept, span|
-          kept.last&.reaches?(span) ? [*kept[..-2], widened(kept.last, span)] : [*kept, span]
+        sorted.each_with_object([]) do |span, kept|
+          kept.last&.reaches?(span) ? kept[-1] = widened(kept.last, span) : kept << span
         end
       end
 

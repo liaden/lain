@@ -108,4 +108,19 @@ RSpec.describe Lain::Sensitivity::Spans do
       expect(whole.covers?(spans([3, 4]))).to be(false)
     end
   end
+
+  describe ".of at scale" do
+    it "merges 10,000 disjoint spans in linear array allocations" do
+      list = Array.new(10_000) { described_class::Span.new(start: _1 * 10, length: 5) }
+      GC.start
+      GC.disable
+      before = ObjectSpace.count_objects[:T_ARRAY]
+      merged = described_class.of(list)
+      arrays = ObjectSpace.count_objects[:T_ARRAY] - before
+      GC.enable
+
+      expect(merged.to_a.size).to eq(10_000)
+      expect(arrays).to be < 100
+    end
+  end
 end

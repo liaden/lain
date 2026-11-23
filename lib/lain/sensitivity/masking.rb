@@ -40,18 +40,20 @@ module Lain
           bytes = content.b
           view = Regions::View.of(bytes)
           spans = view.aligned(regions.is_a?(Spans) ? regions : Spans.ascending(regions))
-          cursor, parts = spans.inject([0, []]) { |carry, region| swap(bytes, carry, region, ordinals, view) }
-
-          (parts << bytes.byteslice(cursor..)).join.force_encoding(content.encoding)
+          pieces(bytes, spans, ordinals, view).join.force_encoding(content.encoding)
         end
 
         private
 
-        # The bytes kept since the previous region, then the placeholder that
-        # stands in for this one -- carrying forward the offset just past it.
-        def swap(bytes, (at, kept), region, ordinals, view)
-          [region.start + region.length,
-           kept + [bytes.byteslice(at, region.start - at), view.encode(format(Regions::PLACEHOLDER, ordinals.next))]]
+        # The bytes kept before each region, then the placeholder standing in
+        # for it, and the bytes after the last.
+        def pieces(bytes, spans, ordinals, view)
+          cursor = 0
+          spans.each_with_object([]) do |region, parts|
+            placeholder = view.encode(format(Regions::PLACEHOLDER, ordinals.next))
+            parts << bytes.byteslice(cursor, region.start - cursor) << placeholder
+            cursor = region.start + region.length
+          end << bytes.byteslice(cursor..)
         end
       end
     end

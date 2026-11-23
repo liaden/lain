@@ -396,7 +396,21 @@ module Lain
         end
 
         def outside(candidates, spans)
-          candidates.reject { |candidate| spans.any? { _1.cover?(candidate[:start]...candidate[:finish]) } }
+          begins, widest = widest_reach(spans)
+          candidates.reject do |candidate|
+            index = owner(begins, candidate[:start])
+            index >= 0 && widest[index].cover?(candidate[:start]...candidate[:finish])
+          end
+        end
+
+        # Of the spans beginning at or before a point, the one ending last is
+        # the only one that can cover a candidate starting there.
+        def widest_reach(spans)
+          sorted = spans.sort_by(&:begin)
+          widest = sorted.each_with_object([]) do |span, kept|
+            kept << (kept.last && kept.last.end > span.end ? kept.last : span)
+          end
+          [sorted.map(&:begin), widest]
         end
 
         def public_spans(matches_by_shape, blocks)
