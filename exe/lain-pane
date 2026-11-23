@@ -1,0 +1,74 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+# Usage: lain-pane SOCKET -- PROGRAM ARG...
+# Asks the spawner on SOCKET to run lain with ARG... on this terminal; on any failure before the
+# program starts it execs PROGRAM ARG... unchanged. It requires nothing of lain, so its own start stays cheap.
+require "io/console"
+require "json"
+require "socket"
+
+TIOCSCTTY = 0x540E
+TIOCNOTTY = 0x5422
+PID_WITHIN = 2
+
+socket, _, *fallback = ARGV
+abort "usage: lain-pane SOCKET -- PROGRAM ARG..." if socket.nil? || fallback.empty?
+
+# The spawner's program claims this terminal for a session of its own, and cannot while this
+# session still holds it; so the claim is given up before the terminal is sent. A fallback takes it back.
+def reclaim
+  $stdin.ioctl(TIOCSCTTY, 0)
+rescue SystemCallError, IOError
+  nil
+end
+
+def ask(sock, fallback)
+  tty = IO.for_fd(0, autoclose: false)
+  sock.write("#{JSON.generate(argv: fallback.drop(1), env: ENV.to_h, cwd: Dir.pwd)}\n")
+  begin
+    $stdin.ioctl(TIOCNOTTY)
+  rescue SystemCallError, IOError
+    nil
+  end
+  sock.send_io(tty)
+  sock.flush
+end
+
+def started?(sock, fallback)
+  ask(sock, fallback)
+  return false unless sock.wait_readable(PID_WITHIN)
+
+  line = sock.gets
+  line && JSON.parse(line).key?("pid")
+rescue JSON::ParserError, SystemCallError, IOError
+  false
+end
+
+# The program runs once a pid is heard, so nothing here may fall back to a second one.
+def exit_status(sock)
+  status = JSON.parse(sock.gets.to_s)["status"]
+  status.is_a?(Integer) ? status : 255
+rescue JSON::ParserError, SystemCallError, IOError
+  255
+end
+
+sock = begin
+  UNIXSocket.new(socket)
+rescue SystemCallError
+  nil
+end
+
+if sock
+  previous = Signal.trap("HUP", "IGNORE")
+  if started?(sock, fallback)
+    status = exit_status(sock)
+    Signal.trap("HUP", previous)
+    exit(status)
+  end
+  sock.close
+  reclaim
+  Signal.trap("HUP", previous)
+end
+
+exec(*fallback)
