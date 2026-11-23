@@ -280,6 +280,19 @@ RSpec.describe Lain::CLI::InputSocket do
     end
   end
 
+  describe "a pane that attaches after the prompt is set" do
+    subject(:socket) { described_class.new(rail:, path:, header:, tick: 10) }
+
+    before { socket.bind.start(nil) }
+
+    it "gets the prompt without waiting for a tick" do
+      publish(:you, "you> ")
+      client = connect
+      client.timeout = 1
+      expect(next_frame(client, of: "prompt")["text"]).to eq("you> ")
+    end
+  end
+
   describe "serving a pane" do
     before { socket.bind.start(nil) }
 
@@ -487,7 +500,9 @@ RSpec.describe Lain::CLI::InputSocket do
       client = connect
       next_frame(client, of: "context")
       socket.stop(goodbye: false)
-      expect([client.gets, File.exist?(path)]).to eq([nil, false])
+      lines = Enumerator.produce { client.gets }.take_while { |line| line }
+      expect([lines.map { |line| JSON.parse(line)["v"] }, File.exist?(path)])
+        .to(satisfy { |(kinds, present)| !kinds.include?("closed") && !present })
     end
   end
 

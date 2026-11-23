@@ -345,6 +345,14 @@ module Lain
         end
         deliver(client, Codec.dump({ "v" => "context", "commands" => asked(@commands, []).map(&:to_s) }))
         spawn { receiving(client) }
+        nudge
+      end
+
+      # A full queue already holds a pending publish, which is all a nudge asks for.
+      def nudge
+        @told&.push(:welcome, true)
+      rescue ThreadError
+        nil
       end
 
       def receiving(client)
