@@ -54,6 +54,8 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
                                                                      rules: Lain::Sensitivity::Rules.empty, root:),
                                   root:)
   end
+  # Well past every stamp, so no take is racy.
+  let(:later) { -> { Time.now + 3600 } }
 
   around do |example|
     Dir.mktmpdir("lain-history-literals") { |made| (@base = File.realpath(made)) and example.run }
@@ -449,7 +451,7 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
   end
 
   describe "a git command that fails" do
-    let(:literals) { described_class.new(root:, policy:, shell: spy) }
+    let(:literals) { described_class.new(root:, policy:, shell: spy, wall: later) }
 
     before do
       seed_deleted("ADMIN_PIN=48291377\n")
@@ -558,9 +560,11 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
 
   describe "the enumeration" do
     let(:spy) { HistoryLiteralsSpecSpy.new }
-    let(:literals) { described_class.new(root:, policy:, shell: spy) }
+    let(:literals) { described_class.new(root:, policy:, shell: spy, wall: later) }
 
-    before { seed_deleted("ADMIN_PIN=48291377\n") }
+    before do
+      seed_deleted("ADMIN_PIN=48291377\n")
+    end
 
     it "runs once while no ref moves" do
       2.times { literals.to_a }
@@ -574,6 +578,103 @@ RSpec.describe Lain::Sensitivity::HistoryLiterals, :seam do
 
       expect(literals.to_a).to include("fresh-commit-value")
       expect(spy.enumerations).to eq(2)
+    end
+  end
+
+  describe "the refs fingerprint" do
+    let(:spy) { HistoryLiteralsSpecSpy.new }
+    let(:literals) { described_class.new(root:, policy:, shell: spy, wall: later) }
+
+    it "reads no ref file and runs no git child while no ref moves" do
+      seed_deleted("ADMIN_PIN=48291377\n")
+      literals.to_a
+      read = []
+      allow(File).to(receive(:binread).and_wrap_original do |orig, path, *rest|
+        (read << path) && orig.call(path, *rest)
+      end)
+
+      literals.to_a
+
+      expect(read.grep(%r{/\.git/(HEAD|packed-refs|refs/)})).to eq([])
+      expect(spy.enumerations).to eq(1)
+    end
+
+    it "lists a value a commit on a new branch added" do
+      seed_deleted("ADMIN_PIN=48291377\n")
+      literals.to_a
+      git("checkout", "-q", "-b", "feature")
+      commit(".env", "FEATURE_PIN=branch-only-secret\n")
+
+      expect(literals.to_a).to include("branch-only-secret")
+    end
+
+    it "still lists a value its commit lost to an amend" do
+      seed_deleted("ADMIN_PIN=48291377\n")
+      commit(".npmrc", "TOKEN=amended-away-value\n")
+      literals.to_a
+      File.write(File.join(root, ".npmrc"), "TOKEN=amended-in-value\n")
+      git("commit", "-q", "-a", "--amend", "-m", "amend")
+
+      expect(literals.to_a).to include("amended-away-value", "amended-in-value")
+    end
+
+    it "lists a value on a packed ref's branch once the refs are packed and the branch is gone" do
+      seed_deleted("ADMIN_PIN=48291377\n")
+      literals.to_a
+      git("pack-refs", "--all")
+
+      expect(literals.to_a).to include("48291377")
+      expect(spy.enumerations).to eq(2)
+    end
+  end
+
+  describe described_class::Fingerprint do
+    let(:file) { File.join(@base, "ref") }
+    let(:dir) { File.join(@base, "refs") }
+
+    before do
+      FileUtils.mkdir_p(dir)
+      File.write(file, "a\n")
+    end
+
+    def taken(now: Time.now + 3600) = described_class.take([file, dir, File.join(@base, "absent")], now:)
+
+    it "is unchanged since an earlier take of an unmoved set" do
+      earlier = taken
+
+      expect(taken).to be_unchanged_since(earlier)
+    end
+
+    it "moves when a file is replaced by rename, though its bytes and size match" do
+      earlier = taken
+      File.write("#{file}.new", "a\n")
+      File.rename("#{file}.new", file)
+
+      expect(taken).not_to be_unchanged_since(earlier)
+    end
+
+    it "moves when a directory gains an entry" do
+      earlier = taken
+      File.write(File.join(dir, "added"), "x")
+
+      expect(taken).not_to be_unchanged_since(earlier)
+    end
+
+    it "moves when a path appears" do
+      earlier = taken
+      File.write(File.join(@base, "absent"), "x")
+
+      expect(taken).not_to be_unchanged_since(earlier)
+    end
+
+    it "vouches for nothing when the earlier take fell within a tick of a change" do
+      earlier = taken(now: File.stat(file).mtime + 0.001)
+
+      expect(taken).not_to be_unchanged_since(earlier)
+    end
+
+    it "is never unchanged since nothing" do
+      expect(taken).not_to be_unchanged_since(nil)
     end
   end
 
