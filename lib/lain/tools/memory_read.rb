@@ -16,7 +16,7 @@ module Lain
     # is refused rather than truncated. But this is the one whole-artifact tool
     # with NO narrower read -- no window on memory, no structural query, no
     # manifest tool -- so a ceiling here alone would be a dead end, and an
-    # asymmetry besides: {Tools::MemoryWrite} would accept a body this tool then
+    # asymmetry besides: `Tools::MemoryWrite` would accept a body this tool then
     # refused forever, the same read/write trap `edit_file`'s partial-read
     # refusal exists to close.
     #
@@ -68,6 +68,7 @@ module Lain
       def parallel_safe? = true
 
       def rerunnable? = true
+      def side_effects? = false
 
       protected
 

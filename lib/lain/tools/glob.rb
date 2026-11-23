@@ -135,6 +135,7 @@ module Lain
       def parallel_safe? = true
 
       def rerunnable? = true
+      def side_effects? = false
 
       protected
 

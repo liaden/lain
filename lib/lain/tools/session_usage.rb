@@ -107,6 +107,7 @@ module Lain
       # Audited: reads one {Lain::Usage} value off the run's {Agent::Accounting}
       # and formats it. No Session write-set mutation, no process-global state.
       def parallel_safe? = true
+      def side_effects? = false
 
       protected
 

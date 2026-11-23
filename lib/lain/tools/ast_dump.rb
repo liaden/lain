@@ -41,6 +41,7 @@ module Lain
       # per-call Structural::Matcher, documented stateless. No filesystem, no
       # Session, no process-global state.
       def parallel_safe? = true
+      def side_effects? = false
 
       protected
 

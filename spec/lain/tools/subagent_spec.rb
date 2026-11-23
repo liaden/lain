@@ -2353,6 +2353,33 @@ RSpec.describe Lain::Tools::Subagent do
     end
   end
 
+  describe "a child's before-effect hooks" do
+    let(:seen) { [] }
+    let(:hooks) { Lain::Agent::BeforeEffect.new([->(tool:, **) { seen << tool.name }]) }
+
+    it "runs the seam's hooks before a child's call with side effects, and not before a read" do
+      provider = mock(tool_response(["c1", "echo", { "text" => "x" }], ["c2", "read_file", {}]), text_response("done"))
+      tool = build_subagent(provider:, policy: spawn_policy(only: %i[echo read_file]), before_effect: hooks)
+
+      tool.call({ "prompt" => "go" }, invocation)
+
+      expect(seen).to eq(["echo"])
+    end
+
+    it "keeps the hooks in a grandchild, whose seam is a copy of the child's" do
+      provider = mock(tool_response(["c1", "subagent", { "prompt" => "on" }]),
+                      tool_response(["g1", "echo", { "text" => "x" }]), text_response("grandchild done"),
+                      text_response("child done"))
+      inner = build_subagent(provider:, policy: spawn_policy(only: %i[echo]), before_effect: hooks)
+      tool = build_subagent(provider:, policy: spawn_policy(only: []), before_effect: hooks,
+                            toolset: Lain::Toolset.new([EchoTool.new, inner]))
+
+      tool.call({ "prompt" => "start" }, invocation)
+
+      expect(seen).to eq(%w[subagent echo])
+    end
+  end
+
   describe "the spawn-depth ceiling" do
     it "refuses to spawn at depth 0, emitting no :spawn event and touching no Store" do
       tool = build_subagent(provider: mock(text_response("unused")), depth: 0)

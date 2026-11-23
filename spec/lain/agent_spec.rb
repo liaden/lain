@@ -3057,6 +3057,7 @@ RSpec.describe Lain::Agent do
         tool_middleware: Lain::Middleware::Stack.new,
         tool_observer: Lain::Agent::ToolRunner::Observer::Null.new,
         round_budget: Lain::Tool::RoundBudget.static,
+        before_effect: Lain::Agent::BeforeEffect::NONE,
         journal: RecordingChannel.new, spend: Lain::Budget::Shared.new }.fetch(keyword)
     end
 
@@ -3134,7 +3135,7 @@ RSpec.describe Lain::Agent do
     it "names the ingredient vocabulary its refusals are keyed on" do
       expect(described_class::KEYWORDS)
         .to contain_exactly(:provider, :model_middleware, :handler, :tool_middleware, :tool_observer, :round_budget,
-                            :journal, :spend)
+                            :before_effect, :journal, :spend)
       expect(described_class::OMITTED).to be_frozen
     end
 
@@ -3196,6 +3197,7 @@ RSpec.describe Lain::Agent do
       queue = [digest]
       tool.define_singleton_method(:take_answered_questions) { queue.slice!(0..) }
       tool.define_singleton_method(:parallel_safe?) { false }
+      tool.define_singleton_method(:side_effects?) { false }
       tool.define_singleton_method(:to_schema) do
         { "name" => "ask_human", "description" => "probe", "input_schema" => { "type" => "object" } }
       end

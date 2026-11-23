@@ -1774,7 +1774,7 @@ module Lain
       # {Ext::Event}/{Canonical} sense.
       Seam = Data.define(:provider, :context_factory, :parent, :tool_middleware, :journal, :telemetry, :display_channel,
                          :supervisor, :observer, :askers, :isolation, :escalation, :scope, :attachments, :middleware,
-                         :twins, :holder, :spend, :bounds, :command, :context_window) do
+                         :twins, :holder, :spend, :bounds, :command, :context_window, :before_effect) do
         # Everything after `tool_middleware` defaults to its Null object. The
         # first four stay required, so Data's own missing-keyword error is the
         # loud failure, unwritten.
@@ -1855,6 +1855,9 @@ module Lain
         # `command` is the skill line the holder is running, or a thunk answering it: a child's payments
         # are made under it, read when the child is built.
         #
+        # `before_effect` is the parent's {Agent::BeforeEffect}, carried so a child's call with
+        # side effects runs the same hooks the parent's does; a grandchild inherits it with the seam.
+        #
         # `bounds` is the holder's {Sensitivity::Bounds::Cell}, or a thunk
         # answering it: where each checkout leased to a child is taken as a
         # lease the holder may read. It is late-bound because the holder's tool
@@ -1870,7 +1873,7 @@ module Lain
                        attachments: Middleware::ResolveAttachments::Unwired,
                        middleware: NO_MIDDLEWARE, twins: Lineage::Twins::Null, holder: Holder::ROOT,
                        spend: Budget::Shared::Null, bounds: NO_BOUNDS, command: nil,
-                       context_window: ContextWindow.default)
+                       context_window: ContextWindow.default, before_effect: Agent::BeforeEffect::NONE)
           Seam.refuse_unbuildable(tool_middleware)
 
           super
@@ -2205,7 +2208,7 @@ module Lain
           Toolset.new(@toolset.map { |tool| tool.respond_to?(:descend) ? tool.descend(**over) : tool })
         end
 
-        # A fresh {Session} per spawn -- never {Session::Null} -- so a
+        # A fresh `Session` per spawn -- never `Session::Null` -- so a
         # write-capable child can satisfy EditFile's read-before-write contract
         # against its OWN read-set. Built here, not memoized: a builder is
         # reused across sibling spawns, so a memoized Session would leak one
@@ -2235,7 +2238,7 @@ module Lain
             model_middleware: child_budget,
             tool_middleware: child_stack(session.worker_env, allowed, chain, task:, cell:),
             session:, budget: @budget, accounting: child_accounting(chain, spend), pipeline_source:, mailbox:,
-            context_window: @seam.context_window,
+            context_window: @seam.context_window, before_effect: @seam.before_effect,
             display: CLI::JournalTee.new(@seam.telemetry, @seam.display_channel), display_as: @name
           )
         end

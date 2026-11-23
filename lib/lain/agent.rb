@@ -69,7 +69,7 @@ module Lain
     # members too, so their DEFAULTS come from that value; they stay named here
     # because the clash rule is keyed on what a caller actually wrote.
     INGREDIENTS = { model_caller: %i[provider model_middleware],
-                    tool_runner: %i[handler tool_middleware tool_observer round_budget],
+                    tool_runner: %i[handler tool_middleware tool_observer round_budget before_effect],
                     accounting: %i[journal spend] }.freeze
 
     # The ingredient vocabulary, flat. Public because {#initialize} splits its
@@ -159,6 +159,8 @@ module Lain
     #   rather than built from `handler:`/`tool_middleware:`/`tool_observer:`.
     # @param handler [Effect::Handler] the tool-effect interpreter a ToolRunner
     #   gets built over when `tool_runner:` is not written.
+    # @param before_effect [BeforeEffect] the hooks called after approval and before a call with
+    #   side effects runs
     # @param round_budget [Tool::RoundBudget] what a tool round's results may
     #   cost together, asked each round with this Agent's window and the turn
     #   that made the calls. Defaults to {Tool::RoundBudget::NONE}.
@@ -207,6 +209,7 @@ module Lain
     def initialize(toolset:, context:, instrumentation: OMITTED,
                    model_caller: OMITTED, provider: OMITTED,
                    tool_runner: OMITTED, handler: OMITTED, round_budget: OMITTED,
+                   before_effect: OMITTED,
                    accounting: OMITTED, spend: OMITTED, timeline: nil, workspace: Workspace.empty,
                    session: Session.new, mailbox: Context::Mailbox::Null,
                    budget: Budget.ceilings, progress: Progress::DEFAULT, request_override: RequestOverride::None,
@@ -223,7 +226,7 @@ module Lain
       @display = display
       @secrets = secrets
       wire_callers(request_override:, instrumentation:, instrumented:,
-                   model_caller:, tool_runner:, accounting:, spend:, provider:, handler:, round_budget:)
+                   model_caller:, tool_runner:, accounting:, spend:, provider:, handler:, round_budget:, before_effect:)
       seed_run_state(session, snapshot_slot, budget, progress, display:, display_as:)
     end
 
@@ -600,6 +603,7 @@ module Lain
                      toolset: @toolset,
                      observer: given.fetch(:tool_observer) { @instrumentation.tool_observer },
                      round_budget: given.fetch(:round_budget) { Tool::RoundBudget::NONE },
+                     before_effect: given.fetch(:before_effect) { BeforeEffect::NONE },
                      room: method(:round_room), head: -> { @timeline.head_digest }, journal: @instrumentation.journal,
                      display: @display, secrets: @secrets)
     end

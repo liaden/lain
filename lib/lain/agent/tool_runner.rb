@@ -218,8 +218,10 @@ module Lain
       def initialize(handler:, middleware: Middleware::Stack.new, toolset: Toolset.new,
                      observer: Observer::Null.new, round_budget: Tool::RoundBudget::NONE, room: ROOMLESS,
                      head: HEADLESS, journal: Channel::Null.instance, display: Channel::Null.instance,
-                     secrets: Sensitivity::Secrets::Source::DEFAULT, clock: RunClock::MONOTONIC)
+                     secrets: Sensitivity::Secrets::Source::DEFAULT, clock: RunClock::MONOTONIC,
+                     before_effect: BeforeEffect::NONE)
         @handler = handler
+        @before_effect = before_effect
         @middleware = middleware
         @toolset = toolset
         @observer = observer
@@ -447,7 +449,7 @@ module Lain
         uses.size > 1 && uses.all? { |tool_use| safety.fetch(tool_use.name) }
       end
 
-      # Gates 3 and 4 are constructor invariants of {Tool::ResultBlock.of}, which
+      # Gates 3 and 4 are constructor invariants of `Tool::ResultBlock.of`, which
       # states them. `to_h` hands the plain hash straight back, so delivery, the
       # commit and the observer see what they always did.
       #
@@ -488,7 +490,7 @@ module Lain
         )
         @middleware.call({ effect:, context:, tool: resolved(effect.name) }) do |env|
           answers.dispatching(tool_use)
-          env.merge(result: interpreted(effect.name, env))
+          env.merge(result: interpreted(effect.name, env, context))
         end.result
       end
 
@@ -505,10 +507,23 @@ module Lain
       # "Held at neither" means the env still carries the {Toolset::Unheld}
       # VALUE for this name -- equal by name, since each read mints its own --
       # and not merely some object that answers `held?` false.
-      def interpreted(name, env)
-        return @handler.call(env) if unchanged?(resolved(name), env.fetch(:tool))
+      def interpreted(name, env, context)
+        return Toolset::Unheld.new(name).call(nil) unless unchanged?(resolved(name), env.fetch(:tool))
 
-        Toolset::Unheld.new(name).call(nil)
+        hooked(env, context) || @handler.call(env)
+      end
+
+      # A hook that raises fails the call it guards: the tool does not run, and
+      # the model reads why instead of the turn unwinding.
+      def hooked(env, context)
+        tool = env.fetch(:tool)
+        tool.side_effects? ? run_hooks(tool, context) : nil
+      end
+
+      def run_hooks(tool, context)
+        @before_effect.call(tool:, context:)
+      rescue StandardError => e
+        Tool::Result.error("before-effect hook failed, so the call did not run: #{e.message}")
       end
 
       def unchanged?(fresh, judged) = fresh.equal?(judged) || (!fresh.held? && fresh == judged)

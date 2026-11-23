@@ -704,6 +704,8 @@ module Lain
 
       def description = DESCRIPTION
 
+      def side_effects? = false
+
       # Names what was removed without echoing its shape, so a reader of the record
       # cannot tell which pattern matched.
       WITHHELD = "[withheld]"

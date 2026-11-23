@@ -85,6 +85,7 @@ module Lain
       # documented stateless. No Session write, no chdir, no process-global
       # state.
       def parallel_safe? = true
+      def side_effects? = false
 
       protected
 

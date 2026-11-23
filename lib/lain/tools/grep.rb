@@ -75,7 +75,7 @@ module Lain
 
         # @param path [String] the resolved target, a file or a directory
         # @param walk_limit [Tool::Bounds::WalkLimit] the entries the walk may list
-        # @param include [Array<String>] ignored files to list anyway, as {FileWalk} reads them
+        # @param include [Array<String>] ignored files to list anyway, as `FileWalk` reads them
         # @param keep [#call] whether the walk would search a name at all, asked
         #   before its readability, so only a name it wanted can count as skipped
         # @return [Files]
@@ -93,7 +93,7 @@ module Lain
         # whose own directory is not UTF-8 still labels `ok.rb` as text.
         def self.relative(name, root) = name.delete_prefix("#{root}/")
 
-        # {FileWalk} lists what git would show, so a repository's ignored build
+        # `FileWalk` lists what git would show, so a repository's ignored build
         # output is never visited. Links come back and are filtered by what they
         # point at, so a link to a file is still searched as it always was.
         def self.walked(walk) = walk.map { |entry| utf8(entry) }.select { |entry| File.file?(entry) }
@@ -172,7 +172,7 @@ module Lain
         end
       end
 
-      # The tool's tier-1 claim in full: {FileWalk} and File.foreach, no boundary.
+      # The tool's tier-1 claim in full: `FileWalk` and File.foreach, no boundary.
       #
       # An {Enumerator} so the MAX_MATCHES+1 pull stops reading files the moment
       # it has enough, rather than scanning every file under `path` before
@@ -258,6 +258,7 @@ module Lain
       def parallel_safe? = true
 
       def rerunnable? = true
+      def side_effects? = false
 
       protected
 

@@ -183,6 +183,72 @@ RSpec.describe Lain::Agent::ToolRunner do
     end
   end
 
+  describe "before-effect hooks" do
+    let(:log) { [] }
+    let(:hook) { ->(tool:, **) { log << "hook:#{tool.name}" } }
+    let(:handler) do
+      Lain::Effect::Handler::Mock.new do |effect, _context|
+        log << "handler:#{effect.name}"
+        Lain::Tool::Result.ok("ran")
+      end
+    end
+    let(:toolset) { Lain::Toolset.new(%w[write_file bash read_file ast_search].map { |name| ToolRegistry.build(name) }) }
+
+    def runner(middleware: Lain::Middleware::Stack.new)
+      described_class.new(handler:, middleware:, toolset:,
+                          before_effect: Lain::Agent::BeforeEffect.new([hook]))
+    end
+
+    it "runs the hook before the handler for an approved writing call" do
+      runner.run(tool_response(["tu_1", "write_file", {}]), context: nil)
+
+      expect(log).to eq(%w[hook:write_file handler:write_file])
+    end
+
+    it "runs no hook for a call the stack refused" do
+      refusing = Class.new(Lain::Middleware::Base) do
+        def call(env) = env.merge(result: Lain::Tool::Result.error("refused"))
+      end.new
+
+      runner(middleware: Lain::Middleware::Stack.new.use(refusing)).run(tool_response(["tu_1", "bash", {}]),
+                                                                        context: nil)
+
+      expect(log).to be_empty
+    end
+
+    it "runs no hook for tools with no side effects" do
+      runner.run(tool_response(["tu_1", "read_file", {}], ["tu_2", "ast_search", {}]), context: nil)
+
+      expect(log).to eq(%w[handler:read_file handler:ast_search])
+    end
+
+    it "runs no hook for a call whose tool the set withdrew after approval" do
+      live = Lain::Toolset.new([ToolRegistry.build("write_file")])
+      withdrawable = SimpleDelegator.new(live)
+      withdrawable.define_singleton_method(:withdraw!) { @withdrawn = true }
+      withdrawable.define_singleton_method(:fetch) { |name| @withdrawn ? raise(Lain::Toolset::UnknownTool, name) : live.fetch(name) }
+      withdrawing = Class.new(Lain::Middleware::Base) do
+        define_method(:call) { |env, &app| withdrawable.withdraw! && downstream(env, &app) }
+      end.new
+
+      described_class.new(handler:, toolset: withdrawable, middleware: Lain::Middleware::Stack.new.use(withdrawing),
+                          before_effect: Lain::Agent::BeforeEffect.new([hook]))
+                     .run(tool_response(["tu_1", "write_file", {}]), context: nil)
+
+      expect(log).to be_empty
+    end
+
+    it "answers a hook's failure as a failed call" do
+      failing = ->(**) { raise "sync failed" }
+      failing_runner = described_class.new(handler:, toolset:, before_effect: Lain::Agent::BeforeEffect.new([failing]))
+
+      block = failing_runner.run(tool_response(["tu_1", "write_file", {}]), context: nil).first
+
+      expect(block["is_error"]).to be(true)
+      expect(log).to be_empty
+    end
+  end
+
   it "names the tool whose output was not text in the refusal it answers with" do
     handler = Lain::Effect::Handler::Mock.new do |_effect, _context|
       Lain::Tool::Result.ok("caf\xE9".b)
@@ -404,6 +470,7 @@ RSpec.describe Lain::Agent::ToolRunner do
       end
       # The runner reads a turn's concurrency off the tools its toolset holds.
       fake.define_singleton_method(:parallel_safe?) { false }
+      fake.define_singleton_method(:side_effects?) { false }
       fake
     end
 

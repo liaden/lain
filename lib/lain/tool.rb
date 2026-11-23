@@ -127,6 +127,13 @@ module Lain
       false
     end
 
+    # Whether a call can change anything outside lain's own memory. Defaults to
+    # true, so a tool that says nothing is treated as one that does; only an
+    # audited reader answers false (spec/lain/tools/side_effects_spec.rb).
+    def side_effects?
+      true
+    end
+
     # Whether this is a tool a `Toolset` holds: always, for a real one.
     # `Toolset::Unheld` is the stand-in that answers no, so the approval gate
     # can decline to ask a human about a call that will run nothing.

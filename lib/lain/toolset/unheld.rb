@@ -18,6 +18,7 @@ module Lain
 
       def parallel_safe? = false
       def rerunnable? = false
+      def side_effects? = false
       def requires_approval? = false
       def held? = false
 
