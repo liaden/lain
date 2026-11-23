@@ -234,7 +234,7 @@ RSpec.describe ConformanceCorpus do
         expect(regenerated).to eq(described_class.read(described_class.path(name)))
       end
 
-      it "re-derives every #{name} vector from the Ruby implementation" do
+      it "re-derives every #{name} vector from the current implementation" do
         expect(described_class.underived(name)).to be_empty
       end
     end

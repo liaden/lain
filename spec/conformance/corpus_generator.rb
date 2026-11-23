@@ -693,8 +693,8 @@ module ConformanceCorpus
     def derive(input)
       token = MaskingInputs.unhex(input.fetch("token"))
       token.force_encoding(Encoding::UTF_8) unless input.fetch("binary")
-      entropy = Lain::Sensitivity::Entropy
-      { "shannon" => Tagged.bits(entropy.shannon(token)), "alphabet_run" => entropy.send(:alphabet_run?, token) }
+      entropy = Lain::Ext::Entropy
+      { "shannon" => Tagged.bits(entropy.shannon(token)), "alphabet_run" => entropy.alphabet_run?(token) }
     end
   end
 

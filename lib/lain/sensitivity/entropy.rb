@@ -54,10 +54,6 @@ module Lain
         [/\A(?:models|datasets|spaces)--(?<name>[\w-]+)\z/, /\Asnapshots\z/, /\A[0-9a-f]{40}\z/].freeze,
         [/\Asnapshots\z/, /\A[0-9a-f]{40}\z/].freeze
       ].freeze
-      # An alphabet literal (base64's, a charset table) is maximally varied and
-      # wholly predictable; no generator emits 16 consecutive code points. The
-      # runs must cover most of the token, or a key glued onto one goes too.
-      ALPHABET_RUN = 16
       HEX = /\A[0-9a-fA-F]+\z/
       # md5, sha1, sha256 and sha512 widths, printed lowercase by every tool
       # that prints one. The trade: a generated hex key at those widths with no
@@ -81,9 +77,9 @@ module Lain
 
       class << self
         def high?(token)
-          return token.length >= HEX_LENGTH && shannon(token) >= HEX_ENTROPY if token.match?(HEX)
+          return token.length >= HEX_LENGTH && Ext::Entropy.shannon(token) >= HEX_ENTROPY if token.match?(HEX)
 
-          token.length >= BASE64_LENGTH && token.match?(BASE64) && shannon(token) >= BASE64_ENTROPY &&
+          token.length >= BASE64_LENGTH && token.match?(BASE64) && Ext::Entropy.shannon(token) >= BASE64_ENTROPY &&
             !predictable_path?(token)
         end
 
@@ -91,23 +87,15 @@ module Lain
         # @param hinted [Boolean] true when a name beside the token hints at a
         #   secret, which is the evidence a digest-width run otherwise lacks
         def predictable?(token, hinted: false)
-          predictable_path?(token) || alphabet_run?(token) || (!hinted && token.match?(DIGEST_HEX))
+          predictable_path?(token) || Ext::Entropy.alphabet_run?(token) || (!hinted && token.match?(DIGEST_HEX))
         end
 
         def hinted?(token)
           return false if token.include?("/") || predictable?(token, hinted: true)
-          return shannon(token) >= HINTED_HEX_ENTROPY if token.match?(HINTED_HEX)
+          return Ext::Entropy.shannon(token) >= HINTED_HEX_ENTROPY if token.match?(HINTED_HEX)
 
           token.length >= HINTED_LENGTH && HINTED_CLASSES.all? { token.match?(_1) } &&
-            shannon(token) >= HINTED_ENTROPY
-        end
-
-        # Bits per character. `each_char` over BINARY bytes is deliberate: the
-        # measure is over the symbols as they were written, and re-decoding to
-        # find codepoints is the thing that raises.
-        def shannon(token)
-          length = token.length.to_f
-          -token.each_char.tally.each_value.sum { |count| (count / length) * Math.log2(count / length) }
+            Ext::Entropy.shannon(token) >= HINTED_ENTROPY
         end
 
         private
@@ -154,13 +142,6 @@ module Lain
           pieces = segment.split(/[-_.]/).reject(&:empty?)
 
           segment.match?(REAL_WORD) && pieces.all? { _1.match?(CAMEL_PIECE) }
-        end
-
-        def alphabet_run?(token)
-          covered = token.each_byte.chunk_while { |before, after| after == before + 1 }
-                         .sum { _1.size >= ALPHABET_RUN ? _1.size : 0 }
-
-          covered * 2 > token.bytesize
         end
       end
     end

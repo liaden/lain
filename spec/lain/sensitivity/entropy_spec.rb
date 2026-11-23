@@ -26,6 +26,10 @@ RSpec.describe Lain::Sensitivity::Entropy do
       expect(described_class.high?("HuggingFaceTB/SmolLM2-360M-Instruct-GGUF")).to be(false)
     end
 
+    it "rejects a long base64-legal run whose entropy is below the floor" do
+      expect(described_class.high?("ghghghghghghghghghghghghgh")).to be(false)
+    end
+
     it "still flags a prefixed token" do
       expect(described_class.high?("ghp_6Fz9qL2vX8mN4pR7tY1wK3sD5hJ0aB2cE4gI")).to be(true)
     end
@@ -46,6 +50,10 @@ RSpec.describe Lain::Sensitivity::Entropy do
     it "still flags a random mixed-case segment after a slash" do
       expect(described_class.high?("keys/Qm9vT2s3x9ZpL1aBc7Yw2RtUv5NhGd8E")).to be(true)
     end
+  end
+
+  it "leaves the entropy measures to the extension" do
+    expect(described_class.methods + described_class.private_methods).not_to include(:shannon, :alphabet_run?)
   end
 
   describe ".hinted?" do
@@ -200,16 +208,6 @@ RSpec.describe Lain::Sensitivity::Entropy do
       it "is false for a temporary directory name with #{what}" do
         expect(described_class.predictable?(path)).to be(false)
       end
-    end
-  end
-
-  describe ".shannon" do
-    it "is 0 for one repeated character" do
-      expect(described_class.shannon("aaaa")).to eq(0.0)
-    end
-
-    it "is 2 bits for four equally common characters" do
-      expect(described_class.shannon("abcd")).to eq(2.0)
     end
   end
 end

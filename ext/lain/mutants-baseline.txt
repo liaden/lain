@@ -1,5 +1,6 @@
-# cargo-mutants sweep over the address-computing and graph modules, the GVL release helper, the BM25 index and the TOML table.
+# cargo-mutants sweep over the address-computing and graph modules, the GVL release helper, the BM25 index, the TOML table and the entropy measures.
 # toml_table's 4 misses are permanent: they are ffi code that cargo test never compiles, and the Ruby specs kill them.
+# entropy's 11 misses are permanent: 9 are its `ffi` module, which the Ruby specs kill, and 2 are equivalent (byte_width's 1 and the ASCII arm of utf8_width, both met by a clamp or the fallback arm).
 # Columns: file caught unviable timeout missed. The gate compares each file's killed (caught plus
 # timeout), unviable and missed counts to its row, so a caught mutant that turns unviable fails it.
 # Sweep: cargo mutants -p lain --file <each file> -j 4 --timeout 300
@@ -11,4 +12,5 @@ ext/lain/src/graph.rs 19 6 0 0
 ext/lain/src/nogvl.rs 33 28 0 0
 ext/lain/src/bm25.rs 37 1 0 0
 ext/lain/src/toml_table.rs 2 2 0 4
-total 194 59 2 4
+ext/lain/src/entropy.rs 67 0 0 11
+total 261 59 2 15

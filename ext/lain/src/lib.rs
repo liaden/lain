@@ -43,6 +43,7 @@ mod corpus;
 mod dag;
 #[deny(clippy::missing_docs_in_private_items)]
 mod digest;
+mod entropy;
 mod event;
 mod fuzzy;
 #[deny(clippy::missing_docs_in_private_items)]
@@ -2781,6 +2782,9 @@ mod ffi {
 
         // Every secret shape in 1 compiled set, so a file is scanned in 1 crossing.
         crate::regions::ffi::define(ruby, ext, lain_error)?;
+
+        // Shannon entropy and the alphabet-run test, over a token's own symbols.
+        crate::entropy::ffi::define(ruby, ext, lain_error)?;
 
         // A generic TOML parse, by the parser cargo reads a manifest with.
         crate::toml_table::ffi::define(ruby, ext, lain_error)?;
