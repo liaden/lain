@@ -165,6 +165,17 @@ was worth removing.
   - the confinement probe tests the bwrap argv and binary the sandbox runs, and bootsnap stops caching
     tmpdir copies (83G at the audit);
   - a Lima template that runs lain on the Mac with every Linux confinement layer.
+- **Bottleneck fixes (2026-11-23).** `[planned]` `planning/specs/bottleneck-fixes-2026-11.md`, 28 cards,
+  from `planning/bottleneck-solutions-research-2026-11.md`:
+  - the snapshot stage only before a call that can write, a mask list and secret set rebuilt only when
+    a stamp moved, and 1 secret scan per output;
+  - launch: the prompt sent on attach, initial heaps, a blake3 daemon digest, a parallel probe, and a
+    history scan that remembers which blobs are sensitive, never their values;
+  - cockpit panes forked from a warm spawner, with exec as the fallback;
+  - the journal fsynced per turn and before a tool with side effects, typed reads that skip other
+    lines unparsed, and a `.wal` emptied once a turn is durable;
+  - a turn's bash calls judged at once and run in order;
+  - masking decisions, entropy and recurrences in Rust, behind a frozen corpus of today's answers.
 - **M0–M1 — housekeeping + the spine.** `[built]` `Canonical`, content-addressed `Timeline`
   (meet-semilattice property-tested), provider-neutral value objects, `Tool`/`Toolset`,
   `Effect`/`Handler`/`Middleware`, `Provider`, pure `Context#render`,
