@@ -1,0 +1,39 @@
+./spec/lain/approval/judge/facts_spec.rb Lain::Approval::Judge::Facts names a system stage by the file that runs	failed 3 of 3
+./spec/lain/approval/judge/facts_spec.rb Lain::Approval::Judge::Facts reads the parse the gate carried rather than parsing the command again	failed 3 of 3
+./spec/lain/approval/judge/facts_spec.rb Lain::Approval::Judge::Facts what the sandbox hides from a call tells the judge history is masked in the output, beside the stages it already names	failed 3 of 3
+./spec/lain/approval/judged_spec.rb Lain::Approval::Judged a call whose paths cannot be named, routed to the judge parks without a judge call when a program word is not a literal, a builtin runs code, or a loop repeats	failed 3 of 3
+./spec/lain/approval/judged_spec.rb Lain::Approval::Judged the structured bar, decided before the judge is asked builds a bash call's facts from the parse the stack carried, so the call is parsed once	failed 3 of 3
+./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summarizer_name and #summarizer_model follows an ollama-cloud chat to ollama-cloud	failed 3 of 3
+./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summary_oracle after the human types /model builds a --summarizer-provider arm on that arm, with none of the chat's runner options	failed 3 of 3
+./spec/lain/cli/daemon_command_spec.rb Lain::CLI::DaemonCommand against the real daemon starts a daemon with ensure, and says its pid	failed 1 of 3
+./spec/lain/cli/epic_driver/factory_spec.rb Lain::CLI::EpicDriver::Factory testing the anchored tip before the implementation gate stops a slow suite when the run is interrupted, leaving no child and no worktree	failed 3 of 3
+./spec/lain/cli/gateway_spec.rb Lain::CLI::Gateway logs under the state home when no log is named	failed 3 of 3
+./spec/lain/cli/wiring/secret_oracle_spec.rb Lain::CLI::Wiring::SecretOracle carries no runner options of an ollama-cloud chat to the local judge, even on the same model name	failed 3 of 3
+./spec/lain/daemon/spawner/pane_listener_spec.rb Lain::Daemon::Spawner::PaneListener a stalled client is answered with an error and hung up on at its deadline	failed 1 of 3
+./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call granted its build tool's ports connects on the granted port, and is refused and recorded on another	failed 3 of 3
+./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call granted its build tool's ports runs under the workspace profile, with no ports, once a file in the project was written	failed 3 of 3
+./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call that reaches the network records a connect with its address, port and rc	failed 3 of 3
+./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call that reaches the network records a refused connect under the reader profile with its errno	failed 3 of 3
+./spec/lain/frontend/focus_spec.rb Lain::Frontend::Focus against a real tmux server counts a window with another pane selected as focused only while a client is attached	failed 3 of 3
+./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#read refuses a symlink, though it points at a good file	failed 3 of 3
+./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#write refuses a symlink at its path, naming the path, and writes nothing through it	failed 3 of 3
+./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#write removes this port's leftover temporary files, and no other port's	failed 3 of 3
+./spec/lain/isolation/checkout_spec.rb Lain::Isolation::Checkout#run in a partial clone, reading a blob it never fetched says so whatever language git speaks, naming the clone's own remote	failed 3 of 3
+./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding answers the whole call when an interrupt that raises nothing lands mid-call	failed 3 of 3
+./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding raises the interrupt's error rather than returning a partial answer	failed 3 of 3
+./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding stops soon after its thread is killed, rather than at the end of the call	failed 3 of 3
+./spec/lain/seams/workspace_profile_spec.rb A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped	failed 3 of 3
+./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver classes a program no user can replace as :system	failed 3 of 3
+./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver classes a system file reached through a symlink in the project as :project	failed 3 of 3
+./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver follows a user symlink into rm, listing every link, and classes it :user	failed 3 of 3
+./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver reads a relative link from the link's real directory, leaving `..` for the kernel	failed 3 of 3
+./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver wrappers resolves under env -i against the default search path	failed 3 of 3
+./spec/lain/shell/executable/run_files_spec.rb Lain::Shell::Executable::RunFiles an interpreter that reads its program from stdin does not mistake a version query for stdin	failed 3 of 3
+./spec/lain/workspace_run_spec.rb bin/workspace-run prints a connect the profile refused from the exec record	failed 3 of 3
+./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected hud() returns the published line, and nothing when none has been published	failed 1 of 3
+./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected says once that an attached runtime is too old to place windows	failed 1 of 3
+./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected warns once when :LainStart is typed before anything attached	failed 1 of 3
+floor:daemon	70
+floor:ruby	38104
+floor:rust	805
+sockets/tests/sockets.rs tcp_fast_open_cannot_reach_a_port_no_grant_names	failed 3 of 3
