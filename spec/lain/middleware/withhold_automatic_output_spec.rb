@@ -352,6 +352,48 @@ RSpec.describe Lain::Middleware::WithholdAutomaticOutput do
       end
     end
 
+    # Scenario: an automatically allowed output is scanned once
+    it "runs the detector once over an output nothing spilled" do
+      output = "exit status: 0\n--- stdout ---\nall quiet\n"
+      seen = []
+      allow(Lain::Sensitivity::Regions).to receive(:detect).and_wrap_original do |original, text, **options|
+        seen << text
+        original.call(text, **options)
+      end
+
+      automatic("echo quiet", "all quiet\n")
+
+      expect(seen.count { _1 == output }).to eq(1)
+    end
+
+    it "runs the detector once over a printed key, and withholds it" do
+      token = integrity("a")
+      File.write(File.join(@tmp, "notes.txt"), "#{token}\n")
+      seen = []
+      allow(Lain::Sensitivity::Regions).to receive(:detect).and_wrap_original do |original, text, **options|
+        seen << text
+        original.call(text, **options)
+      end
+
+      result = automatic("cat notes.txt", "#{token}\n")
+
+      expect(seen.count { _1.include?(token) }).to eq(1)
+      expect(result.content).not_to include(token)
+    end
+
+    # A spill's head and its whole are 2 texts one command is scanned over; the second keeps its own regions.
+    it "answers a different text from that text's own regions, not the last one's" do
+      token = integrity("a")
+      scan = nil
+      redact.call({ effect: call_of("cat notes.txt"), context: session }) do |inner|
+        scan = inner.fetch(:output_scan)
+        inner.merge(result: Lain::Tool::Result.ok("quiet\n"))
+      end
+
+      expect(scan.call("quiet\n").regions).to be_empty
+      expect(scan.call("#{token}\n").regions.size).to eq(1)
+    end
+
     it "withholds the same token in a file the policy does not call checksums" do
       token = integrity("a")
       File.write(File.join(@tmp, "notes.txt"), "#{token}\n")

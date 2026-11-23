@@ -308,9 +308,16 @@ module Lain
       def output_mask(input, released) = ::Lain::Sensitivity::TextMask.new(secrets: input.literals, released:)
 
       # Built on first use and kept, so the spill and the head share one parse lookup and one read of the secrets.
+      # The last text's regions are kept too: when nothing spilled, the withhold scan and the mask read the same
+      # text, and the second is answered from the first by content.
       def output_scan(env, effect)
         input = nil
-        ->(text) { (input ||= output_input(env[:context], effect)).over(text) }
+        last = nil
+        lambda do |text|
+          return last if last && last.text == text
+
+          last = (input ||= output_input(env[:context], effect)).over(text).detecting
+        end
       end
 
       def output_input(context, effect)

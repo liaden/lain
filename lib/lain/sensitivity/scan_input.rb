@@ -2,7 +2,9 @@
 
 module Lain
   class Sensitivity
-    ScanInput = Data.define(:text, :checksums, :literals)
+    ScanInput = Data.define(:text, :checksums, :literals, :detected) do
+      def initialize(text:, checksums:, literals:, detected: nil) = super
+    end
 
     # What one command's output is scanned as, so the mask the model is shown
     # and the scan that withholds an automatically approved command's output
@@ -14,6 +16,8 @@ module Lain
     #   @return [Boolean] whether every file the command reads is one the policy calls checksums
     # @!attribute [r] literals
     #   @return [Array<String>] the known values masked wherever they recur
+    # @!attribute [r] detected
+    #   @return [Array<Regions::Region>, nil] the regions already found in the text, when {#detecting} ran
     class ScanInput
       # They print the environment, and a value there may sit behind a checksum word.
       ENVIRONMENT_PRINTERS = %w[env printenv].freeze
@@ -46,11 +50,14 @@ module Lain
       private_class_method :lockfiles?, :prints_environment?
 
       # @return [Array<Regions::Region>]
-      def regions = Regions.detect(text, checksums:)
+      def regions = detected || Regions.detect(text, checksums:)
+
+      # @return [ScanInput] this scan carrying its regions, so asking again does not detect again
+      def detecting = with(detected: regions)
 
       # @param output [String]
       # @return [ScanInput] this scan over another text
-      def over(output) = with(text: output)
+      def over(output) = with(text: output, detected: nil)
     end
   end
 end

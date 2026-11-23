@@ -81,6 +81,12 @@ RSpec.describe Lain::Sensitivity::ScanInput do
   end
 
   describe "#over" do
+    it "carries no regions found in the text it replaces" do
+      held = described_class.new(text: "a", checksums: false, literals: [].freeze, detected: [:found])
+
+      expect(held.over("b").detected).to be_nil
+    end
+
     it "is the same scan over another text" do
       expect(of("cat package-lock.json").over("x\n")).to have_attributes(text: "x\n", checksums: true)
     end
