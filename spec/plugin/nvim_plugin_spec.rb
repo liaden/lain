@@ -5,7 +5,6 @@ require "fileutils"
 require "json"
 require "neovim"
 require "socket"
-require "timeout"
 require "tmpdir"
 
 # The in-repo nvim plugin (plugin/nvim) -- thin, public API only. It owns
@@ -81,7 +80,39 @@ RSpec.describe "lain nvim plugin", :nvim do
             "XDG_STATE_HOME" => fixture_default(state, @state_home),
             "HOME" => fixture_default(home, @home) }
     @pid = spawn(env, *args, chdir: @project, out: File::NULL, err: File::NULL)
-    Timeout.timeout(10) { sleep 0.02 until File.exist?(@control) }
+    wait_for_boot(@control)
+  end
+
+  # The socket FILE appears at bind, before listen, so existence is not
+  # readiness: only a completed connect is. A `pid` that has already exited
+  # fails now, naming the exit, rather than after the deadline.
+  def wait_for_listen(path, timeout: 10, pid: nil, &on_reaped)
+    deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + timeout
+    begin
+      UNIXSocket.new(path).close
+    rescue Errno::ENOENT, Errno::ECONNREFUSED
+      raise_if_exited(pid, path, &on_reaped)
+      raise "nvim control socket #{path} never accepted a connection within #{timeout}s" if
+        Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+      sleep 0.02
+      retry
+    end
+  end
+
+  def raise_if_exited(pid, path)
+    return if pid.nil?
+
+    _, status = Process.wait2(pid, Process::WNOHANG)
+    return unless status
+
+    yield if block_given?
+    raise "nvim exited (#{status}) before listening on #{path}"
+  end
+
+  # The wait reaps a dead child, so @pid is dropped for teardown to skip.
+  def wait_for_boot(path)
+    wait_for_listen(path, pid: @pid) { @pid = nil }
   end
 
   def fixture_default(value, fallback) = value == :fixture ? fallback : value
@@ -160,6 +191,48 @@ RSpec.describe "lain nvim plugin", :nvim do
 
   def layout_views
     %w[lain://journal lain://timeline lain://inbox lain://request]
+  end
+
+  describe "waiting for the control socket" do
+    # bind makes the file appear; only listen makes a connect succeed.
+    def bind_only(path)
+      Socket.new(:UNIX, :STREAM).tap { |sock| sock.bind(Addrinfo.unix(path)) }
+    end
+
+    it "returns only after a listen that lags the bind arrives" do
+      sock = bind_only(@control)
+      listening = false
+      lagging = Thread.new do
+        sleep 0.4
+        listening = true
+        sock.listen(1)
+      end
+      wait_for_listen(@control, timeout: 5)
+      expect(listening).to be(true)
+    ensure
+      lagging&.join
+      sock&.close
+    end
+
+    it "names the exit when nvim dies before it listens, without waiting out the deadline" do
+      @pid = spawn("sh", "-c", "exit 3")
+      expect { wait_for_listen(@control, timeout: 5, pid: @pid) }
+        .to raise_error(RuntimeError, /exited.*#{Regexp.escape(@control)}|#{Regexp.escape(@control)}.*exited/)
+    end
+
+    it "leaves teardown clean after the boot wait reaped a dead nvim" do
+      @pid = spawn("sh", "-c", "exit 3")
+      expect { wait_for_boot(@control) }.to raise_error(RuntimeError, /exited/)
+      expect { stop_nvim }.not_to raise_error
+    end
+
+    it "fails naming the socket when nothing ever listens" do
+      sock = bind_only(@control)
+      expect { wait_for_listen(@control, timeout: 0.3) }
+        .to raise_error(RuntimeError, /#{Regexp.escape(@control)}/)
+    ensure
+      sock&.close
+    end
   end
 
   describe "setup() owns the conventions" do
@@ -767,7 +840,7 @@ RSpec.describe "lain nvim plugin", :nvim do
       env = { "XDG_RUNTIME_DIR" => @runtime_dir, "XDG_STATE_HOME" => @state_home, "HOME" => @home }
       @pid = spawn(env, argv.first, "--headless", "-u", init, "-i", "NONE", *argv.drop(1),
                    chdir: @project, out: File::NULL, err: File::NULL)
-      Timeout.timeout(10) { sleep 0.02 until File.exist?(@control) }
+      wait_for_boot(@control)
     end
 
     it "defines :LainStart under an init that replaces runtimepath" do

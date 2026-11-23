@@ -32,9 +32,6 @@
 ./spec/lain/shell/executable/resolver_spec.rb Lain::Shell::Executable::Resolver wrappers resolves under env -i against the default search path	failed 3 of 3
 ./spec/lain/shell/executable/run_files_spec.rb Lain::Shell::Executable::RunFiles an interpreter that reads its program from stdin does not mistake a version query for stdin	failed 3 of 3
 ./spec/lain/workspace_run_spec.rb bin/workspace-run prints a connect the profile refused from the exec record	failed 3 of 3
-./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected hud() returns the published line, and nothing when none has been published	failed 1 of 3
-./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected says once that an attached runtime is too old to place windows	failed 1 of 3
-./spec/plugin/nvim_plugin_spec.rb lain nvim plugin public API only, protocol stays injected warns once when :LainStart is typed before anything attached	failed 1 of 3
 floor:daemon	70
 floor:ruby	38104
 floor:rust	805
