@@ -1,7 +1,7 @@
 //! Headless runs, each started from a closed set of kinds. The daemon builds every argv itself and
 //! refuses whatever it cannot check, so no caller starts a process of its own writing.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::ffi::OsString;
 use std::fs::File;
 use std::future::Future;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::process::{ExitStatus, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use lain_rpc::RpcError;
@@ -39,6 +39,12 @@ const SYNC_BOUND: Duration = Duration::from_secs(30);
 /// How long a start waits on the spawner's answer: a warmed fork answers in milliseconds and a
 /// boot in about a second, so a spawner silent past this is wedged and the run starts by exec.
 pub(crate) const SPAWN_BOUND: Duration = Duration::from_secs(10);
+
+/// Spawners started within this long of each other, at most [`MAX_BOOTS`], so one that dies at boot
+/// does not loop.
+pub(crate) const RESTART_WINDOW: Duration = Duration::from_secs(60);
+
+const MAX_BOOTS: usize = 3;
 
 /// How often a run whose spawner went before reporting it is checked for, since nothing reports
 /// its exit once its parent is gone.
@@ -300,9 +306,12 @@ pub(crate) struct Supervisor {
     next: AtomicU64,
     /// `None` for a daemon that runs nothing, which has nothing to show.
     sync: Option<Arc<Coalescer>>,
-    /// The warmed spawner runs are forked from; a run starts by exec while there is none up. The
-    /// first caller's run starts it, so a daemon that never runs anything never boots one.
+    /// The warmed spawner runs are forked from, started with the daemon and replaced when it exits
+    /// or goes stale; a run starts by exec while there is none up.
     spawner: Mutex<Option<Arc<Spawner>>>,
+    /// When each recent spawner started, which bounds how fast a failing one is replaced.
+    boots: Mutex<VecDeque<Instant>>,
+    me: Weak<Supervisor>,
 }
 
 impl Supervisor {
@@ -311,13 +320,20 @@ impl Supervisor {
         let sync = settings.clone().map(|settings| {
             Coalescer::new(SYNC_EVERY, move || herdr_sync(settings.clone(), SYNC_BOUND))
         });
-        Arc::new(Self {
+        Arc::new_cyclic(|me| Self {
             settings,
             runs: Mutex::new(Vec::new()),
             next: AtomicU64::new(1),
             sync,
             spawner: Mutex::new(None),
+            boots: Mutex::new(VecDeque::new()),
+            me: me.clone(),
         })
+    }
+
+    /// Boots the spawner now, so the first run forks from a warm one. Must run inside the runtime.
+    pub(crate) fn warm(&self) {
+        self.restart_spawner(None);
     }
 
     fn sync(&self) {
@@ -440,8 +456,35 @@ impl Supervisor {
             _ => false,
         };
         if same {
-            *current = self.settings.as_ref().and_then(start_spawner);
+            *current = self.boot_spawner();
         }
+    }
+
+    /// Starts a spawner unless [`MAX_BOOTS`] already started within [`RESTART_WINDOW`]; runs then
+    /// start by exec until the window passes and a later start tries again. A start that fails
+    /// still counts against the window.
+    fn boot_spawner(&self) -> Option<Arc<Spawner>> {
+        let settings = self.settings.as_ref()?;
+        {
+            let mut boots = self.boots.lock().unwrap_or_else(PoisonError::into_inner);
+            let now = Instant::now();
+            boots.retain(|boot| now.duration_since(*boot) < RESTART_WINDOW);
+            if boots.len() >= MAX_BOOTS {
+                tracing::warn!("the spawner keeps failing, so runs start by exec for now");
+                return None;
+            }
+            boots.push_back(now);
+        }
+        let spawner = start_spawner(settings)?;
+        let me = self.me.clone();
+        let watched = Arc::clone(&spawner);
+        tokio::spawn(async move {
+            watched.retired().await;
+            if let Some(supervisor) = me.upgrade() {
+                supervisor.restart_spawner(Some(&watched));
+            }
+        });
+        Some(spawner)
     }
 
     /// `None` when the run must start by exec. A stale spawner is replaced and the request
@@ -1665,6 +1708,134 @@ exec sleep 25
             Arc::ptr_eq(&fresh, &current),
             "a second start booted another spawner"
         );
+    }
+
+    /// Notes each spawner it boots as `spawner.<n>`; the first one acts as `$FIRST` says and every
+    /// later one waits quietly.
+    fn booting(first: &str) -> String {
+        format!(
+            r#"#!/bin/sh
+if [ "$3" = spawner ]; then
+  n=$(ls "$PROBE" | grep -c '^spawner\.')
+  echo $$ > "$PROBE/spawner.$n"
+  if [ "$n" = 0 ]; then {first}; fi
+  exec sleep 25
+fi
+exit 0
+"#
+        )
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_spawner_is_up_before_any_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = booting("exec sleep 25");
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), &script)));
+        supervisor.warm();
+        let probe = dir.path().join("probe");
+
+        let spawner = pid_in(&probe.join("spawner.0"));
+        let _spawner = KillOnDrop(Some(spawner));
+
+        assert!(alive(spawner));
+        assert!(supervisor.list().is_empty());
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_exited_spawner_is_replaced() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = booting(r#"while [ ! -e "$PROBE/die" ]; do sleep 0.02; done; exit 0"#);
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), &script)));
+        supervisor.warm();
+        let probe = dir.path().join("probe");
+        let first = pid_in(&probe.join("spawner.0"));
+        let _first = KillOnDrop(Some(first));
+
+        std::fs::write(probe.join("die"), "").expect("let it exit");
+
+        let fresh = pid_in(&probe.join("spawner.1"));
+        let _fresh = KillOnDrop(Some(fresh));
+        assert!(alive(fresh));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn an_unsolicited_stale_line_starts_a_fresh_spawner_and_leaves_the_old_one_running() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = booting(r#"echo '{"stale":true}' >&0; exec sleep 25"#);
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), &script)));
+        supervisor.warm();
+        let probe = dir.path().join("probe");
+        let stale = pid_in(&probe.join("spawner.0"));
+        let _stale = KillOnDrop(Some(stale));
+
+        let fresh = pid_in(&probe.join("spawner.1"));
+        let _fresh = KillOnDrop(Some(fresh));
+
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        assert!(alive(stale), "the stale spawner was killed while it drains");
+        assert!(alive(fresh));
+    }
+
+    /// Reads a request, then writes the stale line with the request still unanswered; the stale
+    /// spawner stays alive. Every later spawner forks each request in a session of its own.
+    const STALE_ON_REQUEST: &str = r#"#!/bin/sh
+if [ "$3" = spawner ]; then
+  n=$(ls "$PROBE" | grep -c '^spawner\.')
+  echo $$ > "$PROBE/spawner.$n"
+  if [ "$n" = 0 ]; then IFS= read -r line; echo '{"stale":true}' >&0; exec sleep 25; fi
+  while IFS= read -r line; do
+    setsid sleep 25 & echo $! >> "$PROBE/forked"; echo "{\"pid\":$!}" >&0
+  done
+  exit 0
+fi
+exit 0
+"#;
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_request_pending_when_the_stale_line_arrives_is_retried_on_the_fresh_spawner() {
+        let (_dir, supervisor, probe, chores) = spawning(STALE_ON_REQUEST);
+        supervisor.warm();
+        let stale = pid_in(&probe.join("spawner.0"));
+        let _stale = KillOnDrop(Some(stale));
+
+        let run = supervisor.start(chores).await.expect("start");
+        let _run = KillOnDrop(Some(run.pid));
+
+        let fresh = pid_in(&probe.join("spawner.1"));
+        let _fresh = KillOnDrop(Some(fresh));
+        let forked = std::fs::read_to_string(probe.join("forked")).unwrap_or_default();
+        assert_eq!(run.pid.to_string(), forked.trim(), "the run was not forked");
+        assert!(alive(stale), "the stale spawner was killed");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_spawner_that_dies_at_boot_is_started_at_most_3_times_in_the_restart_window() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let script = "#!/bin/sh\n[ \"$3\" = spawner ] || exit 0\nn=$(ls \"$PROBE\" | grep -c '^spawner\\.')\necho $$ > \"$PROBE/spawner.$n\"\nexit 0\n";
+        let supervisor = Supervisor::new(Some(settings_for(dir.path(), script)));
+        supervisor.warm();
+        let probe = dir.path().join("probe");
+        let boots = || {
+            std::fs::read_dir(&probe)
+                .expect("probe")
+                .filter(|entry| {
+                    entry.as_ref().is_ok_and(|entry| {
+                        entry.file_name().to_string_lossy().starts_with("spawner.")
+                    })
+                })
+                .count()
+        };
+
+        crate::periodic::tests::until("3 boots", || boots() == 3).await;
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(3, boots(), "a 4th spawner started inside the window");
+
+        tokio::time::advance(RESTART_WINDOW + Duration::from_secs(1)).await;
+        supervisor.restart_spawner(None);
+        crate::periodic::tests::until("a boot after the window", || boots() == 4).await;
     }
 
     #[tokio::test(start_paused = true)]

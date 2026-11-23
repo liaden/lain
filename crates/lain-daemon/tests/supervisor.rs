@@ -1496,17 +1496,8 @@ impl Daemon {
         }
     }
 
-    /// Boots the spawner the way a daemon does, with a first run, which starts by exec and is
-    /// stopped at once, its probe notes cleared; the pid of the spawner it started.
+    /// The pid of the spawner the daemon booted at its start, once it has, before any run.
     async fn warmed(&mut self) -> u32 {
-        let project = self.project();
-        let (error, first) = self.start(bare("chores", &project)).await;
-        assert_eq!(Value::Nil, error);
-        self.stop(&first).await;
-        assert!(self.forked().is_empty(), "the first run was forked");
-        for noted in ["argv", "env", "cwd", "grandchild", "registered"] {
-            let _ = std::fs::remove_file(self.probe().join(noted));
-        }
         self.spawner(1).await
     }
 
@@ -1710,23 +1701,18 @@ async fn a_forked_runs_exit_status_reaches_run_list_through_the_spawner() {
 }
 
 #[tokio::test]
-async fn when_the_spawner_dies_the_next_run_starts_by_exec_and_a_new_spawner_starts() {
+async fn when_the_spawner_dies_a_new_one_starts_at_once_and_the_next_run_forks_from_it() {
     let mut daemon = forking("exit3", &[]).await;
     let first = daemon.warmed().await;
     kill(first);
     let project = daemon.project();
 
-    let (error, by_exec) = daemon.start(bare("chores", &project)).await;
-    assert_eq!(Value::Nil, error);
-    let row = daemon.ended(&field(&by_exec, "id")).await;
-    assert_eq!(Value::from(3), field(&row, "status"));
-    assert!(daemon.forked().is_empty(), "a dead spawner forked a run");
-
     let second = daemon.spawner(2).await;
     assert_ne!(first, second);
     let (error, forked) = daemon.start(bare("chores", &project)).await;
     assert_eq!(Value::Nil, error);
-    daemon.ended(&field(&forked, "id")).await;
+    let row = daemon.ended(&field(&forked, "id")).await;
+    assert_eq!(Value::from(3), field(&row, "status"));
     assert_eq!(vec![pid_of(&forked)], daemon.forked());
 }
 

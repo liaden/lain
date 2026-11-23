@@ -52,6 +52,8 @@ struct Shared {
     /// The spawner answers requests in order, so the oldest waiting request owns the next answer.
     waiting: VecDeque<oneshot::Sender<Spawned>>,
     exits: HashMap<u32, watch::Sender<Option<i32>>>,
+    /// Set once it will fork nothing more: it hung up or reported itself stale.
+    retired: watch::Sender<bool>,
 }
 
 pub(crate) struct Spawner {
@@ -59,6 +61,7 @@ pub(crate) struct Spawner {
     shared: Arc<Mutex<Shared>>,
     /// Kills the spawner through the task that reaps it, so a pid already reaped is never signalled.
     kill: Mutex<Option<oneshot::Sender<()>>>,
+    retired: watch::Receiver<bool>,
 }
 
 impl Spawner {
@@ -88,10 +91,12 @@ impl Spawner {
             .spawn()?;
         ours.set_nonblocking(true)?;
         let (reader, writer) = UnixStream::from_std(ours)?.into_split();
+        let (retire, retired) = watch::channel(false);
         let shared = Arc::new(Mutex::new(Shared {
             open: true,
             waiting: VecDeque::new(),
             exits: HashMap::new(),
+            retired: retire,
         }));
         tokio::spawn(read(reader, Arc::clone(&shared)));
         let (kill, killed) = oneshot::channel::<()>();
@@ -115,6 +120,7 @@ impl Spawner {
             writer: tokio::sync::Mutex::new(writer),
             shared,
             kill: Mutex::new(Some(kill)),
+            retired,
         }))
     }
 
@@ -124,6 +130,12 @@ impl Spawner {
 
     pub(crate) fn is_open(&self) -> bool {
         self.shared().open
+    }
+
+    /// Resolves once the spawner hung up or said it is stale. A stale one is still draining its
+    /// runs, so this is the cue to start a fresh one and not to kill this one.
+    pub(crate) async fn retired(&self) {
+        let _ = self.retired.clone().wait_for(|retired| *retired).await;
     }
 
     /// 1 request, written whole: the spawner reaps only between whole lines. One not answered
@@ -216,6 +228,7 @@ async fn read(reader: OwnedReadHalf, shared: Arc<Mutex<Shared>>) {
     shared.open = false;
     shared.waiting.clear();
     shared.exits.clear();
+    shared.retired.send_replace(true);
 }
 
 fn answered(shared: &Mutex<Shared>, line: &str) {
@@ -253,6 +266,7 @@ fn answered(shared: &Mutex<Shared>, line: &str) {
         }
         Answer { stale: true, .. } => {
             shared.open = false;
+            shared.retired.send_replace(true);
             for waiting in shared.waiting.drain(..) {
                 let _ = waiting.send(Spawned::Stale);
             }

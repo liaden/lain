@@ -656,12 +656,7 @@ async fn serve_unix(args: Args) -> ExitCode {
             relay::Worker::spawn(listen, devices, args.trace.as_deref(), registry, events)
         },
     );
-    let runs = Supervisor::new(args.run.map(|(ruby, lain, runs)| supervisor::Settings {
-        ruby,
-        lain,
-        runs,
-        env: run_env(std::env::vars_os()),
-    }));
+    let runs = start_supervisor(args.run, run_env(std::env::vars_os()));
     spawn_review_polls(&runs, &registry, args.poll_user, periodic::POLL_EVERY);
     let handler = Daemon {
         build_digest: args.build_digest,
@@ -680,6 +675,22 @@ async fn serve_unix(args: Args) -> ExitCode {
         tracing::warn!(%error, "could not remove the socket");
     }
     code
+}
+
+/// The runs' supervisor, with its spawner already booting so the first run forks from a warm one.
+/// Must run inside the runtime.
+fn start_supervisor(
+    run: Option<(PathBuf, PathBuf, PathBuf)>,
+    env: Vec<(std::ffi::OsString, std::ffi::OsString)>,
+) -> Arc<Supervisor> {
+    let runs = Supervisor::new(run.map(|(ruby, lain, runs)| supervisor::Settings {
+        ruby,
+        lain,
+        runs,
+        env,
+    }));
+    runs.warm();
+    runs
 }
 
 /// The review polls' timer, which reads the registered roots afresh each `every`; `None` for a
@@ -1149,6 +1160,46 @@ mod tests {
             uid: None,
             pid: Some(std::process::id()),
         }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_daemons_supervisor_has_a_spawner_running_before_any_run() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ruby = dir.path().join("ruby");
+        std::fs::write(
+            &ruby,
+            "#!/bin/sh\n[ \"$3\" = spawner ] && echo $$ > \"$PROBE/spawner\" && exec sleep 25\nexit 0\n",
+        )
+        .expect("script");
+        std::fs::set_permissions(&ruby, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .expect("chmod");
+        std::fs::create_dir(dir.path().join("probe")).expect("probe");
+        let env = vec![
+            ("PATH".into(), std::env::var_os("PATH").unwrap_or_default()),
+            ("PROBE".into(), dir.path().join("probe").into_os_string()),
+        ];
+
+        let runs = start_supervisor(
+            Some((ruby, dir.path().join("lain"), dir.path().join("runs"))),
+            env,
+        );
+
+        let mut pid = None;
+        for _ in 0..500 {
+            pid = std::fs::read_to_string(dir.path().join("probe/spawner"))
+                .ok()
+                .and_then(|text| text.trim().parse::<i32>().ok());
+            if pid.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let pid = pid.expect("a spawner started with no run asked for");
+        assert!(runs.list().is_empty());
+        let _ = nix::sys::signal::killpg(
+            nix::unistd::Pid::from_raw(pid),
+            nix::sys::signal::Signal::SIGKILL,
+        );
     }
 
     #[tokio::test(start_paused = true)]

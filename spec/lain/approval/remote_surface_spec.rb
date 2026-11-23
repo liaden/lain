@@ -222,9 +222,16 @@ module RemoteSurfaceSpecSupport
       client.call("daemon.info").tap { client.stop }
     end
 
-    # The relay worker is the daemon's only child.
+    # The daemon also keeps a warm spawner, so the worker is the child run as `<daemon> relay ...`.
     def worker_pid
-      Dir[File.join("/proc", pid.to_s, "task", "*", "children")].flat_map { File.read(_1).split }.map(&:to_i).sole
+      Dir[File.join("/proc", pid.to_s, "task", "*", "children")].flat_map { File.read(_1).split }.map(&:to_i)
+                                                                .select { relay_worker?(_1) }.sole
+    end
+
+    def relay_worker?(child)
+      File.binread("/proc/#{child}/cmdline").split("\0")[1] == "relay"
+    rescue Errno::ENOENT, Errno::ESRCH
+      false
     end
   end
 
