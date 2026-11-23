@@ -6,7 +6,6 @@
 ./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summarizer_name and #summarizer_model follows an ollama-cloud chat to ollama-cloud	failed 3 of 3
 ./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summary_oracle after the human types /model builds a --summarizer-provider arm on that arm, with none of the chat's runner options	failed 3 of 3
 ./spec/lain/cli/daemon_command_spec.rb Lain::CLI::DaemonCommand against the real daemon lists each registered session and each run in status	flaky: ENOTEMPTY in teardown, failed 1 hook run at seed 55650, passed alone, same error on base 036e5b37 (seed 55650, load 5.38)
-./spec/lain/cli/daemon_command_spec.rb Lain::CLI::DaemonCommand against the real daemon starts a daemon with ensure, and says its pid	failed 1 of 3
 ./spec/lain/cli/epic_driver/factory_spec.rb Lain::CLI::EpicDriver::Factory testing the anchored tip before the implementation gate stops a slow suite when the run is interrupted, leaving no child and no worktree	failed 3 of 3
 ./spec/lain/cli/gateway_spec.rb Lain::CLI::Gateway logs under the state home when no log is named	failed 3 of 3
 ./spec/lain/cli/input_socket_spec.rb Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started	flaky: 5 threads over a limit of 4, failed 1 hook run at seed 57836, 1 of 20 loaded on the fixes, 0 of 20 loaded on 036e5b37 (seed 57836, load 4.93)

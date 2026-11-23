@@ -190,27 +190,71 @@ RSpec.describe Lain::CLI::DaemonCommand do
 
     def run_id = lines("run", "epic", "research-x").first[/\A\S+/]
 
-    after do
-      daemon = Sync { LainDaemon.pid_at(Lain::Paths.new) }
+    # The daemon is stopped, and waited for, before the state home goes: it keeps its spawner warm
+    # and logs under that home until it exits.
+    after { stop_daemon }
+
+    def stop_runs
       Sync do
         client = Lain::Daemon.attached(paths: Lain::Paths.new, env: ENV)
         client&.call("run.list")&.select { _1["status"].nil? }&.each { client.call("run.stop", [{ "id" => _1["id"] }]) }
         client&.stop
       end
-      (stragglers - [daemon]).each { |pid| kill(pid) }
+    end
+
+    def stop_daemon
+      stop_runs
+      begin
+        Sync { LainDaemon.reap(Lain::Paths.new) }
+      ensure
+        stragglers.each { |pid| kill(pid) }
+      end
+      raise LainDaemon::Leaked, "still running when its state home is removed:\n#{state_users.join}" if state_users.any?
+    end
+
+    it "names a daemon that ignores the stop, and leaves nothing of it running" do
+      stubborn = Process.spawn("sh", "-c", "trap '' TERM; while :; do sleep 1; done", @state)
+      Process.detach(stubborn)
+      allow(LainDaemon).to receive(:pid_at).and_return(stubborn)
+      allow(Lain::Daemon).to receive(:stop)
+
+      expect { stop_daemon }.to raise_error(LainDaemon::Leaked, /pid #{stubborn}\b/)
+      expect(state_users).to be_empty
+    ensure
+      kill(stubborn) if stubborn
+    end
+
+    it "leaves its state home quiet once the daemon has been stopped" do
+      start("ensure")
+      pids = stragglers
+      Sync { Lain::Daemon.stop(paths: Lain::Paths.new) }
+      pids.each { |pid| LainDaemon.running_after_budget?(pid) }
+      settled = state_listing
+      sleep 1
+
+      expect(state_users).to be_empty
+      expect(state_listing).to eq(settled)
     end
 
     def kill(pid)
       Process.kill("KILL", pid)
+      LainDaemon.running_after_budget?(pid)
     rescue Errno::ESRCH
       nil
     end
 
-    # A forced restart leaves a run the new daemon cannot list, so it is found by its stand-in's path.
-    # The daemon's own argv names that path too, so the caller leaves it out for the reap.
     def stragglers
-      IO.popen(["ps", "-eo", "pid=,args="], &:read).lines.select { _1.include?(@state) }.map(&:to_i)
+      state_users.map(&:to_i)
     end
+
+    def state_listing
+      Dir.glob("**/*", File::FNM_DOTMATCH, base: @state).sort.to_h do |name|
+        stat = File.lstat(File.join(@state, name))
+        [name, [stat.size, stat.mtime]]
+      end
+    end
+
+    def state_users = IO.popen(["ps", "-eo", "pid=,args="], &:read).lines.select { _1.include?(@state) }
 
     it "starts a daemon with ensure, and says its pid" do
       expect(start("ensure")).to match(/daemon pid \d+/)
