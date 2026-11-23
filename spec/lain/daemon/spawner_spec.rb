@@ -249,7 +249,8 @@ RSpec.describe Lain::Daemon::Spawner, :seam do
       expect(Dir.exist?(File.join(home, "run", "lain", "daemon"))).to be(false)
     end
 
-    # Ruby's own eventfd and epoll, the socket, the self-pipe, and stdio: no run's log, no journal.
+    # Ruby's own eventfd and epoll, the daemon's socket, the pane socket, the self-pipe, and
+    # stdio: no run's log, no journal.
     it "holds only its own fds after a run" do
       skip "reads /proc, which only Linux has" unless File.directory?("/proc/self/fd")
       home = File.join(@dir, "home")
@@ -261,8 +262,8 @@ RSpec.describe Lain::Daemon::Spawner, :seam do
         File.readlink("/proc/#{@pids.first}/fd/#{fd}").sub(/:\[\d+\]\z/, "")
       end
       expect(held.first(3)).to eq([File::NULL, File::NULL, File.join(@dir, "spawner.err")])
-      expect(held.drop(3)).to contain_exactly("anon_inode:[eventfd]", "anon_inode:[eventpoll]", "socket", "pipe",
-                                              "pipe")
+      expect(held.drop(3)).to contain_exactly("anon_inode:[eventfd]", "anon_inode:[eventpoll]", "socket", "socket",
+                                              "pipe", "pipe")
     end
   end
 

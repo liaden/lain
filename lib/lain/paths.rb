@@ -246,6 +246,10 @@ module Lain
     # @return [String] where the per-user daemon's socket and trace live
     def daemon_dir = File.join(runtime_dir, "daemon")
 
+    # Creates nothing: the spawner binds it, 0600, and unlinks it when it stops forking.
+    # @return [String] where a pane client asks the warm spawner for its program
+    def spawner_socket = File.join(runtime_dir, "spawner.sock")
+
     # The same recipe docs/devs/debugging-nvim.md gives for the nvim socket path, so a
     # project resolves to one identifier everywhere: `sha256(realpath)[0,12]`.
     #

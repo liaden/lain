@@ -61,6 +61,13 @@ RSpec.describe Lain::Paths do
     it "uses XDG_RUNTIME_DIR, suffixed with /lain" do
       expect(paths("XDG_RUNTIME_DIR" => "/run/user/1000").runtime_dir).to eq("/run/user/1000/lain")
     end
+
+    it "names the spawner's pane socket under runtime_dir, and creates nothing" do
+      Dir.mktmpdir do |tmp|
+        expect(paths("XDG_RUNTIME_DIR" => tmp).spawner_socket).to eq(File.join(tmp, "lain", "spawner.sock"))
+        expect(Dir.children(tmp)).to be_empty
+      end
+    end
   end
 
   describe "the suite's own config home" do
