@@ -105,7 +105,7 @@ repos:
 
       - id: cargo-test
         name: cargo test
-        entry: cargo test
+        entry: sh -c 'if [ -n "$LAIN_KNOWN_FAILURES" ]; then exec bin/known-failures hook rust; fi; exec cargo test'
         language: system
         types: [rust]
         exclude: ^apps/
@@ -171,7 +171,7 @@ repos:
       # from before a protocol change reds them for a reason the commit lacks.
       - id: ruby-checks
         name: ruby checks (rubocop + rspec, parallel)
-        entry: bundle exec rake compile daemon:build check
+        entry: sh -c 'if [ -n "$LAIN_KNOWN_FAILURES" ]; then exec bin/known-failures hook ruby; fi; exec bundle exec rake compile daemon:build check'
         language: system
         types_or: [ruby, rust]
         # The phone app's Rust never reaches this suite: the app never touches Ruby, and its own unit
@@ -185,9 +185,18 @@ repos:
       # missing binary a failure here.
       - id: daemon-tier
         name: daemon tier (:core and :daemon specs)
-        entry: env LAIN_REQUIRE_BINARIES=1 sh -c 'bundle exec rake compile daemon:build && bundle exec rspec --tag core --tag daemon'
+        entry: env LAIN_REQUIRE_BINARIES=1 sh -c 'if [ -n "$LAIN_KNOWN_FAILURES" ]; then exec bin/known-failures hook daemon; fi; bundle exec rake compile daemon:build && bundle exec rspec --tag core --tag daemon'
         language: system
         files: ^(crates/lain-(rpc|daemon|wire)/|Cargo\.(toml|lock)$|Rakefile$|lib/lain/(core|daemon)(\.rb|/)|lib/lain/approval/remote_surface\.rb|lib/lain/paths/shipped\.rb|spec/lain/(daemon_spec\.rb|daemon/|core/|approval/remote_surface_spec\.rb)|spec/support/(lain_daemon|tags)\.rb)
+        pass_filenames: false
+
+      # A commit touching only the ledger fires none of the test hooks, and an entry with no reason
+      # that reaches HEAD stops being an addition, so its reasons are checked here.
+      - id: known-failures-ledger
+        name: known-failures ledger reasons
+        entry: sh -c 'if [ -n "$LAIN_KNOWN_FAILURES" ]; then exec bin/known-failures hook ledger; fi'
+        language: system
+        files: ^spec/vm_known_failures\.txt$
         pass_filenames: false
 
       # The doc defects RuboCop cannot reach, because they are properties of the
