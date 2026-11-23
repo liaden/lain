@@ -123,7 +123,7 @@ module Lain
       def self.build_digest_of(binary:, ruby:, lain:, keyed: false)
         return unless File.file?(binary)
 
-        Digest::SHA256.hexdigest([Digest::SHA256.file(binary).hexdigest, ruby, lain, KEEP.source, RUN_ENV.source,
+        Digest::SHA256.hexdigest([Ext.blake3_hex(File.binread(binary)), ruby, lain, KEEP.source, RUN_ENV.source,
                                   keyed].inspect)
       end
 

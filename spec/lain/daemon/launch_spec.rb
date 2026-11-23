@@ -419,6 +419,23 @@ RSpec.describe Lain::Daemon::Launch do
       expect(launch(binary: built("built twice", name: "other")).build_digest).not_to eq(launch.build_digest)
     end
 
+    it "changes when 1 byte of the binary changes" do
+      before = launch.build_digest
+      File.write(binary, "built oncf")
+
+      expect(launch.build_digest).not_to eq(before)
+    end
+
+    it "hashes the binary's bytes with blake3 rather than streaming them through SHA-256" do
+      allow(Digest::SHA256).to receive(:file).and_call_original
+      allow(Lain::Ext).to receive(:blake3_hex).and_call_original
+
+      launch.build_digest
+
+      expect(Lain::Ext).to have_received(:blake3_hex).with("built once")
+      expect(Digest::SHA256).not_to have_received(:file)
+    end
+
     it "changes with the ruby and the lain" do
       digests = [launch, launch(ruby: "/opt/ruby"), launch(lain: "/elsewhere/exe/lain")].map(&:build_digest)
 
