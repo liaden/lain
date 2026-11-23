@@ -1,9 +1,9 @@
 {
-  "about": "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation answered at the commit named here, so a change in either implementation shows up as a mismatch. The other 4 files are frozen fixtures whose Ruby is gone (see ruby_oracle_retired); only their digests hold them still. They cannot find a bug both implementations share.",
+  "about": "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation answered at the commit named here, so a change in either implementation shows up as a mismatch. The detect, recurrences and entropy vectors record the masking path's answers before it moved to Rust; their hex holds spaces between 4-byte groups, and a detect input's fill (at, chunk, times) splices chunk repeated times into its bytes at byte offset at. The other 4 files are frozen fixtures whose Ruby is gone (see ruby_oracle_retired); only their digests hold them still. They cannot find a bug both implementations share.",
   "seed": 20261019,
-  "sha": "b541b418f3108c5b963404e42984ea484b5f627e",
-  "ruby": "4.0.6",
-  "json": "3.0.2",
+  "sha": "c1cf290e85cbd99be0b4ddfc8887b1274cb2f957",
+  "ruby": "4.0.10",
+  "json": "3.1.0",
   "default_external": "UTF-8",
   "files": {
     "canonical.ndjson": {
@@ -33,6 +33,18 @@
     "toml.ndjson": {
       "blake3": "blake3:a13d350d552b5ad70e76bf7c30f7acaba05d3047f03b929f197ed229841cebca",
       "records": 720
+    },
+    "detect.ndjson": {
+      "blake3": "blake3:fab2730ef0430853eb8eaadd60c46e19734160340eb1e8ae501daa4bfbb6394c",
+      "records": 1097
+    },
+    "recurrences.ndjson": {
+      "blake3": "blake3:f4300903e4b404c114190a099b7f73cfa3ca706c9e661621589c1cbace69bb19",
+      "records": 140
+    },
+    "entropy.ndjson": {
+      "blake3": "blake3:7a28d840e7910c32aff1ca5da6cc2f1659fc24639a7489462ae10d30d46b7a2f",
+      "records": 600
     }
   },
   "ruby_oracle_retired": {

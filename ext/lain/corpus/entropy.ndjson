@@ -1,0 +1,600 @@
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70","binary":false},"output":{"shannon":"4010000000000000","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70","binary":true},"output":{"shannon":"4010000000000000","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38396162 63646566","binary":false},"output":{"shannon":"4010000000000000","alphabet_run":false}}
+{"input":{"token":"30313233 34353637 38396162 63646566","binary":true},"output":{"shannon":"4010000000000000","alphabet_run":false}}
+{"input":{"token":"78616263 64656679 7a7a7a","binary":false},"output":{"shannon":"400837a471594f11","alphabet_run":false}}
+{"input":{"token":"78616263 64656679 7a7a7a","binary":true},"output":{"shannon":"400837a471594f11","alphabet_run":false}}
+{"input":{"token":"41424344 45464748 494a4b4c 31","binary":false},"output":{"shannon":"400d9a802391e234","alphabet_run":false}}
+{"input":{"token":"41424344 45464748 494a4b4c 31","binary":true},"output":{"shannon":"400d9a802391e234","alphabet_run":false}}
+{"input":{"token":"61616161 61616161 61616161 61616161","binary":false},"output":{"shannon":"8000000000000000","alphabet_run":false}}
+{"input":{"token":"61616161 61616161 61616161 61616161","binary":true},"output":{"shannon":"8000000000000000","alphabet_run":false}}
+{"input":{"token":"61626162 61626162 61626162 61626162 61626162 61626162","binary":false},"output":{"shannon":"3ff0000000000000","alphabet_run":false}}
+{"input":{"token":"61626162 61626162 61626162 61626162 61626162 61626162","binary":true},"output":{"shannon":"3ff0000000000000","alphabet_run":false}}
+{"input":{"token":"","binary":false},"output":{"shannon":"0000000000000000","alphabet_run":false}}
+{"input":{"token":"","binary":true},"output":{"shannon":"0000000000000000","alphabet_run":false}}
+{"input":{"token":"c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9","binary":false},"output":{"shannon":"8000000000000000","alphabet_run":false}}
+{"input":{"token":"c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9 c3a9c3a9","binary":true},"output":{"shannon":"3ff0000000000000","alphabet_run":false}}
+{"input":{"token":"e697a5e6 9cace8aa 9ee697a5 e69cace8 aa9ee697 a5e69cac e8aa9e","binary":false},"output":{"shannon":"3ff95c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"e697a5e6 9cace8aa 9ee697a5 e69cace8 aa9ee697 a5e69cac e8aa9e","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"636166c3 a9787878 78787878 787878","binary":false},"output":{"shannon":"3ff6f3e9cc8c8c93","alphabet_run":false}}
+{"input":{"token":"636166c3 a9787878 78787878 787878","binary":true},"output":{"shannon":"3ffb138ba9f0d50a","alphabet_run":false}}
+{"input":{"token":"f09fa680 f09fa680 f09fa680 f09fa680","binary":false},"output":{"shannon":"8000000000000000","alphabet_run":false}}
+{"input":{"token":"f09fa680 f09fa680 f09fa680 f09fa680","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"616263c3 a9646566 c3a96768 69c3a96a 6b6c","binary":false},"output":{"shannon":"400cb81c7e1fef36","alphabet_run":false}}
+{"input":{"token":"616263c3 a9646566 c3a96768 69c3a96a 6b6c","binary":true},"output":{"shannon":"400d22015dafc881","alphabet_run":false}}
+{"input":{"token":"c3b1616e 64c3ba2d c3b1616e 64c3ba2d c3b1616e 64c3ba","binary":false},"output":{"shannon":"4004920fefa665f9","alphabet_run":false}}
+{"input":{"token":"c3b1616e 64c3ba2d c3b1616e 64c3ba2d c3b1616e 64c3ba","binary":true},"output":{"shannon":"4005d42a3ddbefd8","alphabet_run":false}}
+{"input":{"token":"c3a96162 63646566 6768696a 6b6c6d6e 6f7071","binary":false},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":true}}
+{"input":{"token":"c3a96162 63646566 6768696a 6b6c6d6e 6f7071","binary":true},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71c3a9","binary":false},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71c3a9","binary":true},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac6162 63646566 6768696a 6b6c6d6e 6f7071","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac6162 63646566 6768696a 6b6c6d6e 6f7071","binary":true},"output":{"shannon":"4011bf157eb69ad0","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71e697a5 e69cac","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71e697a5 e69cac","binary":true},"output":{"shannon":"4011bf157eb69ad0","alphabet_run":true}}
+{"input":{"token":"c3bc6162 63646566 6768696a 6b6c6d6e 6f7071","binary":false},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":true}}
+{"input":{"token":"c3bc6162 63646566 6768696a 6b6c6d6e 6f7071","binary":true},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71c3bc","binary":false},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 71c3bc","binary":true},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d616263 64656667 68696a6b 6c6d6e6f 7071","binary":false},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d616263 64656667 68696a6b 6c6d6e6f 7071","binary":true},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 715c757b 31663938 307d","binary":false},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":true}}
+{"input":{"token":"61626364 65666768 696a6b6c 6d6e6f70 715c757b 31663938 307d","binary":true},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":true}}
+{"input":{"token":"c3a94142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"c3a94142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":true},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253c3 a9","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253c3 a9","binary":true},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac4142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":false},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac4142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":true},"output":{"shannon":"40124163845aeb20","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253e6 97a5e69c ac","binary":false},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253e6 97a5e69c ac","binary":true},"output":{"shannon":"40124163845aeb20","alphabet_run":true}}
+{"input":{"token":"c3bc4142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"c3bc4142 43444546 4748494a 4b4c4d4e 4f505152 53","binary":true},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253c3 bc","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 515253c3 bc","binary":true},"output":{"shannon":"401191bba891f171","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d414243 44454647 48494a4b 4c4d4e4f 50515253","binary":false},"output":{"shannon":"40133abb3faa0217","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d414243 44454647 48494a4b 4c4d4e4f 50515253","binary":true},"output":{"shannon":"40133abb3faa0217","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 5152535c 757b3166 3938307d","binary":false},"output":{"shannon":"40133abb3faa0217","alphabet_run":true}}
+{"input":{"token":"41424344 45464748 494a4b4c 4d4e4f50 5152535c 757b3166 3938307d","binary":true},"output":{"shannon":"40133abb3faa0217","alphabet_run":true}}
+{"input":{"token":"c3a93031 32333435 36373839 3a3b3c3d 3e3f4041","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"c3a93031 32333435 36373839 3a3b3c3d 3e3f4041","binary":true},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041c3a9","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041c3a9","binary":true},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac3031 32333435 36373839 3a3b3c3d 3e3f4041","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"e697a5e6 9cac3031 32333435 36373839 3a3b3c3d 3e3f4041","binary":true},"output":{"shannon":"401201ab13929a04","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041e697 a5e69cac","binary":false},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041e697 a5e69cac","binary":true},"output":{"shannon":"401201ab13929a04","alphabet_run":true}}
+{"input":{"token":"c3bc3031 32333435 36373839 3a3b3c3d 3e3f4041","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"c3bc3031 32333435 36373839 3a3b3c3d 3e3f4041","binary":true},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041c3bc","binary":false},"output":{"shannon":"4010fde0b5c81340","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 4041c3bc","binary":true},"output":{"shannon":"401149a784bcd1b9","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d303132 33343536 3738393a 3b3c3d3e 3f4041","binary":false},"output":{"shannon":"4011d598eeddbb18","alphabet_run":true}}
+{"input":{"token":"5c757b31 66393830 7d303132 33343536 3738393a 3b3c3d3e 3f4041","binary":true},"output":{"shannon":"4011d598eeddbb18","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 40415c75 7b316639 38307d","binary":false},"output":{"shannon":"4011d598eeddbb18","alphabet_run":true}}
+{"input":{"token":"30313233 34353637 38393a3b 3c3d3e3f 40415c75 7b316639 38307d","binary":true},"output":{"shannon":"4011d598eeddbb18","alphabet_run":true}}
+{"input":{"token":"414b4941 50455a57 44545848 345a4f58 495a4f4b","binary":false},"output":{"shannon":"400cac68839a753d","alphabet_run":false}}
+{"input":{"token":"414b4941 50455a57 44545848 345a4f58 495a4f4b","binary":true},"output":{"shannon":"400cac68839a753d","alphabet_run":false}}
+{"input":{"token":"41694e4d 65576853 616c3336 67743853 66347933 31573739 6149346a 6f4d6555 6a784a64 69745762","binary":false},"output":{"shannon":"401303211678395f","alphabet_run":false}}
+{"input":{"token":"41694e4d 65576853 616c3336 67743853 66347933 31573739 6149346a 6f4d6555 6a784a64 69745762","binary":true},"output":{"shannon":"401303211678395f","alphabet_run":false}}
+{"input":{"token":"6768705f 61713246 44534338 68786b50 4a613968 78433347 764b4a48 64374248 74426574 48374535","binary":false},"output":{"shannon":"4012efcddb66d438","alphabet_run":false}}
+{"input":{"token":"6768705f 61713246 44534338 68786b50 4a613968 78433347 764b4a48 64374248 74426574 48374535","binary":true},"output":{"shannon":"4012efcddb66d438","alphabet_run":false}}
+{"input":{"token":"736b5f6c 6976655f 4c6a4472 46637459 73763364 6c365671 6d445250 6a6d6455","binary":false},"output":{"shannon":"4012000000000000","alphabet_run":false}}
+{"input":{"token":"736b5f6c 6976655f 4c6a4472 46637459 73763364 6c365671 6d445250 6a6d6455","binary":true},"output":{"shannon":"4012000000000000","alphabet_run":false}}
+{"input":{"token":"786f7862 2d363432 33333234 37333536 2d383838 33323433 38353831 2d387037 4a576552 69413632 5256786e 594e6444 6d6d7044 69","binary":false},"output":{"shannon":"4011c4e4f1475bd8","alphabet_run":false}}
+{"input":{"token":"786f7862 2d363432 33333234 37333536 2d383838 33323433 38353831 2d387037 4a576552 69413632 5256786e 594e6444 6d6d7044 69","binary":true},"output":{"shannon":"4011c4e4f1475bd8","alphabet_run":false}}
+{"input":{"token":"65794a68 62476369 4f694a49 557a4931 4e694a39 2e65794a 7a645749 694f6949 784d6a4d 304e534a 392e324d 31677653 42687251 56664b30 50504441 61387749 6d674f49 37515530 58444d51 72667058 326d504f 43","binary":false},"output":{"shannon":"4014ca71e72f9800","alphabet_run":false}}
+{"input":{"token":"65794a68 62476369 4f694a49 557a4931 4e694a39 2e65794a 7a645749 694f6949 784d6a4d 304e534a 392e324d 31677653 42687251 56664b30 50504441 61387749 6d674f49 37515530 58444d51 72667058 326d504f 43","binary":true},"output":{"shannon":"4014ca71e72f9800","alphabet_run":false}}
+{"input":{"token":"32564c6a 78766542 6d506c67 34487676","binary":false},"output":{"shannon":"400d9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"32564c6a 78766542 6d506c67 34487676","binary":true},"output":{"shannon":"400d9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"45524334 5a333335 6d6d544b 68763650 4d705237 73437166","binary":false},"output":{"shannon":"401101ab13929a04","alphabet_run":false}}
+{"input":{"token":"45524334 5a333335 6d6d544b 68763650 4d705237 73437166","binary":true},"output":{"shannon":"401101ab13929a04","alphabet_run":false}}
+{"input":{"token":"4a6e4731 78464854 4f30426f 54505147 49465733 4d736a6a 6e765262 466f7157","binary":false},"output":{"shannon":"4011e7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"4a6e4731 78464854 4f30426f 54505147 49465733 4d736a6a 6e765262 466f7157","binary":true},"output":{"shannon":"4011e7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"39316531 35336632 30646161 65346162","binary":false},"output":{"shannon":"400b9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"39316531 35336632 30646161 65346162","binary":true},"output":{"shannon":"400b9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"63383731 34396365 33366163 37316630 32376330 30633965 38323066 62353530","binary":false},"output":{"shannon":"400d81a7395e800c","alphabet_run":false}}
+{"input":{"token":"63383731 34396365 33366163 37316630 32376330 30633965 38323066 62353530","binary":true},"output":{"shannon":"400d81a7395e800c","alphabet_run":false}}
+{"input":{"token":"39626130 38343563 62643164 65613430 66376366 61323065 66656564 33396438 33373161 30316262","binary":false},"output":{"shannon":"400e46021d340ed7","alphabet_run":false}}
+{"input":{"token":"39626130 38343563 62643164 65613430 66376366 61323065 66656564 33396438 33373161 30316262","binary":true},"output":{"shannon":"400e46021d340ed7","alphabet_run":false}}
+{"input":{"token":"34366664 62316465 65636263 30316161 30636231 38346531 66363835 32633463 37346231 32383532 39363235 37373535 36666430 61366534 65366432 63363864","binary":false},"output":{"shannon":"400e8529c29f544b","alphabet_run":false}}
+{"input":{"token":"34366664 62316465 65636263 30316161 30636231 38346531 66363835 32633463 37346231 32383532 39363235 37373535 36666430 61366534 65366432 63363864","binary":true},"output":{"shannon":"400e8529c29f544b","alphabet_run":false}}
+{"input":{"token":"54723075 6234646f 722633","binary":false},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"54723075 6234646f 722633","binary":true},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"68756e74 65723270 617373","binary":false},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"68756e74 65723270 617373","binary":true},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"73336372 33742178","binary":false},"output":{"shannon":"4006000000000000","alphabet_run":false}}
+{"input":{"token":"73336372 33742178","binary":true},"output":{"shannon":"4006000000000000","alphabet_run":false}}
+{"input":{"token":"636f7272 6563742d 686f7273 652d6261 74746572 792d7374 61706c65","binary":false},"output":{"shannon":"400bf51afb2250e3","alphabet_run":false}}
+{"input":{"token":"636f7272 6563742d 686f7273 652d6261 74746572 792d7374 61706c65","binary":true},"output":{"shannon":"400bf51afb2250e3","alphabet_run":false}}
+{"input":{"token":"42373371 5538664f 446a5333 4e6f6763 4c775855 6a4a","binary":false},"output":{"shannon":"4010bf2f6c8ed18a","alphabet_run":false}}
+{"input":{"token":"42373371 5538664f 446a5333 4e6f6763 4c775855 6a4a","binary":true},"output":{"shannon":"4010bf2f6c8ed18a","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70703a70 75474a76 67756175 4876636c 566c4b69 54523940 64622e69 6e746572 6e616c2e 6578616d 706c652e 636f6d3a 35343332 2f617070","binary":false},"output":{"shannon":"40134646c826979a","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70703a70 75474a76 67756175 4876636c 566c4b69 54523940 64622e69 6e746572 6e616c2e 6578616d 706c652e 636f6d3a 35343332 2f617070","binary":true},"output":{"shannon":"40134646c826979a","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70703a68 756e7465 72327061 73734064 623a3534 33322f61 7070","binary":false},"output":{"shannon":"40102c608c5f0c59","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70703a68 756e7465 72327061 73734064 623a3534 33322f61 7070","binary":true},"output":{"shannon":"40102c608c5f0c59","alphabet_run":false}}
+{"input":{"token":"6d797371 6c323a2f 2f726f6f 743a5472 30756234 646f7226 33403130 2e302e30 2e352f61 7070","binary":false},"output":{"shannon":"4011b9fb872dfd90","alphabet_run":false}}
+{"input":{"token":"6d797371 6c323a2f 2f726f6f 743a5472 30756234 646f7226 33403130 2e302e30 2e352f61 7070","binary":true},"output":{"shannon":"4011b9fb872dfd90","alphabet_run":false}}
+{"input":{"token":"72656469 733a2f2f 3a683168 76744e77 54594a72 48693070 6b734237 72414e61 69406361 6368652e 696e7465 726e616c 3a363337 392f30","binary":false},"output":{"shannon":"401336ee1a80bf13","alphabet_run":false}}
+{"input":{"token":"72656469 733a2f2f 3a683168 76744e77 54594a72 48693070 6b734237 72414e61 69406361 6368652e 696e7465 726e616c 3a363337 392f30","binary":true},"output":{"shannon":"401336ee1a80bf13","alphabet_run":false}}
+{"input":{"token":"616d7170 733a2f2f 67756573 743a6e79 6d584964 38474172 6c624c4c 3257406d 712e6578 616d706c 652e636f 6d2f7668 6f7374","binary":false},"output":{"shannon":"40133fa2e9101b1f","alphabet_run":false}}
+{"input":{"token":"616d7170 733a2f2f 67756573 743a6e79 6d584964 38474172 6c624c4c 3257406d 712e6578 616d706c 652e636f 6d2f7668 6f7374","binary":true},"output":{"shannon":"40133fa2e9101b1f","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f7573 65723a6a 42745259 75635669 36753557 6b473654 6340636c 75737465 72302e61 62636465 2e6d6f6e 676f6462 2e6e6574 2f64623f 72657472 79577269 7465733d 74727565","binary":false},"output":{"shannon":"40134036fa2eaaa1","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f7573 65723a6a 42745259 75635669 36753557 6b473654 6340636c 75737465 72302e61 62636465 2e6d6f6e 676f6462 2e6e6574 2f64623f 72657472 79577269 7465733d 74727565","binary":true},"output":{"shannon":"40134036fa2eaaa1","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f7573 65723a70 61737331 32333440 636c7573 74657230 2e6d6f6e 676f6462 2e6e6574 2f6462","binary":false},"output":{"shannon":"4011f91144fb4133","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f7573 65723a70 61737331 32333440 636c7573 74657230 2e6d6f6e 676f6462 2e6e6574 2f6462","binary":true},"output":{"shannon":"4011f91144fb4133","alphabet_run":false}}
+{"input":{"token":"53657276 65723d64 622e6578 616d706c 652e636f 6d3b4461 74616261 73653d61 70703b55 73657220 49643d73 613b5061 7373776f 72643d77 38645043 31703054 4d6a5050 4b3b","binary":false},"output":{"shannon":"401287bcba30cd5c","alphabet_run":false}}
+{"input":{"token":"53657276 65723d64 622e6578 616d706c 652e636f 6d3b4461 74616261 73653d61 70703b55 73657220 49643d73 613b5061 7373776f 72643d77 38645043 31703054 4d6a5050 4b3b","binary":true},"output":{"shannon":"401287bcba30cd5c","alphabet_run":false}}
+{"input":{"token":"53657276 65723d78 3b557365 72204964 3d753b50 61737377 6f72643d 54723075 6234646f 72333b","binary":false},"output":{"shannon":"4010b3c38a688064","alphabet_run":false}}
+{"input":{"token":"53657276 65723d78 3b557365 72204964 3d753b50 61737377 6f72643d 54723075 6234646f 72333b","binary":true},"output":{"shannon":"4010b3c38a688064","alphabet_run":false}}
+{"input":{"token":"686f7374 3d646220 75736572 3d617070 20706173 73776f72 643d6875 6e746572 32706173 73206462 6e616d65 3d617070","binary":false},"output":{"shannon":"400f1252d7eb43a9","alphabet_run":false}}
+{"input":{"token":"686f7374 3d646220 75736572 3d617070 20706173 73776f72 643d6875 6e746572 32706173 73206462 6e616d65 3d617070","binary":true},"output":{"shannon":"400f1252d7eb43a9","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76312f78 3f746f6b 656e3d4f 6d494b77 66377064 4c597755 6f4b7459 534c3555 7866796c 41314971 507449","binary":false},"output":{"shannon":"401400abc11a22de","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76312f78 3f746f6b 656e3d4f 6d494b77 66377064 4c597755 6f4b7459 534c3555 7866796c 41314971 507449","binary":true},"output":{"shannon":"401400abc11a22de","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 73332e65 78616d70 6c652e63 6f6d2f62 2f6b3f58 2d416d7a 2d536967 6e617475 72653d66 32613433 34383761 61303237 38613864 34303431 37346364 39663031 30613665 32303234 66343161 30303233 37366339 33353664 38633637 63336238 62353626 582d416d 7a2d4578 70697265 733d3330 30","binary":false},"output":{"shannon":"40145ada3ee15f3d","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 73332e65 78616d70 6c652e63 6f6d2f62 2f6b3f58 2d416d7a 2d536967 6e617475 72653d66 32613433 34383761 61303237 38613864 34303431 37346364 39663031 30613665 32303234 66343161 30303233 37366339 33353664 38633637 63336238 62353626 582d416d 7a2d4578 70697265 733d3330 30","binary":true},"output":{"shannon":"40145ada3ee15f3d","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 63646e2e 6578616d 706c652e 636f6d2f 613f7369 673d434b 63444e50 32513669 4d417271 6832","binary":false},"output":{"shannon":"40138736d5342dad","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 63646e2e 6578616d 706c652e 636f6d2f 613f7369 673d434b 63444e50 32513669 4d417271 6832","binary":true},"output":{"shannon":"40138736d5342dad","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76313f61 70695f6b 65793d38 35346565 33303765 63633466 30386135 62663063 37626135 63313539 343139","binary":false},"output":{"shannon":"4012c96d901c6806","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76313f61 70695f6b 65793d38 35346565 33303765 63633466 30386135 62663063 37626135 63313539 343139","binary":true},"output":{"shannon":"4012c96d901c6806","alphabet_run":false}}
+{"input":{"token":"35353065 38343030 2d653239 622d3431 64342d61 3731362d 34343636 35353434 30303030","binary":false},"output":{"shannon":"400b1fd37d114cc8","alphabet_run":false}}
+{"input":{"token":"35353065 38343030 2d653239 622d3431 64342d61 3731362d 34343636 35353434 30303030","binary":true},"output":{"shannon":"400b1fd37d114cc8","alphabet_run":false}}
+{"input":{"token":"66653863 33393465 2d646563 392d3464 62392d39 6435332d 36303662 36363932 34666630","binary":false},"output":{"shannon":"400d3836637b555c","alphabet_run":false}}
+{"input":{"token":"66653863 33393465 2d646563 392d3464 62392d39 6435332d 36303662 36363932 34666630","binary":true},"output":{"shannon":"400d3836637b555c","alphabet_run":false}}
+{"input":{"token":"36613536 62383539 65346436 30663632 61643331 36373030 34373032 39363132 65653266 38646339","binary":false},"output":{"shannon":"400e9edb87987cbb","alphabet_run":false}}
+{"input":{"token":"36613536 62383539 65346436 30663632 61643331 36373030 34373032 39363132 65653266 38646339","binary":true},"output":{"shannon":"400e9edb87987cbb","alphabet_run":false}}
+{"input":{"token":"61373234 373763","binary":false},"output":{"shannon":"40010651931f8028","alphabet_run":false}}
+{"input":{"token":"61373234 373763","binary":true},"output":{"shannon":"40010651931f8028","alphabet_run":false}}
+{"input":{"token":"63623966 64313031 38376134 61663662 31343837 65336462 33653634 39356437 39656561 63396564 37363938 62383662 32323262 35313431 34396462 35656661","binary":false},"output":{"shannon":"400f07883f021829","alphabet_run":false}}
+{"input":{"token":"63623966 64313031 38376134 61663662 31343837 65336462 33653634 39356437 39656561 63396564 37363938 62383662 32323262 35313431 34396462 35656661","binary":true},"output":{"shannon":"400f07883f021829","alphabet_run":false}}
+{"input":{"token":"312e3234 2e332d72 632e31","binary":false},"output":{"shannon":"4006c3475a137d9d","alphabet_run":false}}
+{"input":{"token":"312e3234 2e332d72 632e31","binary":true},"output":{"shannon":"4006c3475a137d9d","alphabet_run":false}}
+{"input":{"token":"7632302e 31312e31","binary":false},"output":{"shannon":"40013ebfb1520c7c","alphabet_run":false}}
+{"input":{"token":"7632302e 31312e31","binary":true},"output":{"shannon":"40013ebfb1520c7c","alphabet_run":false}}
+{"input":{"token":"64622e69 6e746572 6e616c2e 6578616d 706c652e 636f6d","binary":false},"output":{"shannon":"400e191fa54d3e4e","alphabet_run":false}}
+{"input":{"token":"64622e69 6e746572 6e616c2e 6578616d 706c652e 636f6d","binary":true},"output":{"shannon":"400e191fa54d3e4e","alphabet_run":false}}
+{"input":{"token":"69702d31 302d302d 312d3233 2e656332 2e696e74 65726e61 6c","binary":false},"output":{"shannon":"400e1c60a24f6fd8","alphabet_run":false}}
+{"input":{"token":"69702d31 302d302d 312d3233 2e656332 2e696e74 65726e61 6c","binary":true},"output":{"shannon":"400e1c60a24f6fd8","alphabet_run":false}}
+{"input":{"token":"2f766172 2f6c6962 2f706f73 74677265 73716c2f 64617461","binary":false},"output":{"shannon":"400dc2eb62408d88","alphabet_run":false}}
+{"input":{"token":"2f766172 2f6c6962 2f706f73 74677265 73716c2f 64617461","binary":true},"output":{"shannon":"400dc2eb62408d88","alphabet_run":false}}
+{"input":{"token":"2f686f6d 652f7573 65722f2e 63616368 652f78","binary":false},"output":{"shannon":"400aedc14a6f542e","alphabet_run":false}}
+{"input":{"token":"2f686f6d 652f7573 65722f2e 63616368 652f78","binary":true},"output":{"shannon":"400aedc14a6f542e","alphabet_run":false}}
+{"input":{"token":"2f757372 2f6c6f63 616c2f6c 69622f72 7562792f 67656d73 2f342e30 2e302f67 656d732f 61637469 76657375 70706f72 742d382e 302e312f 6c6962","binary":false},"output":{"shannon":"401115feb825769c","alphabet_run":false}}
+{"input":{"token":"2f757372 2f6c6f63 616c2f6c 69622f72 7562792f 67656d73 2f342e30 2e302f67 656d732f 61637469 76657375 70706f72 742d382e 302e312f 6c6962","binary":true},"output":{"shannon":"401115feb825769c","alphabet_run":false}}
+{"input":{"token":"70726f64 75637469 6f6e","binary":false},"output":{"shannon":"4008f9b56fe009d8","alphabet_run":false}}
+{"input":{"token":"70726f64 75637469 6f6e","binary":true},"output":{"shannon":"4008f9b56fe009d8","alphabet_run":false}}
+{"input":{"token":"64657665 6c6f706d 656e74","binary":false},"output":{"shannon":"400837a471594f11","alphabet_run":false}}
+{"input":{"token":"64657665 6c6f706d 656e74","binary":true},"output":{"shannon":"400837a471594f11","alphabet_run":false}}
+{"input":{"token":"35343332","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"35343332","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"32303236 2d31302d 3138","binary":false},"output":{"shannon":"40042ce8a3133d0b","alphabet_run":false}}
+{"input":{"token":"32303236 2d31302d 3138","binary":true},"output":{"shannon":"40042ce8a3133d0b","alphabet_run":false}}
+{"input":{"token":"32303236 2d31302d 31385431 323a3334 3a35365a","binary":false},"output":{"shannon":"400b924eca8813d5","alphabet_run":false}}
+{"input":{"token":"32303236 2d31302d 31385431 323a3334 3a35365a","binary":true},"output":{"shannon":"400b924eca8813d5","alphabet_run":false}}
+{"input":{"token":"74727565","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"74727565","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76312f74 68696e67 73","binary":false},"output":{"shannon":"40105bb3a35c1940","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6170692e 6578616d 706c652e 636f6d2f 76312f74 68696e67 73","binary":true},"output":{"shannon":"40105bb3a35c1940","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70704064 622e696e 7465726e 616c2e65 78616d70 6c652e63 6f6d3a35 3433322f 617070","binary":false},"output":{"shannon":"40115d99c7ad4be0","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f61 70704064 622e696e 7465726e 616c2e65 78616d70 6c652e63 6f6d3a35 3433322f 617070","binary":true},"output":{"shannon":"40115d99c7ad4be0","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f64 623a3534 33322f61 70705f64 6576656c 6f706d65 6e74","binary":false},"output":{"shannon":"4010bb4c0ee5bc5b","alphabet_run":false}}
+{"input":{"token":"706f7374 67726573 3a2f2f64 623a3534 33322f61 70705f64 6576656c 6f706d65 6e74","binary":true},"output":{"shannon":"4010bb4c0ee5bc5b","alphabet_run":false}}
+{"input":{"token":"72656469 733a2f2f 63616368 652e696e 7465726e 616c3a36 3337392f 30","binary":false},"output":{"shannon":"4010770e1247e798","alphabet_run":false}}
+{"input":{"token":"72656469 733a2f2f 63616368 652e696e 7465726e 616c3a36 3337392f 30","binary":true},"output":{"shannon":"4010770e1247e798","alphabet_run":false}}
+{"input":{"token":"616d7170 3a2f2f6d 712e6578 616d706c 652e636f 6d3a3536 37322f76 686f7374","binary":false},"output":{"shannon":"4010a7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"616d7170 3a2f2f6d 712e6578 616d706c 652e636f 6d3a3536 37322f76 686f7374","binary":true},"output":{"shannon":"4010a7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f636c 75737465 72302e61 62636465 2e6d6f6e 676f6462 2e6e6574 2f64623f 72657472 79577269 7465733d 74727565","binary":false},"output":{"shannon":"40116262567c830f","alphabet_run":false}}
+{"input":{"token":"6d6f6e67 6f64622b 7372763a 2f2f636c 75737465 72302e61 62636465 2e6d6f6e 676f6462 2e6e6574 2f64623f 72657472 79577269 7465733d 74727565","binary":true},"output":{"shannon":"40116262567c830f","alphabet_run":false}}
+{"input":{"token":"53657276 65723d64 622e6578 616d706c 652e636f 6d3b4461 74616261 73653d61 70703b49 6e746567 72617465 64205365 63757269 74793d74 7275653b","binary":false},"output":{"shannon":"401142656216c969","alphabet_run":false}}
+{"input":{"token":"53657276 65723d64 622e6578 616d706c 652e636f 6d3b4461 74616261 73653d61 70703b49 6e746567 72617465 64205365 63757269 74793d74 7275653b","binary":true},"output":{"shannon":"401142656216c969","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6578616d 706c652e 636f6d2f 73656172 63683f71 3d68656c 6c6f2670 6167653d 32","binary":false},"output":{"shannon":"4010ceafe00a083f","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 6578616d 706c652e 636f6d2f 73656172 63683f71 3d68656c 6c6f2670 6167653d 32","binary":true},"output":{"shannon":"4010ceafe00a083f","alphabet_run":false}}
+{"input":{"token":"656e5f55 532e5554 462d38","binary":false},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"656e5f55 532e5554 462d38","binary":true},"output":{"shannon":"400a388d64c08bce","alphabet_run":false}}
+{"input":{"token":"64657640 6578616d 706c652e 636f6d","binary":false},"output":{"shannon":"400ba70b6d0ede24","alphabet_run":false}}
+{"input":{"token":"64657640 6578616d 706c652e 636f6d","binary":true},"output":{"shannon":"400ba70b6d0ede24","alphabet_run":false}}
+{"input":{"token":"72656769 73747279 2e657861 6d706c65 2e636f6d 2f746561 6d2f6170 703a312e 322e33","binary":false},"output":{"shannon":"40105f62a96d03f9","alphabet_run":false}}
+{"input":{"token":"72656769 73747279 2e657861 6d706c65 2e636f6d 2f746561 6d2f6170 703a312e 322e33","binary":true},"output":{"shannon":"40105f62a96d03f9","alphabet_run":false}}
+{"input":{"token":"2f737276 2f617070 2f72656c 65617365 732f3230 32363130 31383132 33343536 2f707562 6c6963","binary":false},"output":{"shannon":"40107ca0ffaf0d9c","alphabet_run":false}}
+{"input":{"token":"2f737276 2f617070 2f72656c 65617365 732f3230 32363130 31383132 33343536 2f707562 6c6963","binary":true},"output":{"shannon":"40107ca0ffaf0d9c","alphabet_run":false}}
+{"input":{"token":"636f6d2e 6578616d 706c652e 6170706c 69636174 696f6e2e 4d61696e 41637469 76697479 4c6f6e67 4e616d65","binary":false},"output":{"shannon":"401016434f59c23a","alphabet_run":false}}
+{"input":{"token":"636f6d2e 6578616d 706c652e 6170706c 69636174 696f6e2e 4d61696e 41637469 76697479 4c6f6e67 4e616d65","binary":true},"output":{"shannon":"401016434f59c23a","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 63692e65 78616d70 6c652e63 6f6d2f6a 6f622f62 75696c64 2d616e64 2d646570 6c6f792d 6d61696e 2f313233 342f","binary":false},"output":{"shannon":"4011f5c3596c6fef","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 63692e65 78616d70 6c652e63 6f6d2f6a 6f622f62 75696c64 2d616e64 2d646570 6c6f792d 6d61696e 2f313233 342f","binary":true},"output":{"shannon":"4011f5c3596c6fef","alphabet_run":false}}
+{"input":{"token":"6d792d63 6f6d7061 6e792d70 726f642d 61737365 74732d75 732d6561 73742d31","binary":false},"output":{"shannon":"400d080b6b8287d4","alphabet_run":false}}
+{"input":{"token":"6d792d63 6f6d7061 6e792d70 726f642d 61737365 74732d75 732d6561 73742d31","binary":true},"output":{"shannon":"400d080b6b8287d4","alphabet_run":false}}
+{"input":{"token":"38376137 36306630 65353937 35306663 33633034 61383837 61353632 63343135 37383462 64643535 66643434 32623630 34323330 64656133 35383765 62326365","binary":false},"output":{"shannon":"400ee6147afbde62","alphabet_run":false}}
+{"input":{"token":"38376137 36306630 65353937 35306663 33633034 61383837 61353632 63343135 37383462 64643535 66643434 32623630 34323330 64656133 35383765 62326365","binary":true},"output":{"shannon":"400ee6147afbde62","alphabet_run":false}}
+{"input":{"token":"646f776e 6c6f6164 732f616d 692e7a69 70","binary":false},"output":{"shannon":"400cef5bf41284d5","alphabet_run":false}}
+{"input":{"token":"646f776e 6c6f6164 732f616d 692e7a69 70","binary":true},"output":{"shannon":"400cef5bf41284d5","alphabet_run":false}}
+{"input":{"token":"66613339 61363330 64323033 66643836 63383764 34613166 35643165 38386134","binary":false},"output":{"shannon":"400d9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"66613339 61363330 64323033 66643836 63383764 34613166 35643165 38386134","binary":true},"output":{"shannon":"400d9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"36653063 63323636 64653634 35366366 65376262 65363334 35613531 39636239 33613031 34616561 35353936 32643666 63643764 32336532 32346337 31373261 31346334 66633766 31363266 66613862 31336631 36346632 36326365 61366566 62393035 61353138 61313163 61613632 31366534 64643861 62323335 30623631","binary":false},"output":{"shannon":"400efe3f38192eeb","alphabet_run":false}}
+{"input":{"token":"36653063 63323636 64653634 35366366 65376262 65363334 35613531 39636239 33613031 34616561 35353936 32643666 63643764 32336532 32346337 31373261 31346334 66633766 31363266 66613862 31336631 36346632 36326365 61366566 62393035 61353138 61313163 61613632 31366534 64643861 62323335 30623631","binary":true},"output":{"shannon":"400efe3f38192eeb","alphabet_run":false}}
+{"input":{"token":"616d692e 7a6970","binary":false},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"616d692e 7a6970","binary":true},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"7b226469 67657374 223a2230 61333062 39633662 31383064 63353463 64376239 33376662 35333465 31636662 34356338 38613166 66616230 62343631 61643265 36323038 39633866 31303822 7d","binary":false},"output":{"shannon":"4011515ca767a16a","alphabet_run":false}}
+{"input":{"token":"7b226469 67657374 223a2230 61333062 39633662 31383064 63353463 64376239 33376662 35333465 31636662 34356338 38613166 66616230 62343631 61643265 36323038 39633866 31303822 7d","binary":true},"output":{"shannon":"4011515ca767a16a","alphabet_run":false}}
+{"input":{"token":"22646967 65737422 3a","binary":false},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"22646967 65737422 3a","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"22736861 3235363a 63633532 32326665 31643665 65313638 63383138 63393931 30616132 66306266 37616664 61356163 30333439 39343665 63353934 37323130 32396262 65643337 222c","binary":false},"output":{"shannon":"4010c63a319ae54f","alphabet_run":false}}
+{"input":{"token":"22736861 3235363a 63633532 32326665 31643665 65313638 63383138 63393931 30616132 66306266 37616664 61356163 30333439 39343665 63353934 37323130 32396262 65643337 222c","binary":true},"output":{"shannon":"4010c63a319ae54f","alphabet_run":false}}
+{"input":{"token":"636f6d6d 6974","binary":false},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"636f6d6d 6974","binary":true},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"61303630 65656134 36343539 37343834 35663436 31373537 33383531 66656635 35623438 34643839","binary":false},"output":{"shannon":"400c8a0d2193cb4c","alphabet_run":false}}
+{"input":{"token":"61303630 65656134 36343539 37343834 35663436 31373537 33383531 66656635 35623438 34643839","binary":true},"output":{"shannon":"400c8a0d2193cb4c","alphabet_run":false}}
+{"input":{"token":"636f6d6d 69742d68 6173683a","binary":false},"output":{"shannon":"400a035627253409","alphabet_run":false}}
+{"input":{"token":"636f6d6d 69742d68 6173683a","binary":true},"output":{"shannon":"400a035627253409","alphabet_run":false}}
+{"input":{"token":"34346234 39303337 31316539 31343933 39663030 33386565 34323662 33336335 35653632 38623865","binary":false},"output":{"shannon":"400d01778d60dcf1","alphabet_run":false}}
+{"input":{"token":"34346234 39303337 31316539 31343933 39663030 33386565 34323662 33336335 35653632 38623865","binary":true},"output":{"shannon":"400d01778d60dcf1","alphabet_run":false}}
+{"input":{"token":"7475726e 3a","binary":false},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"7475726e 3a","binary":true},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"626c616b 65333a35 31396465 63343161 39656430 35636538 32353131 32613264 64363936 39373232 61663831 63303962 32333932 37326666 38623837 36636662 33343734 623831","binary":false},"output":{"shannon":"40104d807a45d196","alphabet_run":false}}
+{"input":{"token":"626c616b 65333a35 31396465 63343161 39656430 35636538 32353131 32613264 64363936 39373232 61663831 63303962 32333932 37326666 38623837 36636662 33343734 623831","binary":true},"output":{"shannon":"40104d807a45d196","alphabet_run":false}}
+{"input":{"token":"6177735f 61636365 73735f6b 65795f69 64","binary":false},"output":{"shannon":"400966a6f550aeb3","alphabet_run":false}}
+{"input":{"token":"6177735f 61636365 73735f6b 65795f69 64","binary":true},"output":{"shannon":"400966a6f550aeb3","alphabet_run":false}}
+{"input":{"token":"746f6b65 6e","binary":false},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"746f6b65 6e","binary":true},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"76616c75 65","binary":false},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"76616c75 65","binary":true},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"586b3350 71394c6d 5a723254 76384e62 57633548 79314a64 37466734 53613651 65305275 324b6f38","binary":false},"output":{"shannon":"4014e3411e566b53","alphabet_run":false}}
+{"input":{"token":"586b3350 71394c6d 5a723254 76384e62 57633548 79314a64 37466734 53613651 65305275 324b6f38","binary":true},"output":{"shannon":"4014e3411e566b53","alphabet_run":false}}
+{"input":{"token":"6170695f 6b6579","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"6170695f 6b6579","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"22323865 38396630 62396663 61303839 63633263 36333936 61346363 66613065 33376636 33396432 36333334 39363639 61353831 61363933 36646639 33353633 3422","binary":false},"output":{"shannon":"400e2abfaa461624","alphabet_run":false}}
+{"input":{"token":"22323865 38396630 62396663 61303839 63633263 36333936 61346363 66613065 33376636 33396432 36333334 39363639 61353831 61363933 36646639 33353633 3422","binary":true},"output":{"shannon":"400e2abfaa461624","alphabet_run":false}}
+{"input":{"token":"6578706f 7274","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"6578706f 7274","binary":true},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"47495448 55425f57 4542484f 4f4b5f53 45435245 543d3562 30653032 36373430 38626431 34373033 34353865 31623636 63353930 36623461 37666662 32383735 31656436 65346166 33333635 64353561 35313638 6365","binary":false},"output":{"shannon":"4012a43f8c144e38","alphabet_run":false}}
+{"input":{"token":"47495448 55425f57 4542484f 4f4b5f53 45435245 543d3562 30653032 36373430 38626431 34373033 34353865 31623636 63353930 36623461 37666662 32383735 31656436 65346166 33333635 64353561 35313638 6365","binary":true},"output":{"shannon":"4012a43f8c144e38","alphabet_run":false}}
+{"input":{"token":"22636c69 656e745f 73656372 6574223a","binary":false},"output":{"shannon":"400a9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"22636c69 656e745f 73656372 6574223a","binary":true},"output":{"shannon":"400a9f5fd8a9063e","alphabet_run":false}}
+{"input":{"token":"22383564 37373431 61663237 66313863 62656663 37666463 39366434 34363566 3622","binary":false},"output":{"shannon":"400dba66a11925b9","alphabet_run":false}}
+{"input":{"token":"22383564 37373431 61663237 66313863 62656663 37666463 39366434 34363566 3622","binary":true},"output":{"shannon":"400dba66a11925b9","alphabet_run":false}}
+{"input":{"token":"41757468 6f72697a 6174696f 6e3a","binary":false},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"41757468 6f72697a 6174696f 6e3a","binary":true},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"42656172 6572","binary":false},"output":{"shannon":"3ffeb156f8f512be","alphabet_run":false}}
+{"input":{"token":"42656172 6572","binary":true},"output":{"shannon":"3ffeb156f8f512be","alphabet_run":false}}
+{"input":{"token":"39613763 62623963 32393562 64373639 30396234 37363931 36323639 64326231 33656666 39323931 34663965 38653766 34656261 34313064 32393261 62363430","binary":false},"output":{"shannon":"400de9a23219fdc8","alphabet_run":false}}
+{"input":{"token":"39613763 62623963 32393562 64373639 30396234 37363931 36323639 64326231 33656666 39323931 34663965 38653766 34656261 34313064 32393261 62363430","binary":true},"output":{"shannon":"400de9a23219fdc8","alphabet_run":false}}
+{"input":{"token":"583d3331 32363832 32616138 66613632 63646531 63623963 37313564 65636638 39313131 63323965 61393530 62353162 32306533 32653464 64663664 61303061 3530","binary":false},"output":{"shannon":"400f98552547d492","alphabet_run":false}}
+{"input":{"token":"583d3331 32363832 32616138 66613632 63646531 63623963 37313564 65636638 39313131 63323965 61393530 62353162 32306533 32653464 64663664 61303061 3530","binary":true},"output":{"shannon":"400f98552547d492","alphabet_run":false}}
+{"input":{"token":"73657373 696f6e3a","binary":false},"output":{"shannon":"40033ebfb1520c7c","alphabet_run":false}}
+{"input":{"token":"73657373 696f6e3a","binary":true},"output":{"shannon":"40033ebfb1520c7c","alphabet_run":false}}
+{"input":{"token":"53455353 494f4e5f 44494745 53543d62 6c616b65 333a3531 39646563 34316139 65643035 63653832 35313132 61326464 36393639 37323261 66383163 30396232 33393237 32666638 62383736 63666233 34373462 3831","binary":false},"output":{"shannon":"40124c3592bd9825","alphabet_run":false}}
+{"input":{"token":"53455353 494f4e5f 44494745 53543d62 6c616b65 333a3531 39646563 34316139 65643035 63653832 35313132 61326464 36393639 37323261 66383163 30396232 33393237 32666638 62383736 63666233 34373462 3831","binary":true},"output":{"shannon":"40124c3592bd9825","alphabet_run":false}}
+{"input":{"token":"454e4352 59505449 4f4e5f4b 45593d30 61333062 39633662 31383064 63353463 64376239 33376662 35333465 31636662 34356338 38613166 66616230 62343631 61643265 36323038 39633866 313038","binary":false},"output":{"shannon":"40121129e7013c56","alphabet_run":false}}
+{"input":{"token":"454e4352 59505449 4f4e5f4b 45593d30 61333062 39633662 31383064 63353463 64376239 33376662 35333465 31636662 34356338 38613166 66616230 62343631 61643265 36323038 39633866 313038","binary":true},"output":{"shannon":"40121129e7013c56","alphabet_run":false}}
+{"input":{"token":"7b227369 676e696e 674b6579 223a","binary":false},"output":{"shannon":"4009e32d5ac1bb08","alphabet_run":false}}
+{"input":{"token":"7b227369 676e696e 674b6579 223a","binary":true},"output":{"shannon":"4009e32d5ac1bb08","alphabet_run":false}}
+{"input":{"token":"22636335 32323266 65316436 65653136 38633831 38633939 31306161 32663062 66376166 64613561 63303334 39393436 65633539 34373231 30323962 62656433 37227d","binary":false},"output":{"shannon":"401039db33a70d5a","alphabet_run":false}}
+{"input":{"token":"22636335 32323266 65316436 65653136 38633831 38633939 31306161 32663062 66376166 64613561 63303334 39393436 65633539 34373231 30323962 62656433 37227d","binary":true},"output":{"shannon":"401039db33a70d5a","alphabet_run":false}}
+{"input":{"token":"73747269 70653a","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"73747269 70653a","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"6b65793a","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"6b65793a","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"6375726c","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"6375726c","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"61646d69 6e3a3961 37636262 39633239 35626437 36393039 62343736 39313632 36396432 62313365 66663932 39313466 39653865 37663465 62613431 30643239 32616236 3430","binary":false},"output":{"shannon":"400fc16886c40922","alphabet_run":false}}
+{"input":{"token":"61646d69 6e3a3961 37636262 39633239 35626437 36393039 62343736 39313632 36396432 62313365 66663932 39313466 39653865 37663465 62613431 30643239 32616236 3430","binary":true},"output":{"shannon":"400fc16886c40922","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 78","binary":false},"output":{"shannon":"4005cdc8c0118485","alphabet_run":false}}
+{"input":{"token":"68747470 733a2f2f 78","binary":true},"output":{"shannon":"4005cdc8c0118485","alphabet_run":false}}
+{"input":{"token":"7b22636c 69656e74 5f736563 72657422 3a","binary":false},"output":{"shannon":"400ba379ed2a123c","alphabet_run":false}}
+{"input":{"token":"7b22636c 69656e74 5f736563 72657422 3a","binary":true},"output":{"shannon":"400ba379ed2a123c","alphabet_run":false}}
+{"input":{"token":"22383564 37373431 61663237 66313863 62656663 37666463 39366434 34363566 36227d","binary":false},"output":{"shannon":"400e604c3f83a2ff","alphabet_run":false}}
+{"input":{"token":"22383564 37373431 61663237 66313863 62656663 37666463 39366434 34363566 36227d","binary":true},"output":{"shannon":"400e604c3f83a2ff","alphabet_run":false}}
+{"input":{"token":"73656372 6574733a","binary":false},"output":{"shannon":"4004000000000000","alphabet_run":false}}
+{"input":{"token":"73656372 6574733a","binary":true},"output":{"shannon":"4004000000000000","alphabet_run":false}}
+{"input":{"token":"32386538 39663062 39666361 30383963 63326336 33393661 34636366 61306533 37663633 39643236 33333439 36363961 35383161 36393336 64663933 35363334","binary":false},"output":{"shannon":"400d7e52ff5358ff","alphabet_run":false}}
+{"input":{"token":"32386538 39663062 39666361 30383963 63326336 33393661 34636366 61306533 37663633 39643236 33333439 36363961 35383161 36393336 64663933 35363334","binary":true},"output":{"shannon":"400d7e52ff5358ff","alphabet_run":false}}
+{"input":{"token":"6170695f 6b65793a","binary":false},"output":{"shannon":"4008000000000000","alphabet_run":false}}
+{"input":{"token":"6170695f 6b65793a","binary":true},"output":{"shannon":"4008000000000000","alphabet_run":false}}
+{"input":{"token":"35623065 30323637 34303862 64313437 30333435 38653162 36366335 39303662 34613766 66623238 37353165 64366534 61663333 36356435 35613531 36386365","binary":false},"output":{"shannon":"400edc7e2fc5d2b6","alphabet_run":false}}
+{"input":{"token":"35623065 30323637 34303862 64313437 30333435 38653162 36366335 39303662 34613766 66623238 37353165 64366534 61663333 36356435 35613531 36386365","binary":true},"output":{"shannon":"400edc7e2fc5d2b6","alphabet_run":false}}
+{"input":{"token":"73657373 696f6e","binary":false},"output":{"shannon":"40010651931f8028","alphabet_run":false}}
+{"input":{"token":"73657373 696f6e","binary":true},"output":{"shannon":"40010651931f8028","alphabet_run":false}}
+{"input":{"token":"22323865 38396630 62396663 61303839 63633263 36333936 61346363 66613065 33376636 33396432 36333334 39363639 61353831 61363933 36646639 33353633 34227d","binary":false},"output":{"shannon":"400e9cacdf173481","alphabet_run":false}}
+{"input":{"token":"22323865 38396630 62396663 61303839 63633263 36333936 61346363 66613065 33376636 33396432 36333334 39363639 61353831 61363933 36646639 33353633 34227d","binary":true},"output":{"shannon":"400e9cacdf173481","alphabet_run":false}}
+{"input":{"token":"636f6e66 69675b3a 73656372 65745f6b 65795f62 6173655d","binary":false},"output":{"shannon":"401001ab13929a04","alphabet_run":false}}
+{"input":{"token":"636f6e66 69675b3a 73656372 65745f6b 65795f62 6173655d","binary":true},"output":{"shannon":"401001ab13929a04","alphabet_run":false}}
+{"input":{"token":"454e562e 66657463 68282253 45435245 545f4b45 595f4241 53452229","binary":false},"output":{"shannon":"4010b6b8c363b811","alphabet_run":false}}
+{"input":{"token":"454e562e 66657463 68282253 45435245 545f4b45 595f4241 53452229","binary":true},"output":{"shannon":"4010b6b8c363b811","alphabet_run":false}}
+{"input":{"token":"454e562e 66657463 68282241 50495f4b 4559222c","binary":false},"output":{"shannon":"40107cdab7f004ec","alphabet_run":false}}
+{"input":{"token":"454e562e 66657463 68282241 50495f4b 4559222c","binary":true},"output":{"shannon":"40107cdab7f004ec","alphabet_run":false}}
+{"input":{"token":"22313635 35333233 32633231 66663436 63306166 35343232 34633234 32353233 65303330 31623161 34336164 62316537 32393332 31653131 37633134 64663738 622229","binary":false},"output":{"shannon":"400f07f58ab73185","alphabet_run":false}}
+{"input":{"token":"22313635 35333233 32633231 66663436 63306166 35343232 34633234 32353233 65303330 31623161 34336164 62316537 32393332 31653131 37633134 64663738 622229","binary":true},"output":{"shannon":"400f07f58ab73185","alphabet_run":false}}
+{"input":{"token":"6f732e67 6574656e 76282257 4542484f 4f4b5f53 45435245 54222c","binary":false},"output":{"shannon":"40116d1da0d6ec59","alphabet_run":false}}
+{"input":{"token":"6f732e67 6574656e 76282257 4542484f 4f4b5f53 45435245 54222c","binary":true},"output":{"shannon":"40116d1da0d6ec59","alphabet_run":false}}
+{"input":{"token":"22623238 37373662 66303665 37333434 37333331 62643764 31356231 32373231 38363865 31363564 39343362 38646530 65633037 34323230 39386237 32313130 632229","binary":false},"output":{"shannon":"400f1be5be8b3f41","alphabet_run":false}}
+{"input":{"token":"22623238 37373662 66303665 37333434 37333331 62643764 31356231 32373231 38363865 31363564 39343362 38646530 65633037 34323230 39386237 32313130 632229","binary":true},"output":{"shannon":"400f1be5be8b3f41","alphabet_run":false}}
+{"input":{"token":"6f732e65 6e766972 6f6e5b22 4150495f 4b455922 5d","binary":false},"output":{"shannon":"40106d295f6d5f27","alphabet_run":false}}
+{"input":{"token":"6f732e65 6e766972 6f6e5b22 4150495f 4b455922 5d","binary":true},"output":{"shannon":"40106d295f6d5f27","alphabet_run":false}}
+{"input":{"token":"22656539 30386336 33396631 30393836 62373464 37373136 38356430 35333831 31366363 33363039 65666566 65343562 33626465 31306262 63356564 33643164 6422","binary":false},"output":{"shannon":"400e90e0db437474","alphabet_run":false}}
+{"input":{"token":"22656539 30386336 33396631 30393836 62373464 37373136 38356430 35333831 31366363 33363039 65666566 65343562 33626465 31306262 63356564 33643164 6422","binary":true},"output":{"shannon":"400e90e0db437474","alphabet_run":false}}
+{"input":{"token":"454e565b 22415049 5f4b4559 225d","binary":false},"output":{"shannon":"400c2c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"454e565b 22415049 5f4b4559 225d","binary":true},"output":{"shannon":"400c2c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"22353634 35646633 37656230 31626330 66623636 38646435 39653362 31376538 63356235 64343262 65643465 33313436 36666539 32316136 61393061 61386665 3622","binary":false},"output":{"shannon":"400fbe2ad162049b","alphabet_run":false}}
+{"input":{"token":"22353634 35646633 37656230 31626330 66623636 38646435 39653362 31376538 63356235 64343262 65643465 33313436 36666539 32316136 61393061 61386665 3622","binary":true},"output":{"shannon":"400fbe2ad162049b","alphabet_run":false}}
+{"input":{"token":"68656164 6572735b 22582d41 70692d4b 6579225d","binary":false},"output":{"shannon":"400f12ceea00dba4","alphabet_run":false}}
+{"input":{"token":"68656164 6572735b 22582d41 70692d4b 6579225d","binary":true},"output":{"shannon":"400f12ceea00dba4","alphabet_run":false}}
+{"input":{"token":"22613330 35636363 34343838 35326430 38396162 38326232 38393739 34373132 62613338 32613430 31656163 63663765 37636138 36626662 36393066 39636239 6122","binary":false},"output":{"shannon":"400f1a1c846fa64e","alphabet_run":false}}
+{"input":{"token":"22613330 35636363 34343838 35326430 38396162 38326232 38393739 34373132 62613338 32613430 31656163 63663765 37636138 36626662 36393066 39636239 6122","binary":true},"output":{"shannon":"400f1a1c846fa64e","alphabet_run":false}}
+{"input":{"token":"636c6965 6e742e73 65745f73 65637265 74282261 33663665 39623736 32303632 39323533 32323430 61656161 30666235 62383161 64346139 37326337 32306462 63303463 35376564 36633033 62613666 35393722 29","binary":false},"output":{"shannon":"4011b45adbf1d5c8","alphabet_run":false}}
+{"input":{"token":"636c6965 6e742e73 65745f73 65637265 74282261 33663665 39623736 32303632 39323533 32323430 61656161 30666235 62383161 64346139 37326337 32306462 63303463 35376564 36633033 62613666 35393722 29","binary":true},"output":{"shannon":"4011b45adbf1d5c8","alphabet_run":false}}
+{"input":{"token":"7b226170 695f6b65 7973223a","binary":false},"output":{"shannon":"400b58ab7c7a895f","alphabet_run":false}}
+{"input":{"token":"7b226170 695f6b65 7973223a","binary":true},"output":{"shannon":"400b58ab7c7a895f","alphabet_run":false}}
+{"input":{"token":"5b223964 61333838 37333230 65663631 64343638 38303333 33356664 31343336 38313938 37396661 38616263 35383265 62316233 30373361 64313239 32623834 6563222c","binary":false},"output":{"shannon":"4010316171354ade","alphabet_run":false}}
+{"input":{"token":"5b223964 61333838 37333230 65663631 64343638 38303333 33356664 31343336 38313938 37396661 38616263 35383265 62316233 30373361 64313239 32623834 6563222c","binary":true},"output":{"shannon":"4010316171354ade","alphabet_run":false}}
+{"input":{"token":"22386133 30633461 34366634 39663939 37623634 37353137 61373762 61366265 66626333 37623437 61646434 38356538 39623866 63323035 66313230 32353563 38225d7d","binary":false},"output":{"shannon":"401044de02a20221","alphabet_run":false}}
+{"input":{"token":"22386133 30633461 34366634 39663939 37623634 37353137 61373762 61366265 66626333 37623437 61646434 38356538 39623866 63323035 66313230 32353563 38225d7d","binary":true},"output":{"shannon":"401044de02a20221","alphabet_run":false}}
+{"input":{"token":"7b22746f 6b656e22 3a","binary":false},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"7b22746f 6b656e22 3a","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"7b227661 6c756522 3a","binary":false},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"7b227661 6c756522 3a","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"22653331 37363733 65646662 63626563 63623033 62633363 62383432 36393734 36623063 34613364 62626334 65353236 61633662 36336465 63303832 64646334 62227d7d","binary":false},"output":{"shannon":"400e8463f5ee1194","alphabet_run":false}}
+{"input":{"token":"22653331 37363733 65646662 63626563 63623033 62633363 62383432 36393734 36623063 34613364 62626334 65353236 61633662 36336465 63303832 64646334 62227d7d","binary":true},"output":{"shannon":"400e8463f5ee1194","alphabet_run":false}}
+{"input":{"token":"3c616464","binary":false},"output":{"shannon":"3ff8000000000000","alphabet_run":false}}
+{"input":{"token":"3c616464","binary":true},"output":{"shannon":"3ff8000000000000","alphabet_run":false}}
+{"input":{"token":"6b65793d 22417069 4b657922","binary":false},"output":{"shannon":"4008ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"6b65793d 22417069 4b657922","binary":true},"output":{"shannon":"4008ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"76616c75 653d2233 38316135 32636666 34633865 64303331 65633965 38333566 64623064 64636233 39346561 35623862 36333364 34383939 35356464 61303835 30626466 64333322 2f3e","binary":false},"output":{"shannon":"40106e60a9ca1cdb","alphabet_run":false}}
+{"input":{"token":"76616c75 653d2233 38316135 32636666 34633865 64303331 65633965 38333566 64623064 64636233 39346561 35623862 36333364 34383939 35356464 61303835 30626466 64333322 2f3e","binary":true},"output":{"shannon":"40106e60a9ca1cdb","alphabet_run":false}}
+{"input":{"token":"70617373 776f7264 3a","binary":false},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"70617373 776f7264 3a","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"21217374 72","binary":false},"output":{"shannon":"3ffec037ac8ce07c","alphabet_run":false}}
+{"input":{"token":"21217374 72","binary":true},"output":{"shannon":"3ffec037ac8ce07c","alphabet_run":false}}
+{"input":{"token":"37626666 35386466 31643664 31343034 33643631 30626332 66633938 31336363 33643232 37313230 38336139 66306239 38393733 66636137 35303734 37643733","binary":false},"output":{"shannon":"400e6f60352c59b9","alphabet_run":false}}
+{"input":{"token":"37626666 35386466 31643664 31343034 33643631 30626332 66633938 31336363 33643232 37313230 38336139 66306239 38393733 66636137 35303734 37643733","binary":true},"output":{"shannon":"400e6f60352c59b9","alphabet_run":false}}
+{"input":{"token":"68656164 6572733a","binary":false},"output":{"shannon":"4006000000000000","alphabet_run":false}}
+{"input":{"token":"68656164 6572733a","binary":true},"output":{"shannon":"4006000000000000","alphabet_run":false}}
+{"input":{"token":"60426561 726572","binary":false},"output":{"shannon":"4001e32d5ac1bb08","alphabet_run":false}}
+{"input":{"token":"60426561 726572","binary":true},"output":{"shannon":"4001e32d5ac1bb08","alphabet_run":false}}
+{"input":{"token":"31303334 64333365 37323532 65353839 34363233 30653432 65643331 37336465 39353935 39336562 39323065 64313864 61333964 62393337 64623331 33616134 60","binary":false},"output":{"shannon":"400d450cb3c381c7","alphabet_run":false}}
+{"input":{"token":"31303334 64333365 37323532 65353839 34363233 30653432 65643331 37336465 39353935 39336562 39323065 64313864 61333964 62393337 64623331 33616134 60","binary":true},"output":{"shannon":"400d450cb3c381c7","alphabet_run":false}}
+{"input":{"token":"61666664 65613762 39623334 33396264 63343432 31323137 61313465 31393331 63646539 61313435 66316461 61643339 63643338 38383736 33666538 62646463","binary":false},"output":{"shannon":"400deb5a7f6b15cf","alphabet_run":false}}
+{"input":{"token":"61666664 65613762 39623334 33396264 63343432 31323137 61313465 31393331 63646539 61313435 66316461 61643339 63643338 38383736 33666538 62646463","binary":true},"output":{"shannon":"400deb5a7f6b15cf","alphabet_run":false}}
+{"input":{"token":"6c69622f 73657373 696f6e2e 7262","binary":false},"output":{"shannon":"400974bf76f09d98","alphabet_run":false}}
+{"input":{"token":"6c69622f 73657373 696f6e2e 7262","binary":true},"output":{"shannon":"400974bf76f09d98","alphabet_run":false}}
+{"input":{"token":"38303261 66613464 34343761 38346534 37383334 61356232 37656233 36343639 35303239 35353838 66623234 30333562 38626562 34363634 37616138 63393739","binary":false},"output":{"shannon":"400d940612449765","alphabet_run":false}}
+{"input":{"token":"38303261 66613464 34343761 38346534 37383334 61356232 37656233 36343639 35303239 35353838 66623234 30333562 38626562 34363634 37616138 63393739","binary":true},"output":{"shannon":"400d940612449765","alphabet_run":false}}
+{"input":{"token":"6c69622f 6f746865 722e7262","binary":false},"output":{"shannon":"400a035627253409","alphabet_run":false}}
+{"input":{"token":"6c69622f 6f746865 722e7262","binary":true},"output":{"shannon":"400a035627253409","alphabet_run":false}}
+{"input":{"token":"36363931 30306532 35356262 39363664 38356661 62643438 65353539 34643264 63653264 30633336","binary":false},"output":{"shannon":"400da79de40adf70","alphabet_run":false}}
+{"input":{"token":"36363931 30306532 35356262 39363664 38356661 62643438 65353539 34643264 63653264 30633336","binary":true},"output":{"shannon":"400da79de40adf70","alphabet_run":false}}
+{"input":{"token":"726f7461 7465","binary":false},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"726f7461 7465","binary":true},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"77656268 6f6f6b","binary":false},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"77656268 6f6f6b","binary":true},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"73656372 6574","binary":false},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"73656372 6574","binary":true},"output":{"shannon":"4002035627253409","alphabet_run":false}}
+{"input":{"token":"38383261 38613061 62393336 32333536 63346630 34356162 39363964 61353636 64643765 64656632","binary":false},"output":{"shannon":"400e20ae3b5cde2c","alphabet_run":false}}
+{"input":{"token":"38383261 38613061 62393336 32333536 63346630 34356162 39363964 61353636 64643765 64656632","binary":true},"output":{"shannon":"400e20ae3b5cde2c","alphabet_run":false}}
+{"input":{"token":"62756d70","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"62756d70","binary":true},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"76657273 696f6e","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"76657273 696f6e","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"6d6f6e6b 65793a","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"6d6f6e6b 65793a","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"35313566 30346437 35376164 32346361 38613339 63363064 31303433 38353537 31326234 32653761 30666131 37623132 64663666 39393863 30313632 64656466","binary":false},"output":{"shannon":"400f49b2a4e107df","alphabet_run":false}}
+{"input":{"token":"35313566 30346437 35376164 32346361 38613339 63363064 31303433 38353537 31326234 32653761 30666131 37623132 64663666 39393863 30313632 64656466","binary":true},"output":{"shannon":"400f49b2a4e107df","alphabet_run":false}}
+{"input":{"token":"7475726b 6579","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"7475726b 6579","binary":true},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"22616566 64666166 37663539 30383665 39353739 66343865 37393938 62343863 30653563 34363135 63636362 38663835 35303530 32336130 63616665 37613037 3722","binary":false},"output":{"shannon":"400e8bc3bfb0d219","alphabet_run":false}}
+{"input":{"token":"22616566 64666166 37663539 30383665 39353739 66343865 37393938 62343863 30653563 34363135 63636362 38663835 35303530 32336130 63616665 37613037 3722","binary":true},"output":{"shannon":"400e8bc3bfb0d219","alphabet_run":false}}
+{"input":{"token":"2d2d7573 65723d61 646d696e 3a313635 35333233 32633231 66663436 63306166 35343232 34633234 32353233 65303330 31623161 34336164 62316537 32393332 31653131 37633134 64663738 62","binary":false},"output":{"shannon":"4010f96a4dd05715","alphabet_run":false}}
+{"input":{"token":"2d2d7573 65723d61 646d696e 3a313635 35333233 32633231 66663436 63306166 35343232 34633234 32353233 65303330 31623161 34336164 62316537 32393332 31653131 37633134 64663738 62","binary":true},"output":{"shannon":"4010f96a4dd05715","alphabet_run":false}}
+{"input":{"token":"53484132 35363a62 32383737 36626630 36653733 34343733 33316264 37643135 62313237 32313836 38653136 35643934 33623864 65306563 30373432 32303938 62373231 313063","binary":false},"output":{"shannon":"400fcd1a47ffc5e4","alphabet_run":false}}
+{"input":{"token":"53484132 35363a62 32383737 36626630 36653733 34343733 33316264 37643135 62313237 32313836 38653136 35643934 33623864 65306563 30373432 32303938 62373231 313063","binary":true},"output":{"shannon":"400fcd1a47ffc5e4","alphabet_run":false}}
+{"input":{"token":"22617069 5f6b6579 223a","binary":false},"output":{"shannon":"4008f9b56fe009d8","alphabet_run":false}}
+{"input":{"token":"22617069 5f6b6579 223a","binary":true},"output":{"shannon":"4008f9b56fe009d8","alphabet_run":false}}
+{"input":{"token":"225f6175 7468546f 6b656e22 3a","binary":false},"output":{"shannon":"400c5f6c7256ce83","alphabet_run":false}}
+{"input":{"token":"225f6175 7468546f 6b656e22 3a","binary":true},"output":{"shannon":"400c5f6c7256ce83","alphabet_run":false}}
+{"input":{"token":"22534841 3235363a 62636537 30353336 62363465 65373635 31633463 36363830 33666133 37363437 63386437 32333232 63306663 34656538 32653632 61333232 63306264 38343038 22","binary":false},"output":{"shannon":"40100ff66a5b08bf","alphabet_run":false}}
+{"input":{"token":"22534841 3235363a 62636537 30353336 62363465 65373635 31633463 36363830 33666133 37363437 63386437 32333232 63306663 34656538 32653632 61333232 63306264 38343038 22","binary":true},"output":{"shannon":"40100ff66a5b08bf","alphabet_run":false}}
+{"input":{"token":"22504750 4b657922 3a","binary":false},"output":{"shannon":"4005cdc8c0118485","alphabet_run":false}}
+{"input":{"token":"22504750 4b657922 3a","binary":true},"output":{"shannon":"4005cdc8c0118485","alphabet_run":false}}
+{"input":{"token":"22303430 39613533 61633936 35303138 64633430 65313465 38323738 38303632 31313532 66373439 63373935 38376263 37666265 63383561 30636539 33336538 3722","binary":false},"output":{"shannon":"400f793149510116","alphabet_run":false}}
+{"input":{"token":"22303430 39613533 61633936 35303138 64633430 65313465 38323738 38303632 31313532 66373439 63373935 38376263 37666265 63383561 30636539 33336538 3722","binary":true},"output":{"shannon":"400f793149510116","alphabet_run":false}}
+{"input":{"token":"22326661 5f746f6b 656e223a","binary":false},"output":{"shannon":"400b58ab7c7a895f","alphabet_run":false}}
+{"input":{"token":"22326661 5f746f6b 656e223a","binary":true},"output":{"shannon":"400b58ab7c7a895f","alphabet_run":false}}
+{"input":{"token":"22393163 66376161 34333037 39333932 35653030 37383763 32343330 34303865 31343330 33386465 35643966 66303134 30326266 36393466 31333665 32386634 3822","binary":false},"output":{"shannon":"400f2805093be2fe","alphabet_run":false}}
+{"input":{"token":"22393163 66376161 34333037 39333932 35653030 37383763 32343330 34303865 31343330 33386465 35643966 66303134 30326266 36393466 31333665 32386634 3822","binary":true},"output":{"shannon":"400f2805093be2fe","alphabet_run":false}}
+{"input":{"token":"50524956 4b45593d 32386538 39663062 39666361 30383963 63326336 33393661 34636366 61306533 37663633 39643236 33333439 36363961 35383161 36393336 64663933 35363334","binary":false},"output":{"shannon":"4010745e989f947b","alphabet_run":false}}
+{"input":{"token":"50524956 4b45593d 32386538 39663062 39666361 30383963 63326336 33393661 34636366 61306533 37663633 39643236 33333439 36363961 35383161 36393336 64663933 35363334","binary":true},"output":{"shannon":"4010745e989f947b","alphabet_run":false}}
+{"input":{"token":"53484132 3536","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"53484132 3536","binary":true},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"286c6962 2f6c6169 6e2f7365 6e736974 69766974 792f7365 63726574 732e7262 29","binary":false},"output":{"shannon":"400e342cae54cf30","alphabet_run":false}}
+{"input":{"token":"286c6962 2f6c6169 6e2f7365 6e736974 69766974 792f7365 63726574 732e7262 29","binary":true},"output":{"shannon":"400e342cae54cf30","alphabet_run":false}}
+{"input":{"token":"28617070 2f6d6f64 656c732f 73657373 696f6e2e 726229","binary":false},"output":{"shannon":"400e9f8f29f2c651","alphabet_run":false}}
+{"input":{"token":"28617070 2f6d6f64 656c732f 73657373 696f6e2e 726229","binary":true},"output":{"shannon":"400e9f8f29f2c651","alphabet_run":false}}
+{"input":{"token":"53484132 2d323536 28636f6e 6669672f 61757468 2e796d6c 293d","binary":false},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":false}}
+{"input":{"token":"53484132 2d323536 28636f6e 6669672f 61757468 2e796d6c 293d","binary":true},"output":{"shannon":"40127e7b257a2c2d","alphabet_run":false}}
+{"input":{"token":"6c69622f 6c61696e 2f617574 682f746f 6b656e5f 73746f72 652e7262 3a","binary":false},"output":{"shannon":"400fd3a08e7e2776","alphabet_run":false}}
+{"input":{"token":"6c69622f 6c61696e 2f617574 682f746f 6b656e5f 73746f72 652e7262 3a","binary":true},"output":{"shannon":"400fd3a08e7e2776","alphabet_run":false}}
+{"input":{"token":"286f7269 67696e2f 746f6b65 6e29","binary":false},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"286f7269 67696e2f 746f6b65 6e29","binary":true},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"612e7365 63726574 5f6b6579 5f626173 653a","binary":false},"output":{"shannon":"400b231e1566d9da","alphabet_run":false}}
+{"input":{"token":"612e7365 63726574 5f6b6579 5f626173 653a","binary":true},"output":{"shannon":"400b231e1566d9da","alphabet_run":false}}
+{"input":{"token":"7b224461 656d6f6e 4b657922 3a","binary":false},"output":{"shannon":"400b2458c11bbad1","alphabet_run":false}}
+{"input":{"token":"7b224461 656d6f6e 4b657922 3a","binary":true},"output":{"shannon":"400b2458c11bbad1","alphabet_run":false}}
+{"input":{"token":"22363238 32323836 61303031 39666563 33303337 39633939 38623064 36356230 34633862 64313165 62323934 65636635 38613762 38386137 38363464 64303832 39227d","binary":false},"output":{"shannon":"400ffc7f1816b740","alphabet_run":false}}
+{"input":{"token":"22363238 32323836 61303031 39666563 33303337 39633939 38623064 36356230 34633862 64313165 62323934 65636635 38613762 38386137 38363464 64303832 39227d","binary":true},"output":{"shannon":"400ffc7f1816b740","alphabet_run":false}}
+{"input":{"token":"7b22636f 6d6d6f6e 4b657922 3a","binary":false},"output":{"shannon":"4009e9450fe0a720","alphabet_run":false}}
+{"input":{"token":"7b22636f 6d6d6f6e 4b657922 3a","binary":true},"output":{"shannon":"4009e9450fe0a720","alphabet_run":false}}
+{"input":{"token":"22623831 39336266 35393763 38306662 63653535 30626138 65383266 61663361 62363537 38323535 66353838 35366636 38613035 38316462 33356232 30323766 61227d","binary":false},"output":{"shannon":"400e44d71a659999","alphabet_run":false}}
+{"input":{"token":"22623831 39336266 35393763 38306662 63653535 30626138 65383266 61663361 62363537 38323535 66353838 35366636 38613035 38316462 33356232 30323766 61227d","binary":true},"output":{"shannon":"400e44d71a659999","alphabet_run":false}}
+{"input":{"token":"7b22706f 6b656d6f 6e4b6579 223a","binary":false},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"7b22706f 6b656d6f 6e4b6579 223a","binary":true},"output":{"shannon":"400b07bfa3e64d51","alphabet_run":false}}
+{"input":{"token":"22343835 63663133 37386166 38303566 66303035 66366265 32303265 35643939 31623336 34353439 61383036 36313736 64386334 37373436 66393438 63653530 64227d","binary":false},"output":{"shannon":"40100558880ddf04","alphabet_run":false}}
+{"input":{"token":"22343835 63663133 37386166 38303566 66303035 66366265 32303265 35643939 31623336 34353439 61383036 36313736 64386334 37373436 66393438 63653530 64227d","binary":true},"output":{"shannon":"40100558880ddf04","alphabet_run":false}}
+{"input":{"token":"7b227375 6d6d6f6e 546f6b65 6e223a","binary":false},"output":{"shannon":"400afd0b97053de2","alphabet_run":false}}
+{"input":{"token":"7b227375 6d6d6f6e 546f6b65 6e223a","binary":true},"output":{"shannon":"400afd0b97053de2","alphabet_run":false}}
+{"input":{"token":"22623232 35366130 33363061 34323539 38396230 35386636 61616663 36356331 37316166 35343031 30633736 38343864 38616134 62666131 33303735 62343937 64227d","binary":false},"output":{"shannon":"400f8f5aec1724dc","alphabet_run":false}}
+{"input":{"token":"22623232 35366130 33363061 34323539 38396230 35386636 61616663 36356331 37316166 35343031 30633736 38343864 38616134 62666131 33303735 62343937 64227d","binary":true},"output":{"shannon":"400f8f5aec1724dc","alphabet_run":false}}
+{"input":{"token":"6d6f6e6b 65793d36 32303966 61336639 31396136 66663434 34363933 37633934 64636361 66366363 65313635 38616136 62316239 39393965 34663162 39343434 34633330 376163","binary":false},"output":{"shannon":"400fd2f16ca39e30","alphabet_run":false}}
+{"input":{"token":"6d6f6e6b 65793d36 32303966 61336639 31396136 66663434 34363933 37633934 64636361 66366363 65313635 38616136 62316239 39393965 34663162 39343434 34633330 376163","binary":true},"output":{"shannon":"400fd2f16ca39e30","alphabet_run":false}}
+{"input":{"token":"7475726b 65793a","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"7475726b 65793a","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"30656433 36366533 32303938 32663863 30633462 39623936 32656631 66613961 37613964 31343161 33663761 31656566 30363661 34313464 39343034 38623362","binary":false},"output":{"shannon":"400ea50cc7c8ca34","alphabet_run":false}}
+{"input":{"token":"30656433 36366533 32303938 32663863 30633462 39623936 32656631 66613961 37613964 31343161 33663761 31656566 30363661 34313464 39343034 38623362","binary":true},"output":{"shannon":"400ea50cc7c8ca34","alphabet_run":false}}
+{"input":{"token":"646f6e54 6f6b656e 3d343832 39313337 37","binary":false},"output":{"shannon":"400de04ce50375c6","alphabet_run":false}}
+{"input":{"token":"646f6e54 6f6b656e 3d343832 39313337 37","binary":true},"output":{"shannon":"400de04ce50375c6","alphabet_run":false}}
+{"input":{"token":"73713131 30464e55 51722d59 5f36535a 2d307947 562f46","binary":false},"output":{"shannon":"4010b3f41a8a153f","alphabet_run":false}}
+{"input":{"token":"73713131 30464e55 51722d59 5f36535a 2d307947 562f46","binary":true},"output":{"shannon":"4010b3f41a8a153f","alphabet_run":false}}
+{"input":{"token":"55344b4e 4158","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"55344b4e 4158","binary":true},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"54317831 3663766e 77594978 74524962 6c394142 502d3642 54486843 336f6274 6442346f 6a61684f 77695549 7a444266 42383749 326b","binary":false},"output":{"shannon":"40143bd08880654e","alphabet_run":false}}
+{"input":{"token":"54317831 3663766e 77594978 74524962 6c394142 502d3642 54486843 336f6274 6442346f 6a61684f 77695549 7a444266 42383749 326b","binary":true},"output":{"shannon":"40143bd08880654e","alphabet_run":false}}
+{"input":{"token":"77534171 325a6b2b 784b6f68 705a3636 58","binary":false},"output":{"shannon":"400ed13dd5f466b6","alphabet_run":false}}
+{"input":{"token":"77534171 325a6b2b 784b6f68 705a3636 58","binary":true},"output":{"shannon":"400ed13dd5f466b6","alphabet_run":false}}
+{"input":{"token":"41436a55 4566326d 76683745 7652594d 45","binary":false},"output":{"shannon":"400d855bcf0bf41e","alphabet_run":false}}
+{"input":{"token":"41436a55 4566326d 76683745 7652594d 45","binary":true},"output":{"shannon":"400d855bcf0bf41e","alphabet_run":false}}
+{"input":{"token":"726b416f 42486f6c 38573447 79487231 2b756f35 6965564c 5834535f 764a3645 4172","binary":false},"output":{"shannon":"40128671ab49bdd3","alphabet_run":false}}
+{"input":{"token":"726b416f 42486f6c 38573447 79487231 2b756f35 6965564c 5834535f 764a3645 4172","binary":true},"output":{"shannon":"40128671ab49bdd3","alphabet_run":false}}
+{"input":{"token":"30443568 5448","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"30443568 5448","binary":true},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"48376958 6c5148","binary":false},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"48376958 6c5148","binary":true},"output":{"shannon":"40042c51ed0adf9a","alphabet_run":false}}
+{"input":{"token":"6e434434 615649","binary":false},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"6e434434 615649","binary":true},"output":{"shannon":"400675767f54042c","alphabet_run":false}}
+{"input":{"token":"76586543 66525a6f 576e432f 625f62","binary":false},"output":{"shannon":"400d1f2db9276004","alphabet_run":false}}
+{"input":{"token":"76586543 66525a6f 576e432f 625f62","binary":true},"output":{"shannon":"400d1f2db9276004","alphabet_run":false}}
+{"input":{"token":"5762345f 752f6669 594a4142 6b4b7a55 3377424d 4e70514a 4a64746a 504b5930","binary":false},"output":{"shannon":"4012a7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"5762345f 752f6669 594a4142 6b4b7a55 3377424d 4e70514a 4a64746a 504b5930","binary":true},"output":{"shannon":"4012a7d7f62a4190","alphabet_run":false}}
+{"input":{"token":"47653665 3948676f 692b626b 39537875 6d7a5844 32437841 6d772d56 41387738 4464666d 414f7046 72375f6f 36662b61 79595277 7247","binary":false},"output":{"shannon":"40145551c0eff6c1","alphabet_run":false}}
+{"input":{"token":"47653665 3948676f 692b626b 39537875 6d7a5844 32437841 6d772d56 41387738 4464666d 414f7046 72375f6f 36662b61 79595277 7247","binary":true},"output":{"shannon":"40145551c0eff6c1","alphabet_run":false}}
+{"input":{"token":"336f454d 4f69395f 7a585750 786d797a 2f7a7151 6c525a6d 5651364c 6f53746a 73694e52 595a5f6e 51744166 77703766 2b334e56 2d7978","binary":false},"output":{"shannon":"40148afc225c3a06","alphabet_run":false}}
+{"input":{"token":"336f454d 4f69395f 7a585750 786d797a 2f7a7151 6c525a6d 5651364c 6f53746a 73694e52 595a5f6e 51744166 77703766 2b334e56 2d7978","binary":true},"output":{"shannon":"40148afc225c3a06","alphabet_run":false}}
+{"input":{"token":"4733696f 6949722d 4b794376 67543451 686b3964 72675f41 6e535159 57386c50 33345254 50334e7a 73642f31 472f","binary":false},"output":{"shannon":"4013f10fe72d0b33","alphabet_run":false}}
+{"input":{"token":"4733696f 6949722d 4b794376 67543451 686b3964 72675f41 6e535159 57386c50 33345254 50334e7a 73642f31 472f","binary":true},"output":{"shannon":"4013f10fe72d0b33","alphabet_run":false}}
+{"input":{"token":"637a7a2f 65644368 45783865 49485670 59486138 41345f37 5a70704f 61473538 34727a57 47583448 6d504f34 434d7145 58772f6a 3954516f 394356","binary":false},"output":{"shannon":"401427f1d9259365","alphabet_run":false}}
+{"input":{"token":"637a7a2f 65644368 45783865 49485670 59486138 41345f37 5a70704f 61473538 34727a57 47583448 6d504f34 434d7145 58772f6a 3954516f 394356","binary":true},"output":{"shannon":"401427f1d9259365","alphabet_run":false}}
+{"input":{"token":"69764b45 5a2d454d 744d6c41 44613169 4c4c7363 38442f4d 37586e55 54","binary":false},"output":{"shannon":"4011ac316c94dd0b","alphabet_run":false}}
+{"input":{"token":"69764b45 5a2d454d 744d6c41 44613169 4c4c7363 38442f4d 37586e55 54","binary":true},"output":{"shannon":"4011ac316c94dd0b","alphabet_run":false}}
+{"input":{"token":"3545636c 50685373 44712b5f 65773350 39625164 5a4c2f52 41306f68 49384d30 5139326d 47676e4b 567a65","binary":false},"output":{"shannon":"401496ba4861abe3","alphabet_run":false}}
+{"input":{"token":"3545636c 50685373 44712b5f 65773350 39625164 5a4c2f52 41306f68 49384d30 5139326d 47676e4b 567a65","binary":true},"output":{"shannon":"401496ba4861abe3","alphabet_run":false}}
+{"input":{"token":"47366878 6e4c5734 44557a54 53716532 5f633364 5848304d 30355550 68744657 446f5537 774d6869 78583331 58","binary":false},"output":{"shannon":"4013a1fd96e6d5e4","alphabet_run":false}}
+{"input":{"token":"47366878 6e4c5734 44557a54 53716532 5f633364 5848304d 30355550 68744657 446f5537 774d6869 78583331 58","binary":true},"output":{"shannon":"4013a1fd96e6d5e4","alphabet_run":false}}
+{"input":{"token":"394a3662 496b6765 4964436d 4f6c6845 72344a53 364c6b6d 53424670 77364162 74487432 4c5f6f6c 4a544f4a 676b6957 41455751 482d65","binary":false},"output":{"shannon":"4013d0cd96b9514b","alphabet_run":false}}
+{"input":{"token":"394a3662 496b6765 4964436d 4f6c6845 72344a53 364c6b6d 53424670 77364162 74487432 4c5f6f6c 4a544f4a 676b6957 41455751 482d65","binary":true},"output":{"shannon":"4013d0cd96b9514b","alphabet_run":false}}
+{"input":{"token":"426a6561 482d5663 37595139 51453862 6a4a5956 72734f41 6755544b 54307078 2f705568 335349","binary":false},"output":{"shannon":"4013b4a98141497a","alphabet_run":false}}
+{"input":{"token":"426a6561 482d5663 37595139 51453862 6a4a5956 72734f41 6755544b 54307078 2f705568 335349","binary":true},"output":{"shannon":"4013b4a98141497a","alphabet_run":false}}
+{"input":{"token":"34664b66 51336947 336f6f36 6d734735 78366e46 32446e7a 31414e61 7a68646a 51","binary":false},"output":{"shannon":"40123cf987e35c0b","alphabet_run":false}}
+{"input":{"token":"34664b66 51336947 336f6f36 6d734735 78366e46 32446e7a 31414e61 7a68646a 51","binary":true},"output":{"shannon":"40123cf987e35c0b","alphabet_run":false}}
+{"input":{"token":"6a435651 48414f5f 624e5a61 65484b52 774a3572 6e47725a 67367079 7878656b 6d635a43 36617356 38743571 5071466a 6a","binary":false},"output":{"shannon":"40140cc4d085fbc4","alphabet_run":false}}
+{"input":{"token":"6a435651 48414f5f 624e5a61 65484b52 774a3572 6e47725a 67367079 7878656b 6d635a43 36617356 38743571 5071466a 6a","binary":true},"output":{"shannon":"40140cc4d085fbc4","alphabet_run":false}}
+{"input":{"token":"2f796b73 654f4f2f 4f2b2d73 55516656 5a72314d 70547859 362d5270 6b52494c 70","binary":false},"output":{"shannon":"4011d010baa1eab5","alphabet_run":false}}
+{"input":{"token":"2f796b73 654f4f2f 4f2b2d73 55516656 5a72314d 70547859 362d5270 6b52494c 70","binary":true},"output":{"shannon":"4011d010baa1eab5","alphabet_run":false}}
+{"input":{"token":"7a6d4476 74487558 50487179 6c4c7447 344b4566 544c646d 50394e73 76664465 59703764 69683357 6b354d38 3637672b 2d734472 4c4d4530 7346782d 6f","binary":false},"output":{"shannon":"4015584de6fa3be3","alphabet_run":false}}
+{"input":{"token":"7a6d4476 74487558 50487179 6c4c7447 344b4566 544c646d 50394e73 76664465 59703764 69683357 6b354d38 3637672b 2d734472 4c4d4530 7346782d 6f","binary":true},"output":{"shannon":"4015584de6fa3be3","alphabet_run":false}}
+{"input":{"token":"4667726b 6f677665 6c68652d 39","binary":false},"output":{"shannon":"400b2458c11bbad1","alphabet_run":false}}
+{"input":{"token":"4667726b 6f677665 6c68652d 39","binary":true},"output":{"shannon":"400b2458c11bbad1","alphabet_run":false}}
+{"input":{"token":"71414744 49697775 6c315f4e 61736679 6a43","binary":false},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"71414744 49697775 6c315f4e 61736679 6a43","binary":true},"output":{"shannon":"4010ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"47613534 37385777 4135534e 2d564a4b 5f725563 52387763 30616b7a 2b754248 45726832 6b6a574b 45594265 5f366179 38556572 61445933 6f30","binary":false},"output":{"shannon":"40146e6663c1005a","alphabet_run":false}}
+{"input":{"token":"47613534 37385777 4135534e 2d564a4b 5f725563 52387763 30616b7a 2b754248 45726832 6b6a574b 45594265 5f366179 38556572 61445933 6f30","binary":true},"output":{"shannon":"40146e6663c1005a","alphabet_run":false}}
+{"input":{"token":"39686f61 6a765849 5942504b 365f6839 306b7564 4c2b5448 31656668 6d6c4f78 4b496942 662f6546 50547933 535851","binary":false},"output":{"shannon":"401448220756fc6e","alphabet_run":false}}
+{"input":{"token":"39686f61 6a765849 5942504b 365f6839 306b7564 4c2b5448 31656668 6d6c4f78 4b496942 662f6546 50547933 535851","binary":true},"output":{"shannon":"401448220756fc6e","alphabet_run":false}}
+{"input":{"token":"435a4649 38687552 586d7349 5062517a 79567865 49533265","binary":false},"output":{"shannon":"401136cb06759c19","alphabet_run":false}}
+{"input":{"token":"435a4649 38687552 586d7349 5062517a 79567865 49533265","binary":true},"output":{"shannon":"401136cb06759c19","alphabet_run":false}}
+{"input":{"token":"4367755f 39674239 3065316a 6977667a 6a575244 6f31","binary":false},"output":{"shannon":"4010621826bd5d2d","alphabet_run":false}}
+{"input":{"token":"4367755f 39674239 3065316a 6977667a 6a575244 6f31","binary":true},"output":{"shannon":"4010621826bd5d2d","alphabet_run":false}}
+{"input":{"token":"2b434d4e 5451642f 5a57666d 43742d38 6e4d4646 62775453 6d656459 5956","binary":false},"output":{"shannon":"4011c2ca0fc6e335","alphabet_run":false}}
+{"input":{"token":"2b434d4e 5451642f 5a57666d 43742d38 6e4d4646 62775453 6d656459 5956","binary":true},"output":{"shannon":"4011c2ca0fc6e335","alphabet_run":false}}
+{"input":{"token":"37383259 30696a32 61354a4f 58465768 664c5633 2b447151 4f597278 3274394b 5a6c6537 61456156 556d374a 33384247","binary":false},"output":{"shannon":"401426b0553c7279","alphabet_run":false}}
+{"input":{"token":"37383259 30696a32 61354a4f 58465768 664c5633 2b447151 4f597278 3274394b 5a6c6537 61456156 556d374a 33384247","binary":true},"output":{"shannon":"401426b0553c7279","alphabet_run":false}}
+{"input":{"token":"6f48726d 34344e34 784c394e 34773270 66424c2b 4f734e6f 4e53546a 53514f45 74533373 54354e43 3430546f 464b72","binary":false},"output":{"shannon":"401258edfe62e7b9","alphabet_run":false}}
+{"input":{"token":"6f48726d 34344e34 784c394e 34773270 66424c2b 4f734e6f 4e53546a 53514f45 74533373 54354e43 3430546f 464b72","binary":true},"output":{"shannon":"401258edfe62e7b9","alphabet_run":false}}
+{"input":{"token":"6b496936 4d675662 305a48","binary":false},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"6b496936 4d675662 305a48","binary":true},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"72417a33 4c4d486e 4f","binary":false},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"72417a33 4c4d486e 4f","binary":true},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"5273577a 636d6236 344c7964 55324f2b 33454a5a 4f5f7964 62554a36 4e6a415f 7964662f 61322f2d 5868452d 64735f61 77487548 472d7a34 5537512f 4e4858","binary":false},"output":{"shannon":"401410e4960ae99c","alphabet_run":false}}
+{"input":{"token":"5273577a 636d6236 344c7964 55324f2b 33454a5a 4f5f7964 62554a36 4e6a415f 7964662f 61322f2d 5868452d 64735f61 77487548 472d7a34 5537512f 4e4858","binary":true},"output":{"shannon":"401410e4960ae99c","alphabet_run":false}}
+{"input":{"token":"6849766d 75482b42 4b527430 57695368 33476a34 65302f72 73786646 44775378 53334176 44474b63 42625336 4e397676 484d364c 6569334f 426c4a","binary":false},"output":{"shannon":"401471f63fedd647","alphabet_run":false}}
+{"input":{"token":"6849766d 75482b42 4b527430 57695368 33476a34 65302f72 73786646 44775378 53334176 44474b63 42625336 4e397676 484d364c 6569334f 426c4a","binary":true},"output":{"shannon":"401471f63fedd647","alphabet_run":false}}
+{"input":{"token":"55764a43 6143345a 5f544378 304d4a71 37446334 51586d2d 67504447 49343945 694f6870 73615076","binary":false},"output":{"shannon":"4013563441cd3a9f","alphabet_run":false}}
+{"input":{"token":"55764a43 6143345a 5f544378 304d4a71 37446334 51586d2d 67504447 49343945 694f6870 73615076","binary":true},"output":{"shannon":"4013563441cd3a9f","alphabet_run":false}}
+{"input":{"token":"42706f4c 54","binary":false},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"42706f4c 54","binary":true},"output":{"shannon":"4002934f0979a371","alphabet_run":false}}
+{"input":{"token":"64336b77 7a783754 2d314834 66714d4d 37514d35 2f375468 534a7332 69763379 34","binary":false},"output":{"shannon":"40124c2fc263db31","alphabet_run":false}}
+{"input":{"token":"64336b77 7a783754 2d314834 66714d4d 37514d35 2f375468 534a7332 69763379 34","binary":true},"output":{"shannon":"40124c2fc263db31","alphabet_run":false}}
+{"input":{"token":"4c486a77 2d453235 3456415f 4c396a6e 344f7173 4d4b587a 35676b54 4d334943 39573656","binary":false},"output":{"shannon":"40131fc7ee41a5d0","alphabet_run":false}}
+{"input":{"token":"4c486a77 2d453235 3456415f 4c396a6e 344f7173 4d4b587a 35676b54 4d334943 39573656","binary":true},"output":{"shannon":"40131fc7ee41a5d0","alphabet_run":false}}
+{"input":{"token":"6b6d5959 6f2d5356 48517233 4746756f 55716f32 2f776377 456d6143 67667237 6a754654 6b2b49","binary":false},"output":{"shannon":"401337d0dba59987","alphabet_run":false}}
+{"input":{"token":"6b6d5959 6f2d5356 48517233 4746756f 55716f32 2f776377 456d6143 67667237 6a754654 6b2b49","binary":true},"output":{"shannon":"401337d0dba59987","alphabet_run":false}}
+{"input":{"token":"63536247 5a4a7839 68544c52 412d2b49 73395a6e 5951714c 464f5358 6964786f 33476c4c 46634531 62395a6c 35656154 6b394170 64563264 784b5756","binary":false},"output":{"shannon":"4014a05283543bdf","alphabet_run":false}}
+{"input":{"token":"63536247 5a4a7839 68544c52 412d2b49 73395a6e 5951714c 464f5358 6964786f 33476c4c 46634531 62395a6c 35656154 6b394170 64563264 784b5756","binary":true},"output":{"shannon":"4014a05283543bdf","alphabet_run":false}}
+{"input":{"token":"2f326549 63783761 70662d50 3470504b 77596c4a 3065342b 4b516633 62765870 36673453 2b","binary":false},"output":{"shannon":"4012ba88b6e72d8e","alphabet_run":false}}
+{"input":{"token":"2f326549 63783761 70662d50 3470504b 77596c4a 3065342b 4b516633 62765870 36673453 2b","binary":true},"output":{"shannon":"4012ba88b6e72d8e","alphabet_run":false}}
+{"input":{"token":"35724f4b 33793762 7567427a 57727145 79716469 774b5637 44707871 6a616163 4d71554d 4a33","binary":false},"output":{"shannon":"4012ad0921922e33","alphabet_run":false}}
+{"input":{"token":"35724f4b 33793762 7567427a 57727145 79716469 774b5637 44707871 6a616163 4d71554d 4a33","binary":true},"output":{"shannon":"4012ad0921922e33","alphabet_run":false}}
+{"input":{"token":"5f7a7651 58783257 4e6e352b 352d6759 3279614a 46505274 784d5067 71692d62 522f7972 62705353 39313156 782f6e5f","binary":false},"output":{"shannon":"4013c6e5b7aec5b9","alphabet_run":false}}
+{"input":{"token":"5f7a7651 58783257 4e6e352b 352d6759 3279614a 46505274 784d5067 71692d62 522f7972 62705353 39313156 782f6e5f","binary":true},"output":{"shannon":"4013c6e5b7aec5b9","alphabet_run":false}}
+{"input":{"token":"4c693674 47483677 4236526c 53532d32 4d486a70 7478384d 41334449 5f677a77 7734336c 78776e35 46753979 6f4b3173 36586642 465f","binary":false},"output":{"shannon":"40145a56900d2363","alphabet_run":false}}
+{"input":{"token":"4c693674 47483677 4236526c 53532d32 4d486a70 7478384d 41334449 5f677a77 7734336c 78776e35 46753979 6f4b3173 36586642 465f","binary":true},"output":{"shannon":"40145a56900d2363","alphabet_run":false}}
+{"input":{"token":"71585849 4a4b5772 5553735a 666a414a 706a454d 7246784b 75302d6e 39434e71 6162365a 4c77376f 4c5f457a 43455064 43575737 6d4e4137 466e","binary":false},"output":{"shannon":"4014770e1247e798","alphabet_run":false}}
+{"input":{"token":"71585849 4a4b5772 5553735a 666a414a 706a454d 7246784b 75302d6e 39434e71 6162365a 4c77376f 4c5f457a 43455064 43575737 6d4e4137 466e","binary":true},"output":{"shannon":"4014770e1247e798","alphabet_run":false}}
+{"input":{"token":"492f424b 6f4d346c 2b457656 4a437744 59546138 6341722f 4a386e76 654b5067 62496738 566b436f 6f53","binary":false},"output":{"shannon":"401323c7ca586db9","alphabet_run":false}}
+{"input":{"token":"492f424b 6f4d346c 2b457656 4a437744 59546138 6341722f 4a386e76 654b5067 62496738 566b436f 6f53","binary":true},"output":{"shannon":"401323c7ca586db9","alphabet_run":false}}
+{"input":{"token":"5278432d 59735231 6f654e63 39644f4b 7845366d 66637a","binary":false},"output":{"shannon":"40110cff3bee41c4","alphabet_run":false}}
+{"input":{"token":"5278432d 59735231 6f654e63 39644f4b 7845366d 66637a","binary":true},"output":{"shannon":"40110cff3bee41c4","alphabet_run":false}}
+{"input":{"token":"37796c7a 4f462d33 746d546d 47693168 504e5a6a 5a416866 65736479 69766938 67466c4d 30734567","binary":false},"output":{"shannon":"4013365449ab6c92","alphabet_run":false}}
+{"input":{"token":"37796c7a 4f462d33 746d546d 47693168 504e5a6a 5a416866 65736479 69766938 67466c4d 30734567","binary":true},"output":{"shannon":"4013365449ab6c92","alphabet_run":false}}
+{"input":{"token":"686e6a4b 4f6e3078 32703958 55395039 30574d6b 59626377 6a454236 617a6a2b 55553634 314b5f78 624c","binary":false},"output":{"shannon":"4013116024603e26","alphabet_run":false}}
+{"input":{"token":"686e6a4b 4f6e3078 32703958 55395039 30574d6b 59626377 6a454236 617a6a2b 55553634 314b5f78 624c","binary":true},"output":{"shannon":"4013116024603e26","alphabet_run":false}}
+{"input":{"token":"626b394f 574a512f 704e6b67 31337368 50352d2b 4b4e4a5f 6b6f7177 2f4b317a 746a6e36 42553667 6c596c77 302b7839","binary":false},"output":{"shannon":"40141c3b0d041b0f","alphabet_run":false}}
+{"input":{"token":"626b394f 574a512f 704e6b67 31337368 50352d2b 4b4e4a5f 6b6f7177 2f4b317a 746a6e36 42553667 6c596c77 302b7839","binary":true},"output":{"shannon":"40141c3b0d041b0f","alphabet_run":false}}
+{"input":{"token":"6a674f70 4c594a52 5830702b 43555a33 776a7946 436a5f53 4144","binary":false},"output":{"shannon":"4011747140c1df54","alphabet_run":false}}
+{"input":{"token":"6a674f70 4c594a52 5830702b 43555a33 776a7946 436a5f53 4144","binary":true},"output":{"shannon":"4011747140c1df54","alphabet_run":false}}
+{"input":{"token":"6b616168 45524b47 585f656d 74543231 772b5a61 5a563449 574e3835 6a31474d 6a5a656a 6b4a502d 32373059 46454843 3431694b 55597253","binary":false},"output":{"shannon":"4014ba5fbb784ecc","alphabet_run":false}}
+{"input":{"token":"6b616168 45524b47 585f656d 74543231 772b5a61 5a563449 574e3835 6a31474d 6a5a656a 6b4a502d 32373059 46454843 3431694b 55597253","binary":true},"output":{"shannon":"4014ba5fbb784ecc","alphabet_run":false}}
+{"input":{"token":"6b626559 382b6c58 72456855 49335a6a 4f325978 79377a2f 63575a6d 4a495562 784b564d 35735353","binary":false},"output":{"shannon":"4013e3411e566b53","alphabet_run":false}}
+{"input":{"token":"6b626559 382b6c58 72456855 49335a6a 4f325978 79377a2f 63575a6d 4a495562 784b564d 35735353","binary":true},"output":{"shannon":"4013e3411e566b53","alphabet_run":false}}
+{"input":{"token":"6b7a7a4d 3573702d 54505a62 336f596f 5a6e6650 39416574 776e3771 6576462f 7336522f 2b352f56 344b624c 6e792b45","binary":false},"output":{"shannon":"40140c205bcaf16e","alphabet_run":false}}
+{"input":{"token":"6b7a7a4d 3573702d 54505a62 336f596f 5a6e6650 39416574 776e3771 6576462f 7336522f 2b352f56 344b624c 6e792b45","binary":true},"output":{"shannon":"40140c205bcaf16e","alphabet_run":false}}
+{"input":{"token":"3272322f 4f6d5550 7a44737a 4d4d7a73 41437230 7046544f 507a646d 622f557a 3434524f 624d5362 6b794e36 31534758 67613768 66444634 73476872 6650","binary":false},"output":{"shannon":"4013a14d40f5bde6","alphabet_run":false}}
+{"input":{"token":"3272322f 4f6d5550 7a44737a 4d4d7a73 41437230 7046544f 507a646d 622f557a 3434524f 624d5362 6b794e36 31534758 67613768 66444634 73476872 6650","binary":true},"output":{"shannon":"4013a14d40f5bde6","alphabet_run":false}}
+{"input":{"token":"754f4739 73776658 76634958 77542d66 69363042 7933705f 686b4d6e 443833","binary":false},"output":{"shannon":"4012c8d6c5e82c45","alphabet_run":false}}
+{"input":{"token":"754f4739 73776658 76634958 77542d66 69363042 7933705f 686b4d6e 443833","binary":true},"output":{"shannon":"4012c8d6c5e82c45","alphabet_run":false}}
+{"input":{"token":"48776c5a 4a724b4a 47554349 4d2d4e69 5a684d5f 69613850 6152344a 5f4b7030 435f3870 636a4c50 4c4d6632 79583874 35","binary":false},"output":{"shannon":"401399a031645bd8","alphabet_run":false}}
+{"input":{"token":"48776c5a 4a724b4a 47554349 4d2d4e69 5a684d5f 69613850 6152344a 5f4b7030 435f3870 636a4c50 4c4d6632 79583874 35","binary":true},"output":{"shannon":"401399a031645bd8","alphabet_run":false}}
+{"input":{"token":"dc8ae3a0 9aeea0b0 77f2a6af 96e4bda1 33e48a8a","binary":false},"output":{"shannon":"4008000000000000","alphabet_run":false}}
+{"input":{"token":"dc8ae3a0 9aeea0b0 77f2a6af 96e4bda1 33e48a8a","binary":true},"output":{"shannon":"400f12ceea00dba4","alphabet_run":false}}
+{"input":{"token":"f3808d9e 0fee9fa5 cfb10af4 8c9383ef 91b664c9 9f","binary":false},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"f3808d9e 0fee9fa5 cfb10af4 8c9383ef 91b664c9 9f","binary":true},"output":{"shannon":"4011303590306b58","alphabet_run":false}}
+{"input":{"token":"62e8a4a8 ebabbbe2 9081","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"62e8a4a8 ebabbbe2 9081","binary":true},"output":{"shannon":"400a934f0979a372","alphabet_run":false}}
+{"input":{"token":"eb80b7f2 97a0aa74 eea3a521 f185889b d787ee88 99e48c9c 0cc2a1","binary":false},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"eb80b7f2 97a0aa74 eea3a521 f185889b d787ee88 99e48c9c 0cc2a1","binary":true},"output":{"shannon":"40126d4d14cac493","alphabet_run":false}}
+{"input":{"token":"e387b2e4 bf89efa6 b6f4829d b3efbc88 f180ba9c eea4a6ef b48acab2 d19d7ad2 84e28cb2","binary":false},"output":{"shannon":"400d9a802391e234","alphabet_run":false}}
+{"input":{"token":"e387b2e4 bf89efa6 b6f4829d b3efbc88 f180ba9c eea4a6ef b48acab2 d19d7ad2 84e28cb2","binary":true},"output":{"shannon":"40132db9a3e21a5d","alphabet_run":false}}
+{"input":{"token":"f19e94a0 f19fb7b2 ee8f98e4 a9b4c9aa dabdf099 ae93e69d a6ef8ba6 f1acbe87 f09b8187","binary":false},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"f19e94a0 f19fb7b2 ee8f98e4 a9b4c9aa dabdf099 ae93e69d a6ef8ba6 f1acbe87 f09b8187","binary":true},"output":{"shannon":"40137c161e67356c","alphabet_run":false}}
+{"input":{"token":"f2b09e87 f2a7ad99 e9b982c7 8250efa3 aee181ab e68485f0 9bb582e4 88ac55ef b380f09b afb9ee8f a4ef9bbc","binary":false},"output":{"shannon":"400f414fdb498227","alphabet_run":false}}
+{"input":{"token":"f2b09e87 f2a7ad99 e9b982c7 8250efa3 aee181ab e68485f0 9bb582e4 88ac55ef b380f09b afb9ee8f a4ef9bbc","binary":true},"output":{"shannon":"4013fed811481ac3","alphabet_run":false}}
+{"input":{"token":"eeb0a1c6 9aeeb4ad f3bf8bb2 ee9598ef 9991","binary":false},"output":{"shannon":"4004ae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"eeb0a1c6 9aeeb4ad f3bf8bb2 ee9598ef 9991","binary":true},"output":{"shannon":"400f3f0180a7c2f5","alphabet_run":false}}
+{"input":{"token":"7feea5a4 e3b092d8 b0","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"7feea5a4 e3b092d8 b0","binary":true},"output":{"shannon":"400794e531d8a0f6","alphabet_run":false}}
+{"input":{"token":"7fefafb9 eeafbedf b1e2a5a0 cca4ef9a 90ef9490 c381e5a0 a244c99a","binary":false},"output":{"shannon":"400cae00d1cfdeb4","alphabet_run":false}}
+{"input":{"token":"7fefafb9 eeafbedf b1e2a5a0 cca4ef9a 90ef9490 c381e5a0 a244c99a","binary":true},"output":{"shannon":"4011684458fedf4d","alphabet_run":false}}
+{"input":{"token":"ef9baad5 9ae8b396 eba1aeeb a3a4ef96 bd58df80 21e4bda9 eea8be","binary":false},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"ef9baad5 9ae8b396 eba1aeeb a3a4ef96 bd58df80 21e4bda9 eea8be","binary":true},"output":{"shannon":"4011d598eeddbb18","alphabet_run":false}}
+{"input":{"token":"c885ef8f b5e39ab3 63","binary":false},"output":{"shannon":"4000000000000000","alphabet_run":false}}
+{"input":{"token":"c885ef8f b5e39ab3 63","binary":true},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"f0a582a7 1ff3a3a8 a9c29ae2 8fade8a8 8df188ac a4e993ae ef8e83f0 af9fa946 e9afb7e3 a8b0eeac 8be2bfac f2b98dbc","binary":false},"output":{"shannon":"4010000000000000","alphabet_run":false}}
+{"input":{"token":"f0a582a7 1ff3a3a8 a9c29ae2 8fade8a8 8df188ac a4e993ae ef8e83f0 af9fa946 e9afb7e3 a8b0eeac 8be2bfac f2b98dbc","binary":true},"output":{"shannon":"40148c205bcaf16e","alphabet_run":false}}
+{"input":{"token":"ee9eaee4 acbfe69d 9f2cdfbd ee91b7d7 8d6aeeb2 97","binary":false},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"ee9eaee4 acbfe69d 9f2cdfbd ee91b7d7 8d6aeeb2 97","binary":true},"output":{"shannon":"4010a9e02bde861b","alphabet_run":false}}
+{"input":{"token":"e3a686dc 86eab3b8 f1998f8c e2abbfed 88a221e6 babbe6b8 acefa3a4","binary":false},"output":{"shannon":"400a934f0979a372","alphabet_run":false}}
+{"input":{"token":"e3a686dc 86eab3b8 f1998f8c e2abbfed 88a221e6 babbe6b8 acefa3a4","binary":true},"output":{"shannon":"40125f4d88ce9460","alphabet_run":false}}
+{"input":{"token":"f188a98c e5abbfda 98e38d92 74ee83a8 ce92ef84 98f0bd9c a2ca8aef b587e3ac 93d8a4ef ad85d29f","binary":false},"output":{"shannon":"400f414fdb498227","alphabet_run":false}}
+{"input":{"token":"f188a98c e5abbfda 98e38d92 74ee83a8 ce92ef84 98f0bd9c a2ca8aef b587e3ac 93d8a4ef ad85d29f","binary":true},"output":{"shannon":"4014365449ab6c92","alphabet_run":false}}
+{"input":{"token":"29ef9582 f19694be efad9cf0 b29591f2 9cb3af7d e2b181d7 8f","binary":false},"output":{"shannon":"40095c01a39fbd68","alphabet_run":false}}
+{"input":{"token":"29ef9582 f19694be efad9cf0 b29591f2 9cb3af7d e2b181d7 8f","binary":true},"output":{"shannon":"40119d8c7a1d7a7c","alphabet_run":false}}
+{"input":{"token":"ee9d87df 89eeb7b7 5dce85ee 9bb2e99a 97e9be89 ec9ca6f0 acb199ee 9194","binary":false},"output":{"shannon":"400bacea7c065d42","alphabet_run":false}}
+{"input":{"token":"ee9d87df 89eeb7b7 5dce85ee 9bb2e99a 97e9be89 ec9ca6f0 acb199ee 9194","binary":true},"output":{"shannon":"4011c2ca0fc6e335","alphabet_run":false}}
+{"input":{"token":"65d4a1db abda98ef 94b0f2b7 9b88f48d babdf29c 8eaf","binary":false},"output":{"shannon":"4008000000000000","alphabet_run":false}}
+{"input":{"token":"65d4a1db abda98ef 94b0f2b7 9b88f48d babdf29c 8eaf","binary":true},"output":{"shannon":"4011795df831ba44","alphabet_run":false}}
+{"input":{"token":"d3b523f3 9381b9ee 89b4e498 9acdbfd1 9644e28e 90f39bac 93efbab1 eba0aa70 f1a69484","binary":false},"output":{"shannon":"400e75767f54042d","alphabet_run":false}}
+{"input":{"token":"d3b523f3 9381b9ee 89b4e498 9acdbfd1 9644e28e 90f39bac 93efbab1 eba0aa70 f1a69484","binary":true},"output":{"shannon":"40143c39b55e1797","alphabet_run":false}}

@@ -28,6 +28,9 @@ const EVENT_DIGEST: &str = include_str!("../corpus/event_digest.ndjson");
 const DAG: &str = include_str!("../corpus/dag.ndjson");
 const STORE: &str = include_str!("../corpus/store.ndjson");
 const ERRORS: &str = include_str!("../corpus/errors.ndjson");
+const DETECT: &str = include_str!("../corpus/detect.ndjson");
+const RECURRENCES: &str = include_str!("../corpus/recurrences.ndjson");
+const ENTROPY: &str = include_str!("../corpus/entropy.ndjson");
 const MANIFEST: &str = include_str!("../corpus/MANIFEST.json");
 
 const UNSUPPORTED: &str = "Lain::Canonical::UnsupportedType";
@@ -667,6 +670,9 @@ fn every_corpus_file_is_the_one_its_manifest_names() {
         ("dag.ndjson", DAG),
         ("store.ndjson", STORE),
         ("errors.ndjson", ERRORS),
+        ("detect.ndjson", DETECT),
+        ("recurrences.ndjson", RECURRENCES),
+        ("entropy.ndjson", ENTROPY),
     ] {
         let entry = files.get(name);
         assert_eq!(
@@ -675,6 +681,27 @@ fn every_corpus_file_is_the_one_its_manifest_names() {
             "{name} differs from the manifest"
         );
         assert_eq!(text.lines().count(), entry.get("records").index(), "{name}");
+    }
+}
+
+#[test]
+fn every_masking_vector_carries_the_input_key_and_answer_key_its_file_records() {
+    for (name, file, input_key, answer) in [
+        ("detect", DETECT, "bytes", "regions"),
+        ("recurrences", RECURRENCES, "bytes", "spans"),
+        ("entropy", ENTROPY, "token", "shannon"),
+    ] {
+        assert!(records(file).count() > 0, "{name} holds no records");
+        for (line, input, output) in records(file) {
+            assert!(
+                input.opt(input_key).is_some(),
+                "{name}:{line} has no {input_key}"
+            );
+            assert!(
+                output.opt(answer).is_some(),
+                "{name}:{line} has no {answer}"
+            );
+        }
     }
 }
 

@@ -2,10 +2,13 @@
 
 require "json"
 require "fileutils"
+require "yaml"
 
 # The frozen conformance corpus under ext/lain/corpus, read by `cargo test` (ext/lain/src/corpus.rs) with no
-# Ruby VM. Only the canonical vectors still have a Ruby implementation to derive from; the other files are
-# frozen fixtures that generation carries through unchanged and the manifest digests hold still.
+# Ruby VM. The canonical vectors and the 3 masking vectors (detect, recurrences, entropy) still have a Ruby
+# implementation to derive from; the other files are frozen fixtures that generation carries through unchanged
+# and the manifest digests hold still. A masking input's `bytes` is hex in groups of 4 bytes split by spaces, and
+# an input with a `fill` of at, chunk and times splices chunk repeated times at byte offset at into bytes.
 # `rake conformance:corpus` runs this generator and spec/conformance_corpus_spec.rb re-runs it.
 #
 # Every line is `{"input": ..., "output": ...}`. Values travel as a tagged tree
@@ -14,10 +17,13 @@ require "fileutils"
 module ConformanceCorpus
   DIR = File.expand_path("../../ext/lain/corpus", __dir__)
   MANIFEST = File.join(DIR, "MANIFEST.json")
-  FILES = %w[canonical event_digest dag store errors regions toml].freeze
+  FILES = %w[canonical event_digest dag store errors regions toml detect recurrences entropy].freeze
 
   ABOUT = "A regression oracle, not a discovery one: the canonical vectors record what the Ruby implementation " \
           "answered at the commit named here, so a change in either implementation shows up as a mismatch. " \
+          "The detect, recurrences and entropy vectors record the masking path's answers before it moved to Rust; " \
+          "their hex holds spaces between 4-byte groups, and a detect input's fill (at, chunk, times) splices " \
+          "chunk repeated times into its bytes at byte offset at. " \
           "The other 4 files are frozen fixtures whose Ruby is gone (see ruby_oracle_retired); only their digests " \
           "hold them still. They cannot find a bug both implementations share."
 
@@ -453,5 +459,245 @@ module ConformanceCorpus
     end
   end
 
-  VECTORS = { "canonical" => CanonicalVectors, "regions" => RegionVectors, "toml" => TomlVectors }.freeze
+  # The answers Regions.detect, Regions.recurrences and Entropy gave before the masking path moved to Rust.
+  # Texts and tokens travel as spaced hex so the file holds no credential-shaped plain text for a push scanner to
+  # refuse; the labelled corpora's own values are written as parts for the same reason.
+  module MaskingInputs
+    FIXTURES = File.expand_path("../fixtures/sensitivity", __dir__)
+    LOCKS = { "Cargo.lock" => "../../Cargo.lock", "Gemfile.lock" => "../../Gemfile.lock" }.freeze
+    SLICES = 10
+    SLICE_LINES = 40
+    BASE64 = [*"A".."Z", *"a".."z", *"0".."9", "+", "/", "-", "_"].freeze
+    HEXDIGITS = [*"0".."9", *"a".."f"].freeze
+    PATHS = %w[/usr/lib/x86_64-linux-gnu/libssl.so.3 src/lain/sensitivity/regions.rb
+               /tmp/d20261019-4211-1xk2p9 crates/lain-daemon/src/main.rs node_modules/.bin/eslint].freeze
+
+    module_function
+
+    # Groups of 4 bytes, because a scanner decodes a long unbroken hex run and reads the secret inside it.
+    def hex(text) = text.b.unpack1("H*").scan(/.{1,8}/).join(" ")
+
+    def unhex(text) = [text.delete(" ")].pack("H*")
+
+    # A run too long to store is a chunk and a count, spliced in at a byte offset, so the file stays small.
+    def text(input)
+      bytes = unhex(input.fetch("bytes"))
+      fill = input["fill"]
+      return bytes unless fill
+
+      at = fill.fetch("at")
+      bytes.byteslice(0, at) + (unhex(fill.fetch("chunk")) * fill.fetch("times")) + bytes.byteslice(at..)
+    end
+
+    def corpus(name) = YAML.safe_load_file(File.join(FIXTURES, "#{name}_corpus.yml"))
+
+    def hinted = corpus("hinted").map { |row| [row.fetch("label"), Array(row.fetch("value")).join] }
+
+    def digests = corpus("digest").map { |row| [row.fetch("label"), Array(row.fetch("line")).join] }
+
+    def public_texts = corpus("public").map { |row| [row.fetch("label"), Array(row.fetch("text")).join] }
+
+    def token(draw, length, alphabet = BASE64) = Array.new(length) { draw.pick(alphabet) }.join
+
+    def lock_slices
+      LOCKS.flat_map do |name, relative|
+        lines = File.readlines(File.expand_path(relative, __dir__), encoding: Encoding::UTF_8)
+        step = (lines.size - SLICE_LINES) / SLICES
+        Array.new(SLICES) { |index| ["slice #{name}: #{index}", lines[index * step, SLICE_LINES].join] }
+      end
+    end
+  end
+
+  # Every labelled corpus value in 4 framings, 20 slices of the repository's own lock files, and 200 texts
+  # drawn from the seed. The slices are carried once written, so a lock file that moves later cannot move them.
+  module DetectVectors
+    FRAMINGS = {
+      "bare" => ->(text) { text },
+      "key" => ->(text) { "API_KEY=#{text}" },
+      "yaml" => ->(text) { "token: #{JSON.generate(text)}\n" },
+      "json" => ->(text) { %({"secret": #{JSON.generate(text)}}\n) }
+    }.freeze
+
+    module_function
+
+    # The secrets are built from parts, so this file holds no credential-shaped plain text.
+    NAMED = [
+      ["toml assignment", "aws-secret-access-key = \"#{"Zq8vLm2xK9" * 2}\"\n"],
+      ["yaml assignment", "aws-secret-access-key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY\n"],
+      ["credential literal assignment", "api_secret: #{"Zq8vLm2xK9" * 2}\n"],
+      ["password variable assignment", "env PGPASSWORD=#{"Zq8vLm2xK9" * 2} psql -h db\n"]
+    ].freeze
+
+    # Past the second backtrack limit a multi-line shape is masked whole, from its last finished match to the end.
+    RUNAWAY_PEM = { "at" => 27, "chunk" => "A", "times" => 1_000_000 }.freeze
+
+    def inputs(draw)
+      framed + flagged + slices + Array.new(200) { |index| generated(draw, index) } + written + named + [over_masked]
+    end
+
+    def entry(label, text, checksums: false, hinted: false, fill: nil)
+      { "label" => label, "bytes" => MaskingInputs.hex(text), "checksums" => checksums, "hinted" => hinted }
+        .merge(fill ? { "fill" => fill.merge("chunk" => MaskingInputs.hex(fill.fetch("chunk"))) } : {})
+    end
+
+    def written
+      RegionVectors::WRITTEN.reject { |_, label, _| label == "near_miss" }
+                            .map { |shape, label, bytes| entry("written: #{shape} / #{label}", bytes) }
+    end
+
+    def named = NAMED.map { |reason, text| entry("named: #{reason}", text) }
+
+    def over_masked
+      text = "-----BEGIN PUBLIC KEY-----\n-----END RSA PUBLIC KEY-----\nAKIA#{"ABCDEFGH" * 2}\n"
+      entry("over-masked: public key run", text, fill: RUNAWAY_PEM)
+    end
+
+    def framed
+      { "hinted" => MaskingInputs.hinted, "digest" => MaskingInputs.digests, "public" => MaskingInputs.public_texts }
+        .flat_map do |corpus, rows|
+        FRAMINGS.flat_map do |framing, wrap|
+          rows.map do |label, text|
+            entry("#{corpus} #{framing}: #{label}", wrap.call(text))
+          end
+        end
+      end
+    end
+
+    def flagged
+      MaskingInputs.hinted.map { |label, text| entry("hinted flagged: #{label}", text, hinted: true) } +
+        MaskingInputs.digests.map { |label, text| entry("digest checksums: #{label}", text, checksums: true) }
+    end
+
+    def slices
+      path = ConformanceCorpus.path("detect")
+      return MaskingInputs.lock_slices.map { |label, text| entry(label, text) } unless File.exist?(path)
+
+      ConformanceCorpus.records("detect").map { |record, _| record.fetch("input") }
+                       .select { _1.fetch("label").start_with?("slice ") }
+    end
+
+    def generated(draw, index)
+      lines = Array.new(draw.int(2..8)) { line(draw) }
+      entry("generated: #{index}", "#{lines.join("\n")}\n", checksums: draw.chance?(0.15), hinted: draw.chance?(0.15))
+    end
+
+    def line(draw)
+      case draw.int(0..6)
+      when 0 then "KEY_#{draw.int(0..99)}=#{MaskingInputs.token(draw, draw.int(8..48))}"
+      when 1 then "#{draw.pick(%w[sha256 digest checksum])}: #{MaskingInputs.token(draw, draw.pick([32, 40, 64]), MaskingInputs::HEXDIGITS)}"
+      when 2 then draw.pick(MaskingInputs::PATHS)
+      when 3 then "token #{MaskingInputs.token(draw, draw.int(16..44))} end"
+      when 4 then Array.new(draw.int(2..6)) { draw.pick(ConformanceCorpus::Draw::WORDS) }.join(" ")
+      else "the #{draw.pick(%w[value file call])} is #{MaskingInputs.token(draw, draw.int(5..30))}"
+      end
+    end
+
+    def derive(input)
+      bytes = MaskingInputs.text(input)
+      regions = Lain::Sensitivity::Regions.detect(bytes, checksums: input.fetch("checksums"),
+                                                         hinted: input.fetch("hinted"))
+      { "regions" => regions.map { [_1.start, _1.start + _1.length, _1.reason, _1.detector.to_s, _1.over_masked_by] } }
+    end
+  end
+
+  # Texts holding secrets raw, escaped as inspect escapes them, overlapping, beside placeholders and in UTF-16.
+  module RecurrenceVectors
+    KINDS = %w[plain overlapping multibyte escaped placeholder short utf16].freeze
+    PER_KIND = 20
+    PLACEHOLDER = "<redacted:3>"
+
+    module_function
+
+    def inputs(draw) = KINDS.flat_map { |kind| Array.new(PER_KIND) { |index| send(kind, draw, "#{kind}: #{index}") } }
+
+    def entry(label, text, secrets)
+      { "label" => label, "bytes" => MaskingInputs.hex(text), "secrets" => secrets.map { MaskingInputs.hex(_1) } }
+    end
+
+    def secret(draw) = MaskingInputs.token(draw, draw.int(6..24))
+
+    def plain(draw, label)
+      value = secret(draw)
+      entry(label, "a #{value} b #{value}\nc #{value}", [value])
+    end
+
+    def overlapping(draw, label)
+      value = secret(draw) + MaskingInputs.token(draw, 6)
+      inner = value[draw.int(1..4), draw.int(6..10)]
+      entry(label, "x #{value} y #{inner} z", [value, inner, value])
+    end
+
+    def multibyte(draw, label)
+      value = "#{draw.pick(%w[é 日本 \u{1f980}])}#{secret(draw)}#{draw.pick(%w[ü 語])}"
+      entry(label, "k=#{value}; again #{value.inspect}", [value])
+    end
+
+    def escaped(draw, label)
+      value = "#{secret(draw)}#{draw.pick(["\"", "\\", "\n", "\t", "\u0001"])}#{secret(draw)}"
+      entry(label, "raw #{value} lit #{value.inspect}", [value])
+    end
+
+    def placeholder(draw, label)
+      value = secret(draw)
+      entry(label, "#{PLACEHOLDER}#{value} #{value}#{PLACEHOLDER} #{value}", [value])
+    end
+
+    def short(draw, label)
+      value = secret(draw)[0, draw.int(1..5)]
+      entry(label, "short #{value} and #{value}", [value, secret(draw)])
+    end
+
+    def utf16(draw, label)
+      value = secret(draw)
+      text = "\uFEFF".encode(Encoding::UTF_16LE).b + "k=#{value} #{PLACEHOLDER} #{value}".encode(Encoding::UTF_16LE).b
+      entry(label, text + " #{value}".b, [value])
+    end
+
+    def derive(input)
+      bytes = MaskingInputs.unhex(input.fetch("bytes"))
+      secrets = input.fetch("secrets").map { MaskingInputs.unhex(_1).force_encoding(Encoding::UTF_8) }
+      { "spans" => Lain::Sensitivity::Regions.recurrences(bytes, secrets).map { [_1.start, _1.finish] } }
+    end
+  end
+
+  # Tokens as UTF-8 and again as binary, because each_char reads symbols for one and bytes for the other.
+  module EntropyVectors
+    RUNS = ["abcdefghijklmnop", "0123456789abcdef", "xabcdefyzzz", "ABCDEFGHIJKL1", "aaaaaaaaaaaaaaaa", "ab" * 12,
+            ""].freeze
+    ASCENDING = ["abcdefghijklmnopq", "ABCDEFGHIJKLMNOPQRS", "0123456789:;<=>?@A"].freeze
+    MULTIBYTE_ENDS = %w[é 日本 ü \u{1f980}].freeze
+    MULTIBYTE = ["éééééééééééé", "日本語日本語日本語", "caf\u00e9#{"x" * 10}", "\u{1f980}\u{1f980}\u{1f980}\u{1f980}",
+                 "abc\u00e9def\u00e9ghi\u00e9jkl", "ñandú-ñandú-ñandú"].freeze
+
+    module_function
+
+    def inputs(draw)
+      tokens = fixed + corpus_tokens + Array.new(60) { MaskingInputs.token(draw, draw.int(4..64)) } +
+               Array.new(20) { Array.new(draw.int(4..16)) { [draw.codepoint] }.flatten.pack("U*") }
+      tokens.uniq.flat_map { |token| [entry(token, false), entry(token, true)] }
+    end
+
+    def fixed = [*RUNS, *MULTIBYTE, *runs_beside_multibyte]
+
+    def runs_beside_multibyte
+      ASCENDING.product(MULTIBYTE_ENDS).flat_map { |run, wide| ["#{wide}#{run}", "#{run}#{wide}"] }
+    end
+
+    def corpus_tokens
+      values = MaskingInputs.hinted.map(&:last) + MaskingInputs.digests.flat_map { _2.split }
+      values.select { _1.bytesize.between?(4, 128) && _1.valid_encoding? }
+    end
+
+    def entry(token, binary) = { "token" => MaskingInputs.hex(token), "binary" => binary }
+
+    def derive(input)
+      token = MaskingInputs.unhex(input.fetch("token"))
+      token.force_encoding(Encoding::UTF_8) unless input.fetch("binary")
+      entropy = Lain::Sensitivity::Entropy
+      { "shannon" => Tagged.bits(entropy.shannon(token)), "alphabet_run" => entropy.send(:alphabet_run?, token) }
+    end
+  end
+
+  VECTORS = { "canonical" => CanonicalVectors, "regions" => RegionVectors, "toml" => TomlVectors,
+              "detect" => DetectVectors, "recurrences" => RecurrenceVectors, "entropy" => EntropyVectors }.freeze
 end

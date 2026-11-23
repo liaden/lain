@@ -152,4 +152,97 @@ RSpec.describe ConformanceCorpus do
       expect(labelled("spike specs and fixtures")).not_to be_empty
     end
   end
+
+  describe "the masking vectors" do
+    let(:detect) { described_class.records("detect").map(&:first) }
+    let(:recurrences) { described_class.records("recurrences").map(&:first) }
+    let(:entropy) { described_class.records("entropy").map(&:first) }
+
+    def labelled(records, pattern) = records.select { _1.dig("input", "label").match?(pattern) }
+
+    it "names the 3 files in the manifest with their record counts" do
+      files = described_class.recorded.fetch("files")
+      expect(files.keys).to include("detect.ndjson", "recurrences.ndjson", "entropy.ndjson")
+      expect(files.slice("detect.ndjson", "recurrences.ndjson", "entropy.ndjson").values.map { _1.fetch("records") })
+        .to eq([detect.size, recurrences.size, entropy.size])
+    end
+
+    it "frames every labelled corpus value bare, behind a key, as quoted YAML and as a JSON field" do
+      %w[hinted digest public].each do |corpus|
+        counts = described_class::DetectVectors::FRAMINGS.keys.map { |framing| labelled(detect, /\A#{corpus} #{framing}:/).size }
+        expect(counts.uniq.size).to eq(1), corpus
+        expect(counts.first).to be_positive, corpus
+      end
+    end
+
+    it "holds 20 slices of a real Cargo.lock and Gemfile.lock and 200 generated texts" do
+      expect(labelled(detect, /\Aslice Cargo.lock:/).size).to eq(10)
+      expect(labelled(detect, /\Aslice Gemfile.lock:/).size).to eq(10)
+      expect(labelled(detect, /\Agenerated:/).size).to eq(200)
+    end
+
+    it "records each region as start, finish, reason, detector and over_masked_by" do
+      regions = detect.flat_map { _1.dig("output", "regions") }
+      expect(regions).not_to be_empty
+      expect(regions.map(&:size).uniq).to eq([5])
+      expect(regions.map { _1[3] }.uniq).to include("pattern", "entropy")
+    end
+
+    it "records the byte spans of overlapping secrets and of UTF-16 text, each occurrence once and none merged" do
+      expect(recurrences.map { _1.dig("output", "spans") }.flatten(1).map(&:size).uniq).to eq([2])
+      %w[plain overlapping utf16].each do |kind|
+        found = labelled(recurrences, /\A#{kind}:/)
+        expect(found.size).to eq(20), kind
+        expect(found.map { _1.dig("output", "spans").size }.uniq).to eq([3]), kind
+      end
+      overlapping = labelled(recurrences, /\Aoverlapping:/).map { _1.dig("output", "spans") }
+      expect(overlapping).to all(satisfy { |spans| spans.combination(2).any? { |a, b| a[0] < b[1] && b[0] < a[1] } })
+    end
+
+    it "records an over-masked region where a shape could not be scanned to the end" do
+      over = detect.flat_map { _1.dig("output", "regions") }.select { _1[4] }
+      expect(over).not_to be_empty
+      expect(over.map { _1[2] }).to all(start_with("over-masked: "))
+      expect(labelled(detect, /\Aover-masked:/).map { _1.fetch("input") }).to all(include("fill"))
+    end
+
+    it "reports every Regions pattern as the reason of some region" do
+      reasons = detect.flat_map { _1.dig("output", "regions") }.map { _1[2] }.uniq
+      expect(Lain::Sensitivity::Regions::PATTERNS.keys - reasons).to be_empty
+    end
+
+    it "records an ascending run inside multibyte tokens, as UTF-8 and as binary" do
+      runs = entropy.select { _1.dig("output", "alphabet_run") }
+      expect(runs.size).to be >= 10
+      multibyte = runs.map { described_class::MaskingInputs.unhex(_1.dig("input", "token")) }.reject(&:ascii_only?)
+      expect(multibyte).not_to be_empty
+      expect(runs.map { _1.dig("input", "binary") }.uniq).to contain_exactly(true, false)
+    end
+
+    it "records multibyte tokens beside binary ones" do
+      expect(entropy.map { _1.dig("input", "binary") }.uniq).to contain_exactly(true, false)
+      tokens = entropy.reject { _1.dig("input", "binary") }.map { _1.dig("input", "token") }
+      multibyte = tokens.map { described_class::MaskingInputs.unhex(_1).force_encoding(Encoding::UTF_8) }
+      expect(multibyte.count { _1.bytesize > _1.length }).to be_positive
+    end
+
+    %w[detect recurrences entropy].each do |name|
+      it "regenerates #{name} byte for byte from the manifest's seed" do
+        regenerated = described_class.in_utf8 do
+          described_class.vectors(name, described_class.recorded_seed + described_class::FILES.index(name))
+        end
+        expect(regenerated).to eq(described_class.read(described_class.path(name)))
+      end
+
+      it "re-derives every #{name} vector from the Ruby implementation" do
+        expect(described_class.underived(name)).to be_empty
+      end
+    end
+
+    it "gives the same answer to the same input on 2 runs" do
+      inputs = detect.map { _1.fetch("input") }.sample(40, random: Random.new(1))
+      vectors = described_class::VECTORS.fetch("detect")
+      expect(inputs.map { vectors.derive(_1) }).to eq(inputs.map { vectors.derive(_1) })
+    end
+  end
 end
