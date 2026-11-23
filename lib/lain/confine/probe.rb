@@ -30,6 +30,7 @@ module Lain
         @runner = runner
         @ptrace_scope = ptrace_scope
         @private_net_lock = Mutex.new
+        @fence_report_lock = Mutex.new
       end
 
       # @return [Integer] the Landlock ABI the fence reported, 0 when none
@@ -100,8 +101,15 @@ module Lain
         namespace_gap(private_net: true, reason: "bwrap cannot build a private-network namespace")
       end
 
+      # Each check spawns a process and waits on it, so the 3 run at once; the journal is written after the joins.
       def verdicts
-        { bwrap: bwrap_gap, landlock: fence_gap, trace: trace_gap }
+        checks = { bwrap: :bwrap_gap, landlock: :fence_gap, trace: :trace_gap }
+        checks.transform_values { |check| check_thread(check) }.transform_values(&:value)
+      end
+
+      # The error reaches the caller through the join, so the thread must not also print it.
+      def check_thread(check)
+        Thread.new { send(check) }.tap { _1.report_on_exception = false }
       end
 
       def bwrap_gap = namespace_gap(private_net: false, reason: "bwrap cannot build the reader namespace")
@@ -137,14 +145,17 @@ module Lain
       end
 
       # Memoized: the ABI, the gap reason or nil, and whether the binary failed to start.
+      # Locked because the landlock check and a private-network ask can both want it first.
       def fence_report
-        @fence_report ||= begin
-          out, ok = attempt([@fence, "--status"])
-          report = ok ? parse(out) : {}
-          level = report["abi"].is_a?(Integer) ? report["abi"] : 0
-          FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED),
-                          reaps: report["reap"] == true, private_net: report.key?("private_net"))
-        end
+        @fence_report_lock.synchronize { @fence_report ||= build_fence_report }
+      end
+
+      def build_fence_report
+        out, ok = attempt([@fence, "--status"])
+        report = ok ? parse(out) : {}
+        level = report["abi"].is_a?(Integer) ? report["abi"] : 0
+        FenceReport.new(abi: level, gap: gap_for(out, ok, level), unstartable: out.start_with?(START_FAILED),
+                        reaps: report["reap"] == true, private_net: report.key?("private_net"))
       end
 
       def gap_for(out, started, level)

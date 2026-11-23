@@ -144,6 +144,74 @@ RSpec.describe Lain::Confine::Probe do
     end
   end
 
+  describe "the three layer checks" do
+    it "run at once, so a box pays the slowest check rather than the sum" do
+      lock = Mutex.new
+      all_in = ConditionVariable.new
+      arrived = 0
+      met = []
+      rendezvous = lambda do
+        lock.synchronize do
+          arrived += 1
+          all_in.broadcast
+          deadline = Time.now + 2
+          all_in.wait(lock, 0.1) while arrived < 3 && Time.now < deadline
+          met << arrived
+        end
+      end
+      meeting = lambda do |argv|
+        rendezvous.call
+        runner.call(argv)
+      end
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: meeting, ptrace_scope: scope, journal:)
+
+      subject.supports?(:bwrap)
+
+      expect(met).to eq([3, 3, 3])
+    end
+
+    it "journal in bwrap, landlock, trace order on every run of a box missing all three" do
+      answers.replace("bwrap" => ["", false], "lain-fence" => ['{"abi":0}', true], "strace" => ["", false])
+
+      orders = Array.new(20) do
+        j = []
+        described_class.new(fence: "/x/lain-fence", bwrap:, runner:, ptrace_scope: scope, journal: j).supports?(:bwrap)
+        j.map(&:capability)
+      end
+
+      expect(orders.uniq).to eq([%i[bwrap landlock trace]])
+    end
+
+    it "hand a check's unexpected error to the caller of supports?" do
+      exploding = ->(argv) { File.basename(argv.first) == "strace" ? raise("strace blew up") : runner.call(argv) }
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: exploding, ptrace_scope: scope, journal:)
+
+      expect { subject.supports?(:bwrap) }.to raise_error(RuntimeError, "strace blew up")
+    end
+
+    it "write nothing to stderr when a check raises" do
+      exploding = ->(argv) { File.basename(argv.first) == "strace" ? raise("strace blew up") : runner.call(argv) }
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: exploding, ptrace_scope: scope, journal:)
+
+      expect { expect { subject.supports?(:bwrap) }.to raise_error(RuntimeError) }.not_to output.to_stderr
+    end
+
+    it "ask the fence for its report once, though two readers want it at the same moment" do
+      calls = Queue.new
+      slow = lambda do |argv|
+        calls << argv if argv.last == "--status"
+        sleep 0.05 if argv.last == "--status"
+        runner.call(argv)
+      end
+      answers["lain-fence"] = ['{"abi":9,"private_net":false,"reap":true,"rights":{},"skipped":[]}', true]
+      subject = described_class.new(fence: "/x/lain-fence", bwrap:, runner: slow, ptrace_scope: scope, journal:)
+
+      [Thread.new { subject.supports?(:landlock) }, Thread.new { subject.supports?(:private_net) }].each(&:join)
+
+      expect(calls.size).to eq(1)
+    end
+  end
+
   describe "production construction" do
     it "probes the real box without a double" do
       real = described_class.new(fence: "/nonexistent/lain-fence", journal:)
