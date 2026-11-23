@@ -679,16 +679,28 @@ RSpec.describe "bin/known-failures" do
 
   describe "the recorder beside the suite's formatters" do
     it "leaves progress output and the runtime log intact under parallel_rspec" do
+      gate = File.join(@root, "both_booted")
+      FileUtils.mkdir_p(gate)
+      # RSpec truncates --out as each worker boots, so a worker that finishes before another boots loses its line.
       %w[one two].each do |name|
-        File.write(File.join(@root, "spec/#{name}_spec.rb"), %(RSpec.describe("#{name}") { it("works") { } }\n))
+        File.write(File.join(@root, "spec/#{name}_spec.rb"), <<~RUBY)
+          require "timeout"
+          RSpec.describe("#{name}") do
+            it("works") do
+              File.write("#{gate}/#{name}", "")
+              Timeout.timeout(30) { sleep 0.01 until Dir.children("#{gate}").size == 2 }
+            end
+          end
+        RUBY
       end
       FileUtils.mkdir_p(File.join(@root, "tmp"))
       out = File.join(@root, "recorded")
       FileUtils.mkdir_p(out)
+      File.write(File.join(@root, "stagger.rb"), %(sleep 1 if ENV["TEST_ENV_NUMBER"] == "2"\n))
       env = SeedRepo::SCRUB.merge("BUNDLE_GEMFILE" => File.join(repo, "Gemfile"), "LAIN_KNOWN_FAILURES_OUT" => out,
                                   "TEST_ENV_NUMBER" => nil, "SPEC_OPTS" => nil)
-      options = "--require #{recorder} --format progress --format ParallelTests::RSpec::RuntimeLogger " \
-                "--out tmp/parallel_runtime_rspec.log"
+      options = "--require #{@root}/stagger.rb --require #{recorder} --format progress " \
+                "--format ParallelTests::RSpec::RuntimeLogger --out tmp/parallel_runtime_rspec.log"
 
       output, status = Open3.capture2e(env, RbConfig.ruby, "-rbundler/setup", "-e",
                                        'load Gem.bin_path("parallel_tests", "parallel_rspec")', "--",
