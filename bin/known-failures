@@ -1,0 +1,484 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "etc"
+require "fileutils"
+require "json"
+require "open3"
+
+# Gates commits on a ledger of known spec failures while the VM suite is still red.
+#
+#   bin/known-failures hook ruby|daemon|rust|ledger
+#   bin/known-failures record
+#   bin/known-failures add <key> --because <text>
+module KnownFailures
+  LEDGER = "spec/vm_known_failures.txt"
+  OUTPUT_ROOT = "tmp/known-failures"
+  RECORD_RUNS = 3
+  USAGE = "usage: bin/known-failures hook ruby|daemon|rust|ledger | record | add <key> --because <text>"
+
+  class Refusal < StandardError; end
+
+  # The sorted `key<TAB>reason` lines, with each tier's example floor stored as a `floor:<tier>` key.
+  class Ledger
+    FLOOR = "floor:"
+
+    # @param text [String]
+    # @return [Ledger]
+    def self.parse(text) = new(text.lines(chomp: true).reject(&:empty?).map { _1.split("\t", 2) })
+
+    # @return [Ledger] the working-tree file
+    def self.working
+      raise Refusal, "no ledger at #{LEDGER}" unless File.exist?(LEDGER)
+
+      parse(File.read(LEDGER))
+    end
+
+    # @param revision [String] a git revision, empty for the index
+    # @return [Ledger, nil] nil when that revision holds no ledger
+    def self.at(revision)
+      text, status = Open3.capture2("git", "show", "#{revision}:#{LEDGER}", err: File::NULL)
+      status.success? ? parse(text) : nil
+    end
+
+    # @param lines [Array<Array<String>>] key and reason pairs
+    def initialize(lines)
+      @lines = lines
+    end
+
+    # @param tier [String]
+    # @return [Integer]
+    def floor(tier)
+      value = @lines.assoc("#{FLOOR}#{tier}")&.last
+      Integer(value.to_s, exception: false) || raise(Refusal, "ledger has no example floor for #{tier}")
+    end
+
+    # @return [Hash{String=>Integer}] allowed failures per key
+    def counts = entries.map(&:first).tally
+
+    # @param head [Ledger, nil] the committed ledger
+    # @return [Array<String>] keys added since head without a reason
+    def unexplained_since(head)
+      head ||= self.class.new([])
+      before = head.entries.tally
+      entries.tally.flat_map { |line, count| [line] * [count - before.fetch(line, 0), 0].max }
+             .select { |_key, reason| reason.to_s.strip.empty? }.map(&:first)
+    end
+
+    # @param head [Ledger, nil] the committed ledger
+    # @return [Array<String>] 1 line per tier whose floor dropped since head
+    def lowered_floors(head)
+      return [] unless head
+
+      before = head.floors
+      floors.filter_map do |tier, value|
+        "#{tier} floor lowered from #{before[tier]} to #{value}" if before[tier] && value < before[tier]
+      end
+    end
+
+    # @param key [String]
+    # @param reason [String]
+    # @return [Ledger]
+    def with(key, reason) = self.class.new(@lines + [[key, reason]])
+
+    # @return [void]
+    def write
+      temporary = "#{LEDGER}.#{Process.pid}"
+      File.write(temporary, to_s)
+      File.rename(temporary, LEDGER)
+    end
+
+    # @return [String]
+    def to_s = @lines.map { _1.join("\t") }.sort.join("\n").then { _1.empty? ? _1 : "#{_1}\n" }
+
+    protected
+
+    def entries = @lines.reject { |key, _reason| key.start_with?(FLOOR) }
+
+    def floors
+      @lines.select { |key, _value| key.start_with?(FLOOR) }
+            .to_h { |key, value| [key.delete_prefix(FLOOR), Integer(value.to_s, exception: false)] }.compact
+    end
+  end
+
+  # What 1 tier's run produced, whatever tool produced it.
+  Run = Data.define(:failed, :passed, :examples, :problems, :seeds) do
+    # @return [Hash{String=>Integer}] failures per key
+    def failure_counts = failed.tally
+
+    # @param directory [String]
+    # @param load [String]
+    # @return [void]
+    def persist(directory, load)
+      notes = failed.uniq.to_h { |key| [key, { seed: seeds[key], load: }] }
+      File.write(File.join(directory, "failures.json"), JSON.generate(notes))
+    end
+  end
+
+  # Runs an rspec command under the recorder and reads 1 summary per expected worker.
+  class RspecTier
+    COMPILE = %w[bundle exec rake compile daemon:build].freeze
+
+    # @param command [Array<String>]
+    # @param env [Hash{String=>String,nil}]
+    # @param workers [Integer]
+    # @param after [Array<String>, nil] a command that must also exit 0
+    def initialize(command:, env:, workers:, after: nil)
+      @command = command
+      @env = env
+      @workers = workers
+      @after = after
+    end
+
+    # @return [void]
+    def prepare
+      raise Refusal, "compile failed: #{COMPILE.join(" ")}" unless system(@env, *COMPILE)
+    end
+
+    # @param directory [String] a fresh output directory
+    # @return [Run]
+    def run(directory)
+      system(@env.merge("LAIN_KNOWN_FAILURES_OUT" => File.expand_path(directory)), *@command)
+      status = Process.last_status
+      summaries = (1..@workers).to_h { |id| [id, summary(directory, id)] }
+      build(summaries, status, unclean_exits(summaries, directory))
+    end
+
+    # @return [Boolean]
+    def after_passes?
+      return true unless @after
+      return true if system(*@after)
+
+      puts "known-failures: #{@after.join(" ")} (rubocop) failed"
+      false
+    end
+
+    private
+
+    def summary(directory, id)
+      JSON.parse(File.read(File.join(directory, "worker-#{id}.json")))
+    rescue Errno::ENOENT, JSON::ParserError
+      nil
+    end
+
+    # A known failure makes the wrapped command exit non-zero, so its status cannot reveal a crash after the summary.
+    def unclean_exits(summaries, directory)
+      summaries.filter_map do |id, data|
+        "worker #{id} wrote a summary but did not exit cleanly" if data && !File.exist?(marker(directory, id))
+      end
+    end
+
+    def marker(directory, id) = File.join(directory, "worker-#{id}.exit")
+
+    def build(summaries, status, unclean)
+      present = summaries.values.compact
+      failed = present.flat_map { _1.fetch("failed") }
+      problems = summaries.flat_map { |id, data| worker_problems(id, data) } + unclean
+      problems << "#{@command.join(" ")} exited #{status.exitstatus.inspect} with 0 recorded failures" if
+        !status.success? && failed.empty?
+      Run.new(failed:, passed: present.flat_map { _1.fetch("passed") }, problems:,
+              examples: present.sum { _1.fetch("examples") }, seeds: seeds(present))
+    end
+
+    def seeds(present)
+      present.each_with_object({}) { |data, all| data.fetch("failed").each { all[_1] = data.fetch("seed") } }
+    end
+
+    def worker_problems(id, data)
+      return ["worker #{id} wrote no summary"] unless data
+
+      stopped = data.fetch("examples") == data.fetch("expected") ? [] : [stopped_early(id, data)]
+      stopped + data.fetch("errors").map { "error outside examples in worker #{id}: #{_1}" }
+    end
+
+    def stopped_early(id, data)
+      "worker #{id} stopped after #{data.fetch("examples")} of #{data.fetch("expected")} examples"
+    end
+  end
+
+  # Reads libtest's output, 1 target at a time, into keyed outcomes.
+  class CargoLog
+    TARGET = %r{^\s*Running (?:unittests )?(\S+) \((?:.*/)?([^/)]+)-\h+\)}
+    DOCTEST = /^\s*Doc-tests (\S+)/
+    OUTCOME = /^test (.+) \.\.\. (ok|FAILED)$/
+    RESULT = /^test result: \w+\. (\d+) passed; (\d+) failed;/
+
+    attr_reader :failed, :passed
+
+    def initialize
+      @failed = []
+      @passed = []
+      @targets = []
+    end
+
+    # @param line [String]
+    # @return [void]
+    def <<(line)
+      case line
+      when TARGET then open_target("#{Regexp.last_match(2)}/#{Regexp.last_match(1)}")
+      when DOCTEST then open_target("doc/#{Regexp.last_match(1)}")
+      when OUTCOME then outcome(Regexp.last_match(1), Regexp.last_match(2))
+      when RESULT then report(Regexp.last_match(1).to_i, Regexp.last_match(2).to_i)
+      end
+    end
+
+    # @return [Array<String>]
+    def problems = @targets.filter_map { target_problem(_1) }
+
+    private
+
+    def target_problem(target)
+      reported = target[:reported]
+      return "test target #{target[:name]} wrote no summary" unless reported
+      return if reported == target.values_at(:passed, :failed)
+
+      "test target #{target[:name]} reported #{reported.join("/")} passed/failed, " \
+        "log shows #{target[:passed]}/#{target[:failed]}"
+    end
+
+    # A repeated name stays a separate entry, so a later binary cannot erase an earlier one's missing summary.
+    def open_target(name) = @targets << { name:, passed: 0, failed: 0 }
+
+    def report(passed, failed)
+      raise Refusal, "test result with no target in cargo output" if @targets.empty?
+
+      @targets.last[:reported] = [passed, failed]
+    end
+
+    def outcome(test, result)
+      open_target("unknown") if @targets.empty?
+      target = @targets.last
+      kind = result == "ok" ? :passed : :failed
+      target[kind] += 1
+      (kind == :passed ? @passed : @failed) << "#{target[:name]} #{test}"
+    end
+  end
+
+  # Runs the workspace's tests past the first failing binary, so a known failure hides no later target.
+  class RustTier
+    COMMAND = %w[cargo test --no-fail-fast].freeze
+
+    # @return [void]
+    def prepare = nil
+
+    # @return [Boolean]
+    def after_passes? = true
+
+    # @param _directory [String]
+    # @return [Run]
+    def run(_directory)
+      log = CargoLog.new
+      status = Open3.popen2e({ "CARGO_TERM_COLOR" => "never" }, *COMMAND) do |stdin, output, thread|
+        stdin.close
+        output.each_line { |line| tee(line, log) }
+        thread.value
+      end
+      Run.new(failed: log.failed, passed: log.passed, examples: log.failed.size + log.passed.size,
+              problems: log.problems + exit_problem(status, log), seeds: {})
+    end
+
+    private
+
+    def exit_problem(status, log)
+      return [] if status.success? || log.failed.any?
+
+      ["cargo test exited #{status.exitstatus.inspect} with 0 recorded failures"]
+    end
+
+    def tee(line, log)
+      $stdout.write(line)
+      log << line.scrub.chomp
+    end
+  end
+
+  # Ruby splits `check` so spec failures can be judged before rubocop's status, and a known failure must not stop cargo.
+  module Tiers
+    NAMES = %w[ruby daemon rust].freeze
+
+    # @param name [String]
+    # @return [RspecTier, RustTier]
+    def self.fetch(name)
+      case name
+      when "ruby" then ruby
+      when "daemon" then daemon
+      when "rust" then RustTier.new
+      else raise Refusal, USAGE
+      end
+    end
+
+    def self.ruby
+      workers = Integer(ENV.fetch("LAIN_SPEC_WORKERS", ""), exception: false)
+      workers = [Etc.nprocessors - 1, 1].max unless workers&.positive?
+      RspecTier.new(command: %w[bundle exec rake pspec], env: { "LAIN_SPEC_WORKERS" => workers.to_s }, workers:,
+                    after: %w[bundle exec rubocop --parallel])
+    end
+    private_class_method :ruby
+
+    def self.daemon
+      RspecTier.new(command: %w[bundle exec rspec --tag core --tag daemon], workers: 1,
+                    env: { "LAIN_REQUIRE_BINARIES" => "1", "TEST_ENV_NUMBER" => nil })
+    end
+    private_class_method :daemon
+  end
+
+  # An output directory no earlier run can have left a file in.
+  module Output
+    # @param name [String]
+    # @return [String]
+    def self.fresh(name)
+      directory = File.join(OUTPUT_ROOT, name)
+      FileUtils.rm_rf(directory)
+      FileUtils.mkdir_p(directory)
+      directory
+    end
+
+    # @return [String] the 1-minute load, as the kernel reports it
+    def self.load = File.exist?("/proc/loadavg") ? File.read("/proc/loadavg").split.first : "unknown"
+  end
+
+  # Compares 1 run to the ledger and reports what a committer must act on.
+  class Verdict
+    # @param tier [String]
+    # @param ledger [Ledger]
+    # @param run [Run]
+    def initialize(tier:, ledger:, run:)
+      @tier = tier
+      @ledger = ledger
+      @run = run
+    end
+
+    # @return [Boolean]
+    def reported_clean?
+      passed_entries.each { puts "passed, delete its ledger line: #{_1}" }
+      blockers.each { puts "known-failures: #{_1}" }
+      puts "known-failures: #{@tier}: #{@run.failed.size} known failures remain" if blockers.empty?
+      blockers.empty?
+    end
+
+    private
+
+    def blockers = @blockers ||= @run.problems + floor_problem + new_failures
+
+    def floor_problem
+      floor = @ledger.floor(@tier)
+      @run.examples < floor ? ["#{@run.examples} examples is below the #{@tier} floor of #{floor}"] : []
+    end
+
+    def new_failures
+      allowed = @ledger.counts
+      @run.failure_counts.select { |key, count| count > allowed.fetch(key, 0) }.map do |key, count|
+        "new failure: #{key} (#{count} failed, ledger allows #{allowed.fetch(key, 0)})"
+      end
+    end
+
+    def passed_entries
+      failing = @run.failure_counts
+      ran = @run.passed.uniq
+      @ledger.counts.keys.select { |key| ran.include?(key) && failing.fetch(key, 0) < @ledger.counts.fetch(key) }
+    end
+  end
+
+  # Measures every tier and writes a ledger, or writes nothing.
+  class Recording
+    # @return [Integer]
+    def call
+      measured = Tiers::NAMES.to_h { |name| [name, measure(name)] }
+      problems = measured.values.flatten.flat_map(&:problems)
+      raise Refusal, "record refused:\n#{problems.join("\n")}" unless problems.empty?
+
+      Ledger.new(floors(measured) + entries(measured)).write
+      0
+    end
+
+    private
+
+    def measure(name)
+      tier = Tiers.fetch(name)
+      tier.prepare
+      Array.new(RECORD_RUNS) do |index|
+        directory = Output.fresh("record-#{name}-#{index + 1}")
+        tier.run(directory).tap { _1.persist(directory, Output.load) }
+      end
+    end
+
+    def floors(measured) = measured.map { |name, runs| ["#{Ledger::FLOOR}#{name}", runs.map(&:examples).min.to_s] }
+
+    def entries(measured)
+      reasons = measured.values.map { reasons_for(_1) }
+      merged = reasons.reduce({}) { |all, tier| all.merge(tier) { |_key, a, b| a.size >= b.size ? a : b } }
+      merged.flat_map { |key, list| list.map { [key, _1] } }
+    end
+
+    def reasons_for(runs)
+      tallies = runs.map(&:failure_counts)
+      tallies.flat_map(&:keys).uniq.to_h do |key|
+        most = tallies.map { _1.fetch(key, 0) }.max
+        [key, (1..most).map { |nth| "failed #{tallies.count { _1.fetch(key, 0) >= nth }} of #{RECORD_RUNS}" }]
+      end
+    end
+  end
+
+  # A refusal exits 1 and bad usage exits 2, so a wrapped hook can never read either as a pass.
+  module CLI
+    # @param argv [Array<String>]
+    # @return [Integer] the exit status
+    def self.call(argv)
+      $stdout.sync = true
+      dispatch(argv)
+    rescue Refusal => e
+      puts "known-failures: #{e.message}"
+      1
+    end
+
+    def self.dispatch(argv)
+      command, first, flag, text = argv
+      return hook(first) if command == "hook" && argv.size == 2 && Tiers::NAMES.include?(first)
+      return staged_ledger && 0 if argv == %w[hook ledger]
+      return Recording.new.call if argv == ["record"]
+      return add(first, text) if command == "add" && argv.size == 4 && flag == "--because"
+
+      puts USAGE
+      2
+    end
+    private_class_method :dispatch
+
+    def self.staged_ledger
+      ledger = Ledger.at("") || raise(Refusal, "no ledger staged at #{LEDGER}")
+      head = Ledger.at("HEAD")
+      unexplained = ledger.unexplained_since(head)
+      raise Refusal, "ledger entry added with no reason: #{unexplained.join(", ")}" unless unexplained.empty?
+
+      ledger.lowered_floors(head).each { puts "known-failures: #{_1}" }
+      ledger
+    end
+    private_class_method :staged_ledger
+
+    def self.hook(name)
+      ledger = staged_ledger
+      tier = Tiers.fetch(name)
+      tier.prepare
+      directory = Output.fresh(name)
+      run = tier.run(directory)
+      run.persist(directory, Output.load)
+      Verdict.new(tier: name, ledger:, run:).reported_clean? && tier.after_passes? ? 0 : 1
+    end
+    private_class_method :hook
+
+    def self.add(key, text)
+      raise Refusal, "--because needs a reason on 1 line" if text.strip.empty? || text.match?(/[\t\n]/)
+
+      note = recorded(key) || raise(Refusal, "no recorded run failed #{key}")
+      Ledger.working.with(key, "#{text} (seed #{note.fetch("seed") || "none"}, load #{note.fetch("load")})").write
+      0
+    end
+    private_class_method :add
+
+    def self.recorded(key)
+      newest_first = Dir[File.join(OUTPUT_ROOT, "*", "failures.json")].sort_by { File.mtime(_1) }.reverse
+      newest_first.lazy.filter_map { JSON.parse(File.read(_1))[key] }.first
+    end
+    private_class_method :recorded
+  end
+end
+
+exit KnownFailures::CLI.call(ARGV) if $PROGRAM_NAME == __FILE__
