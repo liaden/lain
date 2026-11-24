@@ -469,12 +469,19 @@ RSpec.describe Lain::CLI::InputSocket do
 
     it "reaps a closed pane's reader, so it owns every thread it started" do
       standing = Thread.list.size
-      30.times { connect.close }
-
-      expect(settles { Thread.list.size <= standing + 2 || nil }).to be(true)
+      # A pane's context frame arrives once it is accepted, so every reader but the last has
+      # started; a closed backlog still waiting on accept would otherwise settle the count early.
+      30.times { connect.tap { |pane| next_frame(pane, of: "context") }.close }
       # The registry has no public reader on purpose -- nothing but #stop has
       # any use for it -- and its unbounded growth is the defect under test.
-      expect(socket.instance_variable_get(:@threads).size).to be <= 4
+      registry = socket.instance_variable_get(:@threads)
+      counts = lambda do
+        "#{Thread.list.size} threads against #{standing} standing (+2 allowed), " \
+          "#{registry.size} registered (4 allowed)"
+      end
+
+      # Read only inside the settle: the last reader may start after its frame, and after the settle.
+      expect(settles { (Thread.list.size <= standing + 2 && registry.size <= 4) || nil }).to be(true), counts
     end
 
     # A plain `lain chat` has no ceiling on a pasted line, so neither may the
