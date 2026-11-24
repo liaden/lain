@@ -123,37 +123,56 @@ RSpec.describe Lain::Daemon::Spawner::PaneListener, :seam do
   end
 
   # The spawner in a forked process of its own, listening for panes as `lain daemon spawner` does.
+  # It returns once the spawner is built, since the socket's file exists before it listens and
+  # before the spawner takes the digest of the install it booted from.
   def hosted(starter, root: install, deadline: described_class::DEADLINE, setup: -> {})
     ours, theirs = UNIXSocket.pair
     report, reported = IO.pipe
+    ready, readied = IO.pipe
     @pids << fork do
-      ours.close
-      report.close
-      host(-> { spawner(theirs, starter, root:, deadline:) }, setup:, reported:)
+      [ours, report, ready].each(&:close)
+      host(-> { spawner(theirs, starter, root:, deadline:) }, setup:, reported:, readied:)
     end
-    [theirs, reported].each(&:close)
-    Timeout.timeout(patience) { sleep 0.01 until File.socket?(listening) }
+    [theirs, reported, readied].each(&:close)
+    await_built(ready)
     (@ends ||= []).push(ours, report)
     [ours, report]
+  end
+
+  # The child says "built", or the class of what it raised first; nothing at all within patience.
+  def await_built(ready)
+    said = ready.wait_readable(patience) && ready.gets&.chomp
+    raise "the spawner was never built: #{said || "nothing said within #{patience} s"}" unless said == "built"
+  ensure
+    ready.close
   end
 
   def spawner(socket, starter, root:, deadline:)
     Lain::Daemon::Spawner.new(socket:, starter:, root:, pane_listener: described_class.listen(listening, deadline:))
   end
 
-  def host(built, setup:, reported:)
+  def host(built, setup:, reported:, readied:)
     status = 1
     begin
       setup.call
-      built.call.call
+      spawner = built.call
+      readied.puts("built")
+      readied.close
+      spawner.call
       reported.puts(JSON.generate("threads" => Thread.list.size))
       status = 0
     rescue StandardError => e
-      reported.puts(JSON.generate("raised" => e.class.name))
+      raised(e, reported:, readied:)
     ensure
       reported.close
       exit!(status)
     end
+  end
+
+  # Before the spawner was built, the example is still waiting to hear so.
+  def raised(error, reported:, readied:)
+    readied.puts("raised #{error.class.name}") unless readied.closed?
+    reported.puts(JSON.generate("raised" => error.class.name))
   end
 
   # As a pane's client asks: a session leader that gives its terminal up, then sends it over.
@@ -199,6 +218,25 @@ RSpec.describe Lain::Daemon::Spawner::PaneListener, :seam do
   end
 
   def appeared(file) = Timeout.timeout(patience) { sleep 0.01 until File.exist?(file) }
+
+  # /proc/net/unix's Flags column for a listening socket: the kernel's __SO_ACCEPTCON. A method, since
+  # a constant declared in a describe block leaks out of it.
+  def accepting = "00010000"
+
+  # The socket's file exists from its bind, and a connect is refused until its listen, which
+  # /proc/net/unix shows as the accepting flag.
+  def listening?(socket)
+    File.foreach("/proc/net/unix").any? do |row|
+      fields = row.split
+      fields[7] == socket && fields[3] == accepting
+    end
+  end
+
+  def await_listening(socket)
+    Timeout.timeout(patience, Timeout::Error, "#{socket} was not listening within #{patience} s") do
+      sleep 0.01 until listening?(socket)
+    end
+  end
 
   # File.write creates the file before it writes, so a file that exists can still read empty.
   def written(file)
@@ -430,7 +468,7 @@ RSpec.describe Lain::Daemon::Spawner::PaneListener, :seam do
       home = File.join(@dir, "home")
       daemon_end = real_spawner(home)
       socket = Lain::Paths.new(env: spawner_env(home)).spawner_socket
-      Timeout.timeout(patience) { sleep 0.01 until File.socket?(socket) }
+      await_listening(socket)
       shown = drained(leader)
 
       conn = pane(%w[help], socket:, env: spawner_env(home).merge("PATH" => path))
