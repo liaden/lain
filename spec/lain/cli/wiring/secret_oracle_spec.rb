@@ -119,8 +119,10 @@ RSpec.describe Lain::CLI::Wiring::SecretOracle do
   end
 
   it "carries no runner options of an ollama-cloud chat to the local judge, even on the same model name" do
-    cloud_chat = Lain::CLI::Backend.new({ provider: "ollama-cloud", model: Lain::Provider::Ollama::DEFAULT_MODEL,
-                                          max_tokens: 64, num_batch: 2048 }, root:)
+    cloud_chat = with_env("OLLAMA_API_KEY" => "fixture-key") do
+      Lain::CLI::Backend.new({ provider: "ollama-cloud", model: Lain::Provider::Ollama::DEFAULT_MODEL,
+                               max_tokens: 64, num_batch: 2048 }, root:)
+    end
 
     oracle = described_class.new({ secret_oracle: "local" }).tier(cloud_chat, journal)
 

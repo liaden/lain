@@ -1,10 +1,7 @@
 ./spec/lain/chores/runner_spec.rb Lain::Chores::Runner Lain::Chores::Runner::Tail takes several chunks in one drain, so a flood is not read one chunk per wait	flaky: EPERM growing a pipe to 1 MiB, failed 1 hook run at seed 44283, passed alone, 3 of 3 file runs and 2 full runs (seed 44283, load 25.52)
-./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summarizer_name and #summarizer_model follows an ollama-cloud chat to ollama-cloud	failed 3 of 3
-./spec/lain/cli/backend_spec.rb Lain::CLI::Backend#summary_oracle after the human types /model builds a --summarizer-provider arm on that arm, with none of the chat's runner options	failed 3 of 3
 ./spec/lain/cli/daemon_command_spec.rb Lain::CLI::DaemonCommand against the real daemon lists each registered session and each run in status	flaky: ENOTEMPTY in teardown, failed 1 hook run at seed 55650, passed alone, same error on base 036e5b37 (seed 55650, load 5.38)
 ./spec/lain/cli/epic_driver/factory_spec.rb Lain::CLI::EpicDriver::Factory testing the anchored tip before the implementation gate stops a slow suite when the run is interrupted, leaving no child and no worktree	failed 3 of 3
 ./spec/lain/cli/input_socket_spec.rb Lain::CLI::InputSocket serving a pane reaps a closed pane's reader, so it owns every thread it started	flaky: 5 threads over a limit of 4, failed 1 hook run at seed 57836, 1 of 20 loaded on the fixes, 0 of 20 loaded on 036e5b37 (seed 57836, load 4.93)
-./spec/lain/cli/wiring/secret_oracle_spec.rb Lain::CLI::Wiring::SecretOracle carries no runner options of an ollama-cloud chat to the local judge, even on the same model name	failed 3 of 3
 ./spec/lain/daemon/spawner/pane_listener_spec.rb Lain::Daemon::Spawner::PaneListener a stalled client is answered with an error and hung up on at its deadline	failed 1 of 3
 ./spec/lain/exec/local_spec.rb Lain::Exec::Local what it holds of a command's output takes every byte a stage wrote before exiting, from a grown pipe, while the reader is held	flaky: captured 107 of 1048576 bytes from a grown pipe, failed 1 hook run at seed 13667, passed alone, 3 of 3 file runs and 2 full runs (seed 13667, load 25.52)
 ./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call granted its build tool's ports connects on the granted port, and is refused and recorded on another	failed 3 of 3
@@ -12,9 +9,6 @@
 ./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call that reaches the network records a connect with its address, port and rc	failed 3 of 3
 ./spec/lain/exec/sandboxed_spec.rb Lain::Exec::Sandboxed on this box a call that reaches the network records a refused connect under the reader profile with its errno	failed 3 of 3
 ./spec/lain/frontend/focus_spec.rb Lain::Frontend::Focus against a real tmux server counts a window with another pane selected as focused only while a client is attached	failed 3 of 3
-./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#read refuses a symlink, though it points at a good file	failed 3 of 3
-./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#write refuses a symlink at its path, naming the path, and writes nothing through it	failed 3 of 3
-./spec/lain/gateway/token_file_spec.rb Lain::Gateway::TokenFile#write removes this port's leftover temporary files, and no other port's	failed 3 of 3
 ./spec/lain/isolation/checkout_spec.rb Lain::Isolation::Checkout#run in a partial clone, reading a blob it never fetched says so whatever language git speaks, naming the clone's own remote	failed 3 of 3
 ./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding answers the whole call when an interrupt that raises nothing lands mid-call	failed 3 of 3
 ./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding lets the calling thread keep running while it works	flaky: GVL gap share 0.38 over a 0.3 limit, failed 1 hook run at seed 24814, passed alone and 3 of 3 file runs on 8a3e6e63 (seed 24814, load 5.03)

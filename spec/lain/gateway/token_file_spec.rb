@@ -10,6 +10,14 @@ RSpec.describe Lain::Gateway::TokenFile do
 
   after { FileUtils.rm_rf(dir) }
 
+  # mkdir_p follows the umask; the reader refuses a group-writable directory.
+  around do |example|
+    old = File.umask(0o022)
+    example.run
+  ensure
+    File.umask(old)
+  end
+
   def mode(path) = File.lstat(path).mode & 0o777
 
   # Every file this spec writes is ours, so the reader is made someone else.

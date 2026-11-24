@@ -134,7 +134,9 @@ RSpec.describe Lain::CLI::Backend do
     end
 
     it "follows an ollama-cloud chat to ollama-cloud" do
-      expect(backend_for(provider: "ollama-cloud").summarizer_name).to eq("ollama-cloud")
+      with_env("OLLAMA_API_KEY" => "fixture-key") do
+        expect(backend_for(provider: "ollama-cloud").summarizer_name).to eq("ollama-cloud")
+      end
     end
 
     it "falls to the default summarizer for a chat provider outside PROVIDERS" do
@@ -2948,8 +2950,10 @@ RSpec.describe Lain::CLI::Backend do
       end
 
       it "builds a --summarizer-provider arm on that arm, with none of the chat's runner options" do
-        backend = summarizer_for(model: "qwen3:4b", num_batch: 2048, summarizer_provider: "ollama-cloud",
-                                 summarizer_model: "qwen3:4b")
+        backend = with_env("OLLAMA_API_KEY" => "fixture-key") do
+          summarizer_for(model: "qwen3:4b", num_batch: 2048, summarizer_provider: "ollama-cloud",
+                         summarizer_model: "qwen3:4b")
+        end
         allow(backend).to receive(:provider).and_return(answering_provider)
         tier = backend.summarizer_tier(queue: false)
 
