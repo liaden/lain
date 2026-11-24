@@ -1,32 +1,30 @@
 # Runs lain natively in a Linux VM on macOS, so bwrap, Landlock and lain-fence all have a real kernel.
 # Start it from the repo root: limactl start lima/lain.yaml. See docs/users/lima.md.
-minimumLimaVersion: 1.1.0
+minimumLimaVersion: 2.0.0
 
 vmType: vz
-cpus: 4
-memory: 8GiB
+cpus: 8
+memory: 14GiB
 disk: 60GiB
 
 images:
-  - location: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-amd64.img
+  - location: https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-amd64.img
     arch: x86_64
-  - location: https://cloud-images.ubuntu.com/releases/24.04/release/ubuntu-24.04-server-cloudimg-arm64.img
+  - location: https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-arm64.img
     arch: aarch64
 
-# Two writable mounts and no home mount: a writable mount nested in a read-only one breaks bwrap's binds.
-mountType: virtiofs
-mounts:
-  - location: "~/dev/lain"
-    mountPoint: /mnt/lain
-    writable: true
-  - location: "~/tmp/lain"
-    mountPoint: /mnt/lain-tmp
-    writable: true
+# No Mac mounts, no SSH agent, and no guest port forwards. Guest calls can still reach host.lima.internal.
+mounts: []
 
-env:
-  TMPDIR: /mnt/lain-tmp
-  # Guest-local, so the VM's build never overwrites the Mac's target/release/.
-  CARGO_TARGET_DIR: /var/lib/lain-target
+ssh:
+  forwardAgent: false
+
+portForwards:
+  - guestIP: 0.0.0.0
+    guestIPMustBeZero: false
+    proto: any
+    guestPortRange: [1, 65535]
+    ignore: true
 
 containerd:
   system: false
@@ -37,10 +35,19 @@ provision:
     script: |
       #!/bin/bash
       set -eux -o pipefail
-      install -d -o "$LIMA_CIDATA_USER" /var/lib/lain-target
-      /mnt/lain/bin/ci/install-spec-binaries --persist
-  - mode: user
+      # Lima reruns this on every boot, so a provisioned guest must not need the network.
+      if dpkg -s libnss-resolve zsh >/dev/null 2>&1; then exit 0; fi
+      export DEBIAN_FRONTEND=noninteractive
+      # The lock timeout misses the lists and archives locks, and update exits 0 when mirrors refuse.
+      for attempt in {1..30}; do
+        if apt-get update -q && apt-get -o DPkg::Lock::Timeout=5 install -y -q libnss-resolve zsh; then exit 0; fi
+        if [ "$attempt" -eq 30 ]; then exit 1; fi
+        sleep 10
+      done
+
+probes:
+  - description: libnss-resolve and zsh to be installed
     script: |
       #!/bin/bash
-      set -eux -o pipefail
-      /mnt/lain/bin/ci/install-toolchain
+      dpkg -s libnss-resolve zsh >/dev/null 2>&1
+    hint: See /var/log/cloud-init-output.log in the guest.
