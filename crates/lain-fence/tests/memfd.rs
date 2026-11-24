@@ -14,6 +14,7 @@ const MFD_CLOEXEC: u32 = 0x1;
 const MFD_NOEXEC_SEAL: u32 = 0x8;
 const EPERM: &str = "1";
 const EINVAL: &str = "22";
+#[cfg(target_arch = "x86_64")]
 const ENOSYS: &str = "38";
 const STATUS_ARGS: [&str; 3] = ["--status", "--exec-dir", "/usr"];
 

@@ -9,7 +9,10 @@
 
 pub mod common;
 
-use common::{FENCE, cannot_run, refused_with, skipped};
+#[cfg(target_arch = "x86_64")]
+use common::skipped;
+use common::{FENCE, cannot_run, refused_with};
+use nix::libc::SYS_sendmmsg;
 use std::io::ErrorKind;
 use std::net::{TcpListener, UdpSocket};
 use std::process::{Command, Output};
@@ -17,12 +20,13 @@ use std::time::Duration;
 
 const GRANTS: [&str; 5] = ["--read-dir", "/", "--exec-dir", "/usr", "--"];
 const EPERM: &str = "1";
+#[cfg(target_arch = "x86_64")]
 const ENOSYS: &str = "38";
 
 /// Exit 3 marks a refusal; the errno follows "refused".
 const PROBE: &str = r#"
 import ctypes, socket, struct, sys
-kind, arg = sys.argv[1], sys.argv[2]
+kind, arg, sendmmsg_number = sys.argv[1], sys.argv[2], int(sys.argv[3])
 libc = ctypes.CDLL(None, use_errno=True)
 libc.syscall.restype = ctypes.c_long
 X32 = 0x40000000
@@ -59,7 +63,7 @@ def sendmmsg_fastopen(fd, port):
     iov = ctypes.create_string_buffer(struct.pack("=QQ", ctypes.addressof(data), 5), 16)
     header = struct.pack("=QI4xQQQQi4xI4x", ctypes.addressof(name), 16, ctypes.addressof(iov), 1, 0, 0, 0, 0)
     mmsg = ctypes.create_string_buffer(header, 64)
-    return raw(307, fd, mmsg, 1, MSG_FASTOPEN)
+    return raw(sendmmsg_number, fd, mmsg, 1, MSG_FASTOPEN)
 
 def fast_open(how):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -127,7 +131,8 @@ print("created")
 "#;
 
 fn probe(fenced: bool, kind: &str, arg: &str) -> Output {
-    let python = ["python3", "-I", "-c", PROBE, kind, arg];
+    let sendmmsg = SYS_sendmmsg.to_string();
+    let python = ["python3", "-I", "-c", PROBE, kind, arg, &sendmmsg];
     let mut command = Command::new("timeout");
     command.arg("20");
     if fenced {

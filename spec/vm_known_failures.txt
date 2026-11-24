@@ -36,4 +36,3 @@
 floor:daemon	70
 floor:ruby	38104
 floor:rust	805
-sockets/tests/sockets.rs tcp_fast_open_cannot_reach_a_port_no_grant_names	failed 3 of 3
