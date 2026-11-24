@@ -1452,6 +1452,9 @@ RSpec.describe Lain::Exec::Sandboxed do
 
     def term(*argvs) = Lain::Shell::Term.of(*argvs)
 
+    # /bin/sh may be dash, which has no /dev/tcp and so would exit before any connect.
+    def bash_run(script) = "bash -c '#{script}'"
+
     it "runs a ComposedTerm approval under the reader profile, and journals what it ran" do
       expect(run(term(%w[cat README.md]))).to have_attributes(exit_status: 0, stdout: "the readme\n")
       expect(recorded("sandbox").sole).to have_attributes(tool_use_id: "toolu_1", profile: :reader, trace: true)
@@ -1510,14 +1513,14 @@ RSpec.describe Lain::Exec::Sandboxed do
       def ruby_run(code) = "#{RbConfig.ruby} -rsocket -e '#{code}'"
 
       it "records a connect with its address, port and rc" do
-        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: judged)
+        run(bash_run("exec 3<>/dev/tcp/127.0.0.1/#{port}"), confinement: judged)
 
         expect(recorded("exec_record").sole.connects)
           .to include({ call: "connect", family: "AF_INET", address: "127.0.0.1", port:, rc: 0, errno: nil, count: 1 })
       end
 
       it "records a refused connect under the reader profile with its errno" do
-        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: composed)
+        run(bash_run("exec 3<>/dev/tcp/127.0.0.1/#{port}"), confinement: composed)
 
         expect(recorded("exec_record").sole.connects)
           .to include(a_hash_including(call: "connect", port:, rc: -1, errno: "EACCES"))
@@ -1575,7 +1578,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       def connects = recorded("exec_record").sole.connects.select { _1[:call] == "connect" && _1[:family] == "AF_INET" }
 
       it "connects on the granted port, and is refused and recorded on another" do
-        run("exec 3<>/dev/tcp/127.0.0.1/#{port}; exec 4<>/dev/tcp/127.0.0.1/#{other.addr[1]}",
+        run(bash_run("exec 3<>/dev/tcp/127.0.0.1/#{port}; exec 4<>/dev/tcp/127.0.0.1/#{other.addr[1]}"),
             confinement: granted(%w[git fetch origin], "/usr/bin/git"))
 
         expect(recorded("sandbox").map(&:profile)).to include(:grant)
@@ -1584,7 +1587,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       end
 
       it "opens no datagram socket" do
-        capture = run("echo x > /dev/udp/127.0.0.1/#{datagrams.addr[1]}",
+        capture = run(bash_run("echo x > /dev/udp/127.0.0.1/#{datagrams.addr[1]}"),
                       confinement: granted(%w[git fetch origin], "/usr/bin/git"))
 
         expect(capture.exit_status).not_to eq(0)
@@ -1605,7 +1608,7 @@ RSpec.describe Lain::Exec::Sandboxed do
       it "runs under the workspace profile, with no ports, once a file in the project was written" do
         fresh << Lain::Telemetry::FileWritten.from_stat(File.stat(File.join(root, "README.md")),
                                                         path: File.join(root, "README.md"), tool_use_id: "tu_0")
-        run("exec 3<>/dev/tcp/127.0.0.1/#{port}", confinement: granted(%w[git fetch origin], "/usr/bin/git"))
+        run(bash_run("exec 3<>/dev/tcp/127.0.0.1/#{port}"), confinement: granted(%w[git fetch origin], "/usr/bin/git"))
 
         # The plain workspace call has a loopback of its own, where nothing listens on the host's port.
         expect(recorded("sandbox").map(&:profile)).to include(:workspace)

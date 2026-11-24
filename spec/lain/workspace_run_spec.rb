@@ -85,6 +85,8 @@ RSpec.describe "bin/workspace-run", :seam do
   # A plain call's TCP stays on a loopback of its own, so the refusal shown is a Unix socket's outside every grant,
   # as a resolver's socket is.
   it "prints a connect the profile refused from the exec record" do
+    abi = Lain::Confine::Probe.new(fence:, journal: []).abi
+    skip("refusing a Unix socket connect needs Landlock ABI 9; this kernel reports #{abi}") if abi < 9
     server = UNIXServer.new(sock = File.join(@base, "other", "s.sock"))
     connect = %(import socket; socket.socket(socket.AF_UNIX).connect("#{sock}"))
 
@@ -92,6 +94,18 @@ RSpec.describe "bin/workspace-run", :seam do
 
     expect(status.success?).to be(false)
     expect(err).to include("workspace-run: refused connect #{sock}:").and include("EACCES")
+  ensure
+    server&.close
+  end
+
+  it "prints a TCP connect the grant profile refused on an ungranted port" do
+    server = TCPServer.new("127.0.0.1", 0)
+    port = server.addr[1]
+
+    _out, err, status = run("--grant", "git", "--", "git", "ls-remote", "http://127.0.0.1:#{port}/x")
+
+    expect(status.success?).to be(false)
+    expect(err).to include("workspace-run: refused connect 127.0.0.1:#{port} EACCES")
   ensure
     server&.close
   end
