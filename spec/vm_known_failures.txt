@@ -17,6 +17,7 @@
 ./spec/lain/rust/regions_spec.rb Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding stops soon after its thread is killed, rather than at the end of the call	failed 3 of 3
 ./spec/lain/seams/input_pane_socket_spec.rb a chat fed by an input pane joins the drafts of 2 dropped offers with 1 space at the next you>	flaky: joined drafts missing at the next prompt, failed 1 hook run at seed 42144, passed alone and 3 of 3 file runs on 8a3e6e63 (seed 42144, load 5.03)
 ./spec/lain/seams/workspace_profile_spec.rb A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped	failed 3 of 3
+./spec/lain/shell/executable/fresh_spec.rb Lain::Shell::Executable::Fresh#any_under? counts a fetch's FETCH_HEAD and a rewrite of .git/config by rename, so a grant withdraws the next	flaky: coarse ctime clock behind wall clock under load, failed 1 hook run at seed 44982, passed alone, 3 of 3 file runs on base, 0 of 10 loaded runs on each tree; record rebuilt from the kept hook log, load read by uptime after the run (seed 44982, load about 10)
 ./spec/lain/workspace_run_spec.rb bin/workspace-run prints a connect the profile refused from the exec record	failed 3 of 3
 floor:daemon	70
 floor:ruby	38104
