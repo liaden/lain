@@ -10,14 +10,14 @@ else
 fi
 # A spec passes a fixture root; the kernel's own files are read when it is absent.
 root=${1:-}
-mac=192.168.5.2
+mac_host_ip=192.168.5.2
 mac_high_port=47321
 host_mount_types=" virtiofs 9p fuse.sshfs nfs nfs4 cifs smb3 "
 dir=""
 no_network_reach=""
 grant_reach="/run/systemd/resolve/io.systemd.Resolve
 /run/systemd/resolve/io.systemd.Resolve.Monitor"
-mac_table="ct state established,related accept
+expected_mac_rules="ct state established,related accept
 ip daddr 192.168.5.2 tcp dport 11434 accept
 ip daddr 192.168.5.2 udp dport 53 accept
 ip daddr 192.168.5.2 tcp dport 53 accept
@@ -160,12 +160,12 @@ require_sweep() {
   fail "the $1 sweep did not run"
 }
 
-joined() { printf '%s\n' "$1" | sed '/^$/d' | LC_ALL=C sort -u; }
+sorted_unique_lines() { printf '%s\n' "$1" | sed '/^$/d' | LC_ALL=C sort -u; }
 
 compare_reach() {
   local label=$1 reached expected unexpected missing
-  reached=$(joined "$(sweep_lines "$2" reach)")
-  expected=$(joined "$3")
+  reached=$(sorted_unique_lines "$(sweep_lines "$2" reach)")
+  expected=$(sorted_unique_lines "$3")
   unexpected=$(LC_ALL=C comm -23 <(printf '%s\n' "$reached") <(printf '%s\n' "$expected") | sed '/^$/d')
   missing=$(LC_ALL=C comm -13 <(printf '%s\n' "$reached") <(printf '%s\n' "$expected") | sed '/^$/d')
   [ -z "$unexpected" ] || fail "a $label call reached: $(printf '%s\n' "$unexpected" | paste -sd ' ')"
@@ -195,7 +195,7 @@ check_sockets() {
 }
 
 # Each rule becomes nft's own wording, so the list compares whole: a missing, extra or reordered rule fails.
-mac_table_rules() {
+live_mac_rules() {
   sudo -n nft -j list table inet lain_mac 2>/dev/null </dev/null | python3 -I -c 'import json, sys
 
 def value(right):
@@ -249,8 +249,8 @@ print("chain", chains.get("out"))'
 
 check_mac_table() {
   local rules expected
-  rules=$(mac_table_rules) || fail "the nftables table inet lain_mac is not loaded or does not parse"
-  expected="$mac_table
+  rules=$(live_mac_rules) || fail "the nftables table inet lain_mac is not loaded or does not parse"
+  expected="$expected_mac_rules
 chain filter output 0 accept"
   if [ "$rules" != "$expected" ]; then
     diff <(printf '%s\n' "$expected") <(printf '%s\n' "$rules") | sed 's/^/     /' || true
@@ -269,10 +269,11 @@ check_mac_rejects() {
   local before after
   before=$(rejected_count) || fail "could not read the nftables counter lain_mac_rejected"
   # shellcheck disable=SC2016  # $0 and $1 are the inner bash's own arguments, the address and port
-  timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$mac" "$mac_high_port" >/dev/null 2>&1 </dev/null || true
+  timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$mac_host_ip" "$mac_high_port" >/dev/null 2>&1 </dev/null || true
   after=$(rejected_count) || fail "could not read the nftables counter lain_mac_rejected"
-  ((after > before)) || fail "a connect to $mac:$mac_high_port did not reach the table's reject (counter $before, then $after)"
-  ok "the table rejected a connect to $mac:$mac_high_port"
+  ((after > before)) ||
+    fail "a connect to $mac_host_ip:$mac_high_port did not reach the table's reject (counter $before, then $after)"
+  ok "the table rejected a connect to $mac_host_ip:$mac_high_port"
 }
 
 check_tmux

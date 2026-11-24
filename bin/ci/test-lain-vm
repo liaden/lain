@@ -2,7 +2,7 @@
 # Tests bin/lain-vm with fake limactl and ssh against real git, so a Mac runner needs neither Ruby nor lain.
 set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_CONFIG_GLOBAL GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_EXTERNAL_DIFF \
-  GIT_SSH GIT_SSH_COMMAND GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_DIFF_OPTS GIT_PAGER \
+  GIT_SSH GIT_SSH_COMMAND GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_DIFF_OPTS GIT_PAGER GIT_TERMINAL_PROMPT \
   LAIN_VM_NAME LAIN_VM_FETCH_MAX_KB LAIN_VM_STOP_GRACE_SECONDS LIMA_HOME XDG_CONFIG_HOME ANTHROPIC_API_KEY OLLAMA_API_KEY
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
@@ -145,6 +145,7 @@ write_project() {
   echo base >"$1/Gemfile"
   echo base >"$1/Gemfile.lock"
   echo base >"$1/.envrc"
+  echo base >"$1/lain.gemspec"
   echo notes-body >"$1/notes.txt"
 }
 
@@ -152,6 +153,7 @@ world_paths() {
   HOST="$WORLD/host"
   GUEST="$WORLD/guest"
   OUT="$WORLD/out"
+  host_script="$HOST/bin/lain-vm"
   export HOME="$WORLD/home" GIT_CONFIG_NOSYSTEM=1 FAKE_ROOT="$WORLD" FAKE_LOG="$WORLD/log" FAKE_VM=testvm
   export FAKE_GUEST_HOME="$GUEST" LAIN_VM_NAME=testvm
 }
@@ -199,6 +201,14 @@ crates/x/rust-toolchain
 crates/x/rust-toolchain.toml
 crates/x/.tool-versions
 crates/x/.envrc
+Cargo.toml
+Cargo.lock
+crates/x/Cargo.toml
+build.rs
+crates/x/build.rs
+ext/lain/extconf.rb
+Dockerfile
+docker/Dockerfile.ci
 PATHS
 
   git init -q --bare "$WORLD/upstream.git"
@@ -208,6 +218,7 @@ PATHS
   git -C "$WORLD/seed" commit -q -m base
   git -C "$WORLD/seed" push -q "$WORLD/upstream.git" HEAD:refs/heads/main
   git clone -q "$WORLD/upstream.git" "$HOST"
+  cp "$script" "$host_script"
 }
 
 # Git setup is most of a scenario's fixed cost, so it runs once and each scenario gets a copy.
@@ -251,7 +262,7 @@ guest_stage_blob() {
 
 lain_vm() {
   set +e
-  (cd "$HOST" && "$BASH" "$script" "$@") </dev/null >"$OUT" 2>&1
+  (cd "$HOST" && "$BASH" "$host_script" "$@") </dev/null >"$OUT" 2>&1
   RC=$?
   set -e
 }
@@ -495,6 +506,7 @@ FAKE
   expect_success
   output_has "login -l in $GUEST/lain"
   log_has "limactl shell --workdir / testvm"
+  [ "$(grep -cF "writes straight to this terminal" "$OUT")" -eq 1 ] || fail "shell did not warn once about raw output"
 }
 
 lain_vm_reading() {
@@ -502,7 +514,7 @@ lain_vm_reading() {
   shift
   set +e
   # Through a pipe, not a file: a child that reopens /dev/stderr would truncate a file and hide what it wrote.
-  (cd "$HOST" && printf '%s\n' "$input" | "$BASH" "$script" "$@") 2>&1 | cat >"$OUT"
+  (cd "$HOST" && printf '%s\n' "$input" | "$BASH" "$host_script" "$@") 2>&1 | cat >"$OUT"
   RC=${PIPESTATUS[0]}
   set -e
 }
@@ -748,6 +760,8 @@ scenario_a_rewritten_vm_branch_is_not_forced() {
   lain_vm fetch work
   expect_refused
   ref_is refs/remotes/lain-vm/work "$first"
+  output_has "rewritten"
+  output_has "git update-ref -d refs/remotes/lain-vm/work"
 }
 
 scenario_a_tree_holding_a_git_entry_is_refused() {
@@ -881,6 +895,8 @@ scenario_a_refused_fetch_still_sanitizes_guest_output() {
   expect_refused
   no_raw_escape
   output_has "refusal noise ^[[2J"
+  output_has "refused"
+  output_lacks "stopped"
 }
 
 scenario_guest_attributes_cannot_hide_or_run_anything() {
@@ -1105,6 +1121,8 @@ scenario_every_added_sensitive_path_is_shown() {
   guest_stage_blob 100644 .cargo-not/config "line-outside-cargo"
   guest_stage_blob 100644 docs/x.gemspec.txt "line-outside-gemspec"
   guest_stage_blob 100644 rakelibs/x "line-outside-rakelib"
+  guest_stage_blob 100644 docs/build.rs.md "line-outside-build-script"
+  guest_stage_blob 100644 docs/my-extconf.rb "line-outside-extconf"
   guest_git commit -q -m listed
   lain_vm fetch work
   expect_success
@@ -1347,7 +1365,7 @@ lain_vm_in() {
   local dir=$1
   shift
   set +e
-  (cd "$dir" && "$BASH" "$script" "$@") </dev/null >"$OUT" 2>&1
+  (cd "$dir" && "$BASH" "$host_script" "$@") </dev/null >"$OUT" 2>&1
   RC=$?
   set -e
 }
@@ -1516,7 +1534,7 @@ FAKE
   lain_vm fetch work
   expect_refused
   ref_is refs/remotes/lain-vm/work "$moved"
-  output_has "another fetch"
+  output_has "another fetch moved"
   output_lacks "cannot lock ref"
   incoming_refs_gone
 }
@@ -1708,7 +1726,7 @@ scenario_a_stale_incoming_ref_does_not_block_the_fetch() {
   (
     cd "$HOST" || exit 9
     # shellcheck disable=SC2016  # the inner shell's own pid names the ref
-    sh -c 'git update-ref "refs/lain-vm-incoming/$$" "$1" && exec "$2" "$3" fetch work' sh "$unrelated" "$BASH" "$script"
+    sh -c 'git update-ref "refs/lain-vm-incoming/$$" "$1" && exec "$2" "$3" fetch work' sh "$unrelated" "$BASH" "$host_script"
   ) </dev/null >"$OUT" 2>&1
   RC=$?
   set -e
@@ -1725,7 +1743,8 @@ scenario_a_held_ref_lock_prints_a_clear_message() {
   : >"$HOST/.git/refs/remotes/lain-vm/work.lock"
   lain_vm fetch work
   expect_refused
-  output_has "another fetch"
+  output_has "another fetch holds the lock"
+  output_lacks "collides"
   output_lacks "cannot lock ref"
   ref_absent refs/remotes/lain-vm/work
   incoming_refs_gone
@@ -1746,7 +1765,7 @@ FAKE
     signal=${pair%:*}
     code=${pair#*:}
     rm -f "$WORLD/ssh-pid"
-    (cd "$HOST" && exec "$BASH" "$script" fetch work) </dev/null >"$OUT" 2>&1 &
+    (cd "$HOST" && exec "$BASH" "$host_script" fetch work) </dev/null >"$OUT" 2>&1 &
     job=$!
     tries=0
     while [ ! -s "$WORLD/ssh-pid" ] && [ "$tries" -lt 100 ]; do
@@ -1909,7 +1928,7 @@ exec sleep 12
 FAKE
   chmod +x "$WORLD/fakes/ssh"
   local job tries ssh_pid group
-  (cd "$HOST" && exec "$BASH" "$script" fetch work) </dev/null >"$OUT" 2>&1 &
+  (cd "$HOST" && exec "$BASH" "$host_script" fetch work) </dev/null >"$OUT" 2>&1 &
   job=$!
   tries=0
   while [ ! -s "$WORLD/ssh-pid" ] && [ "$tries" -lt 100 ]; do
@@ -1968,7 +1987,7 @@ FAKE
 
 start_fetch_and_wait_for_the_fake() {
   local tries=0
-  (cd "$HOST" && exec "$BASH" "$script" fetch work) </dev/null >"$OUT" 2>&1 &
+  (cd "$HOST" && exec "$BASH" "$host_script" fetch work) </dev/null >"$OUT" 2>&1 &
   JOB=$!
   while [ ! -s "$WORLD/fetch-pid" ] && [ "$tries" -lt 100 ]; do
     sleep 0.1
@@ -2019,6 +2038,343 @@ scenario_a_fetch_that_ignores_term_is_killed_after_a_bound() {
   rm -f "$WORLD/fakes/git"
   incoming_refs_gone
   ref_absent refs/remotes/lain-vm/work
+}
+
+scenario_junk_cannot_bury_a_sensitive_change() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file .github/workflows/main.yml "line-in-workflow"
+  awk 'BEGIN { for (i = 0; i < 15000; i++) print "junk line to scroll the review away" }' >"$GUEST/lain/bin/zz-junk"
+  guest_git add bin/zz-junk
+  guest_git commit -q -m junk
+  lain_vm fetch work
+  expect_refused
+  output_has "too large to review"
+  output_lacks "line-in-workflow"
+  output_has "split the change"
+  ref_absent refs/remotes/lain-vm/work
+  incoming_refs_gone
+  [ "$(wc -c <"$OUT")" -lt 4096 ] || fail "the buried diff was printed"
+}
+
+scenario_escaped_bytes_count_against_the_review_limit() {
+  guest_has_clone
+  guest_branch work
+  LC_ALL=C awk 'BEGIN { for (i = 0; i < 100; i++) s = s "\200"; for (i = 0; i < 1500; i++) print s }' \
+    >"$GUEST/lain/bin/high"
+  guest_git add bin/high
+  guest_git commit -q -m high
+  lain_vm fetch work
+  expect_refused
+  output_has "too large to review"
+  ref_absent refs/remotes/lain-vm/work
+}
+
+scenario_the_sensitive_path_list_frames_the_diff() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file bin/tool "line-in-bin"
+  guest_commit_file notes.txt "line-outside"
+  lain_vm fetch work
+  expect_success
+  local tab lists first last diff_line
+  tab=$(printf '\t')
+  lists=$(grep -n "^:.*${tab}bin/tool\$" "$OUT" | cut -d: -f1)
+  [ "$(printf '%s\n' "$lists" | grep -c .)" -eq 2 ] || fail "the sensitive path list is not printed twice"
+  first=$(printf '%s\n' "$lists" | head -n 1)
+  last=$(printf '%s\n' "$lists" | tail -n 1)
+  diff_line=$(grep -n '^+line-in-bin$' "$OUT" | cut -d: -f1)
+  if [ "$first" -ge "$diff_line" ] || [ "$diff_line" -ge "$last" ]; then fail "the sensitive path list does not frame the diff"; fi
+  if grep -q "^:.*${tab}notes.txt\$" "$OUT"; then fail "a path outside the list is in the sensitive list"; fi
+  grep -qx "M${tab}notes.txt" "$OUT" || fail "the branch's name-status lacks notes.txt"
+  grep -qx "M${tab}bin/tool" "$OUT" || fail "the branch's name-status lacks bin/tool"
+  [ "$(tail -n 1 "$OUT")" = "1 sensitive path changed." ] || fail "the output does not end with the sensitive path count"
+}
+
+scenario_fetch_prints_the_exact_push_line() {
+  guest_has_clone
+  guest_branch feature/push
+  guest_commit_file notes.txt push
+  lain_vm fetch feature/push
+  expect_success
+  output_has "git push git@github-personal:liaden/lain $(guest_git rev-parse HEAD):refs/heads/feature/push"
+  output_lacks "push origin"
+}
+
+write_logging_git() {
+  local real_git
+  real_git=$(command -v git)
+  cat >"$WORLD/fakes/git" <<FAKE
+#!/bin/sh
+case " \$* " in
+  *" clone "* | *" push "* | *" fetch "*)
+    printf 'git-argv prompt=%s %s\n' "\${GIT_TERMINAL_PROMPT-unset}" "\$*" >>"$FAKE_LOG"
+    ;;
+esac
+exec "$real_git" "\$@"
+FAKE
+  chmod +x "$WORLD/fakes/git"
+}
+
+scenario_the_seed_push_never_signs_or_pushes_tags() {
+  vm_is_running
+  write_logging_git
+  git -C "$HOST" tag -a -m local v-local
+  git -C "$HOST" config push.gpgSign if-asked
+  git -C "$HOST" config push.followTags true
+  git -C "$HOST" config gpg.program "$WORLD/canary"
+  git config --file "$GUEST/.gitconfig" receive.certNonceSeed fixture-seed
+  lain_vm up
+  expect_success
+  canary_quiet
+  log_has "-c push.gpgSign=false"
+  log_has "-c push.followTags=false"
+  [ -z "$(git -C "$GUEST/lain" tag -l)" ] || fail "a local tag reached the VM"
+}
+
+scenario_guest_facing_git_never_prompts() {
+  vm_is_running
+  write_logging_git
+  lain_vm up
+  expect_success
+  git -C "$GUEST/lain" switch -q -c work
+  guest_commit_file notes.txt prompt
+  lain_vm fetch work
+  expect_success
+  grep '^git-argv ' "$FAKE_LOG" >"$WORLD/argv" || fail "no guest-facing git command was logged"
+  local verb
+  for verb in clone push fetch; do
+    grep -q " $verb " "$WORLD/argv" || fail "no git $verb was logged"
+  done
+  if grep -v '^git-argv prompt=0 ' "$WORLD/argv" | grep -q .; then fail "a guest-facing git command may prompt"; fi
+}
+
+scenario_a_colliding_ref_name_is_not_called_a_lock() {
+  guest_has_clone
+  guest_branch a
+  guest_commit_file notes.txt one
+  lain_vm fetch a
+  expect_success
+  guest_git switch -q main
+  guest_git branch -q -D a
+  guest_branch a/b
+  guest_commit_file notes.txt two
+  lain_vm fetch a/b
+  expect_refused
+  output_has "collides"
+  output_has "collides with refs/remotes/lain-vm/a,"
+  output_lacks "another fetch"
+  output_lacks "cannot lock ref"
+  ref_absent refs/remotes/lain-vm/a/b
+  incoming_refs_gone
+}
+
+scenario_a_fetch_killed_by_a_signal_says_stopped() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt killed
+  local real_git
+  real_git=$(command -v git)
+  cat >"$WORLD/fakes/git" <<FAKE
+#!/bin/sh
+case " \$* " in
+  *" --no-write-fetch-head "*) kill -TERM \$\$ ;;
+esac
+exec "$real_git" "\$@"
+FAKE
+  chmod +x "$WORLD/fakes/git"
+  lain_vm fetch work
+  expect_refused
+  output_has "stopped"
+  output_lacks "refused"
+  ref_absent refs/remotes/lain-vm/work
+}
+
+scenario_incoming_refs_left_by_a_killed_fetch_are_removed() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt stale
+  local dead live head
+  # shellcheck disable=SC2016  # the inner shell prints its own pid, which is gone once it exits
+  dead=$(sh -c 'echo $$')
+  /bin/sleep 30 >/dev/null 2>&1 &
+  live=$!
+  head=$(git -C "$HOST" rev-parse HEAD)
+  git -C "$HOST" update-ref "refs/lain-vm-incoming/$dead" "$head"
+  git -C "$HOST" update-ref refs/lain-vm-incoming/junk "$head"
+  git -C "$HOST" update-ref "refs/lain-vm-incoming/$live" "$head"
+  lain_vm fetch work
+  kill "$live"
+  wait "$live" 2>/dev/null || true
+  expect_success
+  ref_absent "refs/lain-vm-incoming/$dead"
+  ref_absent refs/lain-vm-incoming/junk
+  ref_is "refs/lain-vm-incoming/$live" "$head"
+}
+
+lain_vm_as() {
+  local dir=$1 program=$2
+  shift 2
+  set +e
+  (cd "$dir" && "$BASH" "$program" "$@") </dev/null >"$OUT" 2>&1
+  RC=$?
+  set -e
+}
+
+repo_footprint() {
+  git -C "$1" for-each-ref
+  find "$1/.git/objects" -type f | LC_ALL=C sort
+}
+
+# The link is relative and sits outside the checkout, so only a resolved path finds the lain root.
+scenario_fetch_from_another_repo_touches_only_the_lain_checkout() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt from-elsewhere
+  git init -q "$WORLD/other"
+  git -C "$WORLD/other" commit -q --allow-empty -m other
+  git -C "$WORLD/other" update-ref refs/remotes/origin/main HEAD
+  mkdir -p "$WORLD/links"
+  ln -s ../host/bin/lain-vm "$WORLD/links/lain-vm"
+  repo_footprint "$WORLD/other" >"$WORLD/other-before"
+  lain_vm_as "$WORLD/other" "$WORLD/links/lain-vm" fetch work
+  expect_success
+  ref_is refs/remotes/lain-vm/work "$(guest_git rev-parse HEAD)"
+  repo_footprint "$WORLD/other" >"$WORLD/other-after"
+  cmp -s "$WORLD/other-before" "$WORLD/other-after" || fail "the other repo gained objects or refs"
+}
+
+scenario_a_copy_outside_a_git_checkout_is_refused() {
+  vm_is_running
+  local copy command
+  mkdir -p "$WORLD/loose/bin" "$HOST/vendor/lain/bin"
+  for copy in "$WORLD/loose" "$HOST/vendor/lain"; do
+    cp "$script" "$copy/bin/lain-vm"
+    echo copied >"$copy/lain.gemspec"
+    for command in up shell 'fetch work' 'secret ANTHROPIC_API_KEY'; do
+      : >"$FAKE_LOG"
+      # shellcheck disable=SC2086  # the command splits into its words on purpose
+      lain_vm_as "$HOST" "$copy/bin/lain-vm" $command
+      expect_refused
+      output_has "lain-vm runs from a lain checkout"
+      [ ! -s "$FAKE_LOG" ] || fail "$command from $copy called limactl before refusing"
+    done
+  done
+}
+
+scenario_a_root_without_lain_gemspec_is_refused() {
+  vm_is_running
+  mkdir -p "$WORLD/loose/bin"
+  cp "$script" "$WORLD/loose/bin/lain-vm"
+  local real_git
+  real_git=$(command -v git)
+  # shellcheck disable=SC2016  # "$@" belongs to the generated script
+  printf '#!/bin/sh\nprintf "git called\\n" >>"%s"\nexec "%s" "$@"\n' "$FAKE_LOG" "$real_git" >"$WORLD/fakes/git"
+  chmod +x "$WORLD/fakes/git"
+  local command
+  for command in up shell 'fetch work' 'secret ANTHROPIC_API_KEY'; do
+    : >"$FAKE_LOG"
+    # shellcheck disable=SC2086  # the command splits into its words on purpose
+    lain_vm_as "$HOST" "$WORLD/loose/bin/lain-vm" $command
+    expect_refused
+    output_has "$WORLD/loose holds no lain.gemspec"
+    output_has "lain-vm runs from a lain checkout"
+    [ ! -s "$FAKE_LOG" ] || fail "$command called limactl or git before refusing"
+  done
+  mkdir -p "$WORLD/loose/tools"
+  echo copied >"$WORLD/loose/lain.gemspec"
+  cp "$script" "$WORLD/loose/tools/lain-vm"
+  : >"$FAKE_LOG"
+  lain_vm_as "$HOST" "$WORLD/loose/tools/lain-vm" up
+  expect_refused
+  output_has "is not in a bin/ directory"
+  output_lacks "lain.gemspec"
+  [ ! -s "$FAKE_LOG" ] || fail "a copy outside bin/ called limactl or git before refusing"
+}
+
+commit_empty_files() {
+  local dir=$1 count=$2 blob tree
+  blob=$(guest_git hash-object -w /dev/null)
+  tree=$(blob_tree "$blob" "$count")
+  guest_git read-tree --prefix="$dir/" "$tree"
+  guest_git commit -q -m "$count files in $dir"
+}
+
+scenario_many_sensitive_paths_are_refused_past_50() {
+  guest_has_clone
+  guest_branch at-limit
+  guest_commit_file .github/workflows/main.yml "line-in-workflow"
+  commit_empty_files bin/zz 49
+  lain_vm fetch at-limit
+  expect_success
+  [ "$(tail -n 1 "$OUT")" = "50 sensitive paths changed." ] || fail "the output does not end with the path count"
+  guest_branch over-limit
+  commit_empty_files bin/zy 1
+  lain_vm fetch over-limit
+  expect_refused
+  output_has "too many sensitive paths"
+  output_has "split the change"
+  ref_absent refs/remotes/lain-vm/over-limit
+  [ "$(wc -c <"$OUT")" -lt 4096 ] || fail "the paths were printed"
+}
+
+# Long names under a path outside the list make even the capped whole-branch list pass the review limit.
+scenario_every_printed_list_counts_against_the_review_limit() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file .github/workflows/main.yml "line-in-workflow"
+  local long
+  long=$(printf '%0200d' 0)
+  commit_empty_files "docs/$long/$long/$long" 1200
+  lain_vm fetch work
+  expect_refused
+  output_has "too large to review"
+  ref_absent refs/remotes/lain-vm/work
+  [ "$(wc -c <"$OUT")" -lt 4096 ] || fail "the name-status was printed"
+}
+
+scenario_the_whole_branch_list_is_capped_and_says_so() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file .github/workflows/main.yml "line-in-workflow"
+  commit_empty_files docs/many 1500
+  lain_vm fetch work
+  expect_success
+  output_has "501 more paths not shown; list them all with git diff --name-status $(git -C "$HOST" rev-parse origin/main) $(guest_git rev-parse HEAD)"
+  [ "$(grep -c "^A$(printf '\t')docs/many/" "$OUT")" -eq 999 ] || fail "the whole-branch list did not stop at 1000 lines"
+  [ "$(tail -n 1 "$OUT")" = "1 sensitive path changed." ] || fail "the output does not end with the path count"
+}
+
+scenario_a_failed_ref_write_is_not_called_a_collision() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt unwritable
+  mkdir -p "$HOST/.git/refs/remotes/lain-vm"
+  chmod 555 "$HOST/.git/refs/remotes/lain-vm"
+  lain_vm fetch work
+  chmod 755 "$HOST/.git/refs/remotes/lain-vm"
+  expect_refused
+  output_has "could not write refs/remotes/lain-vm/work"
+  output_lacks "collides"
+  output_lacks "another fetch"
+  ref_absent refs/remotes/lain-vm/work
+}
+
+# A relative script path is resolved through CDPATH unless it is cleared, and GIT_DIR would redirect every git call.
+scenario_the_callers_cdpath_and_git_dir_change_nothing() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt scrubbed
+  mkdir -p "$WORLD/decoy/bin"
+  git init -q "$WORLD/other"
+  git -C "$WORLD/other" commit -q --allow-empty -m other
+  git -C "$WORLD/other" update-ref refs/remotes/origin/main HEAD
+  repo_footprint "$WORLD/other" >"$WORLD/other-before"
+  CDPATH="$WORLD/decoy" GIT_DIR="$WORLD/other/.git" lain_vm_as "$HOST" bin/lain-vm fetch work
+  expect_success
+  ref_is refs/remotes/lain-vm/work "$(guest_git rev-parse HEAD)"
+  repo_footprint "$WORLD/other" >"$WORLD/other-after"
+  cmp -s "$WORLD/other-before" "$WORLD/other-after" || fail "the other repo gained objects or refs"
 }
 
 # Read from bash's own function table, so a scenario counts however its definition line is written.
