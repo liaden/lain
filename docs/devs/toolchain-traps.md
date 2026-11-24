@@ -475,6 +475,7 @@ Keep a retired name here so a later red under it reads as a regression, not as a
   The product was not at fault, and the reason is liveness and has nothing to do with priming. `Frontend::Neovim#run` tears down in an `ensure` (`@channel.close`, the joins, `@rpc.stop`), so the first lain's channel is dead before the second attaches. `channel_alive(owner)` is false, runtime.lua takes the re-attach path and not the `{ refused = "owned" }` one, and the at-rest prime is the NEW OWNER's.
 
   That is the sequential re-attach a human performs (quit lain, start another in the same nvim), never a live double attach. A live double attach is refused, and refused because a newcomer's empty prime replacing a running lain's rendered views is one of the 3 harms runtime.lua's head measured. Both halves are pinned by `spec/lain/frontend/neovim/runtime_spec.rb`'s "one lain per editor".
+- Ubuntu ships `git` with no message catalogs (they live in `language-pack-*-base`), so `LANGUAGE=de` leaves git in English, and git 2.53's own German catalog leaves its promisor lines untranslated anyway. A spec that proves "whatever language git speaks" by matching translated git text cannot pass there; `checkout_spec` now swaps git's stderr for a line with no git token in it. `GIT_TEXTDOMAINDIR=<dir>/usr/share/locale-langpack` makes git read an unpacked language pack, which is how this was told apart.
 
 ## Watchdog and fiber traps
 

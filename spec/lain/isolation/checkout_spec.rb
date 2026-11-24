@@ -253,13 +253,17 @@ RSpec.describe Lain::Isolation::Checkout, :seam do
       expect(shell.stderr).to match(names_the_fix)
     end
 
-    # LANGUAGE needs a locale that is not C, and en_US.utf8 is the one this box is sure to have.
-    it "says so whatever language git speaks, naming the clone's own remote" do
+    # Git 2.53's German catalog leaves both promisor lines in English, and Ubuntu's git ships no catalog at all, so
+    # a real git runs and only what it said is swapped for words with no English in them.
+    it "says so whatever git's stderr says, naming the clone's own remote" do
       missing_blob
-      german = described_class.new(clone, env: { "LC_ALL" => "en_US.utf8", "LANGUAGE" => "de" })
-      stderr = german.run("diff", "HEAD~1", "HEAD").stderr
+      foreign = "schwerwiegend: Objekt fehlt\n"
+      speaks_german = lambda do |*argv, **options|
+        Lain::Shell::Out.new(*argv, **options).tap { |shell| shell.define_singleton_method(:stderr) { foreign } }
+      end
+      stderr = described_class.new(clone, shell_out_factory: speaks_german).run("diff", "HEAD~1", "HEAD").stderr
 
-      expect([stderr, stderr]).to match([/Promisor-Remote/, names_the_fix])
+      expect(stderr).to start_with(foreign).and match(names_the_fix)
     end
 
     def names_the_fix
