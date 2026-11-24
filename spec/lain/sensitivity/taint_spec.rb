@@ -446,13 +446,15 @@ RSpec.describe Lain::Sensitivity::Taint, :seam do
   end
 
   describe "where a run hides a key outside a file's bytes" do
+    include CoarseClock
+
     def renamed
       FileUtils.mkdir_p(path("d"))
       File.write(path("d/f"), "plain\n")
       since = File.lstat(path("d/f")).ctime + 0.5
       refs = described_class.refs(root)
       # Past the mark, so only the rename moves a ctime.
-      sleep 0.6
+      past_coarse_clock(since)
       yield
       taint.scan(root:, since:, refs:, secrets:)
     end
@@ -461,7 +463,7 @@ RSpec.describe Lain::Sensitivity::Taint, :seam do
       FileUtils.mkdir_p(path("d#{key}"))
       since = File.lstat(path("d#{key}")).ctime + 0.5
       refs = described_class.refs(root)
-      sleep 0.6
+      past_coarse_clock(since)
       File.write(path("d#{key}/new"), "x")
 
       expect(taint.scan(root:, since:, refs:, secrets:).gated).to include(path("d#{key}/new"))

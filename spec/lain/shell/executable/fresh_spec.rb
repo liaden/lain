@@ -135,12 +135,29 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       path
     end
 
-    # The filesystem stamps a ctime from a coarse clock, so a gap either side keeps the order unambiguous.
-    def started_after_setup
-      sleep 0.05
-      start = Time.now
-      sleep 0.05
-      described_class.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new)
+    include CoarseClock
+
+    # A VM's time sync can step the clock back 180 ms, so a fixed gap either side of the start could straddle a
+    # step: the start is read until it is past every setup ctime, and a write waits for the coarse clock to pass it.
+    def started_after_setup(**options)
+      start = after_setup
+      past_coarse_clock(start)
+      described_class.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new, **options)
+    end
+
+    # Floored to the microsecond a session file's start keeps.
+    def after_setup
+      newest = [project, *Dir.glob("#{project}/**/*", File::FNM_DOTMATCH)].map { File.lstat(_1).ctime }.max
+      deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + CoarseClock::BOUND
+      start = Time.now.floor(6)
+      until start > newest
+        raise "the clock did not pass the setup's #{newest.iso8601(9)} within #{CoarseClock::BOUND} s" if
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+
+        sleep 0.0005
+        start = Time.now.floor(6)
+      end
+      start
     end
 
     it "is false when nothing under the root was written or changed in this lineage" do
@@ -161,6 +178,17 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       made("lib/lain/version.rb")
 
       expect(lineage(before_every_file).any_under?(project)).to be(true)
+    end
+
+    # The start is handed back once the coarse clock has passed it, so the clock is past the moment it was asked for.
+    it "is true for a write made the moment a new lineage begins" do
+      project
+      asked = Time.now
+      fresh = described_class.for_lineage([])
+      past_start = coarse_now > (asked.to_i * 1_000_000_000) + asked.nsec
+      made("Gemfile")
+
+      expect([past_start, fresh.any_under?(project)]).to eq([true, true])
     end
 
     it "matches a write record that names the root by its realpath when asked through a link" do
@@ -235,9 +263,9 @@ RSpec.describe Lain::Shell::Executable::Fresh do
       end
 
       it "keeps the entry it made settled once the lineage is resumed from its file" do
-        sleep 0.05
-        file = session_file("s1.ndjson", start: Time.now.utc.iso8601(6))
-        sleep 0.05
+        start = after_setup
+        file = session_file("s1.ndjson", start: start.utc.iso8601(6))
+        past_coarse_clock(start)
         File.open(file, "a") do |io|
           described_class.for_lineage([file], journal: Lain::Journal.new(io:))
                          .making(File.join(project, "target")) { Dir.mkdir(_1) }
@@ -249,10 +277,7 @@ RSpec.describe Lain::Shell::Executable::Fresh do
 
       it "still makes the entry, settled, when its record cannot land" do
         closed = Object.new.tap { |journal| def journal.<<(_entry) = raise(Lain::Journal::Closed, "closed") }
-        sleep 0.05
-        start = Time.now
-        sleep 0.05
-        fresh = described_class.new(start:, written: [], stat: Lain::Shell::Executable::Stat.new, journal: closed)
+        fresh = started_after_setup(journal: closed)
         made = fresh.making(File.join(project, "target")) { Dir.mkdir(_1) }
 
         expect([made, fresh.changed_under?(project)]).to eq([0, false])

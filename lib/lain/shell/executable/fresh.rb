@@ -43,6 +43,9 @@ module Lain
         UNNAMED = "a command an older lain did not name"
         # Far above any kernel tick, so it only bounds a clock that stopped.
         TICK_BOUND = 0.05
+        # The coarse clock trails the wall clock by up to a tick, so a write just after a start read from the wall
+        # clock could stamp a ctime before it. The start is handed back once the coarse clock has passed it.
+        WALL_START = -> { Time.now.tap { past_coarse_clock(nanoseconds(_1)) } }
 
         # The lineage of a stack that reads none, which no command has marked unread.
         module Unmarked
@@ -84,12 +87,29 @@ module Lain
         # @param journal [#<<] the session's durable journal: where the reason lands when the lineage cannot be
         #   read, and where an entry the sandbox makes is recorded, for a resume to fold
         # @return [Fresh]
-        def self.for_lineage(paths, stat: Stat.new, clock: -> { Time.now }, journal: Channel::Null.instance)
+        def self.for_lineage(paths, stat: Stat.new, clock: WALL_START, journal: Channel::Null.instance)
           written, unread, made = folded(paths)
           new(start: paths.empty? ? clock.call : first_ts(paths.first), written:, unread:, made:, stat:, journal:)
         rescue StandardError => e
           unknown(e, journal:, stat:)
         end
+
+        # Waits until the coarse clock, which stamps every ctime, is past `floor`, or a stopped clock's bound ends.
+        #
+        # @param floor [Integer] nanoseconds since the epoch
+        # @return [nil]
+        def self.past_coarse_clock(floor)
+          deadline = RunClock::MONOTONIC.call + TICK_BOUND
+          sleep(0.0005) until coarse_now > floor || RunClock::MONOTONIC.call > deadline
+        end
+
+        def self.coarse_now = Process.clock_gettime(Process::CLOCK_REALTIME_COARSE, :nanosecond)
+
+        # Integer nanoseconds, since a ctime in nanoseconds exceeds what a Float holds exactly.
+        #
+        # @param time [Time]
+        # @return [Integer] nanoseconds since the epoch
+        def self.nanoseconds(time) = (time.to_i * 1_000_000_000) + time.nsec
 
         # What a lineage that cannot be read answers: every path fresh, with
         # the reason recorded, so a run that lost the rule says so.
@@ -318,12 +338,7 @@ module Lain
           nil
         end
 
-        def past_coarse_clock(floor)
-          deadline = RunClock::MONOTONIC.call + TICK_BOUND
-          sleep(0.0005) until coarse_now > floor || RunClock::MONOTONIC.call > deadline
-        end
-
-        def coarse_now = Process.clock_gettime(Process::CLOCK_REALTIME_COARSE, :nanosecond)
+        def past_coarse_clock(floor) = self.class.past_coarse_clock(floor)
 
         def vouched?(root)
           real = @stat.real(root)
@@ -342,8 +357,7 @@ module Lain
           false
         end
 
-        # Integer nanoseconds, since a ctime in nanoseconds exceeds what a Float holds exactly.
-        def nanoseconds(time) = (time.to_i * 1_000_000_000) + time.nsec
+        def nanoseconds(time) = self.class.nanoseconds(time)
       end
     end
   end

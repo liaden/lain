@@ -69,9 +69,8 @@ module Lain
       # coarse clock is waited past it: everything the checkout wrote is no
       # later than the start, and everything written after the wait is later.
       class LeaseFreshness
-        # Far above any kernel tick, so it only bounds a clock that stopped.
-        TICK_BOUND = 0.05
-
+        LINEAGE = ::Lain::Shell::Executable::Fresh
+        # `start` in nanoseconds, the unit the coarse clock is read in.
         Begun = Data.define(:fresh, :start)
 
         def initialize
@@ -85,7 +84,7 @@ module Lain
         # @return [Shell::Executable::Fresh]
         def for(worker_env)
           begun = @lock.synchronize { @by_lease[worker_env] ||= begin_now }
-          past_coarse_clock(begun.start)
+          LINEAGE.past_coarse_clock(begun.start)
           begun.fresh
         end
 
@@ -93,16 +92,8 @@ module Lain
 
         def begin_now
           start = Time.now
-          Begun.new(fresh: ::Lain::Shell::Executable::Fresh.for_lineage([], clock: -> { start }), start:)
+          Begun.new(fresh: LINEAGE.for_lineage([], clock: -> { start }), start: LINEAGE.nanoseconds(start))
         end
-
-        def past_coarse_clock(start)
-          floor = (start.to_i * 1_000_000_000) + start.nsec
-          deadline = RunClock::MONOTONIC.call + TICK_BOUND
-          sleep(0.0005) until coarse_now > floor || RunClock::MONOTONIC.call > deadline
-        end
-
-        def coarse_now = Process.clock_gettime(Process::CLOCK_REALTIME_COARSE, :nanosecond)
       end
 
       # The one a run with no chat reads, so every guard built over a lease shares its clock.
