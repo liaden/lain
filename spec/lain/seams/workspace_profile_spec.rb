@@ -4,6 +4,41 @@ require "fileutils"
 require "open3"
 require "tmpdir"
 
+# The fence's tests pass by skipping what the kernel cannot enforce, and CI runners have older kernels than a dev
+# box. So a skip proves nothing unless its own line says the kernel's Landlock ABI is below what the test needs.
+module FenceSkips
+  ABI_GAP = /: needs Landlock ABI (\d+), this kernel release offers (\d+)\z/
+
+  def self.unexplained(output) = output.scan(/SKIPPED.*/).reject { above_kernel?(_1) }
+
+  def self.above_kernel?(line)
+    gap = ABI_GAP.match(line)
+    !gap.nil? && gap[1].to_i > gap[2].to_i
+  end
+end
+
+RSpec.describe "FenceSkips.unexplained" do
+  def skip_line(needs:, offers:)
+    "SKIPPED Unix socket path rules: needs Landlock ABI #{needs}, this kernel release offers #{offers}\n"
+  end
+
+  it "allows a skip needing an ABI above the one the kernel offers" do
+    output = "test result: ok.\n#{skip_line(needs: 9, offers: 8)}#{skip_line(needs: 6, offers: 5)}"
+
+    expect(FenceSkips.unexplained(output)).to be_empty
+  end
+
+  it "refuses a skip needing the ABI the kernel already offers" do
+    expect(FenceSkips.unexplained(skip_line(needs: 9, offers: 9))).to eq([skip_line(needs: 9, offers: 9).chomp])
+  end
+
+  it "refuses a skip with no ABI reason" do
+    line = "SKIPPED exec limits: Landlock is not an active LSM (\"lockdown,capability\")"
+
+    expect(FenceSkips.unexplained("#{line}\n")).to eq([line])
+  end
+end
+
 # A project's own tests run inside the workspace profile: a throwaway copy of what this repo's own test
 # runs read, the mise ruby and cargo, the real sandbox.
 RSpec.describe "A project's own tests inside the workspace profile", :seam do
@@ -60,15 +95,14 @@ RSpec.describe "A project's own tests inside the workspace profile", :seam do
     expect(examples_in(out)).to be_positive
   end
 
-  # The fence's tests skip themselves, and pass, where Landlock is not shown active, so a pass that skipped proves
-  # nothing. The one UDP test binds a datagram socket, which the profile refuses on purpose.
-  it "passes the fence crate's tests, none of them skipped",
+  # The one UDP test binds a datagram socket, which the profile refuses on purpose.
+  it "passes the fence crate's tests, skipping only what the kernel's Landlock ABI cannot enforce",
      budget: 60, starvable: "a cargo test build takes minutes on a box under memory pressure" do
     out, err, status = confined(*%w[cargo test -p lain-fence --test fence --offline --
                                     --skip a_udp_send_to_a_loopback_listener_is_refused])
 
     expect(status.exitstatus).to eq(0), out + err
-    expect(out + err).not_to include("SKIPPED")
+    expect(FenceSkips.unexplained(out + err)).to be_empty, out + err
     expect(out[/test result: ok\. (\d+) passed/, 1].to_i).to be_positive
   end
 end

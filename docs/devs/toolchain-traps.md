@@ -353,7 +353,7 @@ Added 2026-11-20, from the round 30 fix run. Each was red once and green on a re
 
 Not a flake, from the same run, and fixed in it: `Lain::CLI::Wiring` "sends a finished agent's notice after the delay, through the terminal and the feed" was red whenever the runner sat in kitty, because the notifier picks its escape from `KITTY_WINDOW_ID` and `TERM_PROGRAM` in the real `ENV`. `spec/support/terminal_env.rb` now drops both before the suite, and a spec that wants a terminal stubs `ENV`. A red under that name again is a regression.
 
-Not a flake, from the same run: `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped` fails with "path must be shorter than SUN_LEN" when `TMPDIR` is long, because the fence's socket lives under it. Keep `TMPDIR` short (`$HOME/tmp/lain/<short>`) before reading that red as a regression.
+Not a flake, from the same run: `A project's own tests inside the workspace profile passes the fence crate's tests, skipping only what the kernel's Landlock ABI cannot enforce` fails with "path must be shorter than SUN_LEN" when `TMPDIR` is long, because the fence's socket lives under it. Keep `TMPDIR` short (`$HOME/tmp/lain/<short>`) before reading that red as a regression.
 
 Not flakes, from the same run, and fixed in it:
 
