@@ -339,19 +339,23 @@ module Lain
       # @param trace [Boolean] false where this kernel cannot trace
       # @param related [Array<String>] absolute; directories outside the project read whole, their masks among `masks`
       # @param unread [Hash{String => String}] each related directory left unread, with why
+      # @param tmpdir [String] where a call writes its own dir, from which no git dir is read
       # @return [Profile]
       # @raise [Tampered] when the root is a clone lain cut whose git dir was tampered with
-      def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [], unread: {})
+      def self.reader(root:, home:, masks: [], exec_files: [], trace: true, related: [], unread: {},
+                      tmpdir: Dir.tmpdir)
         refuse_tampered(landing(root), :reader)
         new(name: :reader, trace:, exec_files:, masks:, write_dirs: SYSTEM_WRITE, unread:,
             exec_dirs: [*SYSTEM_EXEC, *HOME_EXEC.map { File.join(home, _1) }],
-            read_dirs: [landing(root), *git_reads(root), *related.map { landing(_1) }, *SYSTEM_READ,
+            read_dirs: [landing(root), *git_reads(root, tmpdir), *related.map { landing(_1) }, *SYSTEM_READ,
                         *HOME_READ.map { File.join(home, _1) }])
       end
 
       # git cannot run without the git dir a linked worktree points at, nor without the objects a clone lain cut
       # reads through alternates; the latter comes from lain's own record, never from the alternates file.
-      def self.git_reads(root) = [*linked_git_dir(root), *Isolation::Clone::Guard.upstream_objects(landing(root))]
+      def self.git_reads(root, tmpdir)
+        [*linked_git_dir(root, tmpdir), *Isolation::Clone::Guard.upstream_objects(landing(root))]
+      end
       private_class_method :git_reads
 
       # The reader's reach, plus writes to the project and the caller's TMPDIR,
@@ -403,16 +407,17 @@ module Lain
                          execs: ExecRules.project(root))
         refuse_workspace(root, home, tmpdir)
         refuse_tampered(landing(root), :workspace)
-        reader = reader(root:, home:, masks:, exec_files:, trace:)
+        reader = reader(root:, home:, masks:, exec_files:, trace:, tmpdir:)
         project = reader.read_dirs.first
-        git = Seal.git_dirs(project)
+        git = Seal.git_dirs(project, tmpdir:)
         writes = [project, tmpdir, *commit_writes(project, git)]
         homes = PrivateHome.of(home)
         hooks = hooks_outside(project, git)
         new(**reader.to_h, name: :workspace, sealed: sealing(project, git, tmpdir, configs), homes:,
                            write_dirs: [*writes, *homes.map(&:path), *SYSTEM_WRITE],
                            exec_dirs: [*reader.exec_dirs, *hooks],
-                           read_dirs: [*reader.read_dirs, *system_files, *hooks], hidden: hidden(home)).running(execs)
+                           read_dirs: [*reader.read_dirs, *parent_git_dir(project, git), *system_files, *hooks],
+                           hidden: hidden(home)).running(execs)
       end
 
       # So a project's own tests run, each rule's directory runs where it is a
@@ -449,7 +454,7 @@ module Lain
       # @raise [Unsealable] when a seal is reached through a link inside the writes
       def self.seals(root:, tmpdir:)
         project = landing(root)
-        sealing(project, Seal.git_dirs(project), tmpdir, [])
+        sealing(project, Seal.git_dirs(project, tmpdir:), tmpdir, [])
       end
 
       # A config file the call could rewrite is sealed; one in the TMPDIR is not, since a call writes only its
@@ -615,9 +620,17 @@ module Lain
         common, gitdir = git
         return [] if common.nil? || Landing.under?(common, root)
 
-        [*COMMIT_WRITES.map { File.join(common, _1) }, *(gitdir == common ? [File.join(common, "index")] : []), gitdir]
+        [*COMMIT_WRITES.map { File.join(common, _1) }, *(gitdir == common ? [] : [gitdir])]
       end
       private_class_method :commit_writes
+
+      # git cannot run in a project inside a repository without reading that repository's git dir, which a commit
+      # would write whole; it is read, and only what {.commit_writes} names is written.
+      def self.parent_git_dir(root, git)
+        common, = git
+        common && !Landing.under?(common, root) ? [common] : []
+      end
+      private_class_method :parent_git_dir
 
       # bwrap binds a project back over the private /tmp where it lands, so a
       # root reached through a link must be named by its landing, and so must
@@ -642,7 +655,9 @@ module Lain
         return [] unless hooks && File.directory?(hooks)
 
         landed = landing(hooks)
-        Landing.under?(landed, project) ? [] : [landed]
+        return [] if Landing.under?(landed, project)
+
+        Seal.hooks_vouched?(project, git.first, landed) ? [landed] : []
       end
       private_class_method :hooks_outside
 
@@ -651,18 +666,81 @@ module Lain
       # names the main checkout's git dir in turn, through `commondir`.
       #
       # @param root [String]
+      # @param tmpdir [String] where the call writes its own dir
       # @return [Array<String>] the git dir outside the project, or none
-      def self.linked_git_dir(root)
-        pointer = File.read(File.join(root, ".git"))[/\Agitdir: (.+)$/, 1]
-        return [] unless pointer
-
-        admin = File.expand_path(pointer, root)
-        common = File.join(admin, "commondir")
-        [File.exist?(common) ? File.expand_path(File.read(common).strip, admin) : admin]
-      rescue SystemCallError
-        []
+      def self.linked_git_dir(root, tmpdir)
+        admin = GitPointer.linked_admin(root, tmpdir:)
+        admin ? [GitPointer.common_of(admin)] : []
       end
       private_class_method :linked_git_dir
+
+      # The git dir a `.git` file names, taken only where nothing the call can write vouches for it.
+      module GitPointer
+        # A call can write the project's `.git` file, so its word is taken only when the git dir it names, which the
+        # call cannot write, names this checkout back.
+        #
+        # @param root [String]
+        # @param tmpdir [String] the caller's TMPDIR, where a call writes its own dir
+        # @return [String, nil] where the git dir lands, nil when `.git` is no pointer or the git dir disowns it
+        def self.linked_admin(root, tmpdir: Dir.tmpdir)
+          pointer = File.read(File.join(root, ".git"))[/\Agitdir: (.+)$/, 1]
+          admin = pointer && File.realpath(pointer, root)
+          admin if admin && !swappable?(admin, root, tmpdir) && owned_by?(admin, root) && common_of(admin)
+        rescue SystemCallError
+          nil
+        end
+
+        # A call can write the project and its own dir under the TMPDIR, so a git dir there passes the checks and is
+        # then swapped for a link before the next call binds it. A project kept under the TMPDIR keeps its git dirs.
+        def self.swappable?(admin, root, tmpdir)
+          project = File.realpath(root)
+          tmp = Profile.landing(tmpdir)
+          Landing.under?(admin, project) || (Landing.under?(admin, tmp) && !Landing.under?(project, tmp))
+        end
+        private_class_method :swappable?
+
+        # A worktree's admin dir, which names its common dir, names its `.git` file; a submodule's config names its
+        # checkout. A linked worktree can write its own admin `config`, so that arm counts only for a submodule's
+        # git dir.
+        def self.owned_by?(admin, root)
+          back = read_or_empty(File.join(admin, "gitdir")).strip
+          checkout = read_or_empty(File.join(admin, "config"))[/^\s*worktree\s*=\s*(.+)$/, 1]
+          (!back.empty? && File.exist?(File.join(admin, "commondir")) &&
+            File.realpath(back, admin) == File.realpath(File.join(root, ".git"))) ||
+            (submodule_admin?(admin) && !checkout.nil? && File.realpath(checkout.strip, admin) == File.realpath(root))
+        rescue SystemCallError
+          false
+        end
+        private_class_method :owned_by?
+
+        def self.submodule_admin?(admin)
+          admin.include?("/.git/modules/") && !File.exist?(File.join(admin, "commondir"))
+        end
+        private_class_method :submodule_admin?
+
+        def self.read_or_empty(path)
+          File.read(path)
+        rescue SystemCallError
+          ""
+        end
+        private_class_method :read_or_empty
+
+        # git lays a worktree's admin dir out at `<common>/worktrees/<name>`, under a common dir that names no other,
+        # so a `commondir` naming anywhere else is a plant.
+        #
+        # @param admin [String] a git dir, landed
+        # @return [String, nil] its common dir, nil when its `commondir` does not hold up
+        def self.common_of(admin)
+          named = read_or_empty(File.join(admin, "commondir")).strip
+          return admin if named.empty?
+
+          common = File.realpath(named, admin)
+          laid_out = File.basename(File.dirname(admin)) == "worktrees" && File.dirname(admin, 2) == common
+          common if laid_out && !File.exist?(File.join(common, "commondir"))
+        rescue SystemCallError
+          nil
+        end
+      end
 
       BuildTool = Data.define(:writes, :seals, :shown, :ignored_configs, :mise_data)
 
@@ -840,6 +918,7 @@ module Lain
 
         # The hooks dir is asked first, before the absolute format, which would resolve a link on its way.
         GIT_ASKS = %w[rev-parse --git-path hooks --path-format=absolute --git-common-dir --absolute-git-dir].freeze
+        HOOKS_SCOPES = %w[system global].freeze
 
         # @param root [String] absolute
         # @param git [Array<String>] {.git_dirs} of `root`
@@ -930,16 +1009,18 @@ module Lain
         # and all, so this asks it once rather than parsing its config.
         #
         # @param root [String]
+        # @param tmpdir [String] where the call writes its own dir
         # @return [Array<String>] common dir, git dir and hooks dir, the hooks dir as git spells it under `root`;
         #   none where git cannot answer
-        def self.git_dirs(root)
+        def self.git_dirs(root, tmpdir: Dir.tmpdir)
           laid_out = Isolation::Clone::Guard.git_dirs(root)
           return laid_out if laid_out
+          return [] if forged_layout?(root, tmpdir)
 
           out, status = Open3.capture2(Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, *GIT_ASKS,
                                        err: File::NULL)
           hooks, *dirs = out.lines(chomp: true)
-          status.success? && dirs.size == 2 ? [*dirs, spelled_under(root, hooks)] : []
+          status.success? && dirs.size == 2 && one_repository?(*dirs) ? [*dirs, spelled_under(root, hooks)] : []
         rescue SystemCallError
           []
         end
@@ -947,6 +1028,42 @@ module Lain
         # Not expanded: a `..` after a link climbs from where the link lands, which only {.at} can see.
         def self.spelled_under(root, path) = path.start_with?(File::SEPARATOR) ? path : File.join(root, path)
         private_class_method :spelled_under
+
+        # A call can write a `.git` file in a plain project, so git is asked only through a pointer its git dir owns.
+        def self.forged_layout?(root, tmpdir)
+          dot_git = File.join(root, ".git")
+          File.file?(dot_git) && !GitPointer.linked_admin(root, tmpdir:)
+        end
+        private_class_method :forged_layout?
+
+        # git follows a `commondir` in any git dir, a parent's included, so its answer stands only where that file
+        # is absent or the git dir is laid out as that common dir's worktree.
+        def self.one_repository?(common, gitdir)
+          GitPointer.common_of(Profile.landing(gitdir)) == Profile.landing(common)
+        end
+        private_class_method :one_repository?
+
+        # A repository's own config may be one the call wrote, so a hooks dir outside the project earns read and
+        # exec only as git's default, as lain's record of a clone, or from a config file outside the call's reach.
+        # Its seal does not depend on this: git still runs what that config names once the call has ended.
+        #
+        # @param root [String]
+        # @param common [String] the common git dir
+        # @param landed [String] where the hooks dir lands
+        # @return [Boolean]
+        def self.hooks_vouched?(root, common, landed)
+          landed == Profile.landing(File.join(common, "hooks")) || Isolation::Clone::Guard.cut?(root) ||
+            HOOKS_SCOPES.include?(hooks_scope(root))
+        end
+
+        def self.hooks_scope(root)
+          out, status = Open3.capture2(Isolation::Worktree::GIT_SPAWN_ENV, "git", "-C", root, "config", "--show-scope",
+                                       "--get", "core.hooksPath", err: File::NULL)
+          out.split("\t").first if status.success?
+        rescue SystemCallError
+          nil
+        end
+        private_class_method :hooks_scope
       end
     end
   end

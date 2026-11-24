@@ -68,12 +68,17 @@ RSpec.describe Lain::Confine::Profile do
     it "reads a related directory after the project and its git dir, the project first" do
       Dir.mktmpdir("lain-profile-related") do |dir|
         base = File.realpath(dir)
-        root, admin, related = %w[p admin s].map { File.join(base, _1).tap { |d| FileUtils.mkdir_p(d) } }
+        common = File.join(base, "main", ".git")
+        admin = File.join(common, "worktrees", "p")
+        root, related = %w[p s].map { File.join(base, _1).tap { |d| FileUtils.mkdir_p(d) } }
+        FileUtils.mkdir_p(admin)
+        File.write(File.join(admin, "commondir"), "../..\n")
         File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+        File.write(File.join(admin, "gitdir"), "#{File.join(root, ".git")}\n")
 
         read = described_class.reader(root:, home: "/h", related: [related]).read_dirs
 
-        expect(read.first(4)).to eq([root, admin, related, "/usr"])
+        expect(read.first(4)).to eq([root, common, related, "/usr"])
       end
     end
 
@@ -128,13 +133,15 @@ RSpec.describe Lain::Confine::Profile do
     end
 
     it "reads the main checkout's git dir from a linked worktree, which git needs to run at all" do
-      Dir.mktmpdir do |dir|
+      Dir.mktmpdir do |tmp|
+        dir = File.realpath(tmp)
         common = File.join(dir, "main", ".git")
         admin = File.join(common, "worktrees", "w")
         FileUtils.mkdir_p(admin)
         File.write(File.join(admin, "commondir"), "../..\n")
         root = FileUtils.mkdir_p(File.join(dir, "w")).first
         File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+        File.write(File.join(admin, "gitdir"), "#{File.join(root, ".git")}\n")
 
         expect(described_class.reader(root:, home: "/h").read_dirs).to include(common)
       end
@@ -308,6 +315,26 @@ RSpec.describe Lain::Confine::Profile do
       before do
         FileUtils.mkdir_p(root)
         SeedRepo.git(root, "init", "-q")
+      end
+
+      it "reads and runs a hooks dir outside the project that global config names, and seals it" do
+        FileUtils.mkdir_p(hooks = File.join(@dir, "global-hooks"))
+        File.write(global = File.join(@dir, "global.cfg"), "[core]\n\thooksPath = #{hooks}\n")
+        saved = ENV.fetch("GIT_CONFIG_GLOBAL", nil)
+        ENV["GIT_CONFIG_GLOBAL"] = global
+
+        expect([workspace.read_dirs, workspace.exec_dirs]).to all(include(hooks))
+        expect(sealed_of(workspace)).to include(hooks => false)
+      ensure
+        ENV["GIT_CONFIG_GLOBAL"] = saved
+      end
+
+      it "seals but grants nothing for a hooks dir outside the project that the repository's config names" do
+        FileUtils.mkdir_p(hooks = File.join(@dir, "elsewhere"))
+        SeedRepo.git(root, "config", "core.hooksPath", hooks)
+
+        expect([*workspace.read_dirs, *workspace.exec_dirs]).not_to include(hooks)
+        expect(sealed_of(workspace)).to include(hooks => false)
       end
 
       it "writes the project, its TMPDIR, /dev/null and its private /tmp" do
@@ -626,6 +653,12 @@ RSpec.describe Lain::Confine::Profile do
         )
       end
 
+      it "reads and runs git's default hooks dir in the common dir, which no config had to name" do
+        hooks = File.join(common, "hooks")
+
+        expect([workspace.read_dirs, workspace.exec_dirs]).to all(include(hooks))
+      end
+
       it "seals the common dir's hooks and config, the worktree's own config, and every pointer between them" do
         expect(sealed_of(workspace)).to include(
           File.join(common, "hooks") => false, File.join(common, "config") => false,
@@ -645,10 +678,147 @@ RSpec.describe Lain::Confine::Profile do
       end
     end
 
-    it "writes the common index too when the git dir is the common dir, as a separate git dir is", :seam do
+    it "gives a --separate-git-dir project no grant on its git dir, which names no link back", :seam do
       FileUtils.mkdir_p([root, File.dirname(common)])
       SeedRepo.git(root, "init", "-q", "--separate-git-dir", common)
-      expect(workspace.write_dirs).to include(File.join(common, "index"), common)
+      granted = [*workspace.write_dirs, *workspace.read_dirs, *workspace.exec_dirs]
+
+      expect(granted.select { Lain::Landing.under?(_1, common) }).to eq([])
+    end
+
+    it "gives a submodule project no write on its whole git dir, HEAD and commondir included", :seam do
+      upstream, parent = %w[upstream parent].map { File.join(@dir, _1) }
+      FileUtils.mkdir_p([upstream, parent])
+      SeedRepo.git(upstream, "init", "-q")
+      SeedRepo.git(upstream, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "i")
+      SeedRepo.git(parent, "init", "-q")
+      SeedRepo.git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", upstream, "sub")
+      admin = File.join(parent, ".git", "modules", "sub")
+
+      writes = workspace(File.join(parent, "sub")).write_dirs
+
+      expect(writes).not_to include(admin, File.join(admin, "index"))
+      expect(writes).to include(*%w[objects refs logs].map { File.join(admin, _1) })
+    end
+
+    it "gives a project inside a repository no write on the whole git dir, HEAD and commondir included", :seam do
+      parent = File.join(@dir, "parent")
+      FileUtils.mkdir_p(inner = File.join(parent, "inner"))
+      SeedRepo.git(parent, "init", "-q")
+      git = File.join(parent, ".git")
+
+      writes = workspace(inner).write_dirs
+
+      expect(writes).not_to include(git, File.join(git, "index"))
+      expect(writes).to include(*%w[objects refs logs].map { File.join(git, _1) })
+    end
+
+    it "reads a parent repository's git dir for a project inside it, writing only objects, refs and logs", :seam do
+      parent = File.join(@dir, "parent")
+      FileUtils.mkdir_p(inner = File.join(parent, "inner"))
+      SeedRepo.git(parent, "init", "-q")
+      git = File.join(parent, ".git")
+      profile = workspace(inner)
+
+      expect(profile.read_dirs).to include(git)
+      expect(profile.write_dirs.select { Lain::Landing.under?(_1, git) })
+        .to eq(%w[objects refs logs].map { File.join(git, _1) })
+    end
+
+    it "takes no worktree admin dir inside a call's own dir under the TMPDIR, for a project outside it", :seam do
+      planted = File.join(tmpdir, "lain-call-x", "repo")
+      FileUtils.mkdir_p(planted)
+      SeedRepo.git(planted, "init", "-q")
+      SeedRepo.git(planted, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "i")
+      SeedRepo.git(planted, "worktree", "add", "-q", root)
+      git = File.join(planted, ".git")
+      profile = workspace
+
+      expect([*profile.read_dirs, *profile.write_dirs].select { Lain::Landing.under?(_1, git) }).to eq([])
+      expect(described_class.reader(root:, home: "/h", tmpdir:).read_dirs.select { Lain::Landing.under?(_1, git) })
+        .to eq([])
+    end
+
+    it "takes no admin dir that names the checkout back but is laid out as no worktree's" do
+      FileUtils.mkdir_p([root, admin = File.join(@dir, "elsewhere", "adm")])
+      File.write(File.join(admin, "gitdir"), "#{File.join(root, ".git")}\n")
+      File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+
+      expect(described_class.reader(root:, home: "/h").read_dirs).not_to include(admin)
+    end
+
+    it "takes no git dir from a parent repository whose commondir names another", :seam do
+      victim, parent = %w[victim parent].map { File.join(@dir, _1) }
+      FileUtils.mkdir_p([victim, inner = File.join(parent, "inner")])
+      SeedRepo.git(victim, "init", "-q")
+      SeedRepo.git(parent, "init", "-q")
+      File.write(File.join(parent, ".git", "commondir"), "#{File.join(victim, ".git")}\n")
+
+      expect(workspace(inner).write_dirs.select { Lain::Landing.under?(_1, victim) }).to eq([])
+    end
+
+    it "takes no pointer at a worktree admin dir whose own config claims the project", :seam do
+      linked_worktree
+      admin = File.join(common, "worktrees", "r")
+      FileUtils.mkdir_p(project = File.join(@dir, "unrelated"))
+      File.write(File.join(admin, "config"), "[core]\n\tworktree = #{project}\n")
+      File.write(File.join(project, ".git"), "gitdir: #{admin}\n")
+      profile = workspace(project)
+
+      expect([*profile.read_dirs, *profile.write_dirs].select { Lain::Landing.under?(_1, common) }).to eq([])
+    end
+
+    it "takes no pointer at a config claim outside a modules directory", :seam do
+      FileUtils.mkdir_p([root, admin = File.join(@dir, "plain-admin")])
+      File.write(File.join(admin, "config"), "[core]\n\tworktree = #{root}\n")
+      File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+
+      expect(workspace.read_dirs).not_to include(admin)
+    end
+
+    it "takes no config claim from a linked worktree of a submodule, which can write its own config" do
+      common_dir = File.join(@dir, "parent", ".git", "modules", "sub")
+      admin = File.join(common_dir, "worktrees", "w")
+      FileUtils.mkdir_p([admin, root])
+      File.write(File.join(admin, "commondir"), "../..\n")
+      File.write(File.join(admin, "config"), "[core]\n\tworktree = #{root}\n")
+      File.write(File.join(root, ".git"), "gitdir: #{admin}\n")
+
+      expect(described_class.reader(root:, home: "/h").read_dirs).not_to include(common_dir)
+    end
+
+    it "takes no admin dir inside the project, which a call could swap for a link" do
+      common = File.join(root, ".f")
+      FileUtils.mkdir_p(admin = File.join(common, "worktrees", "w"))
+      File.write(File.join(admin, "commondir"), "../..\n")
+      File.write(File.join(admin, "gitdir"), "#{File.join(root, ".git")}\n")
+      File.write(File.join(root, ".git"), "gitdir: .f/worktrees/w\n")
+
+      expect(described_class.reader(root:, home: "/h").read_dirs).not_to include(common)
+    end
+
+    it "takes no worktree whose common dir is itself a linked admin dir", :seam do
+      linked_worktree
+      own = File.join(common, "worktrees", "r")
+      nested = File.join(own, "worktrees", "x")
+      FileUtils.mkdir_p([nested, project = File.join(@dir, "unrelated")])
+      File.write(File.join(nested, "commondir"), "../..\n")
+      File.write(File.join(nested, "gitdir"), "#{File.join(project, ".git")}\n")
+      File.write(File.join(project, ".git"), "gitdir: #{nested}\n")
+
+      expect(described_class.reader(root: project, home: "/h").read_dirs).not_to include(own)
+    end
+
+    it "takes no git dir from a .git directory whose commondir a call could have planted", :seam do
+      other = File.join(@dir, "other")
+      FileUtils.mkdir_p([other, root])
+      SeedRepo.git(other, "init", "-q")
+      dot_git = File.join(root, ".git")
+      FileUtils.mkdir_p([File.join(dot_git, "objects"), File.join(dot_git, "refs")])
+      File.write(File.join(dot_git, "HEAD"), "ref: refs/heads/main\n")
+      File.write(File.join(dot_git, "commondir"), "#{File.join(other, ".git")}\n")
+
+      expect(workspace.write_dirs.select { Lain::Landing.under?(_1, other) }).to eq([])
     end
 
     it "seals only the project's persistence files outside a git checkout", :seam do
