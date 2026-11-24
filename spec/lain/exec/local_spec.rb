@@ -127,12 +127,22 @@ RSpec.describe Lain::Exec::Local do
 
     # A stage can grow its pipe past one read before it exits, and a slow sink
     # holds the reader between reads: what it wrote before exiting is still all
-    # counted and all forwarded.
+    # counted and all forwarded. The kernel refuses to grow a pipe once this user's pipes hold
+    # fs.pipe-user-pages-soft pages, a budget every process of the user on the box shares, so the stage exits 75
+    # then, and another suite's pipes are not read as a lost byte. Past fs.pipe-max-size it refuses with the same
+    # EPERM, and on CI a spent budget means this suite leaks pipes, so neither is skipped.
     it "takes every byte a stage wrote before exiting, from a grown pipe, while the reader is held" do
-      grown = "#{RbConfig.ruby} --disable-gems -e 'STDOUT.fcntl(1031, 1_048_576); STDOUT.write(%(a) * 1_048_576)'"
+      grown = "#{RbConfig.ruby} --disable-gems -e 'begin; STDOUT.fcntl(1031, 1_048_576); " \
+              "rescue Errno::EPERM; exit 75; end; STDOUT.write(%(a) * 1_048_576)'"
       sink = Class.new(RecordingChannel) { def <<(event) = sleep(0.02).then { super } }.new
 
       capture = backend.call(command: grown, cwd: Dir.pwd, env: ENV.to_h, timeout: 30, stdout_sink: sink)
+      if capture.exit_status == 75
+        max = File.read("/proc/sys/fs/pipe-max-size").to_i
+        raise Errno::EPERM, "a stage could not grow its pipe to 1 MiB" if ENV["CI"] || max < 1_048_576
+
+        skip "no pipe can grow while this user's pipes hold fs.pipe-user-pages-soft"
+      end
 
       expect(capture.size).to eq(1_048_576)
       expect(sink.events.sum(&:bytesize)).to eq(1_048_576)

@@ -180,6 +180,17 @@ RSpec.describe Lain::Chores::Runner, :seam do
   describe Lain::Chores::Runner::Tail do
     def tailing(reader, name = "tail.log") = described_class.new(reader, log: File.join(@logs, name), secrets: [])
 
+    # The kernel refuses to grow a pipe once this user's pipes hold fs.pipe-user-pages-soft pages, a budget every
+    # process of the user on the box shares, so another suite's pipes can spend it. Past fs.pipe-max-size it refuses
+    # with the same EPERM, and on CI a spent budget means this suite leaks pipes, so neither is skipped.
+    def grow(pipe)
+      pipe.fcntl(Fcntl::F_SETPIPE_SZ, 1 << 20)
+    rescue Errno::EPERM
+      raise if ENV["CI"] || File.read("/proc/sys/fs/pipe-max-size").to_i < 1 << 20
+
+      skip "no pipe can grow while this user's pipes hold fs.pipe-user-pages-soft"
+    end
+
     it "reads what is left in the pipe once the writer has closed" do
       reader, writer = IO.pipe
       writer.write("last\n")
@@ -203,7 +214,7 @@ RSpec.describe Lain::Chores::Runner, :seam do
     it "takes several chunks in one drain, so a flood is not read one chunk per wait" do
       skip "no F_SETPIPE_SZ here" unless Fcntl.const_defined?(:F_SETPIPE_SZ)
       reader, writer = IO.pipe
-      reader.fcntl(Fcntl::F_SETPIPE_SZ, 1 << 20)
+      grow(reader)
       writer.write("a flooded line\n" * 20_000)
       tail = tailing(reader)
 
