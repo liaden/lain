@@ -1,0 +1,416 @@
+#!/bin/bash
+# shellcheck disable=SC2016  # single-quoted programs expand in the guest, never on the Mac
+set -euo pipefail
+
+vm=${LAIN_VM_NAME:-lain}
+default_fetch_max_kb=1048576
+fetch_max_kb=${LAIN_VM_FETCH_MAX_KB:-$default_fetch_max_kb}
+sensitive_print_max_bytes=8388608
+max_tree_entries=200000
+max_blob_bytes=16777216
+max_tip_bytes=1073741824
+fetch_job=
+stop_grace_seconds=5
+incoming_ref=
+newline=$'\n'
+
+usage() {
+  cat <<'USAGE'
+Usage: bin/lain-vm up|shell|fetch <branch>|--help
+
+  up              start the VM, seed ~/lain if it is absent, install and build
+  shell           open a login shell in ~/lain
+  fetch <branch>  fetch a VM branch into refs/remotes/lain-vm/<branch> and
+                  print the full diff of sensitive paths against origin/main
+  --help          show this help
+
+LAIN_VM_NAME=<name> selects the VM (default lain). See docs/users/lima.md.
+USAGE
+}
+
+die() {
+  printf 'lain-vm: %s\n' "$*" >&2
+  exit 1
+}
+
+sanitized() { LC_ALL=C cat -v; }
+
+# The subshell scopes LC_ALL: under a UTF-8 collation these ranges can match non-ASCII letters.
+valid_vm_name() (
+  LC_ALL=C
+  case "$1" in
+    '' | [!A-Za-z0-9]* | *[!A-Za-z0-9._-]*) exit 1 ;;
+  esac
+)
+
+valid_branch() (
+  LC_ALL=C
+  case "$1" in
+    '' | -* | *..* | *[!A-Za-z0-9._/-]*) exit 1 ;;
+  esac
+  git check-ref-format --branch "$1" >/dev/null 2>&1
+)
+
+valid_size() (
+  LC_ALL=C
+  case "$1" in
+    '' | 0* | *[!0-9]*) exit 1 ;;
+  esac
+  [ "${#1}" -le 7 ] && [ "$1" -le "$default_fetch_max_kb" ]
+)
+
+require_vm_tools() {
+  valid_vm_name "$vm" || die "refused VM name"
+  command -v limactl >/dev/null 2>&1 || die "limactl is not installed"
+}
+
+enter_repo_root() {
+  local top
+  top=$(git rev-parse --show-toplevel) || die "run this inside a lain checkout"
+  cd "$top"
+}
+
+# ControlMaster=no because a backgrounded master would hold the output pipe open and hang the command.
+use_vm_transport() {
+  local config="${LIMA_HOME:-$HOME/.lima}/$vm/ssh.config"
+  [ -f "$config" ] || die "no ssh config for VM $vm; run bin/lain-vm up"
+  GIT_SSH_COMMAND="ssh -F $(printf %q "$config") -o ForwardAgent=no -o ClearAllForwardings=yes -o ControlMaster=no -o ForwardX11=no -o ForwardX11Trusted=no -o PermitLocalCommand=no"
+  export GIT_SSH_COMMAND
+}
+
+guest_run() {
+  limactl shell --workdir / "$vm" bash -lc "$1" 2>&1 | sanitized
+}
+
+start_vm() {
+  local names status
+  names=$(limactl list --quiet 2>/dev/null) || die "could not list Lima VMs"
+  case "
+$names
+" in
+    *"
+$vm
+"*)
+      status=$(limactl list --format '{{.Status}}' "$vm" 2>/dev/null) || die "could not read the VM status"
+      if [ "$status" != Running ]; then limactl start --tty=false "$vm" 2>&1 | sanitized; fi
+      ;;
+    *) limactl start --tty=false --name="$vm" "$PWD/lima/lain.yaml" 2>&1 | sanitized ;;
+  esac
+}
+
+guest_clone_state() {
+  limactl shell --workdir / "$vm" bash -c \
+    'if [ -e "$HOME/lain" ] || [ -L "$HOME/lain" ]; then echo present; else echo absent; fi' 2>/dev/null
+}
+
+rule_matches_url() {
+  local record value
+  while IFS= read -r -d '' record; do
+    value=${record#*"$newline"}
+    [ "$value" != "$record" ] || continue
+    case "$1" in
+      "$value"*) exit 3 ;;
+    esac
+  done
+}
+
+# git has no query for an anonymous push URL, so any rewrite rule that prefixes the target is refused.
+refuse_redirected_push() {
+  local status=0
+  git config -z --get-regexp '^url\..*\.(insteadof|pushinsteadof)$' 2>/dev/null |
+    rule_matches_url "$1" || status=$?
+  case "$status" in
+    0 | 1) ;;
+    3) die "refused: git config would redirect the seed push" ;;
+    *) die "could not read git config" ;;
+  esac
+}
+
+key_names_remote() {
+  local key
+  while IFS= read -r -d '' key; do
+    case "$key" in
+      "remote.$1."*) exit 3 ;;
+    esac
+  done
+}
+
+refuse_remote_settings() {
+  local status=0
+  git config -z --name-only --get-regexp '^remote\.' 2>/dev/null | key_names_remote "$1" || status=$?
+  case "$status" in
+    0 | 1) ;;
+    3) die "refused: git config holds settings for the remote $1" ;;
+    *) die "could not read git config" ;;
+  esac
+}
+
+# Seeding happens beside ~/lain, so a run that dies midway never leaves a clone that later runs would trust.
+seed_guest_clone() {
+  local seed_url="lima-$vm:.lain-seed"
+  refuse_redirected_push "$seed_url"
+  refuse_remote_settings "$seed_url"
+  use_vm_transport
+  guest_run 'set -eu
+rm -rf "$HOME/.lain-seed"
+git clone -c remote.origin.pushurl=DISABLED https://github.com/liaden/lain "$HOME/.lain-seed"'
+  git -c core.hooksPath=/dev/null push --no-verify --recurse-submodules=no \
+    "$seed_url" HEAD:refs/heads/vm-seed 2>&1 | sanitized
+  guest_run 'set -eu
+git -C "$HOME/.lain-seed" switch vm-seed
+[ ! -e "$HOME/lain" ]
+mv "$HOME/.lain-seed" "$HOME/lain"'
+}
+
+provision_script() {
+  cat <<'GUEST'
+set -euo pipefail
+cd "$HOME/lain"
+bin/ci/install-toolchain
+bin/ci/install-spec-binaries --persist
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+eval "$(mise env -s bash "ruby@$(sed 's/^ruby-//' .ruby-version)")"
+bundle exec rake compile
+bundle exec rake daemon:build
+bin/install-shim
+GUEST
+}
+
+cmd_up() {
+  [ "$#" -eq 0 ] || die "up takes no arguments"
+  require_vm_tools
+  enter_repo_root
+  [ -f lima/lain.yaml ] || die "lima/lain.yaml is missing"
+  start_vm
+  local state
+  state=$(guest_clone_state) || die "could not read the guest's state"
+  case "$state" in
+    present) printf 'lain-vm: keeping the existing ~/lain\n' ;;
+    absent) seed_guest_clone ;;
+    *) die "unexpected answer from the guest" ;;
+  esac
+  guest_run "$(provision_script)"
+}
+
+cmd_shell() {
+  [ "$#" -eq 0 ] || die "shell takes no arguments"
+  require_vm_tools
+  exec limactl shell --workdir / "$vm" bash -lc 'cd "$HOME/lain" && exec "${SHELL:-/bin/bash}" -l'
+}
+
+# Every flag closes a way for guest content or a worktree .gitattributes to hide a change or run a driver.
+sensitive_diff() {
+  git --no-pager -c core.quotePath=true diff --no-ext-diff --no-textconv --text --no-color --no-renames \
+    --ignore-submodules=none --submodule=short -O/dev/null "$@" -- \
+    ':(top,icase).github' ':(top,icase)bin' ':(top,icase)lima' ':(top,icase).pre-commit-config.yaml' \
+    ':(top,icase)Rakefile' ':(top,icase)Gemfile' ':(top,icase)Gemfile.lock' ':(top,icase,glob)**/.envrc' \
+    ':(top,icase,glob)**/.gitattributes' ':(top,icase).lfsconfig' ':(top,icase).gitmodules' \
+    ':(top,icase,glob)**/mise.toml' ':(top,icase,glob)**/.mise.toml' \
+    ':(top,icase,glob)**/mise.*.toml' ':(top,icase,glob)**/.mise.*.toml' \
+    ':(top,icase,glob)**/.mise' ':(top,icase,glob)**/.mise/**' ':(top,icase,glob)**/mise' ':(top,icase,glob)**/mise/**' \
+    ':(top,icase,glob)**/.config' ':(top,icase,glob)**/.config/**' \
+    ':(top,icase,glob)**/.tool-versions' ':(top,icase).ruby-version' \
+    ':(top,icase,glob)**/rust-toolchain*' \
+    ':(top,icase,glob)**/.cargo' ':(top,icase,glob)**/.cargo/**' ':(top,icase).bundle' ':(top,icase).rspec' \
+    ':(top,icase)*.gemspec' ':(top,icase)rakelib' ':(top,icase).rubocop.yml' ':(top,icase).rubocop'
+}
+
+# Bash 3.2 has no wait with a timeout, so a child that ignores TERM is polled and then killed.
+stop_fetch_job() {
+  local waited=0
+  [ -n "$fetch_job" ] || return 0
+  kill -TERM -- "-$fetch_job" 2>/dev/null || true
+  kill -CONT -- "-$fetch_job" 2>/dev/null || true
+  while kill -0 "$fetch_job" 2>/dev/null && [ "$waited" -lt "$stop_grace_seconds" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  kill -KILL -- "-$fetch_job" 2>/dev/null || true
+  wait "$fetch_job" 2>/dev/null || true
+  fetch_job=
+}
+
+# The job stops first, so a dying fetch cannot write the ref back after it is removed.
+remove_incoming() {
+  stop_fetch_job
+  [ -n "$incoming_ref" ] || return 0
+  git -c core.hooksPath=/dev/null update-ref -d "$incoming_ref" >/dev/null 2>&1 || true
+}
+
+refuse_weakened_fsck() {
+  local status=0
+  git config --name-only --get-regexp '^(fetch|transfer)\.fsck\.' >/dev/null 2>&1 || status=$?
+  case "$status" in
+    0) die "refused: a fetch.fsck or transfer.fsck setting weakens object checks" ;;
+    1) ;;
+    *) die "could not read git config" ;;
+  esac
+}
+
+refuse_redirected_url() {
+  [ "$(git ls-remote --get-url "$1")" = "$1" ] || die "refused: git config would redirect the fetch URL"
+}
+
+# Bash runs a trap only after a foreground child exits, so a hung ssh needs its own process group and wait.
+fetch_branch() {
+  local status=0
+  set -m
+  # The handler keeps the job leader alive until its pipeline exits, so waiting on it covers the fetch.
+  # Its stderr is closed because a job notice written under stty tostop would stop it again.
+  (trap : TERM; fetch_pipeline "$1" "$2") </dev/null 2>/dev/null &
+  fetch_job=$!
+  set +m
+  wait "$fetch_job" || status=$?
+  fetch_job=
+  return "$status"
+}
+
+# fsck already forces index-pack; the unpack limits keep the fetch in 1 capped file if that choice changes.
+fetch_pipeline() {
+  local branch=$1 url=$2
+  (
+    trap '' XFSZ
+    ulimit -f "$fetch_max_kb"
+    exec git -c core.hooksPath=/dev/null -c gc.auto=0 -c maintenance.auto=false \
+      -c transfer.fsckObjects=true -c fetch.fsckObjects=true \
+      -c transfer.unpackLimit=1 -c fetch.unpackLimit=1 \
+      fetch --no-tags --no-recurse-submodules --no-prune --no-write-fetch-head \
+      "$url" "refs/heads/$branch:$incoming_ref"
+  ) 2>&1 | sanitized
+}
+
+report_partial_packs() {
+  local dir count
+  dir=$(cd "$(git rev-parse --git-path objects/pack)" && pwd -P) || return 0
+  count=$(find "$dir" -name 'tmp_pack_*' | wc -l)
+  [ "$((count))" -gt 0 ] || return 0
+  printf 'lain-vm: %s partial pack file(s) remain. If no other git command is running, remove them with:\n' \
+    "$((count))" >&2
+  printf '  rm -f %q/tmp_pack_*\n' "$dir" >&2
+}
+
+# ls-tree reads object headers for sizes, so a compressed bomb is never inflated here.
+# The sum stops just past the cap, far inside the range an awk double holds exactly.
+refuse_oversized_tree() {
+  local status=0
+  git ls-tree -r -t -l -z --full-tree "$1" 2>/dev/null | LC_ALL=C tr '\n\000' '?\n' |
+    LC_ALL=C awk -v max_entries="$max_tree_entries" -v max_blob="$max_blob_bytes" -v max_total="$max_tip_bytes" '
+      NR > max_entries { exit 3 }
+      { split(substr($0, 1, index($0, "\t") - 1), field, " ") }
+      field[2] == "blob" && field[4] + 0 > max_blob { exit 4 }
+      field[2] == "blob" { total += field[4]; if (total > max_total) exit 5 }
+    ' || status=$?
+  case "$status" in
+    0) ;;
+    3) die "refused: the tip has too many entries (limit $max_tree_entries)" ;;
+    4) die "refused: a file in the tip is too large (limit $max_blob_bytes bytes)" ;;
+    5) die "refused: the total size of the tip is too large (limit $max_tip_bytes bytes)" ;;
+    *) die "could not read the fetched tree" ;;
+  esac
+}
+
+refuse_non_ascii_paths() {
+  local high
+  high=$(git ls-tree -r -t -z --name-only --full-tree "$1" | LC_ALL=C tr -d '\000-\177' | wc -c) ||
+    die "could not read the fetched tree"
+  [ "$((high))" -eq 0 ] || die "refused: the tip holds a non-ASCII path, which a Mac filesystem can fold"
+}
+
+# Names only and case-folded: git accepts symlinked objects and refs, a commondir file points them
+# elsewhere, and a Mac filesystem folds case.
+refuse_repository_shapes() {
+  local found
+  found=$(git ls-tree -r -t -z --full-tree "$1" | LC_ALL=C tr '\n\000' '?\n' | LC_ALL=C awk '
+    {
+      path = substr($0, index($0, "\t") + 1)
+      slash = 0
+      for (i = length(path); i > 0; i--) if (substr(path, i, 1) == "/") { slash = i; break }
+      dir = substr(path, 1, slash)
+      name = tolower(substr(path, slash + 1))
+      if (name == "head") heads[dir] = 1
+      if (name == "objects") objects[dir] = 1
+      if (name == "refs") refs[dir] = 1
+      if (name == "commondir") commondirs[dir] = 1
+    }
+    END {
+      for (dir in heads)
+        if ((dir in commondirs) || ((dir in objects) && (dir in refs))) print (dir == "" ? "." : dir)
+    }
+  ') || die "could not read the fetched tree"
+  if [ -n "$found" ]; then
+    printf '%s\n' "$found" | sanitized >&2
+    die "refused: the tip holds a directory shaped like a git repository"
+  fi
+}
+
+refuse_unreviewable_sensitive_change() {
+  local raw total
+  raw=$(sensitive_diff --raw --no-abbrev "$1" "$2" 2>/dev/null) || die "could not list sensitive changes"
+  if printf '%s\n' "$raw" | LC_ALL=C awk '$2 == "120000" { found = 1 } END { exit !found }'; then
+    die "refused: a sensitive path is a new or changed symlink"
+  fi
+  total=$(printf '%s\n' "$raw" | LC_ALL=C awk 'NF >= 5 { print $3; print $4 }' |
+    git cat-file --batch-check='%(objectsize)' |
+    LC_ALL=C awk 'NF == 1 { sum += $1 } END { printf "%.0f\n", sum }') || die "could not size sensitive changes"
+  [ "$total" -le "$sensitive_print_max_bytes" ] || die "refused: the sensitive change is too large to print"
+}
+
+cmd_fetch() {
+  [ "$#" -eq 1 ] || die "usage: bin/lain-vm fetch <branch>"
+  local branch=$1 url ref base tip old
+  valid_branch "$branch" || die "refused branch name"
+  valid_size "$fetch_max_kb" || die "refused fetch size limit"
+  require_vm_tools
+  enter_repo_root
+  refuse_weakened_fsck
+  url="lima-$vm:lain"
+  refuse_redirected_url "$url"
+  refuse_remote_settings "$url"
+  base=$(git rev-parse --verify --quiet 'refs/remotes/origin/main^{commit}') || die "origin/main is missing"
+  use_vm_transport
+  ref="refs/remotes/lain-vm/$branch"
+  incoming_ref="refs/lain-vm-incoming/$$"
+  trap remove_incoming EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  remove_incoming
+  if ! fetch_branch "$branch" "$url"; then
+    report_partial_packs
+    die "the fetch was refused or stopped; the local ref is unchanged"
+  fi
+  tip=$(git rev-parse --verify --quiet "$incoming_ref") || die "the fetch stored no ref"
+  [ "$(git cat-file -t "$tip")" = commit ] || die "refused: the fetched ref is not a commit"
+  old=$(git rev-parse --verify --quiet "$ref" || true)
+  if [ -n "$old" ] && ! git merge-base --is-ancestor "$old" "$tip" 2>/dev/null; then
+    die "refused: the VM branch was rewritten; the local ref is unchanged"
+  fi
+  refuse_oversized_tree "$tip"
+  refuse_non_ascii_paths "$tip"
+  refuse_repository_shapes "$tip"
+  refuse_unreviewable_sensitive_change "$base" "$tip"
+  if ! git -c core.hooksPath=/dev/null update-ref "$ref" "$tip" "$old" >/dev/null 2>&1; then
+    die "could not update $ref: another fetch may hold or have moved it. This run changed nothing; run it again."
+  fi
+  printf 'Sensitive paths, origin/main (%s) to lain-vm/%s (%s):\n' "$base" "$branch" "$tip"
+  if sensitive_diff --quiet "$base" "$tip" 2>/dev/null; then
+    printf 'No listed sensitive path changed.\n'
+  else
+    sensitive_diff "$base" "$tip" 2>&1 | sanitized
+  fi
+  printf 'This list cannot make CI safe: any spec or build.rs also runs there. Review the whole branch before pushing.\n'
+}
+
+# The ${1+...} form keeps an empty argument list safe under set -u on old Bash.
+main() {
+  local command=${1:-}
+  case "$command" in
+    up) shift; cmd_up ${1+"$@"} ;;
+    shell) shift; cmd_shell ${1+"$@"} ;;
+    fetch) shift; cmd_fetch ${1+"$@"} ;;
+    --help | -h | help) usage ;;
+    *) usage >&2; exit 2 ;;
+  esac
+}
+
+main ${1+"$@"}
