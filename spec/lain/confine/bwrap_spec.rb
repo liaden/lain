@@ -6,7 +6,7 @@ require "securerandom"
 require "tmpdir"
 
 RSpec.describe Lain::Confine::Bwrap do
-  subject(:launcher) { described_class.new(fence: "/f/lain-fence") }
+  subject(:launcher) { described_class.new(fence: "/f/lain-fence", home: "/h") }
 
   let(:term) { Lain::Shell::Term.of(%w[cat README.md]) }
   let(:reader) { Lain::Confine::Profile.reader(root: "/p", home: "/h", masks: ["/p/.env"], exec_files: ["/h/.local/bin/grep"]) }
@@ -465,7 +465,7 @@ RSpec.describe Lain::Confine::Bwrap do
   end
 
   describe "the call's view of /run" do
-    let(:path_env) { { "PATH" => ENV.fetch("PATH") } }
+    let(:path_env) { { "PATH" => ENV.fetch("PATH"), "HOME" => "/h" } }
 
     def flags(profile, using: launcher)
       argv = argv_of(wrapping(using, term, profile))
@@ -533,11 +533,36 @@ RSpec.describe Lain::Confine::Bwrap do
       end
     end
 
-    it "names no mount for a runtime directory that does not exist" do
+    it "makes a missing runtime directory outside the private mounts, for its owner only, and hides it" do
       Dir.mktmpdir("lain-runtime") do |dir|
+        missing = File.join(dir, "rt")
+
+        argv = flags(reader, using: at_runtime(missing))
+
+        expect(File.stat(missing).mode & 0o777).to eq(0o700)
+        expect(argv.each_cons(2).to_a).to include(["--tmpfs", missing])
+      end
+    end
+
+    it "makes and hides a missing runtime directory under /tmp when the project is /tmp itself" do
+      missing = "/tmp/lain-spec-#{SecureRandom.hex(4)}"
+      at_tmp = Lain::Confine::Profile.reader(root: "/tmp", home: "/h")
+
+      argv = flags(at_tmp, using: at_runtime(missing))
+
+      expect(argv.each_cons(2).to_a).to include(["--tmpfs", missing])
+    ensure
+      FileUtils.rm_rf(missing)
+    end
+
+    it "names no mount for a missing runtime directory it cannot make" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        File.chmod(0o500, dir)
         gone = File.join(dir, "gone")
 
         expect(flags(reader, using: at_runtime(gone)).join(" ")).not_to include(gone)
+      ensure
+        File.chmod(0o700, dir)
       end
     end
 
@@ -686,6 +711,100 @@ RSpec.describe Lain::Confine::Bwrap do
     end
   end
 
+  describe "the call's view of home" do
+    let(:path_env) { { "PATH" => ENV.fetch("PATH") } }
+
+    around do |example|
+      Dir.mktmpdir("lain-home") do |dir|
+        @home = File.realpath(dir)
+        example.run
+      end
+    end
+
+    def at_home(home = @home, **env)
+      described_class.on_path(fence: "/f/lain-fence", env: path_env.merge("HOME" => home, **env))
+    end
+
+    def flags(profile, using: at_home)
+      argv = argv_of(wrapping(using, term, profile))
+      argv.take(argv.index("--"))
+    end
+
+    def under_home(*names) = names.map { File.join(@home, _1) }
+
+    def workspace(**grants) = Lain::Confine::Profile.new(name: :workspace, trace: false, **grants)
+
+    it "hides home behind a small tmpfs before any bind, and makes it read-only after every mount" do
+      argv = flags(reader)
+
+      expect(argv.each_cons(4).to_a).to include(["--size", Lain::Confine::Bwrap::RUN_BYTES.to_s, "--tmpfs", @home])
+      expect(argv.index(@home)).to be < argv.index("--unshare-pid")
+      expect(argv.last(4)).to eq(["--remount-ro", @home, "--remount-ro", "/run"])
+    end
+
+    it "binds back read-only each grant under home, before the writes" do
+      read, exec, tool, sockets, project = under_home("read", "exec", "tool", "sockets", "project")
+      granted = workspace(read_dirs: [read, project], exec_dirs: [exec], exec_files: [tool], unix_dirs: [sockets],
+                          write_dirs: [project])
+      triples = flags(granted).each_cons(3).to_a
+
+      expect(triples).to include(*[read, exec, tool, sockets, project].map { ["--ro-bind-try", _1, _1] })
+      expect(triples.index(["--ro-bind-try", project, project]))
+        .to be < triples.index(["--bind-try", project, project])
+    end
+
+    it "binds a grant that lands under home where it lands, so the link to it still resolves" do
+      Dir.mktmpdir("lain-elsewhere") do |elsewhere|
+        FileUtils.mkdir_p(target = File.join(@home, "project"))
+        File.symlink(target, link = File.join(elsewhere, "link"))
+
+        expect(flags(workspace(read_dirs: [link])).each_cons(3).to_a).to include(["--ro-bind-try", target, target])
+      end
+    end
+
+    it "binds nothing for a grant of home itself, or of a directory that holds it" do
+      [@home, File.dirname(@home)].each do |wide|
+        argv = flags(workspace(read_dirs: [wide], write_dirs: [wide]))
+
+        expect(argv.each_cons(3).select { _1.first.end_with?("bind-try") }).to eq([])
+      end
+    end
+
+    it "binds no seal under home that no write holds, and keeps one a write holds" do
+      seal = Lain::Confine::Profile::Seal
+      hooks, project = under_home("hooks", "project")
+      envrc = File.join(project, ".envrc")
+      sealed = workspace(write_dirs: [project],
+                         sealed: [seal.new(path: hooks, absent: false), seal.new(path: envrc, absent: false)])
+
+      argv = flags(sealed)
+
+      expect(argv).not_to include(hooks)
+      expect(argv.each_cons(3).to_a).to include(["--ro-bind", envrc, envrc])
+    end
+
+    it "leaves a missing runtime directory under home unmade, since the hidden home already covers it" do
+      missing = File.join(@home, "rt")
+
+      flags(reader, using: at_home("XDG_RUNTIME_DIR" => missing))
+
+      expect(File).not_to exist(missing)
+    end
+
+    it "mounts nothing over a home that is absent, is /, or is under the private /tmp" do
+      Dir.mktmpdir("h", "/tmp") do |under_tmp|
+        ["/h-absent-#{SecureRandom.hex(4)}", "/", under_tmp].each do |home|
+          expect(flags(reader, using: at_home(home)).each_cons(2).to_a).not_to include(["--tmpfs", home])
+        end
+      end
+    end
+
+    it "names /tmp, /run, home and the runtime directory as the roots a call cannot see" do
+      expect(at_home("XDG_RUNTIME_DIR" => "/run/user/1").hidden_roots)
+        .to contain_exactly("/tmp", "/run", @home, "/run/user/1")
+    end
+  end
+
   describe "a reader call on this box", :seam do
     let(:fence) { described_class.fence_binary }
 
@@ -728,10 +847,14 @@ RSpec.describe Lain::Confine::Bwrap do
       reader&.close
     end
 
-    # Under a TMPDIR of /tmp the private /tmp hides the file before the fence can refuse it.
-    # This spec file: outside the project, outside every grant, and never under the private /tmp.
+    # The private /tmp and the hidden home would hide a file there before the fence could refuse it.
     it "refuses a file outside the project" do
-      expect(confined("cat", __FILE__)).to match(["", /Permission denied/, false])
+      skip("/var/tmp is not writable here") unless File.writable?("/var/tmp")
+      Dir.mktmpdir("lain-outside", "/var/tmp") do |dir|
+        File.write(outside = File.join(dir, "note"), "outside\n")
+
+        expect(confined("cat", outside)).to match(["", /Permission denied/, false])
+      end
     end
 
     it "reads a masked file inside the project as empty" do
@@ -1229,7 +1352,7 @@ RSpec.describe Lain::Confine::Bwrap do
 
         out, err, = home_sh(mises.map { "#{_1} --version" }.join("; "))
 
-        expect([out, err.scan("Permission denied").size]).to eq(["", mises.size])
+        expect([out, err.scan(/Permission denied|not found/).size]).to eq(["", mises.size])
       end
 
       it "loads Ruby's resolver and reads the LSM list, but not the resolver's own dir" do
@@ -1253,7 +1376,7 @@ RSpec.describe Lain::Confine::Bwrap do
         linked, err, = home_sh("#{root}/target/debug/build-script")
 
         expect([out, linked]).to eq(["built\ntested\n", ""])
-        expect(err).to include("Permission denied")
+        expect(err).to match(/Permission denied|not found/)
       end
 
       describe "on a private network" do

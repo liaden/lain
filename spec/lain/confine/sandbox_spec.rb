@@ -789,7 +789,9 @@ RSpec.describe Lain::Confine::Sandbox do
         true
       SH
 
-      expect(capture.stderr.scan(/Read-only file system|Permission denied|Device or resource busy/).size).to be >= 6
+      # Upstream's refs sit under the hidden home, outside every grant, so that write finds no directory.
+      refused = /Read-only file system|Permission denied|Device or resource busy|Directory nonexistent/
+      expect(capture.stderr.scan(refused).size).to be >= 6
       expect(File.read(File.join(clone, ".git", "config"))).to eq(config)
       expect(File.exist?(File.join(clone, ".git", "hooks", "pre-commit"))).to be(false)
       expect(File.read(File.join(clone, ".git", "objects", "info", "alternates")).strip)

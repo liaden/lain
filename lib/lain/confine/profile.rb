@@ -323,6 +323,9 @@ module Lain
         File.join(installs, tool, version, bin) if bin == "bin" && name && rest.empty?
       end
 
+      # @return [String, nil] the project, which every builder grants as the first read dir
+      def project = read_dirs.first
+
       # @return [String, nil] the first mask that is or holds a grant, which masking would empty
       def overmask
         grants = [*exec_dirs, *exec_files, *read_dirs, *write_dirs]

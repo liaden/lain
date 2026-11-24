@@ -1170,7 +1170,7 @@ RSpec.describe Lain::CLI::Wiring do
         result, records = run_bash("cat README.md")
 
         expect(result.content).not_to include("planted")
-        expect(exec_record_of(records)["refusals"]).to include({ "path" => planted, "errno" => "EACCES" })
+        expect(exec_record_of(records)["execs"]).to include(a_hash_including("path" => planted, "rc" => -1))
         expect(tripwires_of(records))
           .to include(a_hash_including("requester" => "agent", "signal" => "refused_exec", "weight" => "strong"))
       end
@@ -1179,7 +1179,7 @@ RSpec.describe Lain::CLI::Wiring do
         result, records = run_bash("wc -l README.md")
 
         expect(result.content).to include("1")
-        expect(exec_record_of(records)["refusals"]).to include({ "path" => noise, "errno" => "EACCES" })
+        expect(exec_record_of(records)["execs"]).to include(a_hash_including("path" => noise, "rc" => -1))
         expect(tripwires_of(records)).to be_empty
       end
 
@@ -1197,7 +1197,7 @@ RSpec.describe Lain::CLI::Wiring do
 
         _, records = run_bash("head -1 README.md") { File.write(game, "#!/bin/sh\necho planted\n") }
 
-        expect(exec_record_of(records)["refusals"]).to include({ "path" => game, "errno" => "EACCES" })
+        expect(exec_record_of(records)["execs"]).to include(a_hash_including("path" => game, "rc" => -1))
         expect(tripwires_of(records)).to include(a_hash_including("signal" => "refused_exec", "weight" => "strong"))
       end
 

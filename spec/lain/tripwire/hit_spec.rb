@@ -3,6 +3,7 @@
 require "fileutils"
 require "json"
 require "open3"
+require "securerandom"
 require "stringio"
 require "tmpdir"
 
@@ -103,7 +104,6 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
     stray = executable(File.join(mkdir("stray"), "true"))
     record = sandboxed(%w[env true], "PATH" => "#{File.dirname(stray)}:/usr/bin")
 
-    expect(record["refusals"].map { _1["path"] }).to eq([stray])
     expect(record["execs"].map { _1.values_at("path", "rc") }.last(2)).to eq([[stray, -1], ["/usr/bin/true", 0]])
     expect(folded(record, "/usr/bin/env")).to include("refused_exec")
     expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
@@ -115,6 +115,43 @@ RSpec.describe Lain::Tripwire::Hit, :seam do
 
     expect(folded(record, "/usr/bin/sh")).to include("refused_exec")
     expect(stops.standing(Lain::Requester.main)).to eq(:stopped)
+  end
+
+  it "still stops on an exec of a program planted under the host's /tmp, which the private /tmp hides" do
+    Dir.mktmpdir("p", "/tmp") do |host|
+      planted = executable(File.join(host, "planted"))
+      record = sandboxed(["sh", "-c", planted])
+
+      expect(record["execs"]).to include(a_hash_including("path" => planted, "rc" => -1))
+      expect(folded(record, "/usr/bin/sh")).to include("refused_exec")
+    end
+  end
+
+  it "scores nothing for a failed exec of a path in the call's own /tmp, which the host does not hold" do
+    own = "/tmp/lain-own-#{SecureRandom.hex(4)}"
+    record = sandboxed(["sh", "-c", "mkdir #{own} && #{own}/tool; true"])
+
+    expect(record["execs"]).to include(a_hash_including("path" => "#{own}/tool", "rc" => -1))
+    expect(File).not_to exist(own)
+    expect(described_class.of_exec_record(record, resolved("/usr/bin/sh"))).to be_empty
+  end
+
+  describe "a program that is not there" do
+    it "scores nothing for one missing under no root a call cannot see" do
+      missing = "/opt/lain-missing-#{SecureRandom.hex(4)}/tool"
+      record = sandboxed(["sh", "-c", "#{missing}; true"])
+
+      expect(record["execs"]).to include(a_hash_including("path" => missing, "rc" => -1))
+      expect(described_class.of_exec_record(record, resolved("/usr/bin/sh"))).to be_empty
+    end
+
+    it "scores nothing for one missing from a PATH entry the call cannot see" do
+      empty = mkdir("emptybin")
+      record = sandboxed(%w[env true], "PATH" => "#{empty}:/usr/bin")
+
+      expect(record["execs"]).to include(a_hash_including("path" => File.join(empty, "true"), "rc" => -1))
+      expect(described_class.of_exec_record(record, resolved("/usr/bin/env"))).to be_empty
+    end
   end
 
   def resolved(program)

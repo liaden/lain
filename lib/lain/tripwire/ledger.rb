@@ -109,12 +109,14 @@ module Lain
       # @param home [String] the home whose toolchain roots a launcher may exec into
       # @param execs [Confine::ExecRules] named build output, whose fresh run files are expected
       # @param hidden [Array<String>] the toolchain files a workspace mounts empty, whose refusal is lain's own
+      # @param roots [Array<String>] the roots bwrap hides from a call, see {Confine::Bwrap#hidden_roots}
       def initialize(journal:, rules: Rules::DEFAULT, stops: Stops::None, fresh: Resolution::AllFresh, home: Dir.home,
-                     execs: Confine::ExecRules::NONE, hidden: [])
+                     execs: Confine::ExecRules::NONE, hidden: [], roots: Confine::Bwrap.hidden_roots)
         @fresh = fresh
         @home = home
         @execs = execs
         @hidden = hidden
+        @roots = roots
         @journal = journal
         @rules = rules
         @stopping = stops.stopping(rules:)
@@ -180,7 +182,7 @@ module Lain
         else attributed(id,
                         Hit.of_exec_record(record,
                                            @resolutions.delete(id) || Resolution.new(nil, fresh: @fresh, home: @home),
-                                           hidden: @hidden))
+                                           hidden: @hidden, roots: @roots))
         end
       end
 

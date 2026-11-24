@@ -103,8 +103,9 @@ module Lain
       # @param record [Hash{String=>Object}] an `exec_record` record
       # @param resolution [Resolution] what the same call resolved before it ran
       # @param hidden [Array<String>] the toolchain files a workspace mounts empty, which no call can run
+      # @param roots [Array<String>] the roots bwrap hides from a call, see {Confine::Bwrap#hidden_roots}
       # @return [Array<Hit>]
-      def self.of_exec_record(record, resolution, hidden: [])
+      def self.of_exec_record(record, resolution, hidden: [], roots: Confine::Bwrap.hidden_roots)
         return [] if record["truncated"]
 
         id = record["tool_use_id"]
@@ -114,7 +115,7 @@ module Lain
                   hit("loader_exec", id, loaders, confined)]
         return bypass.compact unless confined
 
-        [*bypass, *confined_hits(record, resolution, loaders, hidden)].compact
+        [*bypass, *confined_hits(record, resolution, loaders, hidden, roots)].compact
       end
 
       # A refusal of a file the call's own unchanged toolchain resolves to is a
@@ -127,8 +128,8 @@ module Lain
       # here can every stage's first exec be trusted as the launcher's own, the
       # same program in each, named by the record's first. A string command
       # also runs under the exec's own shell.
-      def self.confined_hits(record, resolution, loaders, hidden)
-        refused = refused(record).reject { refusal_excused?(resolution, hidden, _1) }
+      def self.confined_hits(record, resolution, loaders, hidden, roots)
+        refused = [*refused(record), *unseen(record, roots)].reject { refusal_excused?(resolution, hidden, _1) }
         execs = record["execs"]
         expected = [execs.first&.fetch("path"), Exec::Local::SHELL, *loaders]
         ran = execs.select { _1["rc"].zero? }.map { _1["path"] } - expected
@@ -188,6 +189,14 @@ module Lain
       # A bare descriptor's path is empty, and names no file.
       def self.refused(record) = record["refusals"].map { _1["path"] }.reject(&:empty?)
 
+      # Under a hidden root, a program outside the grants fails as missing before Landlock can refuse it, so a failed
+      # exec of one the host holds is that refusal. One the host lacks is only missing. The host is asked after the
+      # call, so a plant removed since is not counted.
+      def self.unseen(record, roots)
+        record["execs"].reject { _1["rc"].zero? }.filter_map { lexical(_1["path"]) }
+                       .select { |path| roots.any? { Landing.under?(path, _1) } && File.exist?(path) }
+      end
+
       def self.hit(name, id, detail, confined) = present(name, id, detail, confined ? :strong : :medium)
 
       def self.strong(name, id, detail) = present(name, id, detail, :strong)
@@ -198,7 +207,8 @@ module Lain
 
       private_class_method :escalation_hit, :escalated_deny, :protected?, :confined_hits, :network_hits,
                            :refusal_excused?, :unresolved_excused?, :system?, :lexical,
-                           :refused_connects, :datagram_sends, :inet, :named, :refused, :hit, :strong, :present
+                           :refused_connects, :datagram_sends, :inet, :named, :refused, :unseen, :hit, :strong,
+                           :present
     end
   end
 end

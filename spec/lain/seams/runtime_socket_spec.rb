@@ -81,7 +81,10 @@ RSpec.describe "A confined call's view of the runtime sockets", :seam do
       system("/usr/bin/bwrap", "--ro-bind", "/", "/", "--", "true", %i[out err] => File::NULL)
   end
 
-  def env_with(runtime) = ENV.to_h.except("XDG_RUNTIME_DIR").merge(runtime ? { "XDG_RUNTIME_DIR" => runtime } : {})
+  # The home bwrap hides is the fixture home the profiles are built over, wherever the TMPDIR sits.
+  def fixture_env = ENV.to_h.merge("HOME" => @home)
+
+  def env_with(runtime) = fixture_env.except("XDG_RUNTIME_DIR").merge(runtime ? { "XDG_RUNTIME_DIR" => runtime } : {})
 
   def workspace(**changes)
     Lain::Confine::Profile.workspace(root: @repo, home: @home, tmpdir: @tmp, trace: false)
@@ -98,13 +101,13 @@ RSpec.describe "A confined call's view of the runtime sockets", :seam do
     bound&.close
   end
 
-  def confined(profile, *argv, env: ENV.to_h)
+  def confined(profile, *argv, env: fixture_env)
     wrapped(profile, argv, env) do |full, fds|
       Open3.capture3("timeout", "20", *full, chdir: @repo, **fds)
     end
   end
 
-  def bwrap_alone(profile, *argv, env: ENV.to_h)
+  def bwrap_alone(profile, *argv, env: fixture_env)
     wrapped(profile, argv, env) do |full, fds|
       Open3.capture3("timeout", "20", *full.take(full.index("--") + 1), *argv, chdir: @repo, **fds)
     end
@@ -268,7 +271,7 @@ RSpec.describe "A confined call's view of the runtime sockets", :seam do
     outside = File.join(@base, "outside")
 
     confined(workspace, "/usr/bin/systemd-run", "--user", "--wait", "--quiet", "/usr/bin/touch", outside,
-             env: ENV.to_h.merge("XDG_RUNTIME_DIR" => user_run))
+             env: fixture_env.merge("XDG_RUNTIME_DIR" => user_run))
 
     expect(File).not_to exist(outside)
   end
@@ -345,6 +348,154 @@ RSpec.describe "A confined call's view of the runtime sockets", :seam do
       out, err, = call.value
 
       expect(out).to eq("ENOENT\n"), err
+    end
+  end
+
+  describe "sockets made after the call started" do
+    let(:late_connect) do
+      <<~PY
+        import errno, os, socket, sys, time
+        print("started", flush=True)
+        deadline = time.time() + 10
+        while not os.path.exists(sys.argv[2]) and time.time() < deadline:
+            time.sleep(0.01)
+        s = socket.socket(socket.AF_UNIX)
+        try:
+            s.connect(sys.argv[1])
+            print("OK")
+        except OSError as e:
+            print(errno.errorcode.get(e.errno, e.errno))
+      PY
+    end
+
+    def connected_late(profile, socket, go_file, env:, chdir: @repo)
+      wrapped(profile, ["/usr/bin/python3", "-c", late_connect, socket, go_file], env) do |full, fds|
+        Open3.popen3("timeout", "20", *full, chdir:, **fds) do |stdin, stdout, stderr, _|
+          stdin.close
+          started = stdout.gets
+          listening([socket]) do
+            File.write(go_file, "")
+            [started, stdout.read, stderr.read]
+          end
+        end
+      end
+    end
+
+    it "keeps a socket made under home out of reach" do
+      started, out, err = connected_late(workspace, File.join(@home, "late", "l.sock"), File.join(@repo, "go"),
+                                         env: fixture_env)
+
+      expect([started, out]).to eq(%W[started\n ENOENT\n]), err
+    end
+
+    it "keeps a lain socket out of reach in a runtime directory outside /run, /tmp and home that was missing" do
+      skip("/var/tmp is not writable here") unless File.writable?("/var/tmp")
+      Dir.mktmpdir("lain-spec", "/var/tmp") do |outer|
+        runtime = File.join(outer, "rt")
+
+        started, out, err = connected_late(workspace, File.join(runtime, "lain", "spawner.sock"),
+                                           File.join(@repo, "go"), env: env_with(runtime))
+
+        expect([started, out]).to eq(%W[started\n ENOENT\n]), err
+      end
+    end
+
+    it "keeps a lain socket out of reach in a missing runtime directory under /tmp when the project is /tmp" do
+      runtime = "/tmp/lain-spec-#{SecureRandom.hex(4)}"
+      at_tmp = Lain::Confine::Profile.reader(root: "/tmp", home: @home, trace: false)
+
+      started, out, err = connected_late(at_tmp, File.join(runtime, "lain", "spawner.sock"), "#{runtime}-go",
+                                         env: env_with(runtime), chdir: "/tmp")
+
+      expect([started, out]).to eq(%W[started\n ENOENT\n]), err
+    ensure
+      FileUtils.rm_rf([runtime, "#{runtime}-go"])
+    end
+  end
+
+  describe "a socket under home outside every grant" do
+    it "cannot be reached or listed by a no-network call" do
+      socket = File.join(@home, "tmp", "s", "l.sock")
+
+      listening([socket]) do
+        control, = Open3.capture2("/usr/bin/python3", "-c", connect, socket)
+        out, err, = confined(workspace, "/usr/bin/python3", "-c", connect, socket)
+        listed, = bwrap_alone(workspace, "/usr/bin/find", @home)
+
+        expect(control).to eq("#{socket} OK\n")
+        expect(out).to eq("#{socket} ENOENT\n"), err
+        expect(listed).not_to include("l.sock")
+      end
+    end
+
+    it "drives no command through a tmux server listening there" do
+      tmux = "/usr/bin/tmux"
+      skip("tmux is not installed") unless File.executable?(tmux)
+      FileUtils.mkdir_p(File.dirname(socket = File.join(@home, "tmux", "default")))
+      ran = File.join(@base, "tmux-ran")
+      outside = { "TMUX" => nil }
+      system(outside, tmux, "-f", File::NULL, "-S", socket, "new-session", "-d", "-s", "spec", "/usr/bin/sleep 60",
+             in: File::NULL, exception: true)
+
+      alive, = Open3.capture2(outside, tmux, "-S", socket, "display-message", "-p", "alive", stdin_data: "")
+      out, err, = confined(workspace, tmux, "-S", socket, "run-shell", "touch #{ran}")
+
+      expect(alive).to eq("alive\n")
+      expect(File).not_to exist(ran), out + err
+    ensure
+      system(tmux, "-S", socket, "kill-server", %i[out err] => File::NULL, in: File::NULL) if socket
+    end
+  end
+
+  it "runs ruby, bundler, cargo and git in a workspace call as they run outside it" do
+    script = File.expand_path("../../../bin/workspace-run", __dir__)
+    commands = { "ruby" => ["ruby", "-e", "print RUBY_VERSION"], "bundle" => %w[bundle --version],
+                 "cargo" => %w[cargo --version], "git" => %w[git rev-parse --is-inside-work-tree] }
+    found = commands.select { |name, _| Lain::Shell::Path.find(name, path: ENV.fetch("PATH", "")) }
+    skip("none of ruby, bundle, cargo or git is on PATH") if found.empty?
+    env = ENV.to_h.merge("XDG_STATE_HOME" => File.join(@base, "state"), "XDG_CACHE_HOME" => File.join(@base, "cache"))
+
+    answers = found.transform_values do |argv|
+      plain, = Bundler.with_unbundled_env { Open3.capture2(*argv, chdir: @repo, stdin_data: "") }
+      inside, = Open3.capture3(env, "timeout", "60", RbConfig.ruby, script, "--root", @repo, "--", *argv,
+                               chdir: @repo, stdin_data: "")
+      [plain, inside]
+    end
+
+    expect(answers.transform_values(&:last)).to eq(answers.transform_values(&:first))
+    expect(answers.values.map(&:first)).to all(be_present)
+  end
+
+  describe "a shell that reached its directory through a link under home" do
+    def workspace_run_from(shell_dir, root:, tmpdir: @tmp)
+      script = File.expand_path("../../../bin/workspace-run", __dir__)
+      env = fixture_env.merge("PWD" => shell_dir, "TMPDIR" => tmpdir, "XDG_STATE_HOME" => File.join(@base, "state"),
+                              "XDG_CACHE_HOME" => File.join(@base, "cache"))
+      Open3.capture3(env, "timeout", "30", RbConfig.ruby, script, "--root", root, "--",
+                     "/usr/bin/bash", "-c", "pwd -P; cat f", chdir: shell_dir, stdin_data: "")
+    end
+
+    before { File.write(File.join(@repo, "f"), "in the project\n") }
+
+    it "runs the call in the project when the root is spelled through that link" do
+      FileUtils.mkdir_p(File.join(@home, "a"))
+      File.symlink(@repo, link = File.join(@home, "a", "plink"))
+
+      out, err, status = workspace_run_from(link, root: link)
+
+      expect(status.success?).to be(true), err
+      expect(out).to eq("#{@repo}\nin the project\n")
+    end
+
+    it "runs the call when the link's spelling holds the call's own TMPDIR" do
+      FileUtils.mkdir_p(File.join(real = File.join(@home, "real"), "tmpd"))
+      File.write(File.join(real, "f"), "in the project\n")
+      File.symlink(real, anc = File.join(@home, "anc"))
+
+      out, err, status = workspace_run_from(anc, root: anc, tmpdir: File.join(anc, "tmpd"))
+
+      expect(status.success?).to be(true), err
+      expect(out).to eq("#{real}\nin the project\n")
     end
   end
 
@@ -563,7 +714,7 @@ RSpec.describe "A confined call's view of the runtime sockets", :seam do
         out, err, = workspace_run("/usr/bin/cat", note)
 
         expect(out).not_to include("fixture-private")
-        expect(err).to include("Permission denied")
+        expect(err).to match(/Permission denied|No such file or directory/)
       end
 
       it "does not bring a socket under the host /tmp into view" do

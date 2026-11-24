@@ -202,7 +202,7 @@ module Lain
 
       def masked_run(profile, confinement, command:, cwd:, env:, timeout:, **sinks)
         guarded(profile, stages(command)) do |bound, guard, masked|
-          run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard, env), **sinks }
+          run = { command:, cwd:, env:, timeout:, **spawn_options(profile, bound, guard, env, cwd), **sinks }
           told_contained(confinement, profile, masked, command:, cwd:, env:) do
             profile.trace ? traced(confinement, profile, run, stages(command)) : @inner.call(**run)
           end
@@ -232,8 +232,8 @@ module Lain
         guard_notice(settled).then { _1.empty? ? capture : appended(capture, _1) }
       end
 
-      def spawn_options(profile, bound, guard, env)
-        { launch: launch(profile, bound), pinned_env: pinned_env(profile, env).merge(guard.env),
+      def spawn_options(profile, bound, guard, env, cwd)
+        { launch: launch(profile, bound), pinned_env: pinned_env(profile, env, cwd).merge(guard.env),
           **(bound.fds.empty? ? {} : { fds: bound.fds }) }
       end
 
@@ -279,10 +279,13 @@ module Lain
       end
 
       # The child inherits this process's env with the call's laid over it, so both name what it would see.
-      def pinned_env(profile, env)
+      # bwrap starts the call where PWD says when PWD names the cwd, and a spelling through a link may lie under a
+      # root the call cannot see, so PWD names where the cwd lands.
+      def pinned_env(profile, env, cwd)
         return {} unless profile.confined?
 
-        CONFINED_ENV.merge(profile.env([*ENV.keys, *env.keys]), { "TMPDIR" => profile.call_tmpdir }.compact)
+        CONFINED_ENV.merge(profile.env([*ENV.keys, *env.keys]), { "TMPDIR" => profile.call_tmpdir }.compact,
+                           "PWD" => Confine::Profile.landing(cwd))
       end
 
       def finishing(confinement, profile)

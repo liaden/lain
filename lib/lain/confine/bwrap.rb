@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "pathname"
 require "tempfile"
 
@@ -35,8 +36,9 @@ module Lain
       # @return [Bwrap] with bwrap and strace resolved on PATH, nil where absent
       def self.on_path(fence:, env: ENV)
         path = env.fetch("PATH", "")
+        paths = Paths.new(env:)
         new(fence:, bwrap: Shell::Path.find("bwrap", path:), strace: Shell::Path.find("strace", path:),
-            runtime_dir: Paths.new(env:).runtime_dir)
+            runtime_dir: paths.runtime_dir, home: paths.home_or_nil)
       end
 
       # @return [String, nil] the bwrap a call runs under, nil when PATH has none
@@ -50,13 +52,16 @@ module Lain
       # @param strace [String, nil]
       # @param decoys [Decoys] what a masked file reads as
       # @param runtime_dir [String] lain's folder in the runtime directory, which is hidden from every call
+      # @param home [String, nil] the user's home, hidden from every call but for what a profile grants beneath it
       def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace", decoys: Decoys.new,
-                     runtime_dir: Paths.new.runtime_dir)
+                     runtime_dir: Paths.new.runtime_dir, home: Paths.new.home_or_nil)
         @fence = fence
         @bwrap = bwrap
         @strace = strace
         @decoys = decoys
-        @seal_binds = SealBinds.new
+        @home = home_of(home)
+        @private_mounts = [HOST_TMP, RUN, *@home].freeze
+        @seal_binds = SealBinds.new(private_mounts: @private_mounts)
         @runtime_dir = runtime_dir
         @runtime_root = runtime_root_of(runtime_dir)
       end
@@ -75,7 +80,7 @@ module Lain
         kept = masks.reject { |mask| dirs.any? { mask != _1 && Landing.under?(mask, _1) } }
         files = kept - dirs
         Masked.new(entries: [*kept, *@decoys.partners(files)].map { [_1, shown(_1, dirs, files)].freeze }.freeze,
-                   own_tmp: profile.read_dirs.first != HOST_TMP)
+                   own_tmp: profile.project != HOST_TMP)
       end
 
       # @param term [Shell::Term]
@@ -99,6 +104,16 @@ module Lain
       # @return [Array<String>] the bwrap argv a confined call runs under, through its closing "--"
       def namespace_argv(private_net:) = namespace(Profile.new(name: :reader, trace: false, private_net:), [])
 
+      # @param env [Hash] where HOME and XDG_RUNTIME_DIR are read from
+      # @return [Array<String>] what {.on_path} would hide from every call but for what a profile grants beneath it
+      def self.hidden_roots(env: ENV)
+        paths = Paths.new(env:)
+        new(fence: fence_binary(env:), runtime_dir: paths.runtime_dir, home: paths.home_or_nil).hidden_roots
+      end
+
+      # @return [Array<String>] the roots a call sees nothing of but what its profile grants beneath them
+      def hidden_roots = [*@private_mounts, @runtime_root].uniq
+
       private
 
       # With no XDG_RUNTIME_DIR the parent is /tmp, shared with everything else, so only lain's folder is hidden.
@@ -112,27 +127,65 @@ module Lain
         [*namespace(profile, masking), *trace(profile, own), *fence(profile)]
       end
 
-      # Landlock below ABI 9 cannot refuse a Unix connect, so /run and lain's runtime directory are left out of the
-      # call's view. /run turns read-only last, because bwrap cannot make a later bind's mount point in a read-only
-      # tmpfs.
+      # Landlock below ABI 9 cannot refuse a Unix connect, so /run, home and lain's runtime directory are left out of
+      # the call's view. Each turns read-only last, because bwrap cannot make a later bind's mount point in a
+      # read-only tmpfs.
       def namespace(profile, masking)
         runtime = runtime_mask(profile)
+        hidden = hidden_mounts
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-         "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", *private_run, *runtime.before,
+         "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp",
+         *hidden.flat_map { ["--size", RUN_BYTES.to_s, "--tmpfs", _1] }, *runtime.before,
          "--unshare-pid", "--die-with-parent",
-         *("--unshare-net" if profile.private_net),
-         *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
-         *under_run(profile).flat_map { |path| ["--ro-bind-try", path, path] },
-         *writable(profile).flat_map { |dir| ["--bind-try", dir, dir] },
-         *profile.homes.flat_map { housing(_1, profile) },
-         *@seal_binds.for(profile.sealed, writable(profile)),
-         *masking, *runtime.after, *sealed_run, "--"]
+         *("--unshare-net" if profile.private_net), *git_discovery(profile), *granted_binds(profile),
+         *masking, *runtime.after, *hidden.reverse.flat_map { ["--remount-ro", _1] }, "--"]
       end
 
-      # bwrap aborts on a mount at a target a read-only root does not have.
-      def private_run = File.directory?(RUN) ? ["--size", RUN_BYTES.to_s, "--tmpfs", RUN] : []
+      # Read-only binds go before the writes, so a write under home still holds what it holds, as it did over the
+      # read-only root.
+      def granted_binds(profile)
+        writes = writable(profile)
+        [*[*under_tmp(profile), *under_run(profile), *under_home(profile)].flat_map { ["--ro-bind-try", _1, _1] },
+         *writes.flat_map { ["--bind-try", _1, _1] }, *profile.homes.flat_map { housing(_1, profile) },
+         *@seal_binds.for(profile.sealed, writes)]
+      end
 
-      def sealed_run = File.directory?(RUN) ? ["--remount-ro", RUN] : []
+      # The private /tmp is sized per profile and stays writable, so it is mounted on its own. bwrap aborts on a mount
+      # at a target a read-only root does not have.
+      def hidden_mounts = (@private_mounts - [HOST_TMP]).select { File.directory?(_1) }
+
+      def home_hidden? = !@home.nil? && File.directory?(@home)
+
+      # git stops looking for a repository at a mount boundary, and the empty home puts one between a project and
+      # the repository it sits inside.
+      def git_discovery(profile)
+        project = profile.project
+        return [] unless project && home_hidden? && Landing.under?(project, @home)
+
+        %w[--setenv GIT_DISCOVERY_ACROSS_FILESYSTEM 1]
+      end
+
+      # A home under the private /tmp or /run is hidden already, and one that holds them would hide the whole box.
+      def home_of(home)
+        landed = home && Profile.landing(home)
+        return unless landed&.start_with?(File::SEPARATOR)
+
+        landed if [HOST_TMP, RUN].none? { Landing.under?(landed, _1) || Landing.under?(_1, landed) }
+      end
+
+      # Each grant is bound where it is spelled and where it lands, so a link to it still resolves in the empty home.
+      # The fence and the tracer run inside the namespace, so they are bound too. A private home is mounted whole
+      # over its own path.
+      def under_home(profile)
+        return [] unless home_hidden?
+
+        homes = profile.homes.map(&:path)
+        [@fence, *@strace, *profile.read_dirs, *profile.exec_dirs, *profile.exec_files, *profile.unix_dirs,
+         *profile.write_dirs]
+          .flat_map { [Pathname(_1).cleanpath.to_s, landing_of(_1)] }.uniq
+          .select { _1 != @home && Landing.under?(_1, @home) }
+          .reject { |path| homes.any? { Landing.under?(path, _1) } || refused_grant?(path) }
+      end
 
       def under_run(profile)
         [*profile.read_dirs, *profile.exec_dirs, *profile.exec_files, *profile.unix_dirs]
@@ -146,7 +199,7 @@ module Lain
         spelled = Pathname(path).cleanpath.to_s
         landed = landing_of(spelled)
         runtime = landing_of(@runtime_root)
-        landed == runtime || Landing.under?(RUN, landed) ||
+        landed == runtime || Landing.under?(RUN, landed) || (@home && Landing.under?(@home, landed)) ||
           [RUN, runtime].any? { Landing.under?(landed, _1) && !Landing.under?(spelled, _1) }
       end
 
@@ -158,17 +211,25 @@ module Lain
 
       # A mask made before the binds lets a grant inside it come back; one a wider bind would undo goes after them.
       def runtime_mask(profile)
-        return RuntimeMask.none unless File.directory?(@runtime_root)
-
         covered = shown_binds(profile).any? { Landing.under?(@runtime_root, _1) }
-        return RuntimeMask.none unless covered || [HOST_TMP, RUN].none? { Landing.under?(@runtime_root, _1) }
+        return RuntimeMask.none unless covered || @private_mounts.none? { Landing.under?(@runtime_root, _1) }
+        return RuntimeMask.none unless ensure_dir(@runtime_root)
 
         RuntimeMask.new(dir: @runtime_root, late: covered)
       end
 
+      # One made while the call runs would show through, so a missing one in view is made now, as lain makes it.
+      def ensure_dir(dir)
+        FileUtils.mkdir_p(dir, mode: 0o700) unless File.directory?(dir)
+        true
+      rescue SystemCallError
+        false
+      end
+
       def shown_binds(profile)
         writes = writable(profile)
-        [*under_tmp(profile), *under_run(profile), *writes, *@seal_binds.shown(profile.sealed, writes)]
+        [*under_tmp(profile), *under_run(profile), *under_home(profile), *writes,
+         *@seal_binds.shown(profile.sealed, writes)]
       end
 
       # The fence decides what may be written; this only lifts bwrap's
@@ -199,7 +260,7 @@ module Lain
       # /tmp back whole. `-try`, because a grant that does not exist must cost
       # nothing, as it does in the fence, rather than abort bwrap.
       def under_tmp(profile)
-        project = profile.read_dirs.first
+        project = profile.project
         granted = (profile.read_dirs + profile.exec_files).select { _1.start_with?("/tmp/") }
         [*(project == "/tmp" ? [project] : []), *granted].uniq.reject { refused_grant?(_1) }
       end
@@ -328,7 +389,9 @@ module Lain
       class SealBinds
         KEPT = 64
 
-        def initialize
+        # @param private_mounts [Array<String>] the mounts a call sees only what it is granted of
+        def initialize(private_mounts: [HOST_TMP, RUN])
+          @private_mounts = private_mounts
           @kept = {}
           @lock = Mutex.new
         end
@@ -359,9 +422,9 @@ module Lain
         # A bind would bring the host's path into a private mount, sockets included, and no write there needs sealing.
         # One that holds a private mount would replace it whole.
         def in_view?(path, writes)
-          return false if [HOST_TMP, RUN].any? { Landing.under?(_1, path) }
+          return false if @private_mounts.any? { Landing.under?(_1, path) }
 
-          [HOST_TMP, RUN].none? { Landing.under?(path, _1) } || writes.any? { Landing.under?(path, _1) }
+          @private_mounts.none? { Landing.under?(path, _1) } || writes.any? { Landing.under?(path, _1) }
         end
 
         # A write that holds no seal has no directory between it and one.
