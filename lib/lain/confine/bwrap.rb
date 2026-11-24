@@ -20,6 +20,9 @@ module Lain
 
       STRING_BYTES = 256
       HOST_TMP = "/tmp"
+      RUN = "/run"
+      # Holds only the mount points of what a profile grants.
+      RUN_BYTES = 1024 * 1024
 
       # @param env [Hash] where CARGO_TARGET_DIR is read from, see {Paths::Shipped.cargo_target}
       # @return [String] where `rake compile` writes the fence
@@ -32,7 +35,8 @@ module Lain
       # @return [Bwrap] with bwrap and strace resolved on PATH, nil where absent
       def self.on_path(fence:, env: ENV)
         path = env.fetch("PATH", "")
-        new(fence:, bwrap: Shell::Path.find("bwrap", path:), strace: Shell::Path.find("strace", path:))
+        new(fence:, bwrap: Shell::Path.find("bwrap", path:), strace: Shell::Path.find("strace", path:),
+            runtime_dir: Paths.new(env:).runtime_dir)
       end
 
       # @return [String, nil] the bwrap a call runs under, nil when PATH has none
@@ -45,12 +49,16 @@ module Lain
       # @param bwrap [String, nil]
       # @param strace [String, nil]
       # @param decoys [Decoys] what a masked file reads as
-      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace", decoys: Decoys.new)
+      # @param runtime_dir [String] lain's folder in the runtime directory, which is hidden from every call
+      def initialize(fence:, bwrap: "/usr/bin/bwrap", strace: "/usr/bin/strace", decoys: Decoys.new,
+                     runtime_dir: Paths.new.runtime_dir)
         @fence = fence
         @bwrap = bwrap
         @strace = strace
         @decoys = decoys
         @seal_binds = SealBinds.new
+        @runtime_dir = runtime_dir
+        @runtime_root = runtime_root_of(runtime_dir)
       end
 
       # The kind is read here, the last moment before bwrap binds, because a
@@ -93,6 +101,9 @@ module Lain
 
       private
 
+      # With no XDG_RUNTIME_DIR the parent is /tmp, shared with everything else, so only lain's folder is hidden.
+      def runtime_root_of(dir) = [HOST_TMP, File::SEPARATOR].include?(File.dirname(dir)) ? dir : File.dirname(dir)
+
       def shown(mask, dirs, files) = (@decoys.bytes_for(mask, masks: files) unless dirs.include?(mask))
 
       def prefix(profile, own, masking)
@@ -101,15 +112,63 @@ module Lain
         [*namespace(profile, masking), *trace(profile, own), *fence(profile)]
       end
 
+      # Landlock below ABI 9 cannot refuse a Unix connect, so /run and lain's runtime directory are left out of the
+      # call's view. /run turns read-only last, because bwrap cannot make a later bind's mount point in a read-only
+      # tmpfs.
       def namespace(profile, masking)
+        runtime = runtime_mask(profile)
         [@bwrap, "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-         "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", "--unshare-pid", "--die-with-parent",
+         "--size", profile.tmpfs_bytes.to_s, "--tmpfs", "/tmp", *private_run, *runtime.before,
+         "--unshare-pid", "--die-with-parent",
          *("--unshare-net" if profile.private_net),
          *under_tmp(profile).flat_map { |dir| ["--ro-bind-try", dir, dir] },
+         *under_run(profile).flat_map { |path| ["--ro-bind-try", path, path] },
          *writable(profile).flat_map { |dir| ["--bind-try", dir, dir] },
          *profile.homes.flat_map { housing(_1, profile) },
          *@seal_binds.for(profile.sealed, writable(profile)),
-         *masking, "--"]
+         *masking, *runtime.after, *sealed_run, "--"]
+      end
+
+      # bwrap aborts on a mount at a target a read-only root does not have.
+      def private_run = File.directory?(RUN) ? ["--size", RUN_BYTES.to_s, "--tmpfs", RUN] : []
+
+      def sealed_run = File.directory?(RUN) ? ["--remount-ro", RUN] : []
+
+      def under_run(profile)
+        [*profile.read_dirs, *profile.exec_dirs, *profile.exec_files, *profile.unix_dirs]
+          .map { Pathname(_1).cleanpath.to_s }
+          .select { _1.start_with?("#{RUN}/", "#{@runtime_root}/") }.uniq
+          .reject { refused_grant?(_1) }
+      end
+
+      # A bind follows links at its source, so a grant is judged by where it lands as well as how it is spelled.
+      def refused_grant?(path)
+        spelled = Pathname(path).cleanpath.to_s
+        landed = landing_of(spelled)
+        runtime = landing_of(@runtime_root)
+        landed == runtime || Landing.under?(RUN, landed) ||
+          [RUN, runtime].any? { Landing.under?(landed, _1) && !Landing.under?(spelled, _1) }
+      end
+
+      def landing_of(path)
+        File.realpath(path)
+      rescue SystemCallError
+        path
+      end
+
+      # A mask made before the binds lets a grant inside it come back; one a wider bind would undo goes after them.
+      def runtime_mask(profile)
+        return RuntimeMask.none unless File.directory?(@runtime_root)
+
+        covered = shown_binds(profile).any? { Landing.under?(@runtime_root, _1) }
+        return RuntimeMask.none unless covered || [HOST_TMP, RUN].none? { Landing.under?(@runtime_root, _1) }
+
+        RuntimeMask.new(dir: @runtime_root, late: covered)
+      end
+
+      def shown_binds(profile)
+        writes = writable(profile)
+        [*under_tmp(profile), *under_run(profile), *writes, *@seal_binds.shown(profile.sealed, writes)]
       end
 
       # The fence decides what may be written; this only lifts bwrap's
@@ -117,7 +176,8 @@ module Lain
       # private home is written only through its own mount, never the user's.
       def writable(profile)
         homes = profile.homes.map(&:path)
-        (profile.write_dirs - Profile::SYSTEM_WRITE).reject { |dir| homes.any? { Landing.under?(dir, _1) } }
+        (profile.write_dirs - Profile::SYSTEM_WRITE)
+          .reject { |dir| homes.any? { Landing.under?(dir, _1) } || refused_grant?(dir) }
       end
 
       # A call whose TMPDIR is the private /tmp has no dir of its own on the
@@ -140,8 +200,8 @@ module Lain
       # nothing, as it does in the fence, rather than abort bwrap.
       def under_tmp(profile)
         project = profile.read_dirs.first
-        [*(project == "/tmp" ? [project] : []),
-         *(profile.read_dirs + profile.exec_files).select { _1.start_with?("/tmp/") }].uniq
+        granted = (profile.read_dirs + profile.exec_files).select { _1.start_with?("/tmp/") }
+        [*(project == "/tmp" ? [project] : []), *granted].uniq.reject { refused_grant?(_1) }
       end
 
       # `-DD` puts the tracer in a process group of its own, as the tracee's
@@ -168,6 +228,21 @@ module Lain
                    "--connect-port" => profile.connect_ports, "--unix-dir" => profile.unix_dirs }
         [@fence, *("--private-net" if profile.private_net),
          *grants.flat_map { |flag, values| values.flat_map { [flag, _1.to_s] } }, "--"]
+      end
+
+      RuntimeMask = Data.define(:dir, :late) do
+        # @return [RuntimeMask] one that mounts nothing
+        def self.none = new(dir: nil, late: false)
+
+        # @return [Array<String>] the flags that go before the binds
+        def before = dir && !late ? ["--tmpfs", dir] : []
+
+        # @return [Array<String>] the flags that go after the binds
+        def after
+          return [] unless dir
+
+          [*(["--tmpfs", dir] if late), "--remount-ro", dir]
+        end
       end
 
       # A call's masks, read for their kind and bytes.
@@ -269,11 +344,24 @@ module Lain
           end
         end
 
+        # @param sealed [Array<Profile::Seal>]
+        # @param writes [Array<String>] what bwrap binds writable
+        # @return [Array<String>] each seal bwrap binds
+        def shown(sealed, writes) = sealed.reject(&:absent).map(&:path).select { in_view?(_1, writes) }
+
         private
 
         def built(sealed, writes)
           [*pinned(sealed, writes).flat_map { |dir| ["--bind-try", dir, dir] },
-           *sealed.reject(&:absent).flat_map { ["--ro-bind", _1.path, _1.path] }]
+           *shown(sealed, writes).flat_map { ["--ro-bind", _1, _1] }]
+        end
+
+        # A bind would bring the host's path into a private mount, sockets included, and no write there needs sealing.
+        # One that holds a private mount would replace it whole.
+        def in_view?(path, writes)
+          return false if [HOST_TMP, RUN].any? { Landing.under?(_1, path) }
+
+          [HOST_TMP, RUN].none? { Landing.under?(path, _1) } || writes.any? { Landing.under?(path, _1) }
         end
 
         # A write that holds no seal has no directory between it and one.

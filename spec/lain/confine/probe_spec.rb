@@ -89,8 +89,10 @@ RSpec.describe Lain::Confine::Probe do
     end
 
     it "tries the namespace a confined call runs under" do
-      expect(recorded(:bwrap)).to eq([[*bwrap.namespace_argv(private_net: false), true_on_path]])
-      expect(seen.first.each_cons(2).to_a).to include(%w[--proc /proc], %w[--unshare-pid --die-with-parent])
+      calls = recorded(:bwrap)
+
+      expect(calls).to eq([[*bwrap.namespace_argv(private_net: false), true_on_path]])
+      expect(calls.first.each_cons(2).to_a).to include(%w[--proc /proc], %w[--unshare-pid --die-with-parent])
     end
 
     it "tries a private network with --unshare-net in the namespace a confined call runs under" do

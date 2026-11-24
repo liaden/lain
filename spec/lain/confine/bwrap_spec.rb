@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "fileutils"
 require "open3"
 require "securerandom"
 require "tmpdir"
@@ -13,7 +14,19 @@ RSpec.describe Lain::Confine::Bwrap do
 
   def argv_of(wrapped) = wrapped.stages.first.argv
 
+  def binds_in(argv)
+    binds = argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
+    binds.last(2) == %w[--remount-ro /run] ? binds[...-2] : binds
+  end
+
   after { opened.each(&:close) }
+
+  around do |example|
+    saved = ENV.delete("XDG_RUNTIME_DIR")
+    example.run
+  ensure
+    ENV["XDG_RUNTIME_DIR"] = saved
+  end
 
   # Each stage's mask descriptors, opened as Exec::Sandboxed opens them: numbered after every stage's trace.
   def wrapping(launcher, term, profile, trace_fd: 3)
@@ -30,8 +43,9 @@ RSpec.describe Lain::Confine::Bwrap do
     it "puts the reader profile's call inside bwrap, then strace, then the fence" do
       expect(argv_of(wrapping(launcher, term, reader, trace_fd: 3))).to eq(
         %W[/usr/bin/bwrap --ro-bind / / --dev /dev --proc /proc
-           --size #{Lain::Confine::Profile::TMPFS_BYTES} --tmpfs /tmp --unshare-pid --die-with-parent
-           --perms 0400 --ro-bind-data 4 /p/.env --
+           --size #{Lain::Confine::Profile::TMPFS_BYTES} --tmpfs /tmp --size 1048576 --tmpfs /run
+           --unshare-pid --die-with-parent
+           --perms 0400 --ro-bind-data 4 /p/.env --remount-ro /run --
            /usr/bin/strace -DD -f -s 256 --seccomp-bpf -e trace=execve,execveat,connect,sendto,sendmsg,sendmmsg
            -o /dev/fd/3 --
            /f/lain-fence --exec-dir /usr --exec-dir /h/.rustup/toolchains --exec-file /h/.local/bin/grep
@@ -128,7 +142,7 @@ RSpec.describe Lain::Confine::Bwrap do
     it "binds back each read dir under /tmp after the private /tmp hides it, then masks" do
       under = Lain::Confine::Profile.reader(root: "/tmp/p", home: "/h", masks: ["/tmp/p/.env"])
       expect(argv_of(wrapping(launcher, term, under, trace_fd: 3)).each_cons(3).to_a).to include(
-        %w[--tmpfs /tmp --unshare-pid], %w[--ro-bind-try /tmp/p /tmp/p], %w[/tmp/p --perms 0400]
+        %w[--tmpfs /run --unshare-pid], %w[--ro-bind-try /tmp/p /tmp/p], %w[/tmp/p --perms 0400]
       )
     end
 
@@ -147,7 +161,7 @@ RSpec.describe Lain::Confine::Bwrap do
         masks: ["/p/.env"]
       )
       argv = argv_of(wrapping(launcher, term, workspace, trace_fd: 3))
-      expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
+      expect(binds_in(argv)).to eq(
         %w[--bind-try /p /p --bind-try /h/t /h/t --ro-bind /p/.envrc /p/.envrc --perms 0400 --ro-bind-data 4 /p/.env]
       )
     end
@@ -160,7 +174,7 @@ RSpec.describe Lain::Confine::Bwrap do
                  seal.new(path: "/p/.git/commondir", absent: true), seal.new(path: "/elsewhere/hooks", absent: false)]
       )
       argv = argv_of(wrapping(launcher, term, workspace, trace_fd: 3))
-      expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]).to eq(
+      expect(binds_in(argv)).to eq(
         %w[--bind-try /p /p --bind-try /p/.git /p/.git --bind-try /p/.git/worktrees /p/.git/worktrees
            --bind-try /p/.git/worktrees/w /p/.git/worktrees/w
            --ro-bind /p/.git/worktrees/w/gitdir /p/.git/worktrees/w/gitdir --ro-bind /elsewhere/hooks /elsewhere/hooks]
@@ -196,7 +210,7 @@ RSpec.describe Lain::Confine::Bwrap do
 
       def mounts(profile)
         argv_of(wrapping(launcher, term, profile, trace_fd: 3)).then do |argv|
-          argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
+          binds_in(argv)
         end
       end
 
@@ -242,7 +256,7 @@ RSpec.describe Lain::Confine::Bwrap do
       def hiding(*paths)
         profile = Lain::Confine::Profile.new(name: :workspace, trace: false, hidden: paths)
         argv = argv_of(wrapping(launcher, term, profile, trace_fd: 3))
-        argv[(argv.index("--die-with-parent") + 1)...argv.index("--")]
+        binds_in(argv)
       end
 
       it "leaves out a hidden file inside a masked dir, which bwrap cannot bind into the read-only tmpfs" do
@@ -251,7 +265,7 @@ RSpec.describe Lain::Confine::Bwrap do
         profile = Lain::Confine::Profile.new(name: :workspace, trace: false, masks: [dir], hidden: [file])
         argv = argv_of(wrapping(launcher, term, profile, trace_fd: 3))
 
-        expect(argv[(argv.index("--die-with-parent") + 1)...argv.index("--")])
+        expect(binds_in(argv))
           .to eq(["--tmpfs", dir, "--remount-ro", dir])
       end
 
@@ -447,6 +461,228 @@ RSpec.describe Lain::Confine::Bwrap do
     it "starts with the bwrap it launches" do
       expect(described_class.new(fence: "/f/lain-fence", bwrap: "/b/bwrap").namespace_argv(private_net: false).first)
         .to eq("/b/bwrap")
+    end
+  end
+
+  describe "the call's view of /run" do
+    let(:path_env) { { "PATH" => ENV.fetch("PATH") } }
+
+    def flags(profile, using: launcher)
+      argv = argv_of(wrapping(using, term, profile))
+      argv.take(argv.index("--"))
+    end
+
+    def at_runtime(dir) = described_class.on_path(fence: "/f/lain-fence", env: path_env.merge("XDG_RUNTIME_DIR" => dir))
+
+    def present(*dirs)
+      allow(File).to receive(:directory?).and_call_original
+      dirs.each { allow(File).to receive(:directory?).with(_1).and_return(true) }
+    end
+
+    it "binds a NetworkManager resolv.conf read-only before the /run remount" do
+      landing = "/run/NetworkManager/resolv.conf"
+      argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: [landing]))
+
+      expect(argv.each_cons(3).to_a).to include(["--ro-bind-try", landing, landing])
+      expect(argv.index("--ro-bind-try")).to be < argv.index("--remount-ro")
+      expect(argv.last(2)).to eq(%w[--remount-ro /run])
+    end
+
+    it "binds nothing under /run that the profile did not grant" do
+      binds = flags(reader).each_cons(2).select { _1.first.end_with?("bind-try") && _1.last.start_with?("/run") }
+
+      expect(binds).to eq([])
+    end
+
+    it "emits neither the tmpfs nor the remount where /run is absent" do
+      allow(File).to receive(:directory?).and_call_original
+      allow(File).to receive(:directory?).with("/run").and_return(false)
+
+      expect(flags(reader)).not_to include("/run")
+    end
+
+    it "hides the whole runtime directory outside /run, before any bind, with no lain folder yet" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        argv = flags(reader, using: at_runtime(dir))
+
+        expect(argv.each_cons(2).to_a).to include(["--tmpfs", dir])
+        expect(argv.index(dir)).to be < argv.index("--unshare-pid")
+        expect(argv.last(4)).to eq(["--remount-ro", dir, "--remount-ro", "/run"])
+      end
+    end
+
+    it "binds a grant inside a hidden runtime directory back over the mask" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        inner = File.join(dir, "project")
+        argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: [inner]),
+                     using: at_runtime(dir))
+
+        expect(argv.each_cons(3).to_a).to include(["--ro-bind-try", inner, inner])
+        expect(argv.index("--ro-bind-try")).to be > argv.index(dir)
+      end
+    end
+
+    it "masks a runtime directory after a wider grant, which would otherwise show it again" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        FileUtils.mkdir_p(runtime = File.join(dir, "rt"))
+        wide = Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: [dir])
+        argv = flags(wide, using: at_runtime(runtime))
+
+        expect(argv.index(runtime)).to be > argv.index("--bind-try")
+        expect(argv.last(6)).to eq(["--tmpfs", runtime, "--remount-ro", runtime, "--remount-ro", "/run"])
+      end
+    end
+
+    it "names no mount for a runtime directory that does not exist" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        gone = File.join(dir, "gone")
+
+        expect(flags(reader, using: at_runtime(gone)).join(" ")).not_to include(gone)
+      end
+    end
+
+    {
+      "a read grant of /run/" => { read_dirs: ["/run/"] },
+      "a read grant that climbs back to /run" => { read_dirs: ["/run/user/.."] },
+      "a write grant of /run" => { write_dirs: ["/run"] },
+      "a write grant of /" => { write_dirs: ["/"] }
+    }.each do |name, grants|
+      it "refuses to bind #{name}, which would restore the real /run" do
+        argv = flags(Lain::Confine::Profile.new(name: :workspace, trace: false, **grants))
+
+        expect(argv.each_cons(3).select { _1.first.end_with?("bind-try") }).to eq([])
+      end
+    end
+
+    it "refuses a write grant that is a link landing inside /run" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        File.symlink("/run/systemd", link = File.join(dir, "link"))
+        argv = flags(Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: [link]))
+
+        expect(argv).not_to include(link)
+      end
+    end
+
+    { exec_dirs: "/run/x/bin", exec_files: "/run/x/tool", unix_dirs: "/run/x/sockets" }.each do |grant, granted|
+      it "binds back what #{grant} names under /run" do
+        argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, grant => [granted]))
+
+        expect(argv.each_cons(3).to_a).to include(["--ro-bind-try", granted, granted])
+      end
+    end
+
+    it "binds no seal under the private /tmp or /run that no write holds, which would show what is there" do
+      seal = Lain::Confine::Profile::Seal
+      profile = Lain::Confine::Profile.new(
+        name: :workspace, trace: false, write_dirs: ["/p"],
+        sealed: [seal.new(path: "/tmp/sockets", absent: false), seal.new(path: "/run/sockets", absent: false),
+                 seal.new(path: "/p/.envrc", absent: false)]
+      )
+
+      expect(flags(profile)).not_to include("/tmp/sockets", "/run/sockets")
+      expect(flags(profile).each_cons(3).to_a).to include(%w[--ro-bind /p/.envrc /p/.envrc])
+    end
+
+    it "keeps a seal under /tmp that a write holds" do
+      seal = Lain::Confine::Profile::Seal
+      profile = Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: ["/tmp/p"],
+                                           sealed: [seal.new(path: "/tmp/p/.envrc", absent: false)])
+
+      expect(flags(profile).each_cons(3).to_a).to include(%w[--ro-bind /tmp/p/.envrc /tmp/p/.envrc])
+    end
+
+    it "hides a runtime directory that a wider write grant under /run would show" do
+      present("/run/user/1")
+      wide = Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: ["/run/user"])
+
+      expect(flags(wide, using: at_runtime("/run/user/1")).each_cons(2).to_a).to include(%w[--tmpfs /run/user/1])
+    end
+
+    %w[/ /tmp /run].each do |held|
+      it "binds no seal at #{held}, which would restore the private mounts" do
+        seal = Lain::Confine::Profile::Seal.new(path: held, absent: false)
+        profile = Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: ["/p"], sealed: [seal])
+
+        expect(flags(profile).count("--ro-bind")).to eq(1)
+      end
+    end
+
+    it "masks the runtime directory after a seal that holds it" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        FileUtils.mkdir_p(runtime = File.join(dir, "rt"))
+        seal = Lain::Confine::Profile::Seal.new(path: dir, absent: false)
+        profile = Lain::Confine::Profile.new(name: :workspace, trace: false, sealed: [seal])
+
+        expect(flags(profile, using: at_runtime(runtime)).last(6))
+          .to eq(["--tmpfs", runtime, "--remount-ro", runtime, "--remount-ro", "/run"])
+      end
+    end
+
+    it "refuses a grant of a link under /tmp that lands in /run" do
+      Dir.mktmpdir("l", "/tmp") do |dir|
+        File.symlink("/run/systemd", link = File.join(dir, "link"))
+        argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: [link]))
+
+        expect(argv).not_to include(link)
+      end
+    end
+
+    it "refuses a grant under /run that is a link holding /run" do
+      allow(File).to receive(:realpath).and_call_original
+      allow(File).to receive(:realpath).with("/run/x/link").and_return("/")
+      argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: ["/run/x/link"]))
+
+      expect(argv).not_to include("/run/x/link")
+    end
+
+    it "does not take a path that climbs out of /run for a grant under it" do
+      climbing = "/run/../tmp/host"
+      argv = flags(Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: [climbing]))
+
+      expect(argv.join(" ")).not_to include("/tmp/host")
+    end
+
+    { "read" => :read_dirs, "write" => :write_dirs }.each do |kind, grant|
+      it "refuses a #{kind} grant of the runtime directory itself" do
+        Dir.mktmpdir("lain-runtime") do |dir|
+          granted = Lain::Confine::Profile.new(name: :workspace, trace: false, grant => [dir])
+          argv = flags(granted, using: at_runtime(dir))
+
+          expect(argv.each_cons(3).select { _1.first.end_with?("bind-try") }).to eq([])
+          expect(argv.each_cons(2).to_a).to include(["--tmpfs", dir])
+        end
+      end
+    end
+
+    it "refuses a grant of a link that lands inside the runtime directory" do
+      Dir.mktmpdir("lain-runtime") do |dir|
+        FileUtils.mkdir_p(inner = File.join(dir, "rt", "lain"))
+        File.symlink(inner, link = File.join(dir, "link"))
+        wide = Lain::Confine::Profile.new(name: :workspace, trace: false, write_dirs: [link])
+
+        expect(flags(wide, using: at_runtime(File.join(dir, "rt")))).not_to include(link)
+      end
+    end
+
+    it "leaves a runtime directory under the private /run or /tmp alone" do
+      present("/run/user/1/lain", "/tmp/lain")
+
+      expect(flags(reader, using: at_runtime("/run/user/1"))).not_to include("/run/user/1/lain")
+      expect(flags(reader, using: at_runtime("/tmp"))).not_to include("/tmp/lain")
+    end
+
+    it "hides the /tmp fallback when the project is /tmp itself" do
+      present("/tmp/lain")
+      at_tmp = Lain::Confine::Profile.reader(root: "/tmp", home: "/h")
+
+      expect(flags(at_tmp, using: at_runtime("/tmp")).each_cons(2).to_a).to include(%w[--tmpfs /tmp/lain])
+    end
+
+    it "binds nothing for a read grant of a runtime directory under /run" do
+      present("/run/user/1")
+      wide = Lain::Confine::Profile.new(name: :reader, trace: false, read_dirs: ["/run/user/1"])
+
+      expect(flags(wide, using: at_runtime("/run/user/1"))).not_to include("/run/user/1")
     end
   end
 
@@ -1004,7 +1240,8 @@ RSpec.describe Lain::Confine::Bwrap do
         out, err, = home_sh(upstream ? "#{script}; cat #{upstream}" : script)
 
         expect(out).to start_with("resolv\n").and include("landlock")
-        expect(err).to include("Permission denied") if upstream && File.dirname(landing) != "/etc"
+        unread = landing.start_with?("/run/") ? /No such file or directory/ : /Permission denied/
+        expect(err).to match(unread) if upstream && File.dirname(landing) != "/etc"
       end
 
       it "runs a real target/ and the call's own TMPDIR, never a target/ that is a link out of the root" do
