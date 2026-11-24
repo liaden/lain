@@ -3,7 +3,7 @@
 set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX GIT_CONFIG_GLOBAL GIT_CONFIG_PARAMETERS GIT_CONFIG_COUNT GIT_EXTERNAL_DIFF \
   GIT_SSH GIT_SSH_COMMAND GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_DIFF_OPTS GIT_PAGER \
-  LAIN_VM_NAME LAIN_VM_FETCH_MAX_KB LIMA_HOME XDG_CONFIG_HOME
+  LAIN_VM_NAME LAIN_VM_FETCH_MAX_KB LAIN_VM_STOP_GRACE_SECONDS LIMA_HOME XDG_CONFIG_HOME
 
 repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
 script="$repo/bin/lain-vm"
@@ -44,12 +44,30 @@ case "$1" in
       cat "$FAKE_ROOT/state-answer"
       exit 0
     fi
+    if [ "$1" = python3 ]; then
+      for port in "$@"; do :; done
+      echo "$port" >"$FAKE_ROOT/listened-port"
+      echo $$ >"$FAKE_ROOT/listener-pid"
+      if [ -f "$FAKE_ROOT/forwarded" ]; then
+        exec perl -MIO::Socket::INET -e 'my $s = IO::Socket::INET->new(LocalAddr => "127.0.0.1", LocalPort => $ARGV[0], Listen => 1, ReuseAddr => 1) or exit 1; $| = 1; print "listening\n"; alarm 20; $s->accept;' "$port"
+      fi
+      if [ -f "$FAKE_ROOT/listener-answer" ]; then cat "$FAKE_ROOT/listener-answer"; else echo listening; fi
+      if [ -f "$FAKE_ROOT/listener-floods" ]; then
+        yes flood | { head -c 5000000; echo $? >"$FAKE_ROOT/flood-status"; }
+        exit 0
+      fi
+      if [ -f "$FAKE_ROOT/listener-hangs" ]; then exec /bin/sleep 60; fi
+      exit 0
+    fi
     cd "$FAKE_GUEST_HOME" || exit 66
     HOME=$FAKE_GUEST_HOME
     export HOME
     unset GIT_SSH_COMMAND XDG_CONFIG_HOME
     # A login shell would run path_helper on a Mac and put the real tools ahead of these fakes.
-    if [ "$1" = bash ] && [ "$2" = -lc ]; then exec bash -c "$3"; fi
+    if [ "$1" = bash ] && [ "$2" = -lc ]; then
+      if [ -f "$FAKE_ROOT/profile-reads-stdin" ]; then cat >/dev/null; fi
+      exec bash -c "$3"
+    fi
     exec "$@"
     ;;
 esac
@@ -86,11 +104,24 @@ FAKE
 #!/bin/sh
 exit 0
 FAKE
+  cat >"$WORLD/fakes/sleep" <<'FAKE'
+#!/bin/sh
+if [ "$1" = 5 ]; then
+  printf 'sleep 5\n' >>"$FAKE_LOG"
+  exit 0
+fi
+if [ "$1" = 0.2 ] && [ -f "$FAKE_ROOT/instant-polls" ]; then
+  printf 'poll\n' >>"$FAKE_LOG"
+  exit 0
+fi
+exec /bin/sleep "$@"
+FAKE
   cat >"$WORLD/canary" <<'FAKE'
 #!/bin/sh
 : >"$FAKE_ROOT/canary-ran"
 FAKE
-  chmod +x "$WORLD/fakes/limactl" "$WORLD/fakes/ssh" "$WORLD/fakes/bundle" "$WORLD/fakes/mise" "$WORLD/canary"
+  chmod +x "$WORLD/fakes/limactl" "$WORLD/fakes/ssh" "$WORLD/fakes/bundle" "$WORLD/fakes/mise" "$WORLD/fakes/sleep" \
+    "$WORLD/canary"
 }
 
 write_stub_step() {
@@ -104,6 +135,7 @@ write_project() {
   write_stub_step "$1/bin/ci/install-toolchain"
   write_stub_step "$1/bin/ci/install-spec-binaries"
   write_stub_step "$1/bin/install-shim"
+  write_stub_step "$1/bin/ci/check-vm"
   echo ruby-4.0.10 >"$1/.ruby-version"
   echo base >"$1/bin/tool"
   echo base >"$1/.github/workflows/main.yml"
@@ -116,14 +148,16 @@ write_project() {
   echo notes-body >"$1/notes.txt"
 }
 
-build_world() {
-  WORLD=$(cd "$(mktemp -d)" && pwd -P)
-  trap 'rm -rf "$WORLD"' EXIT
+world_paths() {
   HOST="$WORLD/host"
   GUEST="$WORLD/guest"
   OUT="$WORLD/out"
   export HOME="$WORLD/home" GIT_CONFIG_NOSYSTEM=1 FAKE_ROOT="$WORLD" FAKE_LOG="$WORLD/log" FAKE_VM=testvm
-  export FAKE_GUEST_HOME="$GUEST" LAIN_VM_NAME=testvm PATH="$WORLD/fakes:$PATH"
+  export FAKE_GUEST_HOME="$GUEST" LAIN_VM_NAME=testvm
+}
+
+make_base_world() {
+  world_paths
   mkdir -p "$HOME/.lima/testvm" "$GUEST"
   : >"$HOME/.lima/testvm/ssh.config"
   : >"$FAKE_LOG"
@@ -174,6 +208,18 @@ PATHS
   git -C "$WORLD/seed" commit -q -m base
   git -C "$WORLD/seed" push -q "$WORLD/upstream.git" HEAD:refs/heads/main
   git clone -q "$WORLD/upstream.git" "$HOST"
+}
+
+# Git setup is most of a scenario's fixed cost, so it runs once and each scenario gets a copy.
+build_world() {
+  WORLD=$(cd "$(mktemp -d)" && pwd -P)
+  trap 'rm -rf "$WORLD"' EXIT
+  cp -R "$BASE/." "$WORLD"
+  world_paths
+  export PATH="$WORLD/fakes:$PATH"
+  git config --file "$GUEST/.gitconfig" --remove-section "url.file://$BASE/upstream.git"
+  git config --file "$GUEST/.gitconfig" "url.file://$WORLD/upstream.git.insteadOf" https://github.com/liaden/lain
+  git -C "$HOST" config remote.origin.url "$WORLD/upstream.git"
 }
 
 vm_is_running() {
@@ -254,9 +300,135 @@ step install-spec-binaries --persist
 step bundle exec rake compile
 step bundle exec rake daemon:build
 step install-shim
+step check-vm
 STEPS
   cmp -s "$WORLD/steps" "$WORLD/expected" || fail "install steps ran out of order"
   if grep '^limactl shell' "$FAKE_LOG" | grep -qv -- '--workdir'; then fail "a guest command lacks --workdir"; fi
+}
+
+scenario_a_forwarded_guest_port_fails_up() {
+  : >"$WORLD/forwarded"
+  lain_vm up
+  expect_refused
+  [ -s "$WORLD/listened-port" ] || fail "no guest listener was started"
+  output_has "guest port $(cat "$WORLD/listened-port") is forwarded to the Mac"
+}
+
+scenario_an_unforwarded_guest_port_passes_up() {
+  lain_vm up
+  expect_success
+  [ -s "$WORLD/listened-port" ] || fail "no guest listener was started"
+  log_has "sleep 5"
+  output_has "guest port $(cat "$WORLD/listened-port") is not forwarded to the Mac"
+}
+
+scenario_up_runs_the_committed_check_not_the_guests_or_a_dirty_one() {
+  guest_has_clone
+  # shellcheck disable=SC2016  # the fake check expands $FAKE_LOG when the guest runs it, not here
+  printf 'printf "step guest-check-vm\\n" >>"$FAKE_LOG"\n' >"$GUEST/lain/bin/ci/check-vm"
+  # shellcheck disable=SC2016  # the fake check expands $FAKE_LOG when the guest runs it, not here
+  printf 'printf "step dirty-check-vm\\n" >>"$FAKE_LOG"\n' >"$HOST/bin/ci/check-vm"
+  lain_vm up
+  expect_success
+  log_has "step check-vm"
+  log_lacks "guest-check-vm"
+  log_lacks "dirty-check-vm"
+}
+
+scenario_a_guest_listener_that_answers_otherwise_fails_up() {
+  printf 'bind failed\n' >"$WORLD/listener-answer"
+  lain_vm up
+  expect_refused
+  output_has "could not hold a guest listener"
+  log_lacks "sleep 5"
+}
+
+listener_gone() {
+  local pid
+  pid=$(cat "$WORLD/listener-pid")
+  if kill -0 "$pid" 2>/dev/null; then
+    kill "$pid"
+    fail "the guest listener outlived up"
+  fi
+}
+
+scenario_a_silent_guest_listener_cannot_hang_up() {
+  : >"$WORLD/listener-answer"
+  : >"$WORLD/listener-hangs"
+  : >"$WORLD/instant-polls"
+  SECONDS=0
+  lain_vm up
+  [ "$SECONDS" -lt 10 ] || fail "up waited $SECONDS seconds on a silent guest"
+  log_has "poll"
+  expect_refused
+  output_has "could not hold a guest listener"
+  listener_gone
+}
+
+scenario_a_guest_listener_that_never_exits_cannot_hang_up() {
+  : >"$WORLD/listener-hangs"
+  SECONDS=0
+  lain_vm up
+  [ "$SECONDS" -lt 10 ] || fail "up waited $SECONDS seconds on a guest that never exits"
+  expect_success
+  listener_gone
+}
+
+scenario_a_failed_check_fails_up() {
+  guest_has_clone
+  printf 'exit 1\n' >"$HOST/bin/ci/check-vm"
+  git -C "$HOST" commit -q -am "a failing check"
+  lain_vm up
+  expect_refused
+  output_has "the VM failed bin/ci/check-vm"
+  [ ! -e "$WORLD/listened-port" ] || fail "up went on to the port check"
+}
+
+scenario_a_login_profile_cannot_swallow_the_check() {
+  guest_has_clone
+  : >"$WORLD/profile-reads-stdin"
+  lain_vm up
+  expect_success
+  log_has "step check-vm"
+}
+
+scenario_every_character_of_the_check_reaches_the_guest() {
+  guest_has_clone
+  cat >"$HOST/bin/ci/check-vm" <<'CHECK'
+printf '%s\n' "step it's \$(x) \\ \`y\` 100% done" >>"$FAKE_LOG"
+CHECK
+  cat >"$WORLD/expected-line" <<'LINE'
+step it's $(x) \ `y` 100% done
+LINE
+  git -C "$HOST" commit -q -am "a check with quotes"
+  lain_vm up
+  expect_success
+  log_has "$(cat "$WORLD/expected-line")"
+}
+
+scenario_a_flooding_guest_listener_is_capped() {
+  : >"$WORLD/listener-answer"
+  : >"$WORLD/listener-floods"
+  lain_vm up
+  expect_refused
+  output_has "could not hold a guest listener"
+  [ -s "$WORLD/flood-status" ] || fail "the flooding guest never finished"
+  [ "$(cat "$WORLD/flood-status")" -ne 0 ] || fail "the guest's output was not capped"
+}
+
+scenario_the_stop_grace_is_validated() {
+  guest_has_clone
+  guest_branch work
+  guest_commit_file notes.txt grace
+  local value
+  for value in 0 01 -1 abc 100 '1 2'; do
+    LAIN_VM_STOP_GRACE_SECONDS=$value lain_vm fetch work
+    expect_refused
+    output_has "refused stop grace"
+    ref_absent refs/remotes/lain-vm/work
+  done
+  LAIN_VM_STOP_GRACE_SECONDS=2 lain_vm fetch work
+  expect_success
 }
 
 scenario_up_starts_a_stopped_vm_by_name() {
@@ -1663,6 +1835,7 @@ scenario_a_fetch_that_ignores_term_is_killed_after_a_bound() {
   guest_branch work
   guest_commit_file notes.txt stubborn
   write_fetch_that_ignores_term
+  export LAIN_VM_STOP_GRACE_SECONDS=1
   start_fetch_and_wait_for_the_fake
   local fetch_pid tries
   fetch_pid=$(cat "$WORLD/fetch-pid")
@@ -1670,7 +1843,7 @@ scenario_a_fetch_that_ignores_term_is_killed_after_a_bound() {
   kill -TERM "$JOB"
   RC=0
   wait "$JOB" || RC=$?
-  [ "$SECONDS" -lt 10 ] || fail "the script waited $SECONDS seconds for a child that ignores TERM"
+  [ "$SECONDS" -lt 3 ] || fail "the script waited $SECONDS seconds for a child that ignores TERM"
   [ "$RC" -eq 143 ] || fail "exited $RC, not 143"
   tries=0
   while kill -0 "$fetch_pid" 2>/dev/null && [ "$tries" -lt 20 ]; do
@@ -1687,6 +1860,14 @@ scenario_a_fetch_that_ignores_term_is_killed_after_a_bound() {
 list_scenarios() {
   grep -E '^scenario_[a-z0-9_]+\(\) \{$' "$this_test" | cut -d'(' -f1
 }
+
+BASE=$(cd "$(mktemp -d)" && pwd -P)
+trap 'rm -rf "$BASE"' EXIT
+(
+  set -e
+  WORLD=$BASE
+  make_base_world
+) || fail "could not build the base world"
 
 passed=0
 failed=0

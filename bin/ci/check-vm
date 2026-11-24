@@ -1,0 +1,289 @@
+#!/bin/bash
+set -euo pipefail
+
+# bin/lain-vm sends this file's text from the Mac as a bash -c word, so the clone's copy never runs; then the clone
+# is the cwd.
+if [ -n "${BASH_SOURCE[0]:-}" ]; then
+  repo=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)
+else
+  repo=$(pwd -P)
+fi
+# A spec passes a fixture root; the kernel's own files are read when it is absent.
+root=${1:-}
+mac=192.168.5.2
+mac_high_port=47321
+host_mount_types=" virtiofs 9p fuse.sshfs nfs nfs4 cifs smb3 "
+dir=""
+no_network_reach=""
+grant_reach="/run/systemd/resolve/io.systemd.Resolve
+/run/systemd/resolve/io.systemd.Resolve.Monitor"
+mac_table="ct state established,related accept
+ip daddr 192.168.5.2 tcp dport 11434 accept
+ip daddr 192.168.5.2 udp dport 53 accept
+ip daddr 192.168.5.2 tcp dport 53 accept
+ip daddr 192.168.5.2 udp dport 67 accept
+fib daddr type local accept
+meta l4proto tcp ip daddr 192.168.5.0/24 counter name lain_mac_rejected reject with tcp reset
+ip daddr 192.168.5.0/24 counter name lain_mac_rejected reject with icmp port-unreachable"
+
+ok() { printf 'ok   %s\n' "$*"; }
+
+fail() {
+  printf 'FAIL %s\n' "$*"
+  exit 1
+}
+
+check_tmux() {
+  local version
+  version=$(tmux -V 2>/dev/null) || fail "tmux is not installed"
+  [[ $version =~ ([0-9]+)\.([0-9]+) ]] || fail "could not read a version from: $version"
+  local major=${BASH_REMATCH[1]} minor=${BASH_REMATCH[2]}
+  ((major > 3 || (major == 3 && minor >= 5))) || fail "$version is older than tmux 3.5"
+  ok "$version"
+}
+
+read_fence_status() {
+  local fence="$repo/target/release/lain-fence" status fields abstract
+  status=$("$fence" --status </dev/null) || fail "could not run $fence --status"
+  fields=$(python3 -I -c 'import json, sys
+status = json.load(sys.stdin)
+rights = status["rights"]
+print(int(status["abi"]), rights.get("resolve_unix", "absent"), rights.get("abstract_unix_socket", "absent"))' \
+    <<<"$status") || fail "could not read the fence status: $status"
+  read -r abi resolve_unix abstract <<<"$fields"
+  ((abi >= 8)) || fail "Landlock ABI $abi is below 8"
+  ok "Landlock ABI $abi"
+  # The sweep tries path sockets only, so the abstract ones stay out of reach only through the fence.
+  [ "$abstract" = enforced ] || fail "the fence's abstract_unix_socket scope is $abstract, not enforced"
+  ok "the fence scopes abstract Unix sockets"
+}
+
+check_apparmor() {
+  local key="$root/proc/sys/kernel/apparmor_restrict_unprivileged_userns" value lifted
+  value=$(cat "$key" 2>/dev/null) || fail "kernel.apparmor_restrict_unprivileged_userns is unreadable"
+  [ "$value" = 1 ] || fail "kernel.apparmor_restrict_unprivileged_userns is $value, not 1"
+  lifted=$(grep -sHE '^[[:space:]]*-?kernel[./]apparmor_restrict_unprivileged_userns[[:space:]]*=' \
+    "$root/etc/sysctl.conf" "$root"/etc/sysctl.d/*.conf "$root"/run/sysctl.d/*.conf \
+    "$root"/usr/local/lib/sysctl.d/*.conf "$root"/usr/lib/sysctl.d/*.conf |
+    awk -F= '{ value = $NF; gsub(/[[:space:]]/, "", value); if (value != "1") print }') || true
+  [ -z "$lifted" ] || fail "a sysctl file lifts the restriction on the next boot: ${lifted#"$root"}"
+  ok "AppArmor restricts unprivileged user namespaces, now and after a reboot"
+}
+
+check_mounts() {
+  local _ target type rest found=""
+  while read -r _ target type rest; do
+    case "$host_mount_types" in
+      *" $type "*) found="$found $target ($type)" ;;
+    esac
+  done <"$root/proc/self/mounts"
+  [ -z "$found" ] || fail "a host folder is mounted:$found"
+  ok "no host mount"
+}
+
+check_agent() {
+  local status=0
+  if [ -n "${SSH_AUTH_SOCK:-}" ]; then
+    ssh-add -l >/dev/null 2>&1 </dev/null || status=$?
+    [ "$status" -ne 127 ] || fail "ssh-add is not installed, so the agent at $SSH_AUTH_SOCK is unchecked"
+    [ "$status" -eq 2 ] || fail "an SSH agent answers at $SSH_AUTH_SOCK"
+  fi
+  ok "no SSH agent"
+}
+
+# The kernel writes 1 space before a path and nothing after it, so a name keeps every space it holds; a newline
+# in a name splits its line, and a line that does not parse stops the check rather than leave a socket unswept.
+list_sockets() {
+  python3 -I -c 'import re, sys
+line_shape = re.compile(r"[0-9a-f]+: [0-9A-F]{8} [0-9A-F]{8} ([0-9A-F]{8}) ([0-9A-F]{4}) ([0-9A-F]{2}) +\d+(?: (.*))?\Z")
+kinds = {"0001": "stream", "0002": "dgram", "0005": "seqpacket"}
+listed = set()
+with open(sys.argv[1], "rb") as table:
+    lines = table.read().decode("utf-8", "surrogateescape").split("\n")
+if lines[-1] == "":
+    lines.pop()
+for line in lines[1:]:
+    match = line_shape.match(line)
+    if match is None:
+        sys.exit("cannot parse this /proc/net/unix line: " + ascii(line))
+    flags, kind, state, path = match.groups()
+    if path is None or not path.startswith("/") or kind not in kinds:
+        continue
+    listening = int(flags, 16) & 0x10000
+    unbound_dgram = kinds[kind] == "dgram" and state == "01"
+    if listening or unbound_dgram:
+        listed.add((kinds[kind], path))
+for kind, path in sorted(listed):
+    sys.stdout.buffer.write(kind.encode() + b" " + path.encode("utf-8", "surrogateescape") + b"\0")' \
+    "$root/proc/net/unix"
+}
+
+write_sweep() {
+  list_sockets >"$1/sockets" || fail "could not list the listening Unix sockets"
+  [ -s "$1/sockets" ] || fail "no listening path socket to sweep"
+  # Output goes to stderr, because a grant call's git reads its ssh command's stdout as protocol.
+  cat >"$1/sweep.py" <<'PY'
+import os, socket, sys
+
+def say(*words):
+    print("lain-check-vm", *words, file=sys.stderr, flush=True)
+
+try:
+    say("netns", os.readlink("/proc/self/ns/net"))
+except OSError as error:
+    say("netns", "unreadable", error.errno)
+kinds = {"dgram": socket.SOCK_DGRAM, "seqpacket": socket.SOCK_SEQPACKET, "stream": socket.SOCK_STREAM}
+count = 0
+with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "sockets"), "rb") as listing:
+    records = [record for record in listing.read().split(b"\0") if record]
+for record in records:
+    kind, path = record.split(b" ", 1)
+    probe = socket.socket(socket.AF_UNIX, kinds[kind.decode()])
+    probe.settimeout(2)
+    try:
+        probe.connect(path)
+        say("reach", ascii(path.decode("utf-8", "surrogateescape"))[1:-1])
+    except OSError:
+        pass
+    finally:
+        probe.close()
+    count += 1
+say("swept", count)
+PY
+}
+
+sweep_lines() { printf '%s\n' "$1" | sed -n "s/^lain-check-vm $2 //p"; }
+
+require_sweep() {
+  [ -n "$(sweep_lines "$2" swept)" ] && return 0
+  printf '%s\n' "$2" | LC_ALL=C cat -v | sed 's/^/     /'
+  fail "the $1 sweep did not run"
+}
+
+joined() { printf '%s\n' "$1" | sed '/^$/d' | LC_ALL=C sort -u; }
+
+compare_reach() {
+  local label=$1 reached expected unexpected missing
+  reached=$(joined "$(sweep_lines "$2" reach)")
+  expected=$(joined "$3")
+  unexpected=$(LC_ALL=C comm -23 <(printf '%s\n' "$reached") <(printf '%s\n' "$expected") | sed '/^$/d')
+  missing=$(LC_ALL=C comm -13 <(printf '%s\n' "$reached") <(printf '%s\n' "$expected") | sed '/^$/d')
+  [ -z "$unexpected" ] || fail "a $label call reached: $(printf '%s\n' "$unexpected" | paste -sd ' ')"
+  [ -z "$missing" ] || fail "a $label call could not reach: $(printf '%s\n' "$missing" | paste -sd ' ')"
+  ok "a $label call reaches exactly its listed sockets, of $(sweep_lines "$2" swept) swept"
+}
+
+check_sockets() {
+  local no_network grant host_netns call_netns
+  dir=$(mktemp -d)
+  trap 'rm -rf "$dir"' EXIT
+  write_sweep "$dir"
+  no_network=$("$repo/bin/workspace-run" --root "$dir" -- /usr/bin/python3 -I "$dir/sweep.py" 2>&1 </dev/null) || true
+  require_sweep no-network "$no_network"
+  host_netns=$(readlink "$root/proc/self/ns/net") || fail "could not read this shell's network namespace"
+  call_netns=$(sweep_lines "$no_network" netns)
+  [ -n "$call_netns" ] && [ "$call_netns" != "$host_netns" ] ||
+    fail "a no-network call does not run in a private network namespace ($call_netns)"
+  ok "a no-network call runs in a private network namespace"
+  compare_reach no-network "$no_network" "$no_network_reach"
+  # git runs its ssh command inside the grant, so this sweeps what a granted build's own children see.
+  grant=$(LAIN_ENV_PASS=GIT_SSH_COMMAND GIT_SSH_COMMAND="/usr/bin/python3 -I $(printf %q "$dir/sweep.py")" \
+    "$repo/bin/workspace-run" --root "$dir" --grant git -- git ls-remote --quiet ssh://lain-check-vm/sweep 2>&1 </dev/null) ||
+    true
+  require_sweep grant "$grant"
+  compare_reach grant "$grant" "$grant_reach"
+}
+
+# Each rule becomes nft's own wording, so the list compares whole: a missing, extra or reordered rule fails.
+mac_table_rules() {
+  sudo -n nft -j list table inet lain_mac 2>/dev/null </dev/null | python3 -I -c 'import json, sys
+
+def value(right):
+    if isinstance(right, dict) and "prefix" in right:
+        return "%s/%s" % (right["prefix"]["addr"], right["prefix"]["len"])
+    if isinstance(right, dict) and "set" in right:
+        right = right["set"]
+    if isinstance(right, list):
+        return ",".join(str(item) for item in right)
+    return str(right)
+
+def subject(left):
+    if "payload" in left:
+        return "%s %s" % (left["payload"]["protocol"], left["payload"]["field"])
+    if "meta" in left:
+        return "meta " + left["meta"]["key"]
+    if "ct" in left:
+        return "ct " + left["ct"]["key"]
+    if "fib" in left:
+        return "fib %s %s" % (" ".join(left["fib"].get("flags", [])), left["fib"]["result"])
+    return json.dumps(left)
+
+def words(expr):
+    if "match" in expr:
+        match = expr["match"]
+        operator = "" if match["op"] in ("==", "in") else match["op"] + " "
+        return "%s %s%s" % (subject(match["left"]), operator, value(match["right"]))
+    if "counter" in expr:
+        counter = expr["counter"]
+        return "counter name " + counter if isinstance(counter, str) else "counter"
+    if "reject" in expr:
+        reject = expr["reject"] or {}
+        kind = reject.get("type", "")
+        detail = reject.get("expr", "")
+        if kind == "tcp reset":
+            return "reject with tcp reset"
+        return ("reject with %s %s" % (kind, detail)).strip() if kind else "reject"
+    if len(expr) == 1 and list(expr.values())[0] is None:
+        return list(expr)[0]
+    return json.dumps(expr)
+
+chains = {}
+for item in json.load(sys.stdin)["nftables"]:
+    if "chain" in item:
+        chain = item["chain"]
+        chains[chain["name"]] = "%s %s %s %s" % (chain.get("type"), chain.get("hook"), chain.get("prio"), chain.get("policy"))
+    if "rule" in item and item["rule"]["chain"] == "out":
+        print(" ".join(words(expr) for expr in item["rule"]["expr"]))
+print("chain", chains.get("out"))'
+}
+
+check_mac_table() {
+  local rules expected
+  rules=$(mac_table_rules) || fail "the nftables table inet lain_mac is not loaded or does not parse"
+  expected="$mac_table
+chain filter output 0 accept"
+  if [ "$rules" != "$expected" ]; then
+    diff <(printf '%s\n' "$expected") <(printf '%s\n' "$rules") | sed 's/^/     /' || true
+    fail "the nftables table inet lain_mac differs from the rules lain needs"
+  fi
+  ok "nftables table inet lain_mac holds the rules lain needs"
+}
+
+rejected_count() {
+  sudo -n nft -j list counter inet lain_mac lain_mac_rejected 2>/dev/null </dev/null | python3 -I -c 'import json, sys
+print(next(item["counter"]["packets"] for item in json.load(sys.stdin)["nftables"] if "counter" in item))'
+}
+
+# Nothing need listen on the Mac: the counter shows the table, not the Mac, turned the connect away.
+check_mac_rejects() {
+  local before after
+  before=$(rejected_count) || fail "could not read the nftables counter lain_mac_rejected"
+  # shellcheck disable=SC2016  # $0 and $1 are the inner bash's own arguments, the address and port
+  timeout 3 bash -c 'exec 3<>"/dev/tcp/$0/$1"' "$mac" "$mac_high_port" >/dev/null 2>&1 </dev/null || true
+  after=$(rejected_count) || fail "could not read the nftables counter lain_mac_rejected"
+  ((after > before)) || fail "a connect to $mac:$mac_high_port did not reach the table's reject (counter $before, then $after)"
+  ok "the table rejected a connect to $mac:$mac_high_port"
+}
+
+check_tmux
+read_fence_status
+check_apparmor
+check_mounts
+check_agent
+check_sockets
+check_mac_table
+check_mac_rejects
+if [ "$resolve_unix" != enforced ]; then
+  printf 'note Landlock does not filter Unix connects on this kernel, so only a hidden path keeps a socket out of reach\n'
+fi
+printf 'check-vm: every requirement passed\n'

@@ -10,7 +10,8 @@ max_tree_entries=200000
 max_blob_bytes=16777216
 max_tip_bytes=1073741824
 fetch_job=
-stop_grace_seconds=5
+default_stop_grace_seconds=5
+stop_grace_seconds=${LAIN_VM_STOP_GRACE_SECONDS:-$default_stop_grace_seconds}
 incoming_ref=
 newline=$'\n'
 
@@ -57,6 +58,14 @@ valid_size() (
     '' | 0* | *[!0-9]*) exit 1 ;;
   esac
   [ "${#1}" -le 7 ] && [ "$1" -le "$default_fetch_max_kb" ]
+)
+
+valid_grace() (
+  LC_ALL=C
+  case "$1" in
+    '' | 0* | *[!0-9]*) exit 1 ;;
+  esac
+  [ "${#1}" -le 2 ]
 )
 
 require_vm_tools() {
@@ -176,6 +185,77 @@ bin/install-shim
 GUEST
 }
 
+# The script travels inside 1 single-quoted word, so every quote in it is closed, escaped and reopened.
+check_script() {
+  local check quoted
+  check=$(git cat-file blob HEAD:bin/ci/check-vm) || return 1
+  quoted=$(printf '%s\n' "$check" | sed "s/'/'\\\\''/g") || return 1
+  cat <<'GUEST'
+set -euo pipefail
+cd "$HOME/lain"
+export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
+eval "$(mise env -s bash "ruby@$(sed 's/^ruby-//' .ruby-version)")"
+GUEST
+  printf "exec bash -c '%s' check-vm\n" "$quoted"
+}
+
+# A confined call can rewrite the clone's copy, so the check that runs is the one committed on the Mac. It goes in
+# the command, not on stdin, because the guest's login profile and its children could read stdin first.
+run_committed_check() {
+  local script
+  script=$(check_script) || return 1
+  limactl shell --workdir / "$vm" bash -lc "$script" </dev/null 2>&1 | sanitized
+}
+
+mac_port_open() { (exec 3<>"/dev/tcp/127.0.0.1/$1") 2>/dev/null; }
+
+closed_mac_port() {
+  local tries=0 port
+  while [ "$tries" -lt 20 ]; do
+    port=$((20000 + RANDOM % 20000))
+    if ! mac_port_open "$port"; then
+      printf '%s\n' "$port"
+      return 0
+    fi
+    tries=$((tries + 1))
+  done
+  return 1
+}
+
+listener_says() { [ "$(head -c 64 "$1" 2>/dev/null | head -n 1)" = listening ]; }
+
+# The guest cannot see Lima's host side, so only the Mac can tell whether a guest listener was forwarded.
+# The listener is killed after a bounded wait, so a guest that never answers or never exits cannot hang up.
+check_guest_ports_stay_in_the_vm() {
+  local port dir pid tries=0 answer=unheld
+  port=$(closed_mac_port) || die "found no closed Mac port to test guest port forwarding"
+  dir=$(mktemp -d) || die "could not make a temporary directory"
+  # The cap, in 1 KiB blocks, keeps a guest from filling the Mac's disk through its output.
+  (ulimit -f 16; exec limactl shell --workdir / "$vm" python3 -c 'import socket, sys, time
+listener = socket.socket()
+listener.bind(("127.0.0.1", int(sys.argv[1])))
+listener.listen(1)
+print("listening", flush=True)
+time.sleep(10)' "$port") </dev/null >"$dir/listener" 2>/dev/null &
+  pid=$!
+  while ! listener_says "$dir/listener" && [ "$tries" -lt 75 ] && kill -0 "$pid" 2>/dev/null; do
+    sleep 0.2
+    tries=$((tries + 1))
+  done
+  if listener_says "$dir/listener"; then
+    sleep 5
+    if mac_port_open "$port"; then answer=forwarded; else answer=closed; fi
+  fi
+  kill "$pid" 2>/dev/null || true
+  wait "$pid" 2>/dev/null || true
+  rm -rf "$dir"
+  case "$answer" in
+    closed) printf 'lain-vm: guest port %s is not forwarded to the Mac\n' "$port" ;;
+    forwarded) die "guest port $port is forwarded to the Mac" ;;
+    *) die "could not hold a guest listener on port $port" ;;
+  esac
+}
+
 cmd_up() {
   [ "$#" -eq 0 ] || die "up takes no arguments"
   require_vm_tools
@@ -190,6 +270,8 @@ cmd_up() {
     *) die "unexpected answer from the guest" ;;
   esac
   guest_run "$(provision_script)"
+  run_committed_check || die "the VM failed bin/ci/check-vm"
+  check_guest_ports_stay_in_the_vm
 }
 
 cmd_shell() {
@@ -360,6 +442,7 @@ cmd_fetch() {
   local branch=$1 url ref base tip old
   valid_branch "$branch" || die "refused branch name"
   valid_size "$fetch_max_kb" || die "refused fetch size limit"
+  valid_grace "$stop_grace_seconds" || die "refused stop grace"
   require_vm_tools
   enter_repo_root
   refuse_weakened_fsck
