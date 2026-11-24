@@ -39,7 +39,7 @@ RSpec.describe Lain::Herdr::Reporter, :seam do
     calls = []
     tmux = lambda do |*argv, **|
       calls << argv
-      instance_double(Lain::Shell::Out, run_command: nil, stdout: "", stderr: "",
+      instance_double(Lain::Shell::Out, run_command: nil, stdout: argv.include?("-V") ? "tmux 3.6" : "", stderr: "",
                                         exitstatus: argv.include?("has-session") ? 1 : 0)
     end
     Lain::CLI::Up.new(session: "work", cwd: dir, shell_out_factory: tmux, chat_preflight: ->(_args) { [] },

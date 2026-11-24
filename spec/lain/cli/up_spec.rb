@@ -42,6 +42,12 @@ FakeShellOut = Struct.new(:exitstatus, :stderr, :stdout) do
   def stdout = self[:stdout] || ""
 end
 
+Tmux36 = lambda do |factory|
+  lambda do |*args|
+    args.include?("-V") ? FakeShellOut.new(0, "", "tmux 3.6") : factory.call(*args)
+  end
+end
+
 # The `filesystem:` seam of Shell::Path.find: only the listed paths are executable files.
 FakePathFiles = Struct.new(:files) do
   def file?(path) = files.include?(path)
@@ -356,8 +362,10 @@ RSpec.describe Lain::CLI::Up do
     # status job's own never-blank fallback already follow.
     it "launches anyway when tmux will not say whether the pane died -- a diagnostic never fails `lain up`" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
-      mute_probe = lambda do |*args|
-        args.include?("display-message") ? FakeShellOut.new(1, "no server running") : Lain::Shell::Out.new(*args)
+      mute_probe = lambda do |*args, **options|
+        next FakeShellOut.new(1, "no server running") if args.include?("display-message")
+
+        Lain::Shell::Out.new(*args, **options)
       end
 
       plan = described_class.new(session:, socket:, state_path:, chat_command: "exit 1",
@@ -382,8 +390,8 @@ RSpec.describe Lain::CLI::Up do
     # nothing else about the run is faked.
     it "leaves NO session behind when the pane command cannot be spawned" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
-      sabotage = lambda do |*args|
-        real = Lain::Shell::Out.new(*args)
+      sabotage = lambda do |*args, **options|
+        real = Lain::Shell::Out.new(*args, **options)
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
 
@@ -401,8 +409,8 @@ RSpec.describe Lain::CLI::Up do
     # reattaching to the wreck.
     it "lets the retry after a failed spawn create cleanly, rather than reattaching to a bare shell" do
       write_state(cache_deadline: nil, fleet: [], inbox_count: 0)
-      sabotage = lambda do |*args|
-        real = Lain::Shell::Out.new(*args)
+      sabotage = lambda do |*args, **options|
+        real = Lain::Shell::Out.new(*args, **options)
         args.include?("respawn-pane") ? FakeShellOut.new(1, "forced respawn-pane failure") : real
       end
       expect do
@@ -718,6 +726,13 @@ RSpec.describe Lain::CLI::Up do
           sleep(0.5)
 
           expect(titles).to eq(%w[chat input])
+        end
+
+        it "turns title setting off in every pane lain made" do
+          lay_out(nvim: nil)
+
+          expect(pane_rows("\#{pane_id}").map { |id| tmux("show-options", "-pv", "-t", id, "allow-set-title") })
+            .to eq(%w[off off])
         end
 
         it "does not stop the title of a pane lain did not make" do
@@ -1081,7 +1096,7 @@ RSpec.describe Lain::CLI::Up do
       tmux_only = ->(*args) { FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "") }
       no_nvim = Lain::CLI::Up::Binaries.new(path: "/fake/bin", filesystem: FakePathFiles.new([]))
 
-      plan = described_class.new(session: "lain", state_path:, nvim: true, shell_out_factory: tmux_only,
+      plan = described_class.new(session: "lain", state_path:, nvim: true, shell_out_factory: Tmux36[tmux_only],
                                  binaries: no_nvim).launch_plan(nested: false)
 
       expect(plan.messages).to eq(
@@ -1098,7 +1113,8 @@ RSpec.describe Lain::CLI::Up do
     it "names the state file even when nothing is wrong" do
       always_ok = ->(*args) { FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "") }
 
-      plan = described_class.new(session: "lain", state_path:, shell_out_factory: always_ok).launch_plan(nested: false)
+      plan = described_class.new(session: "lain", state_path:,
+                                 shell_out_factory: Tmux36[always_ok]).launch_plan(nested: false)
 
       expect(plan.messages).to eq(["HUD state: #{state_path}", "created tmux session 'lain'"])
     end
@@ -1107,9 +1123,9 @@ RSpec.describe Lain::CLI::Up do
       always_ok = ->(*_args) { FakeShellOut.new(0, "") }
 
       attach_plan = described_class.new(session: "lain", state_path:,
-                                        shell_out_factory: always_ok).launch_plan(nested: false)
+                                        shell_out_factory: Tmux36[always_ok]).launch_plan(nested: false)
       switch_plan = described_class.new(session: "lain", state_path:,
-                                        shell_out_factory: always_ok).launch_plan(nested: true)
+                                        shell_out_factory: Tmux36[always_ok]).launch_plan(nested: true)
 
       expect(attach_plan.argv).to eq(%w[tmux attach -t =lain:])
       expect(switch_plan.argv).to eq(%w[tmux switch-client -t =lain:])
@@ -1144,7 +1160,7 @@ RSpec.describe Lain::CLI::Up do
 
     def up
       described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir,
-                          shell_out_factory: tmux, gc_schedule: schedule)
+                          shell_out_factory: Tmux36[tmux], gc_schedule: schedule)
     end
 
     it "spawns no gc process on a fresh stamp" do
@@ -1166,7 +1182,8 @@ RSpec.describe Lain::CLI::Up do
     it "builds its schedule for the project its chat pane resolves, not the raw directory" do
       allow(Lain::CLI::GcSchedule).to receive(:for).and_call_original
 
-      described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, shell_out_factory: tmux)
+      described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir,
+                          shell_out_factory: Tmux36[tmux])
 
       expect(Lain::CLI::GcSchedule).to have_received(:for).with(cwd: @dir, paths: anything)
     end
@@ -1198,7 +1215,7 @@ RSpec.describe Lain::CLI::Up do
 
     def messages
       described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
-                          shell_out_factory: tmux, chat_args:, chat_preflight: ->(_args) { [] },
+                          shell_out_factory: Tmux36[tmux], chat_args:, chat_preflight: ->(_args) { [] },
                           gc_schedule: -> {})
                      .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:).messages
     end
@@ -1214,7 +1231,7 @@ RSpec.describe Lain::CLI::Up do
       seeded = %w[--prompt hi]
 
       plan = described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
-                                 shell_out_factory: tmux, chat_args: seeded, chat_preflight: ->(_args) { [] },
+                                 shell_out_factory: Tmux36[tmux], chat_args: seeded, chat_preflight: ->(_args) { [] },
                                  gc_schedule: -> {})
                             .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:)
 
@@ -1231,7 +1248,7 @@ RSpec.describe Lain::CLI::Up do
       leave_open(writer:)
 
       expect(described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
-                                 shell_out_factory: tmux, chat_args: ["--resume", name],
+                                 shell_out_factory: Tmux36[tmux], chat_args: ["--resume", name],
                                  chat_preflight: ->(_args) { [] }, gc_schedule: -> {})
         .launch_plan(nested: false, env: { "HOME" => Dir.home }, probe:).messages.grep(/was not closed/)).to be_empty
     end
@@ -1240,7 +1257,7 @@ RSpec.describe Lain::CLI::Up do
       leave_open(writer:)
 
       plan = described_class.new(session: "lain", state_path: "/irrelevant/state.json", cwd: @dir, paths:,
-                                 shell_out_factory: tmux, chat_args:, chat_preflight: ->(_args) { [] },
+                                 shell_out_factory: Tmux36[tmux], chat_args:, chat_preflight: ->(_args) { [] },
                                  gc_schedule: -> {})
                             .launch_plan(nested: false, env: { "HOME" => nil }, probe:)
 
@@ -1282,10 +1299,12 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       spy = lambda do |*args|
         calls << args
+        next FakeShellOut.new(0, "", "tmux 3.6") if args.include?("-V")
+
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
-      described_class.new(session: "lain", shell_out_factory: spy).call
+      described_class.new(session: "lain", shell_out_factory: Tmux36[spy]).call
 
       expect(calls.find { |args| args.include?("status-right") }.last).to include(elsewhere)
     end
@@ -1315,10 +1334,13 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       spy = lambda do |*args|
         calls << args
+        next FakeShellOut.new(0, "", "tmux 3.6") if args.include?("-V")
+
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
-      described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call
+      described_class.new(session: "lain", state_path:, chat_args:,
+                          shell_out_factory: Tmux36[spy]).call
 
       calls.find { |args| args.include?("respawn-pane") }.last
     end
@@ -1384,14 +1406,16 @@ RSpec.describe Lain::CLI::Up do
         FakeShellOut.new((args[1] == "has-session" && !session_exists) || absent ? 1 : 0, "")
       end
       with_env("LAIN_PROVIDER" => nil) do
-        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call
+        described_class.new(session: "lain", state_path:, chat_args:,
+                            shell_out_factory: Tmux36[spy]).call
       end
     end
 
     def warnings_for(chat_args, key: "sk-the-secret", provider_env: nil)
       with_env("OLLAMA_API_KEY" => key, "LAIN_PROVIDER" => provider_env) do
         spy = ->(*args) { FakeShellOut.new(args[1] == "has-session" || args.include?("show-environment") ? 1 : 0, "") }
-        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy).call.warnings
+        described_class.new(session: "lain", state_path:, chat_args:,
+                            shell_out_factory: Tmux36[spy]).call.warnings
       end
     end
 
@@ -1465,7 +1489,8 @@ RSpec.describe Lain::CLI::Up do
         others = FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
         args.first == $PROGRAM_NAME ? preflight : others
       end
-      described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: spy, **keywords).call
+      described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: Tmux36[spy],
+                          **keywords).call
     end
 
     # By the BINARY, not by "the call that is not tmux".
@@ -1587,6 +1612,8 @@ RSpec.describe Lain::CLI::Up do
       calls = []
       allow(Lain::Shell::Out).to receive(:new) do |*args|
         calls << args
+        next FakeShellOut.new(0, "", "tmux 3.6") if args.include?("-V")
+
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
@@ -1606,7 +1633,7 @@ RSpec.describe Lain::CLI::Up do
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
-      report = described_class.new(session: "lain", state_path:, shell_out_factory: hung).call
+      report = described_class.new(session: "lain", state_path:, shell_out_factory: Tmux36[hung]).call
 
       expect(report.warnings.join).to include("chat took too long")
       expect(calls.flatten).to include("new-session")
@@ -1645,7 +1672,8 @@ RSpec.describe Lain::CLI::Up do
         FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
       end
 
-      report = described_class.new(session: "lain", state_path:, shell_out_factory: cannot_run).call
+      report = described_class.new(session: "lain", state_path:,
+                                   shell_out_factory: Tmux36[cannot_run]).call
 
       expect(report.warnings.join).to match(/pre-flight|preflight/i)
       expect(calls.flatten).to include("new-session")
@@ -1677,7 +1705,7 @@ RSpec.describe Lain::CLI::Up do
       end
 
       def up_with(preflight, chat_args: [])
-        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: tmux_spy,
+        described_class.new(session: "lain", state_path:, chat_args:, shell_out_factory: Tmux36[tmux_spy],
                             chat_preflight: preflight)
       end
 
@@ -1870,7 +1898,7 @@ RSpec.describe Lain::CLI::Up do
         calls << a and answer(a, dead:, captured:, probe_exit:, session_exists:, raises:,
                                  listed: listed || [chat_pane, input_pane], input_dead:)
       end
-      described_class.new(session: "lain", state_path:, shell_out_factory: spy,
+      described_class.new(session: "lain", state_path:, shell_out_factory: Tmux36[spy],
                           chat_preflight: ->(_args) { [] }, **keywords).launch_plan(nested: false)
     end
 
@@ -2308,7 +2336,7 @@ RSpec.describe Lain::CLI::Up do
         FakeShellOut.new(args.first == "tmux" && args[1] == "has-session" ? 1 : 0, "", made_pane(args))
       end
       path_probe = Lain::CLI::Up::Binaries.new(path: "/fake/bin", filesystem: FakePathFiles.new(on_path))
-      described_class.new(session: "lain", state_path:, nvim:, cwd:, paths:, chat_args:, shell_out_factory: spy,
+      described_class.new(session: "lain", state_path:, nvim:, cwd:, paths:, chat_args:, shell_out_factory: Tmux36[spy],
                           binaries: path_probe)
     end
 
@@ -2684,6 +2712,11 @@ RSpec.describe Lain::CLI::Up do
       expect(verbs).to eq(%w[split-window split-window respawn-pane respawn-pane])
     end
 
+    def pane_option_names
+      panes = described_class::Panes
+      [panes::CHAT, panes::INPUT, panes::EDITOR]
+    end
+
     # A panel fix: reattaching with --nvim cannot build the cockpit (the
     # session is already there), and a window with no EDITOR pane in it means
     # the request is being ignored -- degraded is never silent, so it warns
@@ -2698,8 +2731,7 @@ RSpec.describe Lain::CLI::Up do
     def reattaching_up(calls, pane_ids:, recorded: %w[%0 %1 %2], paths: Lain::Paths.new(env: SpecHome.env({})))
       # `recorded: []` is a session lain never built: no option is set, so
       # tmux answers the probe nonzero rather than with an empty value.
-      names = [described_class::Panes::CHAT, described_class::Panes::INPUT, described_class::Panes::EDITOR]
-      options = names.zip(recorded).to_h.compact
+      options = pane_option_names.zip(recorded).to_h.compact
       spy = lambda do |*args|
         calls << args
         # has-session hits (the session already exists); the other two are
@@ -2708,7 +2740,7 @@ RSpec.describe Lain::CLI::Up do
                          args[1] == "list-panes" ? pane_ids.join("\n") : options.fetch(args.last, ""))
       end
       described_class.new(session: "lain", state_path:, nvim: "", cwd:,
-                          paths:, shell_out_factory: spy)
+                          paths:, shell_out_factory: Tmux36[spy])
     end
 
     it "leaves an already-running session alone, warning that a window of lain's own has no editor" do
@@ -2945,7 +2977,8 @@ RSpec.describe Lain::CLI::Up do
         spy = ->(*args) { calls << args and FakeShellOut.new(0, "") }
         paths = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "state") })
 
-        described_class.new(state_path: File.join(dir, "state.json"), shell_out_factory: spy, paths:).call
+        described_class.new(state_path: File.join(dir, "state.json"), shell_out_factory: Tmux36[spy],
+                            paths:).call
 
         expect(calls.find { |args| args.include?("status-right") }.last)
           .to include(File.join(dir, "state", "lain", "reviews.json"))
@@ -2976,8 +3009,102 @@ RSpec.describe Lain::CLI::Up do
         end
       end
 
-      expect { described_class.new(state_path:, shell_out_factory: broken).call }
+      expect { described_class.new(state_path:, shell_out_factory: Tmux36[broken]).call }
         .to raise_error(Lain::CLI::Up::TmuxUnavailable, %r{no/such/socket})
+    end
+
+    describe "the tmux version gate" do
+      def versioned(banner, calls = [], failing: nil)
+        lambda do |*args|
+          calls << args
+          next FakeShellOut.new(0, "", banner) if args.include?("-V")
+          next FakeShellOut.new(0, "", "%1") if args.include?("show-options")
+          next FakeShellOut.new(0, "", "%1") if args.include?("show-options")
+          next FakeShellOut.new(1, "invalid option: #{failing}") if failing && args.include?(failing)
+
+          FakeShellOut.new(args.include?("has-session") ? 1 : 0, "")
+        end
+      end
+
+      it "refuses tmux 3.4 before building anything, naming the found and the required version" do
+        calls = []
+
+        expect { described_class.new(state_path:, shell_out_factory: versioned("tmux 3.4", calls)).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /3\.4.*3\.5/m)
+
+        expect(calls.flatten & %w[new-session set-option split-window]).to be_empty
+      end
+
+      ["tmux 3.5", "tmux 3.5a", "tmux 3.6", "tmux 3.10", "tmux 4.0", "tmux next-3.6", "tmux next-3.7"].each do |banner|
+        it "starts on #{banner.inspect}" do
+          calls = []
+
+          described_class.new(state_path:, shell_out_factory: versioned(banner, calls)).call
+
+          expect(calls.flatten).to include("new-session")
+        end
+      end
+
+      ["tmux 3.4a", "tmux 2.9", "tmux next-3.4", "tmux next-3.5"].each do |banner|
+        it "refuses #{banner.inspect}" do
+          expect { described_class.new(state_path:, shell_out_factory: versioned(banner)).call }
+            .to raise_error(Lain::CLI::Up::TmuxUnavailable, /needs tmux 3\.5/)
+        end
+      end
+
+      ["", "tmux", "tmux wibble", "tmux master", "tmux openbsd-7.4"].each do |banner|
+        it "refuses an unreadable banner #{banner.inspect} rather than assuming it is new enough" do
+          expect { described_class.new(state_path:, shell_out_factory: versioned(banner)).call }
+            .to raise_error(Lain::CLI::Up::TmuxUnavailable, /cannot read the tmux version/)
+        end
+      end
+
+      it "says what it read when the banner is not one it knows" do
+        expect { described_class.new(state_path:, shell_out_factory: versioned("tmux openbsd-7.4")).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /"tmux openbsd-7\.4".*"tmux N\.M" or "tmux next-N\.M"/)
+      end
+
+      it "reports tmux's own words when the version probe exits nonzero" do
+        failing = ->(*args) { args.include?("-V") ? FakeShellOut.new(1, "boom\n") : FakeShellOut.new(0, "") }
+
+        expect { described_class.new(state_path:, shell_out_factory: failing).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /-V failed: boom/)
+      end
+
+      it "reports a missing tmux when the version probe cannot start" do
+        absent = ->(*) { raise Errno::ENOENT, "tmux" }
+
+        expect { described_class.new(state_path:, shell_out_factory: absent).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /tmux not found on PATH/)
+      end
+
+      it "gives the version probe a bound, and refuses with TmuxUnavailable when it hangs" do
+        seen = []
+        hung = lambda do |*args, **options|
+          seen << options
+          raise Lain::Shell::Out::Timeout, "timed out after 10s: tmux -V" if args.include?("-V")
+
+          FakeShellOut.new(0, "")
+        end
+
+        expect { described_class.new(state_path:, shell_out_factory: hung).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /timed out/)
+        expect(seen.first).to include(timeout: 10)
+      end
+
+      it "still raises when allow-set-title cannot be set on a new enough tmux" do
+        factory = versioned("tmux 3.6", failing: "allow-set-title")
+
+        expect { described_class.new(state_path:, shell_out_factory: factory).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /allow-set-title/)
+      end
+
+      it "still raises when allow-rename cannot be set on a new enough tmux" do
+        factory = versioned("tmux 3.6", failing: "allow-rename")
+
+        expect { described_class.new(state_path:, shell_out_factory: factory).call }
+          .to raise_error(Lain::CLI::Up::TmuxUnavailable, /allow-rename/)
+      end
     end
 
     # The jq probe is gone with the filter: the status job needs no optional
@@ -2989,7 +3116,7 @@ RSpec.describe Lain::CLI::Up do
       spy = ->(*args) { calls << args and FakeShellOut.new(0, "") }
 
       jq_named_path = "/tmp/state-home-a8tnjq/state.json"
-      report = described_class.new(state_path: jq_named_path, shell_out_factory: spy).call
+      report = described_class.new(state_path: jq_named_path, shell_out_factory: Tmux36[spy]).call
 
       expect(report.warnings).to be_empty
       expect(calls).not_to include(%w[jq --version])
@@ -3024,6 +3151,8 @@ RSpec.describe Lain::CLI::Up, "opening a PATH" do
     calls = []
     allow(Lain::Shell::Out).to receive(:new) do |*args|
       calls << args
+      next FakeShellOut.new(0, "", "tmux 3.6") if args.include?("-V")
+
       FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
     end
     described_class.from_options(up_options(**overrides), chat_args: [], path:).call
@@ -3539,7 +3668,7 @@ RSpec.describe Lain::CLI::Up, "the size of the session it creates" do
       calls << args
       FakeShellOut.new(args[1] == "has-session" && !session_exists ? 1 : 0, "")
     end
-    described_class.new(session: "lain", state_path:, shell_out_factory: spy,
+    described_class.new(session: "lain", state_path:, shell_out_factory: Tmux36[spy],
                         chat_preflight: ->(_args) { [] }, **keywords).call
     calls
   end
@@ -3860,11 +3989,13 @@ RSpec.describe Lain::CLI::Up, "the phone relay" do
     Lain::Project::Trust.for_user(paths:).grant!
     spy = lambda do |*args|
       calls << args
+      next FakeShellOut.new(0, "", "tmux 3.6") if args.include?("-V")
+
       FakeShellOut.new(args[1] == "has-session" ? 1 : 0, "")
     end
 
     report = described_class.new(session: "lain", state_path: File.join(@dir, "state.json"), cwd: root, paths:,
-                                 shell_out_factory: spy, chat_preflight: ->(_args) { [] },
+                                 shell_out_factory: Tmux36[spy], chat_preflight: ->(_args) { [] },
                                  gc_schedule: Lain::CLI::GcSchedule::NONE).call
 
     expect(calls.select { |args| args.include?("new-window") }).to be_empty

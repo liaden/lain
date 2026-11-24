@@ -255,6 +255,10 @@ module Lain
       # is the real cleanup; this extraction only bought {Up} the ten lines the
       # ClassLength cop wanted.
       class Tmux
+        MINIMUM_VERSION = [3, 5].freeze
+        VERSION_BANNER = /\Atmux\s+(next-)?(\d+)\.(\d+)/
+        VERSION_PROBE_TIMEOUT = 10
+
         # @param socket [String, nil] tmux's `-L`; the default socket when nil
         # @param shell_out_factory [#call] `Shell::Out.new`, or a double
         def initialize(socket:, shell_out_factory:)
@@ -271,8 +275,8 @@ module Lain
 
         # TOLERATES a nonzero exit, which two callers need: `has-session`'s "no
         # such session" is an answer, and {Up#keep_failed_pane} is best-effort.
-        def run(*)
-          @shell_out_factory.call(*argv(*)).tap(&:run_command)
+        def run(*, **)
+          @shell_out_factory.call(*argv(*), **).tap(&:run_command)
         rescue Errno::ENOENT
           raise TmuxUnavailable, "tmux not found on PATH -- install it (or fix PATH) before `lain up`"
         end
@@ -287,7 +291,36 @@ module Lain
           raise TmuxUnavailable, "tmux #{args.first} failed: #{shell_out.stderr.strip}"
         end
 
+        # Before 3.5 there is no `allow-set-title`, so a pane program could retitle
+        # the panes lain labels and nothing could stop it.
+        #
+        # A `next-N.M` git build predates release N.M and the option landed partway
+        # through that cycle, so it has to be newer than 3.5 itself to count.
+        #
+        # @return [void]
+        # @raise [TmuxUnavailable] tmux is older than 3.5, or its banner cannot be read
+        def require_supported_version
+          answer = run("-V", timeout: VERSION_PROBE_TIMEOUT)
+          raise TmuxUnavailable, "tmux -V failed: #{answer.stderr.strip}" unless Shell::Out.ok?(answer)
+
+          banner = answer.stdout.strip
+          development, *found = banner.match(VERSION_BANNER)&.captures
+          raise TmuxUnavailable, unreadable(banner) unless found.any?
+
+          found = found.map(&:to_i)
+          return if (found <=> MINIMUM_VERSION) >= (development ? 1 : 0)
+
+          raise TmuxUnavailable, "tmux #{development}#{found.join(".")} is too old: " \
+                                 "`lain up` needs tmux #{MINIMUM_VERSION.join(".")} or newer"
+        rescue Shell::Out::Timeout => e
+          raise TmuxUnavailable, "tmux -V did not answer: #{e.message}"
+        end
+
         private
+
+        def unreadable(banner)
+          "cannot read the tmux version from #{banner.inspect}; lain up expects \"tmux N.M\" or \"tmux next-N.M\""
+        end
 
         # Private since {#argv} exists: composing an argv on this socket is
         # something this object does for callers, not a flag it lends them.
@@ -1256,6 +1289,7 @@ module Lain
       def call(env: ENV, nested: false)
         # Per call, so a second launch through one Up reports only its own.
         @warnings = []
+        @tmux.require_supported_version
         @gc_schedule.call
         created = !session_exists?
         created ? create_session : reattach_session
