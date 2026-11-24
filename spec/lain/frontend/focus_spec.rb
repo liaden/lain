@@ -154,8 +154,9 @@ RSpec.describe Lain::Frontend::Focus do
       tmux_env.merge("TMUX" => "#{path},0,0", "TMUX_PANE" => pane)
     end
 
+    # A client on a dumb or unset TERM, as a hook or CI runner has, exits at once without attaching.
     def attach
-      reader, _writer, pid = PTY.spawn(tmux_env, "tmux", "-L", socket, "attach")
+      reader, _writer, pid = PTY.spawn(tmux_env.merge("TERM" => "xterm-256color"), "tmux", "-L", socket, "attach")
       clients << [reader, pid]
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 20
       sleep 0.05 until tmux("display-message", "-p", "\#{session_attached}").first.strip == "1" ||
