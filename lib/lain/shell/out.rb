@@ -199,24 +199,28 @@ module Lain
           nil
         end
 
+        # A leader the reaper collected is never waited on again: its pid may
+        # already name another child, and a fiber scheduler's wait raises ESRCH
+        # for a pid that is gone.
         def terminate(pid)
+          reaped = nil
           group = ProcessGroup.new(clock: @clock, grace: GRACE, poll: POLL)
-          group.terminate(pid, reaper: -> { reap_exited(pid) })
-          reap(pid)
+          group.terminate(pid, reaper: -> { reaped ||= reap_exited(pid) })
+          reap(pid) unless reaped
         end
 
         # A zombie leader keeps its group listed as alive, so it is collected
         # before the group is asked about.
         def reap_exited(pid)
-          Process.waitpid(pid, Process::WNOHANG)
+          Process.waitpid2(pid, Process::WNOHANG)
         rescue Errno::ECHILD
           nil
         end
 
         def reap(pid)
           Process.waitpid2(pid).last.exitstatus
-        rescue Errno::ECHILD
-          nil # a timeout already reaped it
+        rescue Errno::ECHILD, Errno::ESRCH
+          nil # already reaped; a fiber scheduler's wait says so with ESRCH
         end
 
         def clock = @clock.call

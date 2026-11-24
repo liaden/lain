@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "async"
+
 # Drives real subprocesses, because every property here IS a property of the
 # spawn: what the child inherits, what it does not, and what happens when it
 # refuses to die. A double would be asserting this file's own beliefs about
@@ -137,6 +139,35 @@ RSpec.describe Lain::Shell::Out do
     it "raises Timeout rather than waiting" do
       expect { described_class.new("sleep", "30", timeout: 0.2).run_command }
         .to raise_error(described_class::Timeout, /timed out after 0.2s: sleep 30/)
+    end
+
+    # A fiber scheduler waits through pidfd_open, which answers a pid already reaped with ESRCH, not ECHILD.
+    it "raises Timeout inside a fiber scheduler too" do
+      outcome = Async do
+        described_class.new("sleep", "30", timeout: 0.2).run_command
+      rescue StandardError => e
+        e
+      end.wait
+
+      expect(outcome).to be_a(described_class::Timeout)
+    end
+
+    # An interrupt can land after the child is reaped and before its pid is forgotten, so the cleanup waits on a
+    # pid already gone; inside a fiber scheduler that wait answers ESRCH.
+    it "answers nil for a child already reaped, inside a fiber scheduler" do
+      pid = Process.spawn("true", pgroup: true)
+      Process.wait(pid)
+      bounded = described_class::Bounded.new(timeout: 5, clock: Lain::RunClock::MONOTONIC, command: ["true"])
+
+      expect(Async { bounded.call({}) { pid } }.wait).to be_nil
+    end
+
+    # Asked of the waits made, since the harm, a pid reused by another child before a second wait, cannot be forced.
+    it "never waits again on a leader collected while its group was stopped" do
+      allow(Process).to receive(:waitpid2).and_call_original
+
+      expect { described_class.new("sleep", "30", timeout: 0.2).run_command }.to raise_error(described_class::Timeout)
+      expect(Process).not_to have_received(:waitpid2).with(Integer)
     end
 
     # The point of `pgroup: true`: a shell that has forked its own child is the
