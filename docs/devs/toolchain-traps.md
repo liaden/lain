@@ -360,6 +360,8 @@ Not flakes, from the same run, and fixed in it:
 - `Lain::Bench::ApprovalReplay the disk is never asked while a call of any tool the replay holds is re-decided at any level` was red 3 of 3 on the base at seed 37921: the first I18n lookup loaded its locale files inside the disk guard. The guard now warms I18n first.
 - `a plain chat's inline prompts over a real terminal a cockpit's command> over typeahead runs a /approve typed just before the call parked, once it has` was red in 3 landing suites (seeds 17971 and 127) and green in 12 runs alone. A parked call's decision woke the call before its record was written, and under the io_uring selector that write yields, so the call could settle first. The decision is now written before the call wakes. A red under this name again is a regression.
 
+Added 2026-11-24, from the VM failure ledger: `Lain::Ext::Regions Set#scan with the lock released with 1 shape that matches all through a long text behaves like a GVL-releasing binding lets the calling thread keep running while it works` failed once with a gap share of 0.38 over its 0.3 limit (1 hook run, seed 24814, load 5.03), and passed alone and 3 of 3 runs of its file. The call is 0.036 to 0.055 s on the arm64 VM, so 1 scheduler pause of about 15 ms reaches the limit. Not reproduced: 80 probe calls beside 6 busy workers peaked at 0.136, and 10 runs of the file passed. A longer text would shrink the share, but the text stays the length its sibling interrupt examples were fixed for.
+
 A live demonstration of why this list is by NAME and not by line: `buffers_spec.rb:329` was recorded by line in an earlier chunk, and one card in this one moved that same example to `:417` by adding 88 lines above it.
 
 ### Retired flakes, with the fix that ended each

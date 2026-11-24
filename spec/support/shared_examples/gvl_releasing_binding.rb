@@ -12,19 +12,23 @@
 # and may override:
 #   crowd_work / crowd_complete  a cheaper releasing call, for the 80 at once
 #   settle (how long a call runs before it is interrupted), stop_bound, max_gap_share
+#   (settle and stop_bound default to shares of one_call, 1 measured call of `work`)
 RSpec.shared_examples "a GVL-releasing binding" do
   include GapShare
 
   let(:crowd_work) { work }
   let(:crowd_complete) { complete }
-  let(:settle) { 0.05 }
-  # Relative to one whole call, so a slower machine scales the bound with the work, and a
-  # stop that waited out the call still cannot fit it.
-  let(:stop_bound) do
+  # Shares of one whole call, so a faster or slower machine scales them with the work: the
+  # interrupt lands a quarter of the way in, and a stop that waited out the rest of the call
+  # still cannot fit the bound. It is 1 sample, so the settle outlasts a call only when that
+  # sample ran 4 times slower than the call it settles.
+  let(:one_call) do
     started = clock.call
     work.call
-    0.4 * (clock.call - started)
+    clock.call - started
   end
+  let(:settle) { 0.25 * one_call }
+  let(:stop_bound) { 0.4 * one_call }
   let(:max_gap_share) { 0.3 }
 
   def clock = Lain::RunClock::MONOTONIC
@@ -44,9 +48,11 @@ RSpec.shared_examples "a GVL-releasing binding" do
     end
   end
 
+  # The settle is measured before the worker starts, so its own call never runs beside it.
   def interrupted_after_settling
+    pause = settle
     worker = working
-    sleep settle
+    sleep pause
     expect(worker).to be_alive
     sent = clock.call
     yield worker
