@@ -13,7 +13,8 @@ images:
   - location: https://cloud-images.ubuntu.com/releases/resolute/release/ubuntu-26.04-server-cloudimg-arm64.img
     arch: aarch64
 
-# No Mac mounts, no SSH agent, and no guest port forwards. Guest calls can still reach host.lima.internal.
+# No Mac mounts, no SSH agent, and no guest port forwards. The provision step's nftables table limits what guest
+# calls reach through host.lima.internal.
 mounts: []
 
 ssh:
@@ -35,19 +36,45 @@ provision:
     script: |
       #!/bin/bash
       set -eux -o pipefail
+      packages=(libnss-resolve zsh nftables)
       # Lima reruns this on every boot, so a provisioned guest must not need the network.
-      if dpkg -s libnss-resolve zsh >/dev/null 2>&1; then exit 0; fi
-      export DEBIAN_FRONTEND=noninteractive
-      # The lock timeout misses the lists and archives locks, and update exits 0 when mirrors refuse.
-      for attempt in {1..30}; do
-        if apt-get update -q && apt-get -o DPkg::Lock::Timeout=5 install -y -q libnss-resolve zsh; then exit 0; fi
-        if [ "$attempt" -eq 30 ]; then exit 1; fi
-        sleep 10
-      done
+      if ! dpkg -s "${packages[@]}" >/dev/null 2>&1; then
+        export DEBIAN_FRONTEND=noninteractive
+        # The lock timeout misses the lists and archives locks, and update exits 0 when mirrors refuse.
+        for attempt in {1..30}; do
+          if apt-get update -q && apt-get -o DPkg::Lock::Timeout=5 install -y -q "${packages[@]}"; then break; fi
+          if [ "$attempt" -eq 30 ]; then exit 1; fi
+          sleep 10
+        done
+      fi
+      # Landlock bounds a confined call's ports, never its hosts, so without this a call granted 80 and 443 reaches
+      # those ports on the Mac's loopback. Ollama, DNS and DHCP stay open; Landlock keeps grant calls off them.
+      # The empty table first makes the delete safe on a first boot; nft 1.1.6 wants each brace on its own line.
+      # A reject, not a drop, so a blocked connect fails at once rather than after about 2 minutes of SYN retries.
+      # The guest's own address is in that /24, so a local destination passes. The counter lets a check see a reject.
+      nft -f - <<'NFT'
+      table inet lain_mac
+      delete table inet lain_mac
+      table inet lain_mac {
+        counter lain_mac_rejected {
+        }
+        chain out {
+          type filter hook output priority 0; policy accept;
+          ct state established,related accept
+          ip daddr 192.168.5.2 tcp dport 11434 accept
+          ip daddr 192.168.5.2 udp dport 53 accept
+          ip daddr 192.168.5.2 tcp dport 53 accept
+          ip daddr 192.168.5.2 udp dport 67 accept
+          fib daddr type local accept
+          ip daddr 192.168.5.0/24 counter name lain_mac_rejected reject with tcp reset
+          ip daddr 192.168.5.0/24 counter name lain_mac_rejected reject
+        }
+      }
+      NFT
 
 probes:
-  - description: libnss-resolve and zsh to be installed
+  - description: libnss-resolve, zsh and nftables to be installed, and the Mac table loaded
     script: |
       #!/bin/bash
-      dpkg -s libnss-resolve zsh >/dev/null 2>&1
+      dpkg -s libnss-resolve zsh nftables >/dev/null 2>&1 && sudo -n nft list table inet lain_mac >/dev/null 2>&1
     hint: See /var/log/cloud-init-output.log in the guest.

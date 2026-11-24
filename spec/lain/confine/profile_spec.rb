@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "tmpdir"
+require "yaml"
 
 RSpec.describe Lain::Confine::Profile do
   describe "#network and #tier_line" do
@@ -1279,6 +1280,17 @@ RSpec.describe Lain::Confine::Profile do
     it "runs nothing else, and a dir's name is not a prefix of its neighbour's" do
       expect([profile.runs?("/p/bin/cat"), profile.runs?("/usrx/bin/cat"), profile.runs?("/h/.local/bin/rg")])
         .to eq([false, false, false])
+    end
+  end
+
+  describe "GRANTS" do
+    # The Lima guest's nftables table rejects the Mac's address on every port but the ones it accepts, and
+    # leaves those to Landlock: a grant naming one would open that Mac service to the call.
+    it "names no port the Lima guest leaves open to the Mac" do
+      template = YAML.safe_load_file(File.expand_path("../../../lima/lain.yaml", __dir__))
+      script = template.fetch("provision").find { _1.fetch("mode") == "system" }.fetch("script")
+      accepted = script.scan(/dport (\d+) accept/).flatten.map(&:to_i)
+      expect([accepted.empty?, described_class::GRANTS.values.flatten & accepted]).to eq([false, []])
     end
   end
 
