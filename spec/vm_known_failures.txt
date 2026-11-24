@@ -1,4 +1,3 @@
-./spec/lain/lain_vm_spec.rb bin/lain-vm passes its host test against real git with fake limactl and ssh	flaky: 30.8 s against a 30 s budget at load 9.6 in 1 hook run; passes alone in about 16 s; the 1-example host test is too long (seed 22029, load 7.10)
 floor:daemon	70
 floor:ruby	38104
 floor:rust	805

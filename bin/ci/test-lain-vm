@@ -2021,9 +2021,37 @@ scenario_a_fetch_that_ignores_term_is_killed_after_a_bound() {
   ref_absent refs/remotes/lain-vm/work
 }
 
+# Read from bash's own function table, so a scenario counts however its definition line is written.
 list_scenarios() {
-  grep -E '^scenario_[a-z0-9_]+\(\) \{$' "$this_test" | cut -d'(' -f1
+  declare -F | sed -n 's/^declare -f \(scenario_[a-z0-9_]*\)$/\1/p'
 }
+
+# A group holds every scenario whose position matches it, so the groups share the work evenly and cover it whole.
+selected_scenarios() {
+  local scenario position=0
+  for scenario in $(list_scenarios); do
+    position=$((position + 1))
+    if [ $(((position - 1) % groups + 1)) -eq "$group" ]; then printf '%s\n' "$scenario"; fi
+  done
+}
+
+listing=
+if [ "${1:-}" = --list ]; then
+  listing=1
+  shift
+fi
+selection=${1:-1/1}
+case "$selection" in
+  [1-9]/[1-9]) ;;
+  *) fail "usage: bin/ci/test-lain-vm [--list] [<group>/<groups>], each 1 to 9" ;;
+esac
+group=${selection%/*}
+groups=${selection#*/}
+[ "$group" -le "$groups" ] || fail "group $group is past the $groups groups"
+if [ -n "$listing" ]; then
+  selected_scenarios
+  exit 0
+fi
 
 BASE=$(cd "$(mktemp -d)" && pwd -P)
 trap 'rm -rf "$BASE"' EXIT
@@ -2035,7 +2063,7 @@ trap 'rm -rf "$BASE"' EXIT
 
 passed=0
 failed=0
-for scenario in $(list_scenarios); do
+for scenario in $(selected_scenarios); do
   set +e
   (
     set -e
