@@ -587,11 +587,17 @@ RSpec.describe "a chat fed by an input pane", :seam do
     cockpit.quiet { cockpit.screen }
   end
 
-  # The `you>` the chat draws once told to go, with whatever draft the pane put in it.
-  def you_after_go
+  # The `you>` the chat draws once told to go, once it holds `draft`, or the whole screen when it never
+  # does. The pane types a draft back as keys that Reline reads after it draws the prompt, so a
+  # screen gone quiet can still lack it.
+  def you_after_go(draft = "")
     FileUtils.touch(File.join(dir, "go"))
-    cockpit.settles { cockpit.screen.include?("you> ") || nil }
-    cockpit.quiet { cockpit.screen }.split("you> ").last.to_s
+    drawn = cockpit.settles do
+      screen = cockpit.screen
+      tail = screen.split("you> ", -1).last
+      tail if screen.include?("you> ") && tail.include?(draft)
+    end
+    drawn || cockpit.screen
   end
 
   it "joins the drafts of 2 dropped offers with 1 space at the next you>", :daemon do
@@ -599,7 +605,8 @@ RSpec.describe "a chat fed by an input pane", :seam do
     expect_bound(cockpit.chat("offers_then_lines"))
     queues = [dropped_offer_with("alpha"), dropped_offer_with("beta")]
 
-    expect([you_after_go.include?("alpha beta"), cockpit.quiet { cockpit.heard }]).to eq([true, []])
+    expect(you_after_go("alpha beta")).to include("alpha beta")
+    expect(cockpit.quiet { cockpit.heard }).to eq([])
   ensure
     queues&.each(&:close)
   end

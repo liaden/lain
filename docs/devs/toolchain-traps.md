@@ -355,8 +355,6 @@ Not a flake, from the same run, and fixed in it: `Lain::CLI::Wiring` "sends a fi
 
 Not a flake, from the same run: `A project's own tests inside the workspace profile passes the fence crate's tests, none of them skipped` fails with "path must be shorter than SUN_LEN" when `TMPDIR` is long, because the fence's socket lives under it. Keep `TMPDIR` short (`$HOME/tmp/lain/<short>`) before reading that red as a regression.
 
-Added 2026-11-22, from the attempt 3 sweep run. Red once in a landing suite, green alone, and green 3 of 3 runs of its file with the failing worker's seed on both the base and the card: `a chat fed by an input pane joins the drafts of 2 dropped offers with 1 space at the next you>`.
-
 Not flakes, from the same run, and fixed in it:
 
 - `Lain::Bench::ApprovalReplay the disk is never asked while a call of any tool the replay holds is re-decided at any level` was red 3 of 3 on the base at seed 37921: the first I18n lookup loaded its locale files inside the disk guard. The guard now warms I18n first.
@@ -368,6 +366,7 @@ A live demonstration of why this list is by NAME and not by line: `buffers_spec.
 
 Keep a retired name here so a later red under it reads as a regression, not as a known flake.
 
+- 2026-11-24: `a chat fed by an input pane joins the drafts of 2 dropped offers with 1 space at the next you>` (listed 2026-11-22). A spec race: the pane types a kept draft back as keys that Reline reads after it draws the prompt, and the spec took the screen as drawn once it held still for 0.2 s after `you> ` appeared. A 0.6 s delay at Reline's first read of those keys made it red every run. The spec now waits for the draft in the `you>` line, as its sibling examples already did.
 - 2026-11-24: `Lain::Daemon::Spawner::PaneListener a pane request hangs the program up when the client's socket closes` read the HUP file between its create and its write, and now waits for its content. In the same file, every example waited for the spawner's socket file, which exists from its bind, before its listen and before the spawner takes its boot digest. Connects were refused, or a change was missed, in `a stalled client is answered with an error and hung up on at its deadline` and 4 other examples. The spec now waits for the spawner to say it is built, or for /proc/net/unix to show the socket listening.
 - 2026-11-24: `Lain::Frontend::Focus against a real tmux server counts a window with another pane selected as focused only while a client is attached` failed every run where TERM is dumb or unset (hooks, CI, a limactl shell): `tmux attach` exits with "terminal does not support clear". Its attach client now gets TERM=xterm-256color, as `up_spec`'s does.
 - 2026-11-22: `Lain::Supervisor as an actor reactor the bounded drain over a mixed fleet an actor's own captured Async::TimeoutError is not misread as the drain's bound` (listed since 2026-09-11). It was never a flake: the example was `pending` on a real defect, so its expected failure was read as a red; the Drain's bound now raises its own `Supervisor::Drain::Expired`, so an actor's own `Async::TimeoutError` settles as that actor's failure, and the example runs unpended. Its 1 timeout of the 60s window on 2026-10-19, beside about 20 agents, was never explained, so a repeat is a regression to chase.
