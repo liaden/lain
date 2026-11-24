@@ -78,7 +78,7 @@ RSpec.describe Lain::Shell::Executable::RunFiles do
     end
 
     it "does not mistake a version query for stdin" do
-      expect(stage(%w[ruby -v])).to have_attributes(klass: :system, run_files: [])
+      expect(stage(%w[python3 -V])).to have_attributes(klass: :system, run_files: [])
     end
 
     it "keeps the wrapper that ran it" do

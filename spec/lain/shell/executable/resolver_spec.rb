@@ -29,6 +29,19 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     path
   end
 
+  # A distro may ship a program as a link into another package, so the real file is read off the box.
+  def real(path) = File.realpath(path)
+
+  # The links the resolver reports, leaving a relative link's `..` for the kernel.
+  def link_chain(path)
+    chain = [path]
+    while File.symlink?(chain.last)
+      target = File.readlink(chain.last)
+      chain << (target.start_with?("/") ? target : File.join(File.dirname(chain.last), target))
+    end
+    chain
+  end
+
   def resolve(*argvs, path:, env: {}, cwd: root)
     worker_env = Lain::WorkerEnv.new(cwd:, env: env.merge("PATH" => path))
     resolver.for(worker_env).call(Lain::Shell::Term.of(*argvs))
@@ -65,18 +78,19 @@ RSpec.describe Lain::Shell::Executable::Resolver do
   it "classes a program no user can replace as :system" do
     stage = resolve(%w[cat README.md], path: "/usr/bin").sole
 
-    expect(stage).to have_attributes(resolved: "/usr/bin/cat", chain: ["/usr/bin/cat"], klass: :system,
+    expect(stage).to have_attributes(resolved: "/usr/bin/cat", realpath: real("/usr/bin/cat"),
+                                     chain: link_chain("/usr/bin/cat"), klass: :system,
                                      anomalies: [], shadowed: [])
   end
 
   it "follows a user symlink into rm, listing every link, and classes it :user" do
     FileUtils.mkdir_p("#{home}/bin")
-    File.symlink("/usr/bin/rm", "#{home}/bin/ls")
+    File.symlink(real("/usr/bin/rm"), "#{home}/bin/ls")
 
     stage = resolve(%w[ls], path: "#{home}/bin:/usr/bin").sole
 
-    expect(stage).to have_attributes(resolved: "#{home}/bin/ls", realpath: "/usr/bin/rm", klass: :user)
-    expect(stage.chain).to eq(["#{home}/bin/ls", "/usr/bin/rm"])
+    expect(stage).to have_attributes(resolved: "#{home}/bin/ls", realpath: real("/usr/bin/rm"), klass: :user)
+    expect(stage.chain).to eq(["#{home}/bin/ls", real("/usr/bin/rm")])
   end
 
   it "keeps a mise install's identity: the chain ends at that file, classed :user" do
@@ -89,9 +103,10 @@ RSpec.describe Lain::Shell::Executable::Resolver do
 
   it "classes a system file reached through a symlink in the project as :project" do
     FileUtils.mkdir_p("#{root}/bin")
-    File.symlink("/usr/bin/cat", "#{root}/bin/cat")
+    File.symlink(real("/usr/bin/cat"), "#{root}/bin/cat")
 
-    expect(resolve(%w[cat], path: "#{root}/bin").sole).to have_attributes(realpath: "/usr/bin/cat", klass: :project)
+    expect(resolve(%w[cat], path: "#{root}/bin").sole)
+      .to have_attributes(realpath: real("/usr/bin/cat"), klass: :project)
   end
 
   it "classes a file reached through a directory symlinked into the project as :project" do
@@ -150,13 +165,13 @@ RSpec.describe Lain::Shell::Executable::Resolver do
 
   it "reads a relative link from the link's real directory, leaving `..` for the kernel" do
     FileUtils.mkdir_p(["#{home}/a/bin", "#{home}/a/lib"])
-    File.symlink("/usr/bin/cat", "#{home}/a/lib/real")
+    File.symlink(real("/usr/bin/cat"), "#{home}/a/lib/real")
     File.symlink("../lib/real", "#{home}/a/bin/x")
 
     stage = resolve(%w[x], path: "#{home}/a/bin").sole
 
-    expect(stage.chain).to eq(["#{home}/a/bin/x", "#{home}/a/bin/../lib/real", "/usr/bin/cat"])
-    expect(stage.realpath).to eq("/usr/bin/cat")
+    expect(stage.chain).to eq(["#{home}/a/bin/x", "#{home}/a/bin/../lib/real", real("/usr/bin/cat")])
+    expect(stage.realpath).to eq(real("/usr/bin/cat"))
   end
 
   describe "a relative link reached through a symlinked directory" do
@@ -285,7 +300,7 @@ RSpec.describe Lain::Shell::Executable::Resolver do
     it "resolves under env -i against the default search path" do
       stage = resolve(%w[env -i cat x], path: "#{home}/bin").sole
 
-      expect(stage).to have_attributes(resolved: "/bin/cat", realpath: "/usr/bin/cat")
+      expect(stage).to have_attributes(resolved: "/bin/cat", realpath: real("/usr/bin/cat"))
     end
 
     it "leaves a wrapper option it cannot read :unresolved, named by the wrapper, rather than guessing" do

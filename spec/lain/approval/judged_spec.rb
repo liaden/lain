@@ -737,7 +737,7 @@ RSpec.describe Lain::Approval::Judged do
         end.fetch(:result)
 
         expect([ruling.verdict, ruling.rung]).to eq([:allow, "auto"])
-        expect(scripted.prompts.sole.lines.map(&:chomp)).to include("cat -> /usr/bin/cat [system]")
+        expect(scripted.prompts.sole.lines.map(&:chomp)).to include("cat -> #{File.realpath("/usr/bin/cat")} [system]")
         expect(parses).to eq(1)
       end
     end

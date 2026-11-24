@@ -65,13 +65,15 @@ RSpec.describe Lain::Approval::Judge::Facts do
     facts = described_class::Resolving.new(verdict: Lain::Shell::Verdict.new, stages:)
                                       .call(command, root, parsed:)
 
-    expect(lines_of(facts)).to include("cat -> /usr/bin/cat [system]", "head -> /usr/bin/head [system]")
+    expect(lines_of(facts)).to include("cat -> #{File.realpath("/usr/bin/cat")} [system]",
+                                       "head -> #{File.realpath("/usr/bin/head")} [system]")
     expect(parses).to eq(0)
   end
 
   it "names a system stage by the file that runs" do
-    expect(lines_of(facts_of("cat README.md | head -5"))).to include("cat -> /usr/bin/cat [system]",
-                                                                     "head -> /usr/bin/head [system]")
+    expect(lines_of(facts_of("cat README.md | head -5")))
+      .to include("cat -> #{File.realpath("/usr/bin/cat")} [system]",
+                  "head -> #{File.realpath("/usr/bin/head")} [system]")
   end
 
   it "says a user stage nothing changed this session is unchanged" do
@@ -187,7 +189,7 @@ RSpec.describe Lain::Approval::Judge::Facts do
     it "tells the judge history is masked in the output, beside the stages it already names" do
       masked = facts_of("cat README.md").masking([], history: true)
 
-      expect(lines_of(masked)).to include("cat -> /usr/bin/cat [system]", described_class::HISTORY)
+      expect(lines_of(masked)).to include("cat -> #{File.realpath("/usr/bin/cat")} [system]", described_class::HISTORY)
       expect(masked.bar).to eq([])
     end
 
