@@ -200,6 +200,12 @@ RSpec.describe Lain::Daemon::Spawner::PaneListener, :seam do
 
   def appeared(file) = Timeout.timeout(patience) { sleep 0.01 until File.exist?(file) }
 
+  # File.write creates the file before it writes, so a file that exists can still read empty.
+  def written(file)
+    Timeout.timeout(patience) { sleep 0.01 until File.size?(file) }
+    File.read(file)
+  end
+
   # /proc's tty_nr is the kernel's own encoding of the device number.
   def tty_nr(device)
     stat = File.stat(device)
@@ -258,8 +264,7 @@ RSpec.describe Lain::Daemon::Spawner::PaneListener, :seam do
 
       conn.close
 
-      appeared(hung)
-      expect(File.read(hung)).to eq("HUP")
+      expect(written(hung)).to eq("HUP")
     end
 
     it "answers a request that is not 1 JSON object with an error, forking nothing" do
