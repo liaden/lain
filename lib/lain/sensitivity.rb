@@ -825,6 +825,8 @@ module Lain
       # and `key4.db` are all plausible names in a checkout, and every profile
       # layout holding these puts them under `$HOME`.
       Rule.homed(".config/gh/hosts.yml", level: :denied, reason: :protected),
+      # With the name glob, so the temp file a save renames into place is covered too.
+      Rule.homed(".config/lain", name: "provider.env*", level: :denied, reason: :protected),
       Rule.homed(".docker/config.json", level: :denied, reason: :protected),
       Rule.homed(".kube/config", level: :denied, reason: :protected),
       Rule.homed("", name: "Cookies", level: :denied, reason: :protected),

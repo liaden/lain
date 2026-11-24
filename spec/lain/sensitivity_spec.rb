@@ -174,6 +174,8 @@ RSpec.describe Lain::Sensitivity do
       "#{SensitivitySpecSupport::HOME}/.gnupg/private-keys-v1.d/AB.key" => "a nested ~/.gnupg file",
       "#{SensitivitySpecSupport::HOME}/.aws/credentials" => "aws credentials",
       "#{SensitivitySpecSupport::HOME}/.config/gh/hosts.yml" => "the gh token store",
+      "#{SensitivitySpecSupport::HOME}/.config/lain/provider.env" => "lain's provider key file",
+      "#{SensitivitySpecSupport::HOME}/.config/lain/provider.env.tmp" => "lain's provider key file while it is saved",
       "#{SensitivitySpecSupport::HOME}/.netrc" => "a netrc",
       "#{SensitivitySpecSupport::HOME}/vault.kdbx" => "a keepass database anywhere",
       "#{SensitivitySpecSupport::HOME}/.password-store/work/aws.gpg" => "anything under ~/.password-store",
@@ -277,6 +279,7 @@ RSpec.describe Lain::Sensitivity do
       expect(classify("/root/Downloads/report.pdf")).to be_ordinary
       expect(classify("/root/.kube/config")).to be_ordinary
       expect(classify("/root/.docker/config.json")).to be_ordinary
+      expect(classify("/srv/project/.config/lain/provider.env")).to be_ordinary
     end
   end
 

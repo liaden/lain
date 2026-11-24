@@ -17,12 +17,15 @@ newline=$'\n'
 
 usage() {
   cat <<'USAGE'
-Usage: bin/lain-vm up|shell|fetch <branch>|--help
+Usage: bin/lain-vm up|shell|fetch <branch>|secret <name>|--help
 
   up              start the VM, seed ~/lain if it is absent, install and build
-  shell           open a login shell in ~/lain
+  shell           open a login shell in ~/lain, with the saved provider keys exported
   fetch <branch>  fetch a VM branch into refs/remotes/lain-vm/<branch> and
                   print the full diff of sensitive paths against origin/main
+  secret ANTHROPIC_API_KEY|OLLAMA_API_KEY
+                  read a key at a hidden prompt and save it in the VM's
+                  ~/.config/lain/provider.env; use a key made for this VM
   --help          show this help
 
 LAIN_VM_NAME=<name> selects the VM (default lain). See docs/users/lima.md.
@@ -274,10 +277,92 @@ cmd_up() {
   check_guest_ports_stay_in_the_vm
 }
 
+# The key file is read line by line and never sourced, so it can set the 2 key names and nothing else, and runs no code.
+# A hand edit can leave a CR or an empty value, and either would reach the provider as the key.
+shell_script() {
+  cat <<'GUEST'
+cd "$HOME/lain" || exit 1
+keys="$HOME/.config/lain/provider.env"
+cr=$(printf '\r')
+if [ -f "$keys" ]; then
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=${line%"$cr"}
+    case "$line" in
+      ANTHROPIC_API_KEY=?*) export ANTHROPIC_API_KEY="${line#*=}" ;;
+      OLLAMA_API_KEY=?*) export OLLAMA_API_KEY="${line#*=}" ;;
+    esac
+  done <"$keys"
+fi
+exec "${SHELL:-/bin/bash}" -l
+GUEST
+}
+
 cmd_shell() {
   [ "$#" -eq 0 ] || die "shell takes no arguments"
   require_vm_tools
-  exec limactl shell --workdir / "$vm" bash -lc 'cd "$HOME/lain" && exec "${SHELL:-/bin/bash}" -l'
+  exec limactl shell --workdir / "$vm" bash -lc "$(shell_script)"
+}
+
+valid_key_name() {
+  case "$1" in
+    ANTHROPIC_API_KEY | OLLAMA_API_KEY) return 0 ;;
+  esac
+  return 1
+}
+
+# Every exec in the VM carries the key in its environment, so a huge one would make them all fail.
+valid_key() (
+  LC_ALL=C
+  case "$1" in
+    '' | *[![:graph:]]*) exit 1 ;;
+  esac
+  [ "${#1}" -le 512 ]
+)
+
+require_running_vm() {
+  [ "$(limactl list --format '{{.Status}}' "$vm" 2>/dev/null)" = Running ] ||
+    die "VM $vm is not running; start it with bin/lain-vm up"
+}
+
+# The key arrives on stdin, so it is never in an argv a process listing shows. bash -c, not -lc: a login profile
+# could read stdin first. The rename keeps a reader from seeing a half-written file. The temp file's name is under the
+# denied rule, and one an earlier run left behind is replaced.
+save_key_script() {
+  printf 'name=%s\n' "$1"
+  cat <<'GUEST'
+set -eu
+umask 077
+dir="$HOME/.config/lain"
+mkdir -p "$dir"
+IFS= read -r value
+tmp="$dir/provider.env.tmp"
+rm -f "$tmp"
+trap 'rm -f "$tmp"' EXIT
+if [ -f "$dir/provider.env" ]; then
+  grep -v "^$name=" "$dir/provider.env" >"$tmp" || [ "$?" -eq 1 ]
+fi
+printf '%s=%s\n' "$name" "$value" >>"$tmp"
+mv -f "$tmp" "$dir/provider.env"
+GUEST
+}
+
+cmd_secret() {
+  [ "$#" -eq 1 ] || die "usage: bin/lain-vm secret ANTHROPIC_API_KEY|OLLAMA_API_KEY"
+  local name=$1 value=
+  valid_key_name "$name" || die "refused: secret saves only ANTHROPIC_API_KEY or OLLAMA_API_KEY"
+  require_vm_tools
+  require_running_vm
+  if [ -t 0 ]; then
+    IFS= read -r -s -p "$name: " value || true
+    printf '\n' >&2
+  else
+    IFS= read -r value || true
+  fi
+  valid_key "$value" || die "refused: a key is 1 line of at most 512 printable characters with no spaces"
+  printf '%s\n' "$value" | limactl shell --workdir / "$vm" bash -c "$(save_key_script "$name")" 2>&1 | sanitized ||
+    die "could not save $name in the VM"
+  printf 'lain-vm: saved %s in ~/.config/lain/provider.env in the VM.\n' "$name"
+  printf 'A running tmux server keeps the key it started with. After a rotation, run tmux kill-server in the VM.\n'
 }
 
 # Every flag closes a way for guest content or a worktree .gitattributes to hide a change or run a driver.
@@ -491,6 +576,7 @@ main() {
     up) shift; cmd_up ${1+"$@"} ;;
     shell) shift; cmd_shell ${1+"$@"} ;;
     fetch) shift; cmd_fetch ${1+"$@"} ;;
+    secret) shift; cmd_secret ${1+"$@"} ;;
     --help | -h | help) usage ;;
     *) usage >&2; exit 2 ;;
   esac
