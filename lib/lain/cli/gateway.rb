@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "securerandom"
+require "shellwords"
 
 module Lain
   module CLI
@@ -42,6 +43,7 @@ module Lain
         port = port!
         upstream = checked(Lain::Gateway::Upstream.for(@options.fetch(:upstream)))
         token = SecureRandom.hex(16)
+        own_default_log_directory
         Journal.open(log) do |journal|
           server = server(upstream, journal, port, token)
           serve(server, Lain::Gateway::TokenFile.for(server.port, paths: @paths), token)
@@ -58,10 +60,23 @@ module Lain
         @console.announce(url: server.url, token_file: file.path, log:, caveats:)
         server.run
       rescue Lain::Gateway::TokenFile::Unusable => e
-        raise Lain::Error, "the gateway cannot leave its token for the chat: #{e.message}"
+        raise Lain::Error,
+              "the gateway cannot leave its token for the chat: #{e.message}#{loose_directory_advice(file)}"
       ensure
         server.stop
         file.remove(token)
+      end
+
+      # Only for a real directory this user owns that others can write, the one case
+      # a chmod fixes; a link or a foreign directory gets no advice.
+      def loose_directory_advice(file)
+        directory = File.dirname(file.path)
+        stat = File.lstat(directory)
+        return "" unless stat.directory? && stat.uid == Process.uid && stat.mode.anybits?(0o022)
+
+        "; run: chmod 700 #{Shellwords.escape(directory)}"
+      rescue SystemCallError
+        ""
       end
 
       def checked(upstream)
@@ -100,6 +115,12 @@ module Lain
       end
 
       def root = @root ||= File.expand_path(@options.fetch(:root, nil) || Dir.pwd)
+
+      # The default log shares its directory with the token file, which refuses
+      # one others can write. An existing directory is left as found.
+      def own_default_log_directory
+        FileUtils.mkdir_p(File.dirname(log), mode: 0o700) unless @options.fetch(:log, nil)
+      end
 
       def log = @log ||= @options.fetch(:log, nil) || File.join(@paths.state_home, "gateway", Journal.stem)
     end

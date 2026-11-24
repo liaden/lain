@@ -181,6 +181,56 @@ RSpec.describe Lain::CLI::Gateway do
     end
   end
 
+  it "starts on a fresh state home under a group-writable umask, leaving its directory 0700" do
+    old = File.umask(0o002)
+    serving(gateway(options.except("log"))) do |announced|
+      expect([File.lstat(announced[:token_file]).mode & 0o777,
+              File.lstat(File.dirname(announced[:token_file])).mode & 0o777]).to eq([0o600, 0o700])
+    end
+  ensure
+    File.umask(old)
+  end
+
+  it "refuses to start over a group-writable gateway directory that already exists, and leaves it alone" do
+    gateway_dir = File.join(paths.state_home, "gateway")
+    FileUtils.mkdir_p(gateway_dir)
+    File.chmod(0o775, gateway_dir)
+
+    expect { gateway(options.except("log")).run }
+      .to raise_error(Lain::Error, /writable by others.*chmod 700 #{Regexp.escape(gateway_dir)}/)
+    expect(File.lstat(gateway_dir).mode & 0o777).to eq(0o775)
+  end
+
+  it "shell-escapes the directory in its chmod advice, so a path with a space can be pasted" do
+    spaced = Lain::Paths.new(env: { "HOME" => dir, "XDG_STATE_HOME" => File.join(dir, "my state") })
+    gateway_dir = File.join(spaced.state_home, "gateway")
+    FileUtils.mkdir_p(gateway_dir)
+    File.chmod(0o775, gateway_dir)
+
+    expect { described_class.new(options.except("log"), console:, env: { "OLLAMA_API_KEY" => "k" }, paths: spaced).run }
+      .to raise_error(Lain::Error, /chmod 700 #{Regexp.escape(Shellwords.escape(gateway_dir))}\z/)
+  end
+
+  it "offers no chmod advice when the gateway directory is refused for another reason" do
+    gateway_dir = File.join(paths.state_home, "gateway")
+    FileUtils.mkdir_p(File.dirname(gateway_dir))
+    File.symlink(File.join(dir, "elsewhere"), gateway_dir)
+    FileUtils.mkdir_p(File.join(dir, "elsewhere"))
+
+    expect { gateway(options.except("log")).run }.to raise_error(Lain::Error) { |error| expect(error.message).not_to include("chmod") }
+  end
+
+  it "leaves the directory of a named log to the umask, taking over only the default one" do
+    named = File.join(dir, "elsewhere", "gateway.ndjson")
+    old = File.umask(0o002)
+
+    serving(gateway(options.merge("log" => named))) { |announced| expect(announced[:log]).to eq(named) }
+
+    expect(File.lstat(File.dirname(named)).mode & 0o777).to eq(0o775)
+  ensure
+    File.umask(old)
+  end
+
   it "logs under the state home when no log is named" do
     serving(gateway(options.except("log"))) do |announced|
       expect(announced[:log]).to start_with(File.join(paths.state_home, "gateway"))
